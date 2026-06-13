@@ -1,16 +1,31 @@
-import { Notice, Plugin } from 'obsidian';
+import { Notice, Plugin, WorkspaceLeaf } from 'obsidian';
+import { EditorView } from '@codemirror/view';
 import {
     DEFAULT_SETTINGS,
     EventideQuillSettings,
     EventideQuillSettingTab,
 } from './settings';
 import { lint } from './core/linter/linter';
+import { getLintExtension, setLintResults } from './core/linter/decorations';
+import { LINT_VIEW_TYPE, LintResultsView } from './ui/lint-panel';
 
 export default class EventideQuillPlugin extends Plugin {
     settings!: EventideQuillSettings;
+    private lintPanel: LintResultsView | null = null;
 
     async onload() {
         await this.loadSettings();
+
+        this.registerEditorExtension(getLintExtension());
+
+        this.registerView(
+            LINT_VIEW_TYPE,
+            (leaf: WorkspaceLeaf) => new LintResultsView(leaf),
+        );
+
+        this.addRibbonIcon('checkmark', 'Show lint results', () => {
+            this.openLintPanelNoAsync();
+        });
 
         this.addCommand({
             id: 'lint-active-document',
@@ -18,6 +33,15 @@ export default class EventideQuillPlugin extends Plugin {
             editorCallback: (editor) => {
                 const text = editor.getValue();
                 const results = lint(text);
+
+                const cm = (editor as unknown as { cm: EditorView }).cm;
+                if (cm) {
+                    cm.dispatch({
+                        effects: setLintResults.of(results),
+                    });
+                }
+
+                this.lintPanel?.setResults(results);
 
                 if (results.length === 0) {
                     new Notice('Prose linter: no issues found');
@@ -56,5 +80,27 @@ export default class EventideQuillPlugin extends Plugin {
 
     async saveSettings() {
         await this.saveData(this.settings);
+    }
+
+    private async openLintPanel() {
+        const { workspace } = this.app;
+
+        const existingLeaf = workspace.getLeavesOfType(LINT_VIEW_TYPE)[0];
+
+        if (existingLeaf) {
+            void workspace.revealLeaf(existingLeaf);
+            this.lintPanel = existingLeaf.view as LintResultsView;
+            return;
+        }
+
+        const leaf = workspace.getRightLeaf(false);
+        if (!leaf) return;
+        await leaf.setViewState({ type: LINT_VIEW_TYPE, active: true });
+        void workspace.revealLeaf(leaf);
+        this.lintPanel = leaf.view as LintResultsView;
+    }
+
+    private openLintPanelNoAsync() {
+        void this.openLintPanel();
     }
 }

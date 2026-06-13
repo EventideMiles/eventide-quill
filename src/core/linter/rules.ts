@@ -266,7 +266,56 @@ export function checkDialogueTags(text: string): LintResult[] {
     return results;
 }
 
+const LONG_WORD_THRESHOLD = 3;
+
+function countSyllables(word: string): number {
+    const lower = word.toLowerCase();
+    if (lower.length <= 3) return 1;
+
+    const vowels = lower.match(/[aeiouy]+/g);
+    if (!vowels) return 1;
+
+    let count = vowels.length;
+
+    if (lower.endsWith('e')) count--;
+    if (lower.endsWith('le') && lower.length > 2) {
+        const prev = lower[lower.length - 3];
+        if (prev && !'aeiouy'.includes(prev)) count++;
+    }
+    if (count === 0) count = 1;
+
+    return count;
+}
+
+export function checkComplexWords(text: string): LintResult[] {
+    const results: LintResult[] = [];
+    const words = text.match(/\b\w+\b/g);
+    if (!words) return results;
+
+    let searchIndex = 0;
+
+    for (const word of words) {
+        if (word.length > 8 && countSyllables(word) >= LONG_WORD_THRESHOLD) {
+            const index = text.indexOf(word, searchIndex);
+            if (index === -1) continue;
+            const pos = posAtOffset(text, index);
+            results.push({
+                line: pos.line,
+                column: pos.column,
+                length: word.length,
+                message: `Complex word: "${word}" has ${countSyllables(word)} syllables. Consider a simpler alternative.`,
+                severity: 'info',
+                rule: 'complex-words',
+            });
+            searchIndex = index + word.length;
+        }
+    }
+
+    return results;
+}
+
 export const ALL_RULES = [
+    checkComplexWords,
     checkLongSentences,
     checkPassiveVoice,
     checkAdverbs,
