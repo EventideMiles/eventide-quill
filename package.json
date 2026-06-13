@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
-	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"name": "eventide-quill",
+	"version": "0.1.0",
+	"description": "A feedback-first, novelist-focused writing assistant for Obsidian.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
@@ -11,11 +11,11 @@
 		"lint": "eslint ."
 	},
 	"keywords": [],
-	"license": "0-BSD",
+	"license": "MIT",
 	"devDependencies": {
 		"@eslint/js": "^9.39.4",
 		"@types/node": "^22.15.17",
-		"esbuild": "0.25.5",
+		"esbuild": "^0.28.1",
 		"eslint": "^9.39.4",
 		"eslint-plugin-obsidianmd": "^0.3.0",
 		"globals": "^17.6.0",
