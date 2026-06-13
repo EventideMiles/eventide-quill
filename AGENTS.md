@@ -92,6 +92,8 @@ src/
 ## Planning files
 
 - `.planning/` is gitignored and local-only. Never force-add (`git add -f`) or commit planning files.
+- `.planning/pr-prose-linter.md` — prose linter scope, rules, fixes, tooltip model, known issues.
+- `.planning/pr-lint-suggestions-panel.md` — tabbed sidebar panel (results + details), states, data flow.
 
 ## References
 

@@ -1,4 +1,47 @@
 import { LintResult } from './types';
+import wordLists from './word-lists.json';
+
+// --- Build patterns from word lists ---
+
+const DIALOGUE_TAG_PATTERN = new RegExp(
+    `\\b(${wordLists.dialogueTags.join('|')})\\b`, 'gi'
+);
+
+const PRECEDING_DIALOGUE_TAG = new RegExp(
+    `\\b(${wordLists.dialogueTags.join('|')})\\s+$`, 'i'
+);
+
+const QUALIFIER_PATTERN = new RegExp(
+    `\\b(${wordLists.qualifiers.join('|')})\\b`, 'gi'
+);
+
+const AI_CLICHE_PHRASES = new RegExp(
+    `\\b(${wordLists.aiClichePhrases.join('|')})\\b`, 'gi'
+);
+
+const AI_FILLER_ADVERBS = new RegExp(
+    `\\b(${wordLists.aiFillerAdverbs.join('|')})\\b`, 'gi'
+);
+
+const AI_HEDGING = new RegExp(
+    `\\b(${wordLists.aiHedging.join('|')})\\b`, 'gi'
+);
+
+const AI_WRAP_UP = new RegExp(
+    `\\b(${wordLists.aiWrapUps.join('|')})\\b`, 'gi'
+);
+
+const ABBREVIATIONS = new RegExp(
+    `\\b(${wordLists.abbreviations.join('|')})\\.$`, 'i'
+);
+
+const COMMON_ADVERBS = new Set(wordLists.commonAdverbs);
+const SKIP_WORDS = new Set(wordLists.skipWords);
+const EMOTION_WORDS = new Set(wordLists.emotionWords);
+const COMMON_LONG_WORDS = new Set(wordLists.commonLongWords);
+const PASSIVE_EXCLUSIONS = new Set(wordLists.passiveExclusions);
+
+// --- End word list patterns ---
 
 interface Position {
     line: number;
@@ -15,6 +58,19 @@ function posAtOffset(text: string, offset: number): Position {
     };
 }
 
+function isInsideQuotes(text: string, offset: number): boolean {
+    let inQuotes = false;
+    for (let i = 0; i < offset; i++) {
+        if (text[i] === '"') inQuotes = !inQuotes;
+    }
+    return inQuotes;
+}
+
+function isAfterDialogueTag(text: string, offset: number): boolean {
+    const before = text.slice(Math.max(0, offset - 16), offset);
+    return PRECEDING_DIALOGUE_TAG.test(before);
+}
+
 interface SentenceRange {
     start: number;
     end: number;
@@ -25,7 +81,6 @@ interface SentenceRange {
 
 const SENTENCE_END = /[.!?:;](?=[\s"'\u201c\u201d\u2018\u2019]|$)/g;
 const QUOTE_AFTER = /["'\u201c\u201d\u2018\u2019]/;
-const ABBREVIATIONS = /\b(Dr|Mr|Mrs|Ms|St|Jr|Sr|vs|etc|dept|est|govt|inc|jr|sr|ave|blvd|co|corp|gen|gov|lt|md|mrs|ms|mt|prof|rep|rev|sen|sgt|sq|st|tel|univ)\.$/i;
 
 function isAbbreviation(text: string): boolean {
     return ABBREVIATIONS.test(text);
@@ -112,6 +167,12 @@ export function checkPassiveVoice(text: string): LintResult[] {
     let match: RegExpExecArray | null;
 
     while ((match = PASSIVE_PATTERN.exec(text)) !== null) {
+        const participle = match[2];
+        if (!participle) continue;
+        // Skip proper nouns (capitalized after a be-verb)
+        if (participle[0] === participle[0]?.toUpperCase()) continue;
+        const lower = participle.toLowerCase();
+        if (PASSIVE_EXCLUSIONS.has(lower)) continue;
         const pos = posAtOffset(text, match.index);
         results.push({
             line: pos.line,
@@ -127,11 +188,6 @@ export function checkPassiveVoice(text: string): LintResult[] {
 }
 
 const ADVERB_PATTERN = /\b(\w+ly)\b(?!-)/gi;
-const COMMON_ADVERBS = new Set([
-    'early', 'only', 'lovely', 'friendly', 'holy', 'ugly', 'silly',
-    'family', 'belly', 'ally', 'apply', 'butterfly', 'reluctantly',
-    'melancholy', 'july', 'luckily', 'dimly',
-]);
 
 export function checkAdverbs(text: string): LintResult[] {
     const results: LintResult[] = [];
@@ -142,6 +198,8 @@ export function checkAdverbs(text: string): LintResult[] {
         if (!word) continue;
         if (COMMON_ADVERBS.has(word)) continue;
         if (word.endsWith('ly') && word.length > 4) {
+            if (isInsideQuotes(text, match.index)) continue;
+            if (isAfterDialogueTag(text, match.index)) continue;
             const pos = posAtOffset(text, match.index);
             results.push({
                 line: pos.line,
@@ -159,10 +217,10 @@ export function checkAdverbs(text: string): LintResult[] {
 
 export function checkQualifiers(text: string): LintResult[] {
     const results: LintResult[] = [];
-    const pattern = /\b(very|really|quite|somewhat|rather|fairly|pretty|almost|nearly|just|slightly|barely|hardly|scarcely|utter)\b/gi;
     let match: RegExpExecArray | null;
 
-    while ((match = pattern.exec(text)) !== null) {
+    while ((match = QUALIFIER_PATTERN.exec(text)) !== null) {
+        if (isInsideQuotes(text, match.index)) continue;
         const pos = posAtOffset(text, match.index);
         results.push({
             line: pos.line,
@@ -176,15 +234,6 @@ export function checkQualifiers(text: string): LintResult[] {
 
     return results;
 }
-
-const SKIP_WORDS = new Set([
-    'the', 'and', 'for', 'but', 'not', 'was', 'had', 'his',
-    'her', 'its', 'are', 'has', 'had', 'can', 'all', 'she',
-    'him', 'did', 'get', 'got', 'say', 'see', 'way', 'use',
-    'may', 'let', 'put', 'set', 'new', 'two', 'old', 'own',
-    'too', 'now', 'how', 'why', 'man', 'men', 'any', 'eye',
-    'they',
-]);
 
 export function checkRepeatedWords(text: string, minLength: number = 4): LintResult[] {
     const results: LintResult[] = [];
@@ -227,10 +276,20 @@ const ECHO_THRESHOLD = 3;
 
 export function checkEchoes(text: string): LintResult[] {
     const results: LintResult[] = [];
-    const paragraphs = text.split(/\n\n+/);
+    const PARA_BREAK = /\n\n+/g;
+    let searchFrom = 0;
+    let match: RegExpExecArray | null;
 
-    for (const para of paragraphs) {
-        const sentences = splitSentences(para);
+    while ((match = PARA_BREAK.exec(text)) !== null) {
+        const paraText = text.slice(searchFrom, match.index);
+        searchFrom = match.index + match[0].length;
+
+        const trimmed = paraText.trim();
+        if (!trimmed) continue;
+
+        const leadingTrim = paraText.length - paraText.trimStart().length;
+        const paraPos = posAtOffset(text, match.index - paraText.length + leadingTrim);
+        const sentences = splitSentences(trimmed);
         if (sentences.length < ECHO_THRESHOLD) continue;
 
         const starts = sentences.map((s) => {
@@ -253,7 +312,7 @@ export function checkEchoes(text: string): LintResult[] {
                 const first = sentences[idx];
                 if (!first) continue;
                 results.push({
-                    line: first.line,
+                    line: paraPos.line + first.line - 1,
                     column: 1,
                     length: start.length,
                     message: `Echo: "${start}" starts ${indices.length} sentences in this paragraph.`,
@@ -264,19 +323,47 @@ export function checkEchoes(text: string): LintResult[] {
         }
     }
 
+    const remaining = text.slice(searchFrom).trim();
+    if (remaining) {
+        const paraPos = posAtOffset(text, text.length - remaining.length);
+        const sentences = splitSentences(remaining);
+        if (sentences.length >= ECHO_THRESHOLD) {
+            const starts = sentences.map((s) => {
+                const words = s.text.match(/\b\w+\b/g);
+                return words ? words.slice(0, 2).join(' ').toLowerCase() : '';
+            });
+
+            const startCount = new Map<string, number[]>();
+            starts.forEach((start, idx) => {
+                if (!start) return;
+                const indices = startCount.get(start) || [];
+                indices.push(idx);
+                startCount.set(start, indices);
+            });
+
+            for (const [start, indices] of startCount) {
+                if (indices.length >= 2) {
+                    const idx = indices[0];
+                    if (idx === undefined) continue;
+                    const first = sentences[idx];
+                    if (!first) continue;
+                    results.push({
+                        line: paraPos.line + first.line - 1,
+                        column: 1,
+                        length: start.length,
+                        message: `Echo: "${start}" starts ${indices.length} sentences in this paragraph.`,
+                        severity: 'info',
+                        rule: 'echoes',
+                    });
+                }
+            }
+        }
+    }
+
     return results;
 }
 
 const TELLING_PATTERN = /\b(he|she|they|it|i|we)\s+(was|were|felt|feels|seemed|seems|looked|looks|appeared|appears|became|becomes|grew|grows)\s+(\w+)\b/gi;
-const EMOTION_WORDS = new Set([
-    'angry', 'sad', 'happy', 'glad', 'scared', 'afraid', 'nervous',
-    'anxious', 'worried', 'embarrassed', 'ashamed', 'guilty', 'proud',
-    'jealous', 'envious', 'hurt', 'confused', 'frustrated', 'annoyed',
-    'irritated', 'furious', 'terrified', 'excited', 'thrilled', 'delighted',
-    'disappointed', 'disgusted', 'hopeful', 'helpless', 'lonely',
-    'homesick', 'tired', 'exhausted', 'surprised', 'shocked', 'amazed',
-    'bored', 'curious', 'suspicious', 'grateful', 'thankful',
-]);
 
 export function checkTellingVsShowing(text: string): LintResult[] {
     const results: LintResult[] = [];
@@ -301,9 +388,6 @@ export function checkTellingVsShowing(text: string): LintResult[] {
     return results;
 }
 
-const DIALOGUE_TAG_PATTERN = /\b(said|asked|replied|whispered|shouted|yelled|cried|murmured|muttered|whined|bellowed|screamed|hissed|snapped|snarled|growled|scoffed|snorted|laughed|chuckled|sobbed|sighed|breathed|gasped|panted)\b/gi;
-const OVERUSED_THRESHOLD = 3;
-
 export function checkDialogueTags(text: string): LintResult[] {
     const results: LintResult[] = [];
     const tagCount = new Map<string, number[]>();
@@ -319,8 +403,8 @@ export function checkDialogueTags(text: string): LintResult[] {
     }
 
     for (const [tag, indices] of tagCount) {
-        if (tag === 'said' && indices.length <= OVERUSED_THRESHOLD) continue;
-        if (tag !== 'said' && indices.length <= 1) continue;
+        if (tag === 'said' || tag === 'asked') continue;
+        if (indices.length <= 1) continue;
         for (const index of indices) {
             const pos = posAtOffset(text, index);
             results.push({
@@ -336,26 +420,6 @@ export function checkDialogueTags(text: string): LintResult[] {
 
     return results;
 }
-
-const COMMON_LONG_WORDS = new Set([
-    'surprised', 'suddenly', 'finished', 'happened', 'wondered',
-    'remember', 'different', 'something', 'everything', 'together',
-    'wherever', 'whoever', 'whatever', 'however', 'perhaps',
-    'thought', 'through', 'although', 'already', 'another',
-    'between', 'without', 'morning', 'evening', 'personal',
-    'positive', 'negative', 'pleasant', 'carefully', 'quickly',
-    'quietly', 'definitely', 'completely', 'perfectly',
-    'beautiful', 'terrible', 'horrible', 'difficult', 'wonderful',
-    'exactly', 'actually', 'probably', 'usually', 'finally',
-    'certainly', 'absolutely', 'necessary', 'character',
-    'discovered', 'whispered', 'murmured', 'continued', 'imagined',
-    'curiously', 'nervously', 'anxiously', 'eagerly', 'absurdity',
-    'validation', 'werewolves',
-    'emotional', 'eventually', 'expectation', 'experience',
-    'imagination', 'immediately', 'impossible', 'incredible',
-    'intelligent', 'interaction', 'introduced', 'obviously', 'opportunity',
-    'overconfident', 'responsible', 'unfortunately',
-]);
 
 function countSyllables(word: string): number {
     const lower = word.toLowerCase();
@@ -376,7 +440,7 @@ function countSyllables(word: string): number {
     return count;
 }
 
-export function checkComplexWords(text: string, maxSyllables: number = 4): LintResult[] {
+export function checkComplexWords(text: string, maxSyllables: number = 5): LintResult[] {
     const results: LintResult[] = [];
     const words = text.match(/\b\w+\b/g);
     if (!words) return results;
@@ -389,6 +453,7 @@ export function checkComplexWords(text: string, maxSyllables: number = 4): LintR
         if (word.length > 8 && countSyllables(word) >= maxSyllables) {
             const index = text.indexOf(word, searchIndex);
             if (index === -1) continue;
+            if (isInsideQuotes(text, index)) continue;
             const pos = posAtOffset(text, index);
             results.push({
                 line: pos.line,
@@ -405,13 +470,12 @@ export function checkComplexWords(text: string, maxSyllables: number = 4): LintR
     return results;
 }
 
-const AI_CLICHE_PHRASES = /\b(tapestry|testament|delve|vibrant|nestled|thriving|nascent|weaving|realm|unlock|game.?changer|pivotal|intricate|elucidate|leverage|holistic|paradigm|synergy|myriad|ozone|labyrinth|glimmer|shimmer|loom|unveil|unleash|fragile|echo|profound)\b/gi;
-
 export function checkAiCliches(text: string): LintResult[] {
     const results: LintResult[] = [];
     let match: RegExpExecArray | null;
 
     while ((match = AI_CLICHE_PHRASES.exec(text)) !== null) {
+        if (isInsideQuotes(text, match.index)) continue;
         const pos = posAtOffset(text, match.index);
         results.push({
             line: pos.line,
@@ -426,13 +490,15 @@ export function checkAiCliches(text: string): LintResult[] {
     return results;
 }
 
-const NEGATION_PATTERN = /(?:it'?s?\s+)?not\s+(?:because\s+)?[^,.;!?]{1,60}\s*,?\s*(?:but|it'?s?)\s+(?:because\s+)?/gi;
+const NEGATION_PATTERN = /\bit'?s?\s+not\s+[^,.;!?]{1,60}\s*,?\s*(?:but|it'?s?)\s+/gi;
+const NEGATION_BECAUSE_PATTERN = /\bnot\s+because\s+[^,.;!?]{1,60}\s*,?\s*but\s+because\s+/gi;
 
 export function checkAiNegation(text: string): LintResult[] {
     const results: LintResult[] = [];
     let match: RegExpExecArray | null;
 
     while ((match = NEGATION_PATTERN.exec(text)) !== null) {
+        if (isInsideQuotes(text, match.index)) continue;
         const pos = posAtOffset(text, match.index);
         results.push({
             line: pos.line,
@@ -444,16 +510,29 @@ export function checkAiNegation(text: string): LintResult[] {
         });
     }
 
+    while ((match = NEGATION_BECAUSE_PATTERN.exec(text)) !== null) {
+        if (isInsideQuotes(text, match.index)) continue;
+        const pos = posAtOffset(text, match.index);
+        results.push({
+            line: pos.line,
+            column: pos.column,
+            length: match[0].length,
+            message: 'AI negation pattern: "Not because X, but because Y." State what things are directly.',
+            severity: 'warning',
+            rule: 'ai-negation',
+        });
+    }
+
     return results;
 }
-
-const AI_FILLER_ADVERBS = /\b(quietly|deliberately|shifted|gently|softly|slowly|carefully|suddenly|slightly)\b/gi;
 
 export function checkAiFillerAdverbs(text: string): LintResult[] {
     const results: LintResult[] = [];
     let match: RegExpExecArray | null;
 
     while ((match = AI_FILLER_ADVERBS.exec(text)) !== null) {
+        if (isInsideQuotes(text, match.index)) continue;
+        if (isAfterDialogueTag(text, match.index)) continue;
         const pos = posAtOffset(text, match.index);
         results.push({
             line: pos.line,
@@ -468,13 +547,13 @@ export function checkAiFillerAdverbs(text: string): LintResult[] {
     return results;
 }
 
-const AI_HEDGING = /\b(might|could|perhaps|maybe|possibly|probably|apparently|seemingly|presumably|arguably|sort of|kind of|in a sense|in a way|to some extent|more or less|for the most part)\b/gi;
-
 export function checkAiHedging(text: string): LintResult[] {
     const results: LintResult[] = [];
     let match: RegExpExecArray | null;
 
     while ((match = AI_HEDGING.exec(text)) !== null) {
+        if (isInsideQuotes(text, match.index)) continue;
+        if (match[0].toLowerCase() === 'in a way' && /\sthat\b/i.test(text.slice(match.index + match[0].length, match.index + match[0].length + 8))) continue;
         const pos = posAtOffset(text, match.index);
         results.push({
             line: pos.line,
@@ -489,13 +568,12 @@ export function checkAiHedging(text: string): LintResult[] {
     return results;
 }
 
-const AI_WRAP_UP = /\b(in conclusion|to summarize|to sum up|ultimately,|at the end of the day|when all is said and done|all things considered)\b/gi;
-
 export function checkAiWrapUps(text: string): LintResult[] {
     const results: LintResult[] = [];
     let match: RegExpExecArray | null;
 
     while ((match = AI_WRAP_UP.exec(text)) !== null) {
+        if (isInsideQuotes(text, match.index)) continue;
         const pos = posAtOffset(text, match.index);
         results.push({
             line: pos.line,
@@ -517,6 +595,7 @@ export function checkAiEmDashes(text: string): LintResult[] {
     let match: RegExpExecArray | null;
 
     while ((match = EM_DASH.exec(text)) !== null) {
+        if (isInsideQuotes(text, match.index)) continue;
         const pos = posAtOffset(text, match.index);
         results.push({
             line: pos.line,

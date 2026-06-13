@@ -11,14 +11,15 @@ import {
     setLintResults,
     toggleLintActive,
 } from './core/linter/decorations';
-import { LINT_VIEW_TYPE, LintResultsView } from './ui/lint-panel';
+import { QUILL_VIEW_TYPE, QuillSidebarView } from './ui/quill-sidebar';
 import { LintResult, FIXABLE_RULES } from './core/linter/types';
 import { FIXES } from './core/linter/fixes';
 
 export default class EventideQuillPlugin extends Plugin {
     settings!: EventideQuillSettings;
-    private lintPanel: LintResultsView | null = null;
+    private lintPanel: QuillSidebarView | null = null;
     private lintActive = false;
+    private lintActiveFile: string | null = null;
     private currentResults: LintResult[] = [];
 
     async onload() {
@@ -35,14 +36,22 @@ export default class EventideQuillPlugin extends Plugin {
         );
 
         this.registerView(
-            LINT_VIEW_TYPE,
-            (leaf: WorkspaceLeaf) => new LintResultsView(leaf),
+            QUILL_VIEW_TYPE,
+            (leaf: WorkspaceLeaf) => {
+                const view = new QuillSidebarView(leaf);
+                this.lintPanel = view;
+                return view;
+            },
         );
 
         this.registerEvent(
             this.app.workspace.on('active-leaf-change', () => {
-                this.lintActive = false;
-                this.currentResults = [];
+                const activeFile = this.app.workspace.getActiveFile();
+                if (activeFile?.path !== this.lintActiveFile) {
+                    this.lintActive = false;
+                    this.lintActiveFile = null;
+                    this.currentResults = [];
+                }
             }),
         );
 
@@ -120,7 +129,7 @@ export default class EventideQuillPlugin extends Plugin {
             }),
         );
 
-        this.addRibbonIcon('checkmark', 'Show lint results', () => {
+        this.addRibbonIcon('feather', 'Show lint results', () => {
             this.openLintPanelNoAsync();
         });
 
@@ -151,11 +160,15 @@ export default class EventideQuillPlugin extends Plugin {
             cm.dispatch({
                 effects: toggleLintActive.of(false),
             });
+            this.lintActiveFile = null;
             this.currentResults = [];
             this.lintPanel?.setResults([]);
             new Notice('Prose linter: deactivated');
             return;
         }
+
+        const activeFile = this.app.workspace.getActiveFile();
+        this.lintActiveFile = activeFile?.path ?? null;
 
         const text = editor.getValue();
         const results = this.runLint(text);
@@ -186,25 +199,29 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     private runLint(text: string): LintResult[] {
+        const mode = this.settings.linterMode;
+        const prose = mode === 'all' || mode === 'prose';
+        const ai = mode === 'all' || mode === 'ai';
+
         return lint(text, {
-            enableLongSentences: this.settings.enableLongSentences,
+            enableLongSentences: prose && this.settings.enableLongSentences,
             maxSentenceWords: this.settings.maxSentenceWords,
-            enablePassiveVoice: this.settings.enablePassiveVoice,
-            enableAdverbCheck: this.settings.enableAdverbCheck,
-            enableQualifierCheck: this.settings.enableQualifierCheck,
-            enableRepeatedWords: this.settings.enableRepeatedWords,
+            enablePassiveVoice: prose && this.settings.enablePassiveVoice,
+            enableAdverbCheck: prose && this.settings.enableAdverbCheck,
+            enableQualifierCheck: prose && this.settings.enableQualifierCheck,
+            enableRepeatedWords: prose && this.settings.enableRepeatedWords,
             minRepeatedWordLength: this.settings.minRepeatedWordLength,
-            enableEchoes: this.settings.enableEchoes,
-            enableTellingVsShowing: this.settings.enableTellingVsShowing,
-            enableDialogueTags: this.settings.enableDialogueTags,
-            enableComplexWords: this.settings.enableComplexWords,
+            enableEchoes: prose && this.settings.enableEchoes,
+            enableTellingVsShowing: prose && this.settings.enableTellingVsShowing,
+            enableDialogueTags: prose && this.settings.enableDialogueTags,
+            enableComplexWords: prose && this.settings.enableComplexWords,
             maxSyllablesPerWord: this.settings.maxSyllablesPerWord,
-            enableAiCliches: this.settings.enableAiCliches,
-            enableAiEmDashes: this.settings.enableAiEmDashes,
-            enableAiNegation: this.settings.enableAiNegation,
-            enableAiFillerAdverbs: this.settings.enableAiFillerAdverbs,
-            enableAiHedging: this.settings.enableAiHedging,
-            enableAiWrapUps: this.settings.enableAiWrapUps,
+            enableAiCliches: ai && this.settings.enableAiCliches,
+            enableAiEmDashes: ai && this.settings.enableAiEmDashes,
+            enableAiNegation: ai && this.settings.enableAiNegation,
+            enableAiFillerAdverbs: ai && this.settings.enableAiFillerAdverbs,
+            enableAiHedging: ai && this.settings.enableAiHedging,
+            enableAiWrapUps: ai && this.settings.enableAiWrapUps,
         });
     }
 
@@ -240,19 +257,19 @@ export default class EventideQuillPlugin extends Plugin {
     private async openLintPanel() {
         const { workspace } = this.app;
 
-        const existingLeaf = workspace.getLeavesOfType(LINT_VIEW_TYPE)[0];
+        const existingLeaf = workspace.getLeavesOfType(QUILL_VIEW_TYPE)[0];
 
         if (existingLeaf) {
             void workspace.revealLeaf(existingLeaf);
-            this.lintPanel = existingLeaf.view as LintResultsView;
+            this.lintPanel = existingLeaf.view as QuillSidebarView;
             return;
         }
 
         const leaf = workspace.getRightLeaf(false);
         if (!leaf) return;
-        await leaf.setViewState({ type: LINT_VIEW_TYPE, active: true });
+        await leaf.setViewState({ type: QUILL_VIEW_TYPE, active: true });
         void workspace.revealLeaf(leaf);
-        this.lintPanel = leaf.view as LintResultsView;
+        this.lintPanel = leaf.view as QuillSidebarView;
     }
 
     private openLintPanelNoAsync() {

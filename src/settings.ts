@@ -1,7 +1,10 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
 import EventideQuillPlugin from './main';
 
+export type LinterMode = 'all' | 'prose' | 'ai';
+
 export interface EventideQuillSettings {
+    linterMode: LinterMode;
     enableLongSentences: boolean;
     maxSentenceWords: number;
     enablePassiveVoice: boolean;
@@ -24,6 +27,7 @@ export interface EventideQuillSettings {
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
+    linterMode: 'all',
     enableLongSentences: true,
     maxSentenceWords: 40,
     enablePassiveVoice: false,
@@ -35,7 +39,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     enableTellingVsShowing: true,
     enableDialogueTags: true,
     enableComplexWords: true,
-    maxSyllablesPerWord: 4,
+    maxSyllablesPerWord: 5,
     enableAiCliches: true,
     enableAiEmDashes: true,
     enableAiNegation: true,
@@ -61,6 +65,21 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         new Setting(containerEl)
             .setName('Prose linter')
             .setHeading();
+
+        new Setting(containerEl)
+            .setName('Linter mode')
+            .setDesc('Choose which rule sets are active.')
+            .addDropdown((dropdown) =>
+                dropdown
+                    .addOption('all', 'All rules')
+                    .addOption('prose', 'Prose rules only')
+                    .addOption('ai', 'AI detection only')
+                    .setValue(this.plugin.settings.linterMode)
+                    .onChange(async (value) => {
+                        this.plugin.settings.linterMode = value as LinterMode;
+                        await this.plugin.saveSettings();
+                    }),
+            );
 
         new Setting(containerEl)
             .setName('Lint on save')

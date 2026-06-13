@@ -1,0 +1,112 @@
+{
+    "dialogueTags": [
+        "said", "asked", "replied", "whispered", "shouted", "yelled",
+        "cried", "murmured", "muttered", "whined", "bellowed", "screamed",
+        "hissed", "snapped", "snarled", "growled", "scoffed", "snorted",
+        "laughed", "chuckled", "sobbed", "sighed", "breathed", "gasped",
+        "panted", "mused", "added", "corrected"
+    ],
+    "skipWords": [
+        "the", "and", "for", "but", "not", "was", "had", "his",
+        "her", "its", "are", "has", "can", "all", "she",
+        "him", "did", "get", "got", "say", "see", "way", "use",
+        "may", "let", "put", "set", "new", "two", "old", "own",
+        "too", "now", "how", "why", "man", "men", "any", "eye", "they"
+    ],
+    "commonAdverbs": [
+        "early", "only", "lovely", "friendly", "holy", "ugly", "silly",
+        "family", "belly", "ally", "apply", "butterfly", "reluctantly",
+        "melancholy", "july", "luckily", "dimly",
+        "importantly", "interestingly", "notably", "amazingly", "stunningly",
+        "regrettably", "fortunately", "unfortunately", "incidentally",
+        "consequently", "apparently", "evidently", "admittedly", "frankly",
+        "honestly", "hopefully", "naturally", "obviously", "ironically",
+        "sadly", "surprisingly", "typically", "unexpectedly", "clearly",
+        "thankfully"
+    ],
+    "qualifiers": [
+        "very", "really", "quite", "somewhat", "rather", "fairly", "pretty",
+        "almost", "nearly", "just", "slightly", "barely", "hardly",
+        "scarcely", "utter"
+    ],
+    "emotionWords": [
+        "angry", "sad", "happy", "glad", "scared", "afraid", "nervous",
+        "anxious", "worried", "embarrassed", "ashamed", "guilty", "proud",
+        "jealous", "envious", "hurt", "confused", "frustrated", "annoyed",
+        "irritated", "furious", "terrified", "excited", "thrilled", "delighted",
+        "disappointed", "disgusted", "hopeful", "helpless", "lonely",
+        "homesick", "tired", "exhausted", "surprised", "shocked", "amazed",
+        "bored", "curious", "suspicious", "grateful", "thankful"
+    ],
+    "commonLongWords": [
+        "surprised", "suddenly", "finished", "happened", "wondered",
+        "remember", "different", "something", "everything", "together",
+        "wherever", "whoever", "whatever", "however", "perhaps",
+        "thought", "through", "although", "already", "another",
+        "between", "without", "morning", "evening", "personal",
+        "positive", "negative", "pleasant", "carefully", "quickly",
+        "quietly", "definitely", "completely", "perfectly",
+        "beautiful", "terrible", "horrible", "difficult", "wonderful",
+        "exactly", "actually", "probably", "usually", "finally",
+        "certainly", "absolutely", "necessary", "character",
+        "discovered", "whispered", "murmured", "continued", "imagined",
+        "curiously", "nervously", "anxiously", "eagerly", "absurdity",
+        "validation", "werewolves",
+        "emotional", "eventually", "expectation", "experience",
+        "imagination", "immediately", "impossible", "incredible",
+        "intelligent", "interaction", "introduced", "obviously", "opportunity",
+        "overconfident", "responsible", "unfortunately",
+        "practically", "unnatural", "naturally", "babysitting",
+        "especially", "generally", "specifically", "physically",
+        "altogether", "underneath", "conspiratorial"
+    ],
+    "aiClichePhrases": [
+        "tapestry", "testament", "delve", "vibrant", "nestled",
+        "thriving", "nascent", "weaving", "realm", "unlock",
+        "game changer", "game-changer", "gamechanger",
+        "pivotal", "intricate", "elucidate", "leverage", "holistic",
+        "paradigm", "synergy", "myriad", "ozone", "labyrinth",
+        "glimmer", "shimmer", "loom", "unveil", "unleash",
+        "fragile", "echo", "profound"
+    ],
+    "aiFillerAdverbs": [
+        "quietly", "deliberately", "shifted", "gently", "softly",
+        "slowly", "carefully", "suddenly", "slightly"
+    ],
+    "aiHedging": [
+        "perhaps", "maybe", "possibly", "probably",
+        "apparently", "seemingly", "presumably", "arguably",
+        "in a sense", "in a way", "to some extent", "more or less",
+        "for the most part"
+    ],
+    "aiWrapUps": [
+        "in conclusion", "to summarize", "to sum up",
+        "ultimately,",
+        "at the end of the day", "when all is said and done",
+        "all things considered"
+    ],
+    "abbreviations": [
+        "dr", "mr", "mrs", "ms", "st", "jr", "sr", "vs", "etc",
+        "dept", "est", "govt", "inc", "ave", "blvd", "co", "corp",
+        "gen", "gov", "lt", "md", "mt", "prof", "rep", "rev",
+        "sen", "sgt", "sq", "tel", "univ"
+    ],
+    "passiveExclusions": [
+        "at", "out", "just", "about", "without", "but", "not",
+        "what", "that", "it", "yet", "quite", "first", "last",
+        "next", "right", "still", "most", "almost", "least",
+        "best", "worst", "fast", "past", "current", "present",
+        "different", "important", "constant", "distant",
+        "instant", "relevant", "significant", "excellent",
+        "absent", "silent", "violent", "permanent", "ancient",
+        "decent", "recent", "urgent", "frequent", "patient",
+        "confident", "evident", "innocent", "competent",
+        "prominent", "intelligent",
+        "tired", "scared", "worried", "bored", "excited",
+        "interested", "surprised", "confused",
+        "then", "when", "often", "even", "happen", "garden",
+        "kitchen", "chicken", "children", "dozen", "eleven",
+        "seven", "ten", "open", "sudden", "golden", "wooden",
+        "green", "might", "alright"
+    ]
+}
