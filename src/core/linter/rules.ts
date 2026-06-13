@@ -135,7 +135,9 @@ export function checkRepeatedWords(text: string): LintResult[] {
         for (const [word, positions] of wordCount) {
             if (word.length < 3) continue;
             if (positions.length >= 3) {
-                const col = line.toLowerCase().indexOf(word);
+                const wordMatch = new RegExp(`\\b${word}\\b`);
+                const found = wordMatch.exec(line.toLowerCase());
+                const col = found ? found.index : 0;
                 results.push({
                     line: i + 1,
                     column: col + 1,
@@ -266,7 +268,22 @@ export function checkDialogueTags(text: string): LintResult[] {
     return results;
 }
 
-const LONG_WORD_THRESHOLD = 3;
+const LONG_WORD_THRESHOLD = 4;
+
+const COMMON_LONG_WORDS = new Set([
+    'surprised', 'suddenly', 'finished', 'happened', 'wondered',
+    'remember', 'different', 'something', 'everything', 'together',
+    'wherever', 'whoever', 'whatever', 'however', 'perhaps',
+    'thought', 'through', 'although', 'already', 'another',
+    'between', 'without', 'morning', 'evening', 'personal',
+    'positive', 'negative', 'pleasant', 'carefully', 'quickly',
+    'quietly', 'definitely', 'completely', 'perfectly',
+    'beautiful', 'terrible', 'horrible', 'difficult', 'wonderful',
+    'exactly', 'actually', 'probably', 'usually', 'finally',
+    'certainly', 'absolutely', 'necessary', 'character',
+    'discovered', 'whispered', 'murmured', 'continued', 'imagined',
+    'curiously', 'nervously', 'anxiously', 'eagerly',
+]);
 
 function countSyllables(word: string): number {
     const lower = word.toLowerCase();
@@ -295,6 +312,8 @@ export function checkComplexWords(text: string): LintResult[] {
     let searchIndex = 0;
 
     for (const word of words) {
+        const lower = word.toLowerCase();
+        if (COMMON_LONG_WORDS.has(lower)) continue;
         if (word.length > 8 && countSyllables(word) >= LONG_WORD_THRESHOLD) {
             const index = text.indexOf(word, searchIndex);
             if (index === -1) continue;
