@@ -132,8 +132,17 @@ export function checkRepeatedWords(text: string): LintResult[] {
             wordCount.set(w, positions);
         });
 
+        const skipWords = new Set([
+            'the', 'and', 'for', 'but', 'not', 'was', 'had', 'his',
+            'her', 'its', 'are', 'has', 'had', 'can', 'all', 'she',
+            'him', 'did', 'get', 'got', 'say', 'see', 'way', 'use',
+            'may', 'let', 'put', 'set', 'new', 'two', 'old', 'own',
+            'too', 'now', 'how', 'why', 'man', 'men', 'any', 'eye',
+        ]);
+
         for (const [word, positions] of wordCount) {
-            if (word.length < 3) continue;
+            if (skipWords.has(word)) continue;
+            if (word.length < 4) continue;
             if (positions.length >= 3) {
                 const wordMatch = new RegExp(`\\b${word}\\b`);
                 const found = wordMatch.exec(line.toLowerCase());
