@@ -1,4 +1,4 @@
-import { Editor, Menu, Notice, Plugin, WorkspaceLeaf } from 'obsidian';
+import { Editor, MarkdownView, Menu, Notice, Plugin, TAbstractFile, WorkspaceLeaf } from 'obsidian';
 import { EditorView } from '@codemirror/view';
 import {
     DEFAULT_SETTINGS,
@@ -6,14 +6,20 @@ import {
     EventideQuillSettingTab,
 } from './settings';
 import { lint } from './core/linter/linter';
-import { getLintExtension, setLintResults, toggleLintActive } from './core/linter/decorations';
+import {
+    getLintExtension,
+    setLintResults,
+    toggleLintActive,
+} from './core/linter/decorations';
 import { LINT_VIEW_TYPE, LintResultsView } from './ui/lint-panel';
-import { LintResult } from './core/linter/types';
+import { LintResult, FIXABLE_RULES } from './core/linter/types';
+import { FIXES } from './core/linter/fixes';
 
 export default class EventideQuillPlugin extends Plugin {
     settings!: EventideQuillSettings;
     private lintPanel: LintResultsView | null = null;
     private lintActive = false;
+    private currentResults: LintResult[] = [];
 
     async onload() {
         await this.loadSettings();
@@ -22,6 +28,7 @@ export default class EventideQuillPlugin extends Plugin {
             getLintExtension(
                 (text: string) => this.runLint(text),
                 (results: LintResult[]) => {
+                    this.currentResults = results;
                     this.lintPanel?.setResults(results);
                 },
             ),
@@ -35,8 +42,33 @@ export default class EventideQuillPlugin extends Plugin {
         this.registerEvent(
             this.app.workspace.on('active-leaf-change', () => {
                 this.lintActive = false;
+                this.currentResults = [];
             }),
         );
+
+        this.registerEvent(this.app.vault.on('modify', (file: TAbstractFile) => {
+            if (
+                !this.lintActive ||
+                !this.settings.lintOnSave ||
+                file !== this.app.workspace.getActiveFile()
+            ) return;
+
+            const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+            if (!markdownView) return;
+
+            const text = markdownView.editor.getValue();
+            const results = this.runLint(text);
+            this.currentResults = results;
+
+            const cm = this.getCmView(markdownView.editor);
+            if (!cm) return;
+
+            cm.dispatch({
+                effects: setLintResults.of(results),
+            });
+
+            this.lintPanel?.setResults(results);
+        }));
 
         this.registerEvent(
             this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor) => {
@@ -48,6 +80,43 @@ export default class EventideQuillPlugin extends Plugin {
                             this.toggleLint(editor);
                         });
                 });
+
+                if (!this.lintActive || this.currentResults.length === 0) return;
+
+                const cursor = editor.getCursor();
+                const cursorLine = cursor.line + 1;
+                const cursorCh = cursor.ch;
+
+                const fixableAtCursor = this.currentResults.filter((r) => {
+                    if (!FIXABLE_RULES.has(r.rule)) return false;
+                    if (r.line !== cursorLine) return false;
+                    return cursorCh >= r.column && cursorCh <= r.column + r.length;
+                });
+
+                if (fixableAtCursor.length === 0) return;
+
+                menu.addSeparator();
+
+                for (const result of fixableAtCursor) {
+                    const fix = FIXES[result.rule];
+                    if (!fix) continue;
+                    menu.addItem((item) => {
+                        item
+                            .setTitle(`Quill: ${fix.description}`)
+                            .setIcon('wrench')
+                            .onClick(() => {
+                                const cm = this.getCmView(editor);
+                                if (!cm) return;
+                                const doc = cm.state.doc;
+                                const from = doc.line(result.line).from + result.column;
+                                const to = Math.min(from + result.length, doc.length);
+                                const text = doc.toString();
+                                const replacement = fix.apply(text, result.line, result.column, result.length);
+                                if (replacement === null) return;
+                                cm.dispatch({ changes: { from, to, insert: replacement } });
+                            });
+                    });
+                }
             }),
         );
 
@@ -68,8 +137,12 @@ export default class EventideQuillPlugin extends Plugin {
 
     onunload() {}
 
+    private getCmView(editor: Editor): EditorView | undefined {
+        return (editor as unknown as { cm: EditorView }).cm;
+    }
+
     private toggleLint(editor: Editor) {
-        const cm = (editor as unknown as { cm: EditorView }).cm;
+        const cm = this.getCmView(editor);
         if (!cm) return;
 
         this.lintActive = !this.lintActive;
@@ -78,6 +151,7 @@ export default class EventideQuillPlugin extends Plugin {
             cm.dispatch({
                 effects: toggleLintActive.of(false),
             });
+            this.currentResults = [];
             this.lintPanel?.setResults([]);
             new Notice('Prose linter: deactivated');
             return;
@@ -85,6 +159,7 @@ export default class EventideQuillPlugin extends Plugin {
 
         const text = editor.getValue();
         const results = this.runLint(text);
+        this.currentResults = results;
 
         cm.dispatch({
             effects: [

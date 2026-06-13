@@ -20,6 +20,7 @@ export interface EventideQuillSettings {
     enableAiFillerAdverbs: boolean;
     enableAiHedging: boolean;
     enableAiWrapUps: boolean;
+    lintOnSave: boolean;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -41,6 +42,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     enableAiFillerAdverbs: true,
     enableAiHedging: true,
     enableAiWrapUps: true,
+    lintOnSave: false,
 };
 
 export class EventideQuillSettingTab extends PluginSettingTab {
@@ -59,6 +61,18 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         new Setting(containerEl)
             .setName('Prose linter')
             .setHeading();
+
+        new Setting(containerEl)
+            .setName('Lint on save')
+            .setDesc('Automatically run the prose linter when the document is saved.')
+            .addToggle((toggle) =>
+                toggle
+                    .setValue(this.plugin.settings.lintOnSave)
+                    .onChange(async (value) => {
+                        this.plugin.settings.lintOnSave = value;
+                        await this.plugin.saveSettings();
+                    }),
+            );
 
         new Setting(containerEl)
             .setName('Long sentences')

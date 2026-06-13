@@ -9,6 +9,11 @@ export interface LintResult {
     rule: string;
 }
 
+export interface LintFix {
+    description: string;
+    apply(text: string, line: number, column: number, length: number): string | null;
+}
+
 export interface LintRule {
     id: string;
     name: string;
@@ -16,3 +21,12 @@ export interface LintRule {
     severity: Severity;
     check(text: string): LintResult[];
 }
+
+export const FIXABLE_RULES = new Set([
+    'qualifiers',
+    'adverbs',
+    'ai-filler-adverbs',
+    'ai-hedging',
+    'ai-wrap-ups',
+    'ai-em-dashes',
+]);

@@ -1,8 +1,24 @@
-/*
+.quill-lint-tooltip {
+    padding: 6px 10px;
+    font-size: var(--font-ui-small);
+    line-height: var(--line-height-normal);
+    max-width: 320px;
+    border-radius: 4px;
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.quill-lint-tooltip-msg {
+    margin-bottom: 4px;
+}
 
-If your plugin does not need CSS, delete this file.
+.quill-lint-fix-btn {
+    cursor: pointer;
+    border: none;
+    border-radius: 4px;
+    padding: 3px 10px;
+    font-size: var(--font-ui-smaller);
+    font-family: var(--font-interface);
+}
 
-*/
+.quill-lint-fix-btn:hover {
+    filter: brightness(1.15);
+}
