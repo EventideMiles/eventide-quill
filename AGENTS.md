@@ -47,6 +47,16 @@ src/
 - **UPPER_SNAKE_CASE** for magic constants.
 - Keep imports sorted: external → internal, absolute → relative.
 
+## Branch strategy
+
+- `main` is write-protected. Never commit directly to it.
+- All work happens on feature branches pushed to GitHub, then merged via pull request.
+- Branch naming:
+    - `feature/<short-description>` — new features
+    - `bugfix/<short-description>` — bug fixes
+- Example: `feature/prose-linter`, `bugfix/settings-crash`
+- Open a PR to `main` when the feature is ready. CodeRabbit will review automatically.
+
 ## Security & compliance
 
 - No `innerHTML`. Use `createEl()` + `textContent`.
