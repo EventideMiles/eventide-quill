@@ -1,18 +1,18 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
-import MyPlugin from './main';
+import EventideQuillPlugin from './main';
 
-export interface MyPluginSettings {
+export interface EventideQuillSettings {
 	mySetting: string;
 }
 
-export const DEFAULT_SETTINGS: MyPluginSettings = {
+export const DEFAULT_SETTINGS: EventideQuillSettings = {
 	mySetting: 'default',
 };
 
-export class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
+export class EventideQuillSettingTab extends PluginSettingTab {
+	plugin: EventideQuillPlugin;
 
-	constructor(app: App, plugin: MyPlugin) {
+	constructor(app: App, plugin: EventideQuillPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
