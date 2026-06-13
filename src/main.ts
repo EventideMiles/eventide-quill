@@ -218,6 +218,23 @@ export default class EventideQuillPlugin extends Plugin {
 
     async saveSettings() {
         await this.saveData(this.settings);
+        if (!this.lintActive) return;
+
+        const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!markdownView) return;
+
+        const cm = this.getCmView(markdownView.editor);
+        if (!cm) return;
+
+        const text = markdownView.editor.getValue();
+        const results = this.runLint(text);
+        this.currentResults = results;
+
+        cm.dispatch({
+            effects: setLintResults.of(results),
+        });
+
+        this.lintPanel?.setResults(results);
     }
 
     private async openLintPanel() {

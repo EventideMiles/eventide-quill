@@ -426,7 +426,7 @@ export function checkAiCliches(text: string): LintResult[] {
     return results;
 }
 
-const NEGATION_PATTERN = /(?:it'?s?\s+not\s+.{1,40}?,\s*(?:it'?s?\s+|[a-z]+?\s+(?:is|are|was|were)\s+))/gi;
+const NEGATION_PATTERN = /(?:it'?s?\s+)?not\s+(?:because\s+)?[^,.;!?]{1,60}\s*,?\s*(?:but|it'?s?)\s+(?:because\s+)?/gi;
 
 export function checkAiNegation(text: string): LintResult[] {
     const results: LintResult[] = [];
@@ -468,7 +468,7 @@ export function checkAiFillerAdverbs(text: string): LintResult[] {
     return results;
 }
 
-const AI_HEDGING = /\b(might|could|perhaps|maybe|possibly|probably|apparently|seemingly|presumably|arguably)\b/gi;
+const AI_HEDGING = /\b(might|could|perhaps|maybe|possibly|probably|apparently|seemingly|presumably|arguably|sort of|kind of|in a sense|in a way|to some extent|more or less|for the most part)\b/gi;
 
 export function checkAiHedging(text: string): LintResult[] {
     const results: LintResult[] = [];
