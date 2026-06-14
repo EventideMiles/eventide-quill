@@ -57,8 +57,8 @@ export default class EventideQuillPlugin extends Plugin {
                     this.currentResults = results;
                     this.lintPanel?.setResults(results);
                 },
-                (result: LintResult) => this.openInlineAiFix(result),
-                (result: LintResult) => this.dismissResult(result),
+                (result, view) => this.openInlineAiFix(result, view),
+                (result, view) => this.dismissResult(result, view),
                 () => this.settings.enableLinterAiFixes,
             ),
         );
@@ -334,7 +334,7 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /** Dismiss a lint result for the current session. It will reappear after reactivation. */
-    dismissResult(result: LintResult): void {
+    dismissResult(result: LintResult, _view?: EditorView): void {
         const view = findEditorView(this.app, this.lintActiveFile);
         if (!view) return;
 
@@ -429,7 +429,7 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /** Open the Fix with AI modal for a lint result triggered from an in-editor tooltip. */
-    private openInlineAiFix(result: LintResult): void {
+    private openInlineAiFix(result: LintResult, _view: EditorView): void {
         const view = findEditorView(this.app, this.lintActiveFile);
         if (!view) return;
 

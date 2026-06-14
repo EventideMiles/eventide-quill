@@ -12,11 +12,11 @@ import { LintResult, FIXABLE_RULES } from './types';
 import { FIXES } from './fixes';
 import { applyCmReplacement } from './apply-fix';
 
-/** Callback for when the user clicks "Fix with AI" in the in-editor tooltip. */
-export type AiFixTooltipHandler = (result: LintResult) => void;
+/** Callback for when the user clicks "Fix with AI" in the in-editor tooltip. Includes originating EditorView for split-view correctness. */
+export type AiFixTooltipHandler = (result: LintResult, view: EditorView) => void;
 
-/** Callback for when the user dismisses a lint result from the in-editor tooltip. */
-export type DismissHandler = (result: LintResult) => void;
+/** Callback for when the user dismisses a lint result from the in-editor tooltip. Includes originating EditorView for split-view correctness. */
+export type DismissHandler = (result: LintResult, view: EditorView) => void;
 
 /** Returns whether the "Fix with AI" button should appear in tooltips. Evaluated at tooltip creation time so setting changes take effect immediately. */
 export type AiFixEnabledGetter = () => boolean;
@@ -238,7 +238,7 @@ export function getLintExtension(
                             view.dispatch({
                                 effects: setPinnedTooltip.of(null),
                             });
-                            onAiFix(pinned.result);
+                            onAiFix(pinned.result, view);
                         });
                         btnRow.appendChild(aiBtn);
                     }
@@ -252,7 +252,7 @@ export function getLintExtension(
                             view.dispatch({
                                 effects: setPinnedTooltip.of(null),
                             });
-                            onDismiss(pinned.result);
+                            onDismiss(pinned.result, view);
                         });
                         btnRow.appendChild(dismissBtn);
                     }
