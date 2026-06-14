@@ -68,26 +68,32 @@ interface OllamaChatLine {
 /**
  * Parse an SSE (Server-Sent Events) response body string.
  * Returns an array of parsed SseEvent objects.
+ * Handles CRLF line endings and multi-line data fields.
  */
 export function parseSseEvents(body: string): SseEvent[] {
     const events: SseEvent[] = [];
     let current: Partial<SseEvent> = {};
+    let dataLines: string[] = [];
 
-    for (const line of body.split('\n')) {
+    for (const rawLine of body.split('\n')) {
+        const line = rawLine.replace(/\r$/, '');
         if (line.startsWith('data: ')) {
-            current.data = line.slice(6);
+            dataLines.push(line.slice(6));
         } else if (line.startsWith('event: ')) {
             current.event = line.slice(7);
         } else if (line.startsWith('id: ')) {
             current.id = line.slice(4);
-        } else if (line === '' && current.data !== undefined) {
+        } else if (line === '' && dataLines.length > 0) {
+            current.data = dataLines.join('\n');
             events.push(current as SseEvent);
             current = {};
+            dataLines = [];
         }
     }
 
     // Push any leftover event without trailing blank line
-    if (current.data !== undefined) {
+    if (dataLines.length > 0) {
+        current.data = dataLines.join('\n');
         events.push(current as SseEvent);
     }
 
@@ -234,7 +240,8 @@ export async function* parseSseStream(
 
         buffer += decoder.decode(value, { stream: true });
 
-        const parts = buffer.split('\n\n');
+        // Split on SSE boundaries; handle CRLF by stripping trailing \r
+        const parts = buffer.replace(/\r\n/g, '\n').split('\n\n');
         buffer = parts.pop() ?? '';
 
         for (const part of parts) {
@@ -243,6 +250,9 @@ export async function* parseSseStream(
             if (event) yield event;
         }
     }
+
+    // Flush any remaining incomplete UTF-8 byte sequences
+    decoder.decode();
 
     if (buffer.trim()) {
         const event = parseSseBlock(buffer);
@@ -253,16 +263,20 @@ export async function* parseSseStream(
 /** Parse a single SSE block (lines separated by \n, no trailing \n\n). */
 function parseSseBlock(block: string): SseEvent | null {
     const event: Partial<SseEvent> = {};
-    for (const line of block.split('\n')) {
+    const dataLines: string[] = [];
+    for (const rawLine of block.split('\n')) {
+        const line = rawLine.replace(/\r$/, '');
         if (line.startsWith('data: ')) {
-            event.data = line.slice(6);
+            dataLines.push(line.slice(6));
         } else if (line.startsWith('event: ')) {
             event.event = line.slice(7);
         } else if (line.startsWith('id: ')) {
             event.id = line.slice(4);
         }
     }
-    return event.data !== undefined ? (event as SseEvent) : null;
+    if (dataLines.length === 0) return null;
+    event.data = dataLines.join('\n');
+    return event as SseEvent;
 }
 
 /**
@@ -298,6 +312,9 @@ export async function* parseNdjsonStream(
             }
         }
     }
+
+    // Flush any remaining incomplete UTF-8 byte sequences
+    decoder.decode();
 
     const remaining = buffer.trim();
     if (remaining) {

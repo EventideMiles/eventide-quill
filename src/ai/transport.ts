@@ -69,7 +69,12 @@ export async function streamResponse(
         throw new HttpError(response.status, text);
     }
 
-    return { reader: response.body!.getReader() };
+    if (!response.body) {
+        throw new Error(
+            'Response body is missing or unavailable; streaming is not possible.',
+        );
+    }
+    return { reader: response.body.getReader() };
 }
 
 /**
