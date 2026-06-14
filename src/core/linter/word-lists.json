@@ -70,7 +70,7 @@
         "fragile", "echo", "profound"
     ],
     "aiFillerAdverbs": [
-        "quietly", "deliberately", "shifted", "gently", "softly",
+        "quietly", "deliberately", "gently", "softly",
         "slowly", "carefully", "suddenly", "slightly"
     ],
     "aiHedging": [

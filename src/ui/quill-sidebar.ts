@@ -1,4 +1,4 @@
-import { ItemView, MarkdownView, WorkspaceLeaf } from 'obsidian';
+import { Component, ItemView, MarkdownView, WorkspaceLeaf } from 'obsidian';
 import { EditorView } from '@codemirror/view';
 import { LintResult, RULE_INFO, FIXABLE_RULES } from '../core/linter/types';
 import { FIXES } from '../core/linter/fixes';
@@ -14,6 +14,7 @@ export class QuillSidebarView extends ItemView {
     private container!: HTMLElement;
     private tabBar!: HTMLElement;
     private content!: HTMLElement;
+    private renderEvents: Component | null = null;
 
     constructor(leaf: WorkspaceLeaf) {
         super(leaf);
@@ -53,13 +54,7 @@ export class QuillSidebarView extends ItemView {
     }
 
     private getMarkdownView(): MarkdownView | null {
-        const leaves = this.app.workspace.getLeavesOfType('markdown');
-        for (const leaf of leaves) {
-            if (leaf.view instanceof MarkdownView) {
-                return leaf.view;
-            }
-        }
-        return null;
+        return this.app.workspace.getActiveViewOfType(MarkdownView);
     }
 
     private jumpToResult(result: LintResult) {
@@ -111,6 +106,10 @@ export class QuillSidebarView extends ItemView {
     }
 
     private render() {
+        this.renderEvents?.unload();
+        this.renderEvents = new Component();
+        this.addChild(this.renderEvents);
+
         this.tabBar.empty();
         this.content.empty();
 
@@ -133,7 +132,7 @@ export class QuillSidebarView extends ItemView {
                 cls: `quill-sidebar-tab${this.activeTab === tab.id ? ' quill-sidebar-tab-active' : ''}`,
                 text: tab.label,
             });
-            btn.addEventListener('click', () => this.switchTab(tab.id));
+            this.renderEvents!.registerDomEvent(btn, 'click', () => this.switchTab(tab.id));
         }
     }
 
@@ -158,7 +157,7 @@ export class QuillSidebarView extends ItemView {
             const item = list.createEl('li', {
                 cls: `quill-lint-item quill-lint-${result.severity}`,
             });
-            item.addEventListener('click', () => this.showResultDetail(result));
+            this.renderEvents!.registerDomEvent(item, 'click', () => this.showResultDetail(result));
 
             const badge = item.createEl('span', { cls: 'quill-lint-badge' });
             badge.setText(result.severity);
@@ -170,7 +169,7 @@ export class QuillSidebarView extends ItemView {
             message.setText(result.message);
 
             const location = item.createEl('span', { cls: 'quill-lint-location' });
-            location.setText(`Ln ${result.line}, Col ${result.column}`);
+            location.setText(`Ln ${result.line}, Col ${result.column + 1}`);
         }
     }
 
@@ -193,7 +192,7 @@ export class QuillSidebarView extends ItemView {
             cls: 'quill-details-back',
             text: 'Back',
         });
-        backBtn.addEventListener('click', () => this.switchTab('results'));
+        this.renderEvents!.registerDomEvent(backBtn, 'click', () => this.switchTab('results'));
 
         const ruleEl = header.createEl('span', { cls: 'quill-details-rule-name' });
         ruleEl.setText(ruleName);
@@ -235,7 +234,7 @@ export class QuillSidebarView extends ItemView {
                     cls: 'quill-details-fix-btn',
                     text: fix.description,
                 });
-                fixBtn.addEventListener('click', () => {
+                this.renderEvents!.registerDomEvent(fixBtn, 'click', () => {
                     this.applyFix(result);
                     this.switchTab('results');
                 });
@@ -243,7 +242,7 @@ export class QuillSidebarView extends ItemView {
         }
 
         const locationEl = this.content.createEl('p', { cls: 'quill-details-location' });
-        locationEl.setText(`At line ${result.line}, column ${result.column}`);
+        locationEl.setText(`At line ${result.line}, column ${result.column + 1}`);
 
         const msgEl = this.content.createEl('p', { cls: 'quill-details-message' });
         msgEl.setText(result.message);

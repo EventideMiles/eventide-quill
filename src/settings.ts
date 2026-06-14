@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting } from 'obsidian';
+import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
 import EventideQuillPlugin from './main';
 
 export type LinterMode = 'all' | 'prose' | 'ai';
@@ -116,6 +116,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         if (!isNaN(n) && n >= 1) {
                             this.plugin.settings.maxSentenceWords = n;
                             await this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.maxSentenceWords));
+                            new Notice('Value must be a number ≥ 1');
                         }
                     }),
             );
@@ -179,6 +182,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         if (!isNaN(n) && n >= 1) {
                             this.plugin.settings.minRepeatedWordLength = n;
                             await this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.minRepeatedWordLength));
+                            new Notice('Value must be a number ≥ 1');
                         }
                     }),
             );
@@ -242,6 +248,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         if (!isNaN(n) && n >= 1) {
                             this.plugin.settings.maxSyllablesPerWord = n;
                             await this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.maxSyllablesPerWord));
+                            new Notice('Value must be a number ≥ 1');
                         }
                     }),
             );

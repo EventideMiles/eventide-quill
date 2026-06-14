@@ -48,9 +48,18 @@ export default class EventideQuillPlugin extends Plugin {
             this.app.workspace.on('active-leaf-change', () => {
                 const activeFile = this.app.workspace.getActiveFile();
                 if (activeFile?.path !== this.lintActiveFile) {
+                    for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+                        if (leaf.view instanceof MarkdownView) {
+                            const cm = this.getCmView(leaf.view.editor);
+                            if (cm) {
+                                cm.dispatch({ effects: toggleLintActive.of(false) });
+                            }
+                        }
+                    }
                     this.lintActive = false;
                     this.lintActiveFile = null;
                     this.currentResults = [];
+                    this.lintPanel?.setResults([]);
                 }
             }),
         );

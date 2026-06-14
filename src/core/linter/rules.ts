@@ -197,7 +197,7 @@ export function checkAdverbs(text: string): LintResult[] {
         const word = match[1]?.toLowerCase();
         if (!word) continue;
         if (COMMON_ADVERBS.has(word)) continue;
-        if (word.endsWith('ly') && word.length > 4) {
+        if (word.length > 4) {
             if (isInsideQuotes(text, match.index)) continue;
             if (isAfterDialogueTag(text, match.index)) continue;
             const pos = posAtOffset(text, match.index);
@@ -259,7 +259,7 @@ export function checkRepeatedWords(text: string, minLength: number = 4): LintRes
                 const col = found ? sentence.column + found.index : sentence.column;
                 results.push({
                     line: sentence.line,
-                    column: col + 1,
+                    column: col,
                     length: word.length,
                     message: `Repeated word: "${word}" appears ${positions.length} times in this sentence.`,
                     severity: 'info',
