@@ -2,6 +2,7 @@ import { App, Modal, Notice, PluginSettingTab, Setting, SuggestModal } from 'obs
 import EventideQuillPlugin from './main';
 import { ModelInfo, ProviderConfig, ProviderType } from './ai/provider';
 import { createProvider, generateModelId, generateProviderId } from './ai/provider-registry';
+import { NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS } from './types';
 
 export type LinterMode = 'all' | 'prose' | 'ai';
 
@@ -29,6 +30,12 @@ export interface EventideQuillSettings {
     aiProviders: ProviderConfig[];
     aiDefaultChatProvider: string;
     aiDefaultEmbedProvider: string;
+    transformTemperature: number;
+    transformAppendNewline: boolean;
+    transformVaultContext: boolean;
+    transformMaxOutputTokens: number;
+    narrativeVoicePreset: NarrativeVoicePreset;
+    customNarrativeVoiceRules: string;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -69,6 +76,12 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     ] as ProviderConfig[],
     aiDefaultChatProvider: 'local-default/local-chat',
     aiDefaultEmbedProvider: 'local-default/local-embed',
+    transformTemperature: 1.0,
+    transformAppendNewline: true,
+    transformVaultContext: true,
+    transformMaxOutputTokens: 4096,
+    narrativeVoicePreset: 'third-limited',
+    customNarrativeVoiceRules: 'No genre-specific or context-specific rules configured.',
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -193,7 +206,7 @@ class AddProviderModal extends SuggestModal<{ type: ProviderType; label: string;
 
 export class EventideQuillSettingTab extends PluginSettingTab {
     plugin: EventideQuillPlugin;
-    private activeTab: 'linter' | 'ai-providers' = 'linter';
+    private activeTab: 'linter' | 'ai-providers' | 'model-behaviors' = 'linter';
 
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app, plugin);
@@ -208,6 +221,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         this.renderTabBar(containerEl);
         this.renderLinterTab(containerEl);
         this.renderAiProvidersTab(containerEl);
+        this.renderModelBehaviorsTab(containerEl);
 
         this.showActiveTab();
     }
@@ -216,41 +230,35 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     private renderTabBar(containerEl: HTMLElement): void {
         const tabBar = containerEl.createEl('div', { cls: 'quill-settings-tab-bar' });
 
-        const linterTab = tabBar.createEl('button', {
-            cls: 'quill-settings-tab',
-            text: 'Linter',
-            attr: { 'data-tab': 'linter' },
-        });
-        linterTab.addEventListener('click', () => {
-            this.activeTab = 'linter';
-            this.showActiveTab();
-        });
+        const tabs: { id: 'linter' | 'ai-providers' | 'model-behaviors'; label: string }[] = [
+            { id: 'linter', label: 'Linter' },
+            { id: 'ai-providers', label: 'AI providers' },
+            { id: 'model-behaviors', label: 'Model behaviors' },
+        ];
 
-        const aiTab = tabBar.createEl('button', {
-            cls: 'quill-settings-tab',
-            text: 'AI providers',
-            attr: { 'data-tab': 'ai-providers' },
-        });
-        aiTab.addEventListener('click', () => {
-            this.activeTab = 'ai-providers';
-            this.showActiveTab();
-        });
-
-        if (this.activeTab === 'linter') {
-            linterTab.addClass('quill-settings-tab-active');
-        } else {
-            aiTab.addClass('quill-settings-tab-active');
+        for (const tab of tabs) {
+            const btn = tabBar.createEl('button', {
+                cls: `quill-settings-tab${this.activeTab === tab.id ? ' quill-settings-tab-active' : ''}`,
+                text: tab.label,
+                attr: { 'data-tab': tab.id },
+            });
+            btn.addEventListener('click', () => {
+                this.activeTab = tab.id;
+                this.showActiveTab();
+            });
         }
     }
 
-    /** Toggle visibility of the two tab content sections. */
+    /** Toggle visibility of tab content sections. */
     private showActiveTab(): void {
         const linterContent = this.containerEl.querySelector('.quill-settings-content-linter') as HTMLElement;
         const aiContent = this.containerEl.querySelector('.quill-settings-content-ai') as HTMLElement;
+        const modelBehaviorsContent = this.containerEl.querySelector('.quill-settings-content-model-behaviors') as HTMLElement;
         const tabs = this.containerEl.querySelectorAll('.quill-settings-tab');
 
         if (linterContent) linterContent.style.display = this.activeTab === 'linter' ? 'block' : 'none';
         if (aiContent) aiContent.style.display = this.activeTab === 'ai-providers' ? 'block' : 'none';
+        if (modelBehaviorsContent) modelBehaviorsContent.style.display = this.activeTab === 'model-behaviors' ? 'block' : 'none';
 
         tabs.forEach((tab) => {
             const el = tab as HTMLElement;
@@ -968,6 +976,113 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             });
     }
 
+    /** Render the Model behaviors settings tab. */
+    private renderModelBehaviorsTab(containerEl: HTMLElement): void {
+        const content = containerEl.createEl('div', { cls: 'quill-settings-content-model-behaviors' });
+        this.renderModelBehaviorsSettings(content);
+    }
+
+    /** Render model behavior settings. */
+    private renderModelBehaviorsSettings(containerEl: HTMLElement): void {
+        new Setting(containerEl)
+            .setName('Selection transformations')
+            .setHeading();
+
+        new Setting(containerEl)
+            .setName('Narrative voice')
+            .setDesc('The narrative perspective and tense used when generating text.')
+            .addDropdown((dropdown) => {
+                for (const preset of NARRATIVE_VOICE_PRESETS) {
+                    dropdown.addOption(preset.id, preset.label);
+                }
+                dropdown
+                    .setValue(this.plugin.settings.narrativeVoicePreset)
+                    .onChange(async (value) => {
+                        this.plugin.settings.narrativeVoicePreset = value as NarrativeVoicePreset;
+                        await this.plugin.saveSettings();
+                        this.updateNarrativeVoiceRulesDisplay(value as NarrativeVoicePreset, rulesArea);
+                    });
+            });
+
+        const rulesArea = containerEl.createEl('div', { cls: 'quill-narrative-rules-area' });
+        this.renderNarrativeVoiceRules(containerEl, rulesArea);
+
+        new Setting(containerEl)
+            .setName('Temperature')
+            .setDesc('Higher values produce more creative output. Range: 0.0 – 2.0.')
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.transformTemperature))
+                    .onChange(async (value) => {
+                        const n = parseFloat(value);
+                        if (!isNaN(n) && n >= 0 && n <= 2) {
+                            this.plugin.settings.transformTemperature = n;
+                            await this.plugin.saveSettings();
+                        }
+                    }),
+            );
+
+        new Setting(containerEl)
+            .setName('Vault context')
+            .setDesc('Include cross-document vault context (character notes, worldbuilding, etc.) in transformation prompts.')
+            .addToggle((toggle) =>
+                toggle
+                    .setValue(this.plugin.settings.transformVaultContext)
+                    .onChange(async (value) => {
+                        this.plugin.settings.transformVaultContext = value;
+                        await this.plugin.saveSettings();
+                    }),
+            );
+
+        new Setting(containerEl)
+            .setName('Max output tokens')
+            .setDesc('Maximum tokens per transformation response. Higher values allow longer rewrites.')
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.transformMaxOutputTokens))
+                    .onChange(async (value) => {
+                        const n = parseInt(value, 10);
+                        if (!isNaN(n) && n >= 1) {
+                            this.plugin.settings.transformMaxOutputTokens = n;
+                            await this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.transformMaxOutputTokens));
+                            new Notice('Value must be a number ≥ 1');
+                        }
+                    }),
+            );
+
+        new Setting(containerEl)
+            .setName('Append trailing blank line')
+            .setDesc('Add a blank line after the transformed text so you can continue writing without pressing enter twice.')
+            .addToggle((toggle) =>
+                toggle
+                    .setValue(this.plugin.settings.transformAppendNewline)
+                    .onChange(async (value) => {
+                        this.plugin.settings.transformAppendNewline = value;
+                        await this.plugin.saveSettings();
+                    }),
+            );
+
+        new Setting(containerEl)
+            .setName('Restore defaults')
+            .setDesc('Reset all model behavior settings to their default values.')
+            .addButton((button) =>
+                button
+                    .setButtonText('Restore defaults')
+                    .onClick(async () => {
+                        this.plugin.settings.transformTemperature = DEFAULT_SETTINGS.transformTemperature;
+                        this.plugin.settings.transformAppendNewline = DEFAULT_SETTINGS.transformAppendNewline;
+                        this.plugin.settings.transformVaultContext = DEFAULT_SETTINGS.transformVaultContext;
+                        this.plugin.settings.transformMaxOutputTokens = DEFAULT_SETTINGS.transformMaxOutputTokens;
+                        this.plugin.settings.narrativeVoicePreset = DEFAULT_SETTINGS.narrativeVoicePreset;
+                        this.plugin.settings.customNarrativeVoiceRules = DEFAULT_SETTINGS.customNarrativeVoiceRules;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    }),
+            );
+    }
+
     /** Fetch models from the provider endpoint and show a suggester. */
     private async fetchAndSuggestModels(provider: ProviderConfig, modelConfig: { model: string }): Promise<void> {
         try {
@@ -1014,6 +1129,42 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         }
         if (this.plugin.settings.aiDefaultEmbedProvider && !isValid(this.plugin.settings.aiDefaultEmbedProvider)) {
             this.plugin.settings.aiDefaultEmbedProvider = '';
+        }
+    }
+
+    /** Render the narrative voice rules textarea and wire its change handler. */
+    private renderNarrativeVoiceRules(containerEl: HTMLElement, rulesArea: HTMLElement): void {
+        const textarea = rulesArea.createEl('textarea', {
+            attr: {
+                rows: '6',
+                placeholder: 'Rules for the custom narrative voice...',
+            },
+        });
+        this.updateNarrativeVoiceRulesDisplay(this.plugin.settings.narrativeVoicePreset, rulesArea);
+
+        textarea.addEventListener('input', () => {
+            if (this.plugin.settings.narrativeVoicePreset === 'custom') {
+                this.plugin.settings.customNarrativeVoiceRules = textarea.value;
+                void this.plugin.saveSettings();
+            }
+        });
+    }
+
+    /** Sync the narrative voice rules textarea with the active preset. */
+    private updateNarrativeVoiceRulesDisplay(preset: NarrativeVoicePreset, rulesArea: HTMLElement): void {
+        const textarea = rulesArea.querySelector('textarea');
+        if (!textarea) return;
+
+        const isCustom = preset === 'custom';
+        textarea.readOnly = !isCustom;
+
+        if (isCustom) {
+            textarea.value = this.plugin.settings.customNarrativeVoiceRules;
+        } else {
+            const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === preset)
+                ?? NARRATIVE_VOICE_PRESETS[0];
+            if (!def) return;
+            textarea.value = def.rules.join('\n');
         }
     }
 

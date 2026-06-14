@@ -343,3 +343,32 @@
     gap: 8px;
     justify-content: flex-end;
 }
+
+/* Narrative voice rules textarea */
+.quill-narrative-rules-area {
+    margin: 4px 0 16px 0;
+}
+
+.quill-narrative-rules-area textarea {
+    width: 100%;
+    min-height: 120px;
+    padding: 8px;
+    border-radius: 4px;
+    font-family: var(--font-monospace);
+    font-size: var(--font-ui-small);
+    line-height: var(--line-height-normal);
+    resize: vertical;
+}
+
+.quill-narrative-rules-area textarea:read-only {
+    background: var(--background-primary-alt);
+    color: var(--text-muted);
+    cursor: default;
+    border: 1px solid var(--background-modifier-border);
+}
+
+.quill-narrative-rules-area textarea:not(:read-only) {
+    background: var(--background-primary);
+    color: var(--text-normal);
+    border: 1px solid var(--interactive-accent);
+}
