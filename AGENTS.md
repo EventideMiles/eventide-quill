@@ -46,6 +46,7 @@ src/
 - **camelCase** for functions and variables.
 - **UPPER_SNAKE_CASE** for magic constants.
 - Keep imports sorted: external → internal, absolute → relative.
+- **JSDoc on every function.** All functions and methods must have a `/** ... */` docstring. Coverage threshold is 80%; aim for 100%.
 
 ## Branch strategy
 
