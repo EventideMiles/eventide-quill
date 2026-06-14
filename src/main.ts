@@ -252,7 +252,10 @@ export default class EventideQuillPlugin extends Plugin {
         );
     }
 
-    /** Persist current settings and re-lint the active document if the linter is active. */
+    /**
+     * Persist current settings to disk, rebuild the provider map, and re-lint
+     * the active document if the linter is active.
+     */
     async saveSettings() {
         await this.saveData(this.settings);
         this.rebuildProviders();

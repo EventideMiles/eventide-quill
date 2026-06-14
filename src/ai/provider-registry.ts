@@ -51,7 +51,7 @@ export function getModel(
 
 /**
  * Parse a composite provider key of the format `"providerId/modelId"`.
- * Returns `[providerId, modelId]` or null if the format is invalid.
+ * Returns `{ providerId, modelId }` or null if the format is invalid.
  */
 export function parseProviderKey(key: string): { providerId: string; modelId: string } | null {
     const parts = key.split('/', 2);
@@ -60,26 +60,29 @@ export function parseProviderKey(key: string): { providerId: string; modelId: st
 }
 
 /**
- * Generate a unique provider ID from a display name.
- * Lowercases, replaces non-alphanumeric characters with hyphens, and
- * appends a short random suffix to ensure uniqueness.
+ * Normalize a string into a URL-friendly slug.
+ * Lowercases and replaces non-alphanumeric runs with a single hyphen.
  */
-export function generateProviderId(name: string): string {
-    const slug = name
+function generateSlug(text: string): string {
+    return text
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '');
-    const suffix = Math.random().toString(36).slice(2, 6);
-    return `${slug}-${suffix}`;
 }
 
 /**
- * Generate a unique model ID from a model string and role.
+ * Generate a provider ID from a display name.
+ * Lowercases, replaces non-alphanumeric characters, and appends a short random
+ * suffix to minimise collision risk.
+ */
+export function generateProviderId(name: string): string {
+    const suffix = Math.random().toString(36).slice(2, 6);
+    return `${generateSlug(name)}-${suffix}`;
+}
+
+/**
+ * Generate a model ID from a model string and role.
  */
 export function generateModelId(model: string, role: 'chat' | 'embed' | 'both'): string {
-    const slug = model
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '');
-    return `${slug}-${role}`;
+    return `${generateSlug(model)}-${role}`;
 }

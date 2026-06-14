@@ -1,5 +1,8 @@
 import { ChatChunk } from './provider';
 
+/** Sentinel value emitted by OpenAI as the final SSE data line. */
+const SSE_DONE_SENTINEL = '[DONE]';
+
 /** A single SSE event parsed from a stream. */
 export interface SseEvent {
     data: string;
@@ -7,18 +10,28 @@ export interface SseEvent {
     id?: string;
 }
 
-/** Shape of an OpenAI-format SSE data line choices[0].delta object. */
+/**
+ * Represents the `delta` field within an OpenAI SSE streaming choice.
+ * Contains the incremental token content for the current chunk.
+ */
 interface Delta {
     content?: string;
 }
 
-/** Shape of an OpenAI-format SSE data line choices[0] object. */
+/**
+ * Represents a single `choices[]` entry in an OpenAI SSE data payload.
+ * Each choice carries a delta with incremental content and an optional
+ * finish_reason that signals stream termination.
+ */
 interface Choice {
     delta: Delta;
     finish_reason: string | null;
 }
 
-/** Shape of the usage object in OpenAI SSE data. */
+/**
+ * Token usage counters optionally included in the final OpenAI SSE event.
+ * Both snake_case (API format) and camelCase (fallback) fields are accepted.
+ */
 interface UsageData {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -28,14 +41,21 @@ interface UsageData {
     totalTokens?: number;
 }
 
-/** Shape of a parsed OpenAI SSE data line. */
+/**
+ * The top-level shape of a parsed OpenAI SSE `data: {...}` line.
+ * Maps directly to the JSON payload sent over the SSE stream.
+ */
 interface OpenAiSseData {
     choices?: Choice[];
     model?: string;
     usage?: UsageData;
 }
 
-/** Shape of an Ollama NDJSON line for chat responses. */
+/**
+ * Shape of a single NDJSON line emitted by Ollama's `/api/chat` endpoint.
+ * Each line carries an assistant message fragment and a `done` flag that
+ * is `true` only for the final line in the response.
+ */
 interface OllamaChatLine {
     message?: {
         role?: string;
@@ -116,7 +136,7 @@ export function openAiEventsToChunks(events: SseEvent[]): ChatChunk[] {
     const chunks: ChatChunk[] = [];
 
     for (const event of events) {
-        if (event.data === '[DONE]') {
+        if (event.data === SSE_DONE_SENTINEL) {
             chunks.push({ text: '', done: true });
             continue;
         }
@@ -132,9 +152,10 @@ export function openAiEventsToChunks(events: SseEvent[]): ChatChunk[] {
             const text = delta?.content ?? '';
             const finishReason = firstChoice.finish_reason;
 
+            // Only the final chunk carries a non-null finish_reason ("stop" or "length")
             const chunk: ChatChunk = {
                 text,
-                done: finishReason === 'stop' || finishReason === 'length' || finishReason === null || finishReason === undefined,
+                done: finishReason !== null && finishReason !== undefined,
             };
 
             if (parsed.model) {

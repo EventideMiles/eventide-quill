@@ -108,7 +108,13 @@ export class OpenAiCompatibleProvider implements AiProvider {
         return `${base}${cleanPath}`;
     }
 
-    /** {@inheritDoc AiProvider.chatCompletion} */
+    /**
+     * {@inheritDoc AiProvider.chatCompletion}
+     *
+     * Note: This implementation buffers the entire SSE response before yielding
+     * chunks. Obsidian's requestUrl does not support incremental streaming, so
+     * cancellation via options.signal only takes effect after buffering completes.
+     */
     async *chatCompletion(options: ChatOptions): AsyncGenerator<ChatChunk> {
         const modelConfig = this.resolveModel('chat', options.model);
 
@@ -194,9 +200,11 @@ export class OpenAiCompatibleProvider implements AiProvider {
             );
         }
 
-        const embeddings: number[][] = data.data.map(
-            (item: EmbeddingDataItem) => item.embedding,
-        );
+        const embeddings: number[][] = [];
+        data.data.forEach((item: EmbeddingDataItem, i: number) => {
+            const idx = item.index !== undefined ? item.index : i;
+            embeddings[idx] = item.embedding;
+        });
 
         const result: EmbedResult = {
             embeddings,

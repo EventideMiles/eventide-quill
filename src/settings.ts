@@ -619,6 +619,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     .setButtonText('Remove')
                     .onClick(async () => {
                         this.plugin.settings.aiProviders.splice(index, 1);
+                        this.validateDefaultProviders();
                         await this.plugin.saveSettings();
                         this.display();
                     }),
@@ -783,6 +784,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         .setValue(model.role)
                         .onChange(async (value) => {
                             model.role = value as 'chat' | 'embed' | 'both';
+                            this.validateDefaultProviders();
                             await this.plugin.saveSettings();
                         }),
                 );
@@ -818,6 +820,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             const idx = provider.models.indexOf(model);
                             if (idx !== -1) {
                                 provider.models.splice(idx, 1);
+                                this.validateDefaultProviders();
                                 await this.plugin.saveSettings();
                                 this.display();
                             }
@@ -846,9 +849,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render test connection and test embeddings buttons. */
     private renderTestButtons(containerEl: HTMLElement, provider: ProviderConfig): void {
-        containerEl.createEl('div', { cls: 'quill-provider-test-row' });
+        const testRow = containerEl.createEl('div', { cls: 'quill-provider-test-row' });
 
-        new Setting(containerEl)
+        new Setting(testRow)
             .addButton((button) =>
                 button
                     .setButtonText('Test connection')
@@ -982,11 +985,35 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
             new ModelFetchModal(this.app, models, (modelId) => {
                 modelConfig.model = modelId;
-                this.display();
+                void this.plugin.saveSettings().then(() => this.display());
             }).open();
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             new Notice(`Failed to fetch models: ${msg}`);
+        }
+    }
+
+    /**
+     * Ensure aiDefaultChatProvider and aiDefaultEmbedProvider still reference
+     * valid provider+model keys. Clears any key whose provider or model has
+     * been removed. Call after mutating aiProviders and before saveSettings().
+     */
+    private validateDefaultProviders(): void {
+        const { aiProviders } = this.plugin.settings;
+
+        const isValid = (key: string): boolean => {
+            const parts = key.split('/', 2);
+            if (parts.length !== 2 || !parts[0] || !parts[1]) return false;
+            const provider = aiProviders.find((p) => p.id === parts[0]);
+            if (!provider) return false;
+            return provider.models.some((m) => m.id === parts[1]);
+        };
+
+        if (this.plugin.settings.aiDefaultChatProvider && !isValid(this.plugin.settings.aiDefaultChatProvider)) {
+            this.plugin.settings.aiDefaultChatProvider = '';
+        }
+        if (this.plugin.settings.aiDefaultEmbedProvider && !isValid(this.plugin.settings.aiDefaultEmbedProvider)) {
+            this.plugin.settings.aiDefaultEmbedProvider = '';
         }
     }
 

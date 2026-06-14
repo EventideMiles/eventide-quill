@@ -96,7 +96,13 @@ export class OllamaProvider implements AiProvider {
         return `${base}${cleanPath}`;
     }
 
-    /** {@inheritDoc AiProvider.chatCompletion} */
+    /**
+     * {@inheritDoc AiProvider.chatCompletion}
+     *
+     * Note: This implementation buffers the entire NDJSON response before yielding
+     * chunks. Obsidian's requestUrl does not support incremental streaming, so
+     * cancellation via options.signal only takes effect after buffering completes.
+     */
     async *chatCompletion(options: ChatOptions): AsyncGenerator<ChatChunk> {
         const modelConfig = this.resolveModel('chat', options.model);
 
@@ -155,11 +161,20 @@ export class OllamaProvider implements AiProvider {
     async embed(options: EmbedOptions): Promise<EmbedResult> {
         const modelConfig = this.resolveModel('embed', options.model);
 
+        if (Array.isArray(options.input)) {
+            throw new ProviderError(
+                'Batch embeddings are not supported by the Ollama provider. ' +
+                'The /api/embeddings endpoint only accepts a single prompt. ' +
+                'Send one document at a time or use an OpenAI-compatible provider.',
+                0,
+                '',
+            );
+        }
+
         const url = this.buildUrl('/api/embeddings');
-        const input = Array.isArray(options.input) ? options.input[0] : options.input;
         const body = JSON.stringify({
             model: modelConfig.model,
-            prompt: input,
+            prompt: options.input,
         });
 
         const response: RequestUrlResponse = await requestUrl({

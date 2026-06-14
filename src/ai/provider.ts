@@ -88,6 +88,11 @@ export class ProviderError extends Error {
     /** Raw response body text, if available. */
     body: string;
 
+    /**
+     * @param message - Human-readable error description.
+     * @param status  - HTTP status code, or 0 for network / non-HTTP errors.
+     * @param body    - Raw response body text, if available from the server.
+     */
     constructor(message: string, status: number, body: string) {
         super(message);
         this.name = 'ProviderError';
