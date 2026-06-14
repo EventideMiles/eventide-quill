@@ -75,8 +75,9 @@ export class ToneSuggestModal extends SuggestModal<ToneOption> {
         this.limit = 10;
     }
 
-    getSuggestions(_query: string): ToneOption[] {
-        return [...TONE_OPTIONS];
+    getSuggestions(query: string): ToneOption[] {
+        const q = query.toLowerCase();
+        return TONE_OPTIONS.filter((t) => t.toLowerCase().includes(q));
     }
 
     renderSuggestion(tone: ToneOption, el: HTMLElement): void {

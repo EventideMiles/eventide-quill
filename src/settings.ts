@@ -1018,6 +1018,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         if (!isNaN(n) && n >= 0 && n <= 2) {
                             this.plugin.settings.transformTemperature = n;
                             await this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.transformTemperature));
+                            new Notice('Value must be a number between 0.0 and 2.0');
                         }
                     }),
             );

@@ -44,6 +44,10 @@ export const TRANSFORM_ACTIONS: TransformAction[] = [
 /**
  * Build the shared style-constraints system prompt used for all transformations.
  * Optionally includes vault-derived context (character notes, worldbuilding, etc.).
+ *
+ * @param vaultContext - Vault-derived context notes (character, worldbuilding, etc.).
+ * @param narrativePreset - The selected narrative voice preset identifier.
+ * @returns The assembled system prompt string.
  */
 function getSystemPrompt(vaultContext: string, narrativePreset: NarrativeVoicePreset): string {
     const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === narrativePreset)
@@ -71,10 +75,10 @@ function getSystemPrompt(vaultContext: string, narrativePreset: NarrativeVoicePr
         perspectiveRules,
         '',
         'Formatting:',
-        '15. No bold text in the narrative.',
-        '16. Italics allowed sparingly for internal thoughts or emphasis.',
-        '17. No bullet lists in the narrative.',
-        '18. Output only the rewritten passage. No introductory text, no apologies, no meta-commentary.',
+        `${9 + def.rules.length}. No bold text in the narrative.`,
+        `${9 + def.rules.length + 1}. Italics allowed sparingly for internal thoughts or emphasis.`,
+        `${9 + def.rules.length + 2}. No bullet lists in the narrative.`,
+        `${9 + def.rules.length + 3}. Output only the rewritten passage. No introductory text, no apologies, no meta-commentary.`,
     ];
 
     if (vaultContext) {
@@ -112,10 +116,11 @@ export function getUserPrompt(
 ): string {
     const instruction = getInstruction(type, toneOrInstruction);
 
+    const OMISSION_MARKER = '\n\n... (middle omitted) ...\n\n';
     const truncated = fullDocumentText.length > maxContextChars
-        ? fullDocumentText.slice(0, Math.floor(maxContextChars / 2))
-            + '\n\n... (middle omitted) ...\n\n'
-            + fullDocumentText.slice(-Math.floor(maxContextChars / 2))
+        ? fullDocumentText.slice(0, Math.floor((maxContextChars - OMISSION_MARKER.length) / 2))
+            + OMISSION_MARKER
+            + fullDocumentText.slice(-Math.floor((maxContextChars - OMISSION_MARKER.length) / 2))
         : fullDocumentText;
 
     return [
@@ -202,12 +207,17 @@ export async function applyTransformation(
         // Everything else goes to the document text.
         const systemTokens = Math.ceil(systemPrompt.length / 4);
         const instructionTokens = 200;
-        const responseTokens = transformMaxOutputTokens;
         const totalBudget = provider.config.maxContextTokens;
-        const docTokens = Math.max(
-            totalBudget - systemTokens - instructionTokens - responseTokens,
-            1000, // floor: at least ~1000 tokens for the document
-        );
+
+        // Ensure total token usage never exceeds maxContextTokens.
+        // Reserve at least 1000 tokens for document context.
+        const MIN_DOC_TOKENS = 1000;
+        let responseTokens = transformMaxOutputTokens;
+        const remainingForDoc = totalBudget - systemTokens - instructionTokens - responseTokens;
+        if (remainingForDoc < MIN_DOC_TOKENS) {
+            responseTokens = Math.max(1, totalBudget - systemTokens - instructionTokens - MIN_DOC_TOKENS);
+        }
+        const docTokens = totalBudget - systemTokens - instructionTokens - responseTokens;
         const maxContextChars = Math.min(docTokens * 4, 100_000);
 
         const userPrompt = getUserPrompt(type, selectedText, fullDocumentText, maxContextChars, tone);
@@ -292,7 +302,9 @@ export async function applyTransformation(
             // above (but not at document start).
             if (startsAtLine && anchor > 0) {
                 const charBefore = cm.state.sliceDoc(anchor - 1, anchor);
-                const twoBefore = cm.state.sliceDoc(anchor - 2, anchor);
+                const twoBefore = anchor >= 2
+                    ? cm.state.sliceDoc(anchor - 2, anchor)
+                    : '';
                 if (charBefore === '\n' && twoBefore !== '\n\n') {
                     cm.dispatch({
                         changes: { from: anchor, to: anchor, insert: '\n' },
@@ -305,7 +317,7 @@ export async function applyTransformation(
             // If the selection ended at a line boundary, ensure a blank line below.
             if (endsAtLine) {
                 const endPos = anchor + insertedLength + offset;
-                const after = cm.state.sliceDoc(endPos, endPos + 2);
+                const after = cm.state.sliceDoc(endPos, Math.min(endPos + 2, cm.state.doc.length));
                 if (after !== '\n\n') {
                     cm.dispatch({
                         changes: { from: endPos, to: endPos, insert: '\n' },

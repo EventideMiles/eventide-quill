@@ -15,6 +15,12 @@ export interface NarrativeVoiceDefinition {
     rules: string[];
 }
 
+/**
+ * Array of all available narrative voice presets.
+ * Each entry defines an id, label, pov, tense, and an array of style rules
+ * used by the transformation system to constrain AI-generated prose.
+ * The first entry is used as the fallback default.
+ */
 export const NARRATIVE_VOICE_PRESETS: NarrativeVoiceDefinition[] = [
     {
         id: 'third-limited',
