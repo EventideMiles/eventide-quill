@@ -1,5 +1,7 @@
-import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
+import { App, Modal, Notice, PluginSettingTab, Setting, SuggestModal } from 'obsidian';
 import EventideQuillPlugin from './main';
+import { ModelInfo, ProviderConfig, ProviderType } from './ai/provider';
+import { createProvider, generateModelId, generateProviderId } from './ai/provider-registry';
 
 export type LinterMode = 'all' | 'prose' | 'ai';
 
@@ -24,6 +26,9 @@ export interface EventideQuillSettings {
     enableAiHedging: boolean;
     enableAiWrapUps: boolean;
     lintOnSave: boolean;
+    aiProviders: ProviderConfig[];
+    aiDefaultChatProvider: string;
+    aiDefaultEmbedProvider: string;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -47,28 +52,225 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     enableAiHedging: true,
     enableAiWrapUps: true,
     lintOnSave: false,
+    aiProviders: [
+        {
+            id: 'local-default',
+            name: 'LM Studio local',
+            type: 'openai-compatible',
+            endpoint: 'http://localhost:1234/v1',
+            apiKey: '',
+            models: [
+                { id: 'local-chat', role: 'chat', model: 'local-model' },
+                { id: 'local-embed', role: 'embed', model: 'local-model' },
+            ],
+            maxContextTokens: 32768,
+            maxOutputTokens: 4096,
+        },
+    ] as ProviderConfig[],
+    aiDefaultChatProvider: 'local-default/local-chat',
+    aiDefaultEmbedProvider: 'local-default/local-embed',
 };
+
+const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
+
+/** Simple text input modal for prompting the user for a value. */
+class InputModal extends Modal {
+    private result = '';
+
+    constructor(
+        app: App,
+        private title: string,
+        private placeholder: string,
+        private onSubmit: (value: string) => void,
+    ) {
+        super(app);
+    }
+
+    onOpen(): void {
+        const { contentEl } = this;
+        contentEl.createEl('h2', { text: this.title });
+
+        const input = contentEl.createEl('input', {
+            type: 'text',
+            cls: 'quill-input-modal-input',
+            attr: { placeholder: this.placeholder },
+        });
+
+        const buttonRow = contentEl.createEl('div', { cls: 'quill-input-modal-actions' });
+
+        buttonRow.createEl('button', { text: 'Cancel' })
+            .addEventListener('click', () => this.close());
+
+        const submitBtn = buttonRow.createEl('button', { text: 'OK', cls: 'mod-cta' });
+        submitBtn.addEventListener('click', () => {
+            this.result = input.value;
+            this.close();
+        });
+
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                this.result = input.value;
+                this.close();
+            }
+        });
+    }
+
+    onClose(): void {
+        const { contentEl } = this;
+        contentEl.empty();
+        if (this.result) {
+            this.onSubmit(this.result);
+        }
+    }
+}
+
+/** Modal that shows available models from a provider's endpoint. */
+class ModelFetchModal extends SuggestModal<ModelInfo> {
+    private models: ModelInfo[];
+
+    constructor(
+        app: App,
+        models: ModelInfo[],
+        private onSelect: (modelId: string) => void,
+    ) {
+        super(app);
+        this.models = models;
+        this.setPlaceholder('Search models...');
+        this.limit = 50;
+    }
+
+    /** Filter suggestions by query. */
+    getSuggestions(query: string): ModelInfo[] {
+        const q = query.toLowerCase();
+        return this.models.filter((m) => m.id.toLowerCase().includes(q));
+    }
+
+    /** Render each suggestion row. */
+    renderSuggestion(model: ModelInfo, el: HTMLElement): void {
+        el.createEl('div', { text: model.id });
+        if (model.ownedBy) {
+            el.createEl('small', { text: model.ownedBy, attr: { style: 'color: var(--text-muted); margin-left: 8px;' } });
+        }
+    }
+
+    /** When user selects a model, invoke the callback. */
+    onChooseSuggestion(model: ModelInfo): void {
+        this.onSelect(model.id);
+    }
+}
+
+/** Modal to pick a provider type when adding a new provider. */
+class AddProviderModal extends SuggestModal<{ type: ProviderType; label: string; defaultEndpoint: string }> {
+    private options: { type: ProviderType; label: string; defaultEndpoint: string }[] = [
+        { type: 'openai-compatible', label: 'OpenAI-compatible', defaultEndpoint: 'http://localhost:1234/v1' },
+        { type: 'ollama', label: 'Ollama', defaultEndpoint: 'http://localhost:11434' },
+    ];
+
+    constructor(
+        app: App,
+        private onChoose: (type: ProviderType, defaultEndpoint: string) => void,
+    ) {
+        super(app);
+        this.setPlaceholder('Choose provider type...');
+    }
+
+    /** Filter options by query. */
+    getSuggestions(query: string): { type: ProviderType; label: string; defaultEndpoint: string }[] {
+        const q = query.toLowerCase();
+        return this.options.filter((o) => o.label.toLowerCase().includes(q));
+    }
+
+    /** Render each option. */
+    renderSuggestion(option: { type: ProviderType; label: string }, el: HTMLElement): void {
+        el.createEl('div', { text: option.label });
+    }
+
+    /** When user selects a type, invoke the callback. */
+    onChooseSuggestion(option: { type: ProviderType; label: string; defaultEndpoint: string }): void {
+        this.onChoose(option.type, option.defaultEndpoint);
+    }
+}
 
 export class EventideQuillSettingTab extends PluginSettingTab {
     plugin: EventideQuillPlugin;
+    private activeTab: 'linter' | 'ai-providers' = 'linter';
 
-    /** Create the settings tab and bind it to the plugin instance. */
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app, plugin);
         this.plugin = plugin;
     }
 
-    /** Build and display the full settings UI, recreating all controls from current values. */
+    /** Build and display the full settings UI. */
     display(): void {
         const { containerEl } = this;
-
         containerEl.empty();
 
-        new Setting(containerEl)
+        this.renderTabBar(containerEl);
+        this.renderLinterTab(containerEl);
+        this.renderAiProvidersTab(containerEl);
+
+        this.showActiveTab();
+    }
+
+    /** Render the tab bar at the top of the settings panel. */
+    private renderTabBar(containerEl: HTMLElement): void {
+        const tabBar = containerEl.createEl('div', { cls: 'quill-settings-tab-bar' });
+
+        const linterTab = tabBar.createEl('button', {
+            cls: 'quill-settings-tab',
+            text: 'Linter',
+            attr: { 'data-tab': 'linter' },
+        });
+        linterTab.addEventListener('click', () => {
+            this.activeTab = 'linter';
+            this.showActiveTab();
+        });
+
+        const aiTab = tabBar.createEl('button', {
+            cls: 'quill-settings-tab',
+            text: 'AI providers',
+            attr: { 'data-tab': 'ai-providers' },
+        });
+        aiTab.addEventListener('click', () => {
+            this.activeTab = 'ai-providers';
+            this.showActiveTab();
+        });
+
+        if (this.activeTab === 'linter') {
+            linterTab.addClass('quill-settings-tab-active');
+        } else {
+            aiTab.addClass('quill-settings-tab-active');
+        }
+    }
+
+    /** Toggle visibility of the two tab content sections. */
+    private showActiveTab(): void {
+        const linterContent = this.containerEl.querySelector('.quill-settings-content-linter') as HTMLElement;
+        const aiContent = this.containerEl.querySelector('.quill-settings-content-ai') as HTMLElement;
+        const tabs = this.containerEl.querySelectorAll('.quill-settings-tab');
+
+        if (linterContent) linterContent.style.display = this.activeTab === 'linter' ? 'block' : 'none';
+        if (aiContent) aiContent.style.display = this.activeTab === 'ai-providers' ? 'block' : 'none';
+
+        tabs.forEach((tab) => {
+            const el = tab as HTMLElement;
+            if (el.dataset.tab === this.activeTab) {
+                el.addClass('quill-settings-tab-active');
+            } else {
+                el.removeClass('quill-settings-tab-active');
+            }
+        });
+    }
+
+    /** Render the linter configuration section. */
+    private renderLinterTab(containerEl: HTMLElement): void {
+        const content = containerEl.createEl('div', { cls: 'quill-settings-content-linter' });
+
+        new Setting(content)
             .setName('Prose linter')
             .setHeading();
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Linter mode')
             .setDesc('Choose which rule sets are active.')
             .addDropdown((dropdown) =>
@@ -83,7 +285,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Lint on save')
             .setDesc('Automatically run the prose linter when the document is saved.')
             .addToggle((toggle) =>
@@ -95,7 +297,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Long sentences')
             .setDesc('Flag sentences exceeding the word limit below.')
             .addToggle((toggle) =>
@@ -107,7 +309,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Max words per sentence')
             .setDesc('Sentences longer than this many words will be flagged.')
             .addText((text) =>
@@ -125,7 +327,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Passive voice')
             .setDesc('Flag instances of passive voice. Disabled by default — it is often a valid stylistic choice in fiction.')
             .addToggle((toggle) =>
@@ -137,7 +339,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Adverbs')
             .setDesc('Flag adverbs (e.g. Quickly, slowly, very). Enabled by default — a common teaching tool for new writers.')
             .addToggle((toggle) =>
@@ -149,7 +351,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Qualifiers')
             .setDesc('Flag weak qualifiers (very, really, quite, etc.).')
             .addToggle((toggle) =>
@@ -161,7 +363,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Repeated words')
             .setDesc('Flag words repeated 3+ times in a single line.')
             .addToggle((toggle) =>
@@ -173,7 +375,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Min word length for repeats')
             .setDesc('Words shorter than this are ignored by the repeated-words rule.')
             .addText((text) =>
@@ -191,7 +393,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Echoes')
             .setDesc('Flag sentences in a paragraph that start with the same two words.')
             .addToggle((toggle) =>
@@ -203,7 +405,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Telling vs showing')
             .setDesc('Flag emotional tells (e.g. He felt angry) that could be shown instead.')
             .addToggle((toggle) =>
@@ -215,7 +417,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Dialogue tags')
             .setDesc('Flag overused or repetitive dialogue tags.')
             .addToggle((toggle) =>
@@ -227,7 +429,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Complex words')
             .setDesc('Flag words with many syllables that may be hard to read.')
             .addToggle((toggle) =>
@@ -239,7 +441,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Max syllables per word')
             .setDesc('Words with at least this many syllables are flagged by the complex-words rule.')
             .addText((text) =>
@@ -257,11 +459,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('AI detection')
             .setHeading();
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('AI clichés')
             .setDesc('Flag overused AI words (tapestry, testament, delve, vibrant, realm, etc.).')
             .addToggle((toggle) =>
@@ -273,7 +475,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Em dashes')
             .setDesc('Flag em dashes (—). Common AI overuse — consider commas, colons, or sentence breaks.')
             .addToggle((toggle) =>
@@ -285,7 +487,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Negation patterns')
             .setDesc('Flag "it\'s not X, it\'s y" constructions. State what things are directly.')
             .addToggle((toggle) =>
@@ -297,7 +499,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Filler adverbs')
             .setDesc('Flag strategy adverbs common in AI prose (quietly, deliberately, gently, etc.).')
             .addToggle((toggle) =>
@@ -309,7 +511,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Hedging language')
             .setDesc('Flag hedging words (might, could, perhaps, maybe) that weaken prose.')
             .addToggle((toggle) =>
@@ -321,7 +523,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Wrap-up phrases')
             .setDesc('Flag concluding phrases (in conclusion, to summarize, ultimately, etc.).')
             .addToggle((toggle) =>
@@ -333,17 +535,502 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }),
             );
 
-        new Setting(containerEl)
+        new Setting(content)
             .setName('Restore defaults')
             .setDesc('Reset all linter settings to their default values.')
             .addButton((button) =>
                 button
                     .setButtonText('Restore defaults')
                     .onClick(async () => {
-                        this.plugin.settings = { ...DEFAULT_SETTINGS };
+                        // Only reset linter-related fields, not AI provider settings
+                        this.plugin.settings.linterMode = DEFAULT_SETTINGS.linterMode;
+                        this.plugin.settings.lintOnSave = DEFAULT_SETTINGS.lintOnSave;
+                        this.plugin.settings.enableLongSentences = DEFAULT_SETTINGS.enableLongSentences;
+                        this.plugin.settings.maxSentenceWords = DEFAULT_SETTINGS.maxSentenceWords;
+                        this.plugin.settings.enablePassiveVoice = DEFAULT_SETTINGS.enablePassiveVoice;
+                        this.plugin.settings.enableAdverbCheck = DEFAULT_SETTINGS.enableAdverbCheck;
+                        this.plugin.settings.enableQualifierCheck = DEFAULT_SETTINGS.enableQualifierCheck;
+                        this.plugin.settings.enableRepeatedWords = DEFAULT_SETTINGS.enableRepeatedWords;
+                        this.plugin.settings.minRepeatedWordLength = DEFAULT_SETTINGS.minRepeatedWordLength;
+                        this.plugin.settings.enableEchoes = DEFAULT_SETTINGS.enableEchoes;
+                        this.plugin.settings.enableTellingVsShowing = DEFAULT_SETTINGS.enableTellingVsShowing;
+                        this.plugin.settings.enableDialogueTags = DEFAULT_SETTINGS.enableDialogueTags;
+                        this.plugin.settings.enableComplexWords = DEFAULT_SETTINGS.enableComplexWords;
+                        this.plugin.settings.maxSyllablesPerWord = DEFAULT_SETTINGS.maxSyllablesPerWord;
+                        this.plugin.settings.enableAiCliches = DEFAULT_SETTINGS.enableAiCliches;
+                        this.plugin.settings.enableAiEmDashes = DEFAULT_SETTINGS.enableAiEmDashes;
+                        this.plugin.settings.enableAiNegation = DEFAULT_SETTINGS.enableAiNegation;
+                        this.plugin.settings.enableAiFillerAdverbs = DEFAULT_SETTINGS.enableAiFillerAdverbs;
+                        this.plugin.settings.enableAiHedging = DEFAULT_SETTINGS.enableAiHedging;
+                        this.plugin.settings.enableAiWrapUps = DEFAULT_SETTINGS.enableAiWrapUps;
                         await this.plugin.saveSettings();
                         this.display();
                     }),
             );
+    }
+
+    /** Render the AI providers configuration section. */
+    private renderAiProvidersTab(containerEl: HTMLElement): void {
+        const content = containerEl.createEl('div', { cls: 'quill-settings-content-ai' });
+
+        new Setting(content)
+            .setName('AI providers')
+            .setHeading();
+
+        // Render each provider card
+        const providers = this.plugin.settings.aiProviders;
+        for (const [pIdx, provider] of providers.entries()) {
+            this.renderProviderCard(content, provider, pIdx);
+        }
+
+        // Add provider button
+        new Setting(content)
+            .setName('Add provider')
+            .setDesc('Add a new AI provider endpoint.')
+            .addButton((button) =>
+                button
+                    .setButtonText('Add provider')
+                    .onClick(() => {
+                        new AddProviderModal(this.app, (type, defaultEndpoint) => {
+                            this.addProvider(type, defaultEndpoint);
+                        }).open();
+                    }),
+            );
+
+        // Default model dropdowns
+        this.renderDefaultModelSettings(content);
+    }
+
+    /** Render a single provider card. */
+    private renderProviderCard(
+        containerEl: HTMLElement,
+        provider: ProviderConfig,
+        index: number,
+    ): void {
+        const card = containerEl.createEl('div', { cls: 'quill-provider-card' });
+
+        // Provider heading row
+        const headingRow = card.createEl('div', { cls: 'quill-provider-heading' });
+
+        new Setting(headingRow)
+            .setName(provider.name || 'Unnamed provider')
+            .addButton((button) =>
+                button
+                    .setButtonText('Remove')
+                    .onClick(async () => {
+                        this.plugin.settings.aiProviders.splice(index, 1);
+                        this.validateDefaultProviders();
+                        await this.plugin.saveSettings();
+                        this.display();
+                    }),
+            );
+
+        // Name
+        new Setting(card)
+            .setName('Name')
+            .setDesc('A display name for this provider.')
+            .addText((text) =>
+                text
+                    .setValue(provider.name)
+                    .onChange(async (value) => {
+                        provider.name = value;
+                        await this.plugin.saveSettings();
+                    }),
+            );
+
+        // Type
+        new Setting(card)
+            .setName('Type')
+            .setDesc('The API format this provider uses.')
+            .addDropdown((dropdown) =>
+                dropdown
+                    .addOption('openai-compatible', 'OpenAI-compatible')
+                    .addOption('ollama', 'Ollama')
+                    .setValue(provider.type)
+                    .onChange(async (value) => {
+                        const newType = value as ProviderType;
+                        provider.type = newType;
+                        if (newType === 'ollama') {
+                            provider.endpoint = 'http://localhost:11434';
+                            provider.apiKey = '';
+                        }
+                        await this.plugin.saveSettings();
+                        this.display();
+                    }),
+            );
+
+        // Endpoint URL
+        new Setting(card)
+            .setName('Endpoint URL')
+            .setDesc('The full base URL of the API endpoint. Used as-is with no path manipulation.')
+            .addText((text) =>
+                text
+                    .setValue(provider.endpoint)
+                    // eslint-disable-next-line obsidianmd/ui/sentence-case
+                    .setPlaceholder('http://localhost:1234/v1')
+                    .onChange(async (value) => {
+                        provider.endpoint = value;
+                        await this.plugin.saveSettings();
+                    }),
+            );
+
+        // API Key — only show for OpenAI-compatible
+        if (provider.type === 'openai-compatible') {
+            new Setting(card)
+                .setName('API key')
+                .setDesc('Optional. Leave blank for local providers.')
+                .addText((text) =>
+                    text
+                        .setValue(provider.apiKey)
+                        // eslint-disable-next-line obsidianmd/ui/sentence-case
+                        .setPlaceholder('sk-...')
+                        .onChange(async (value) => {
+                            provider.apiKey = value;
+                            await this.plugin.saveSettings();
+                        }),
+                )
+                .then((setting) => {
+                    // Make it a password field
+                    const input = setting.controlEl.querySelector('input');
+                    if (input) input.type = 'password';
+                });
+        }
+
+        // Context window
+        new Setting(card)
+            .setName('Context window')
+            .setDesc('Maximum context tokens for models on this endpoint.')
+            .addDropdown((dropdown) => {
+                for (const opt of POWER_OF_TWO_OPTIONS) {
+                    dropdown.addOption(String(opt), String(opt));
+                }
+                dropdown.addOption('custom', 'Custom...');
+                const current = String(provider.maxContextTokens);
+                if (POWER_OF_TWO_OPTIONS.includes(provider.maxContextTokens)) {
+                    dropdown.setValue(current);
+                } else {
+                    dropdown.setValue('custom');
+                    card.createEl('div', {
+                        cls: 'quill-provider-setting-extra',
+                        text: `Custom value: ${current}`,
+                    });
+                }
+                dropdown.onChange(async (value) => {
+                    if (value === 'custom') {
+                        new InputModal(
+                            this.app,
+                            'Enter context token count',
+                            'e.g. 24576',
+                            (customVal) => {
+                                const n = parseInt(customVal, 10);
+                                if (!isNaN(n) && n > 0) {
+                                    provider.maxContextTokens = n;
+                                    void this.plugin.saveSettings().then(() => this.display());
+                                } else {
+                                    new Notice('Value must be a positive number');
+                                }
+                            },
+                        ).open();
+                        return;
+                    }
+                    provider.maxContextTokens = parseInt(value, 10);
+                    await this.plugin.saveSettings();
+                });
+            });
+
+        // Max output tokens
+        new Setting(card)
+            .setName('Max output tokens')
+            .setDesc('Maximum tokens per response for all models on this endpoint.')
+            .addText((text) =>
+                text
+                    .setValue(String(provider.maxOutputTokens))
+                    .onChange(async (value) => {
+                        const n = parseInt(value, 10);
+                        if (!isNaN(n) && n >= 1) {
+                            provider.maxOutputTokens = n;
+                            await this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(provider.maxOutputTokens));
+                            new Notice('Value must be a number ≥ 1');
+                        }
+                    }),
+            );
+
+        // Models sub-list
+        this.renderModelList(card, provider);
+
+        // Test buttons
+        this.renderTestButtons(card, provider);
+    }
+
+    /** Render the model list for a provider. */
+    private renderModelList(containerEl: HTMLElement, provider: ProviderConfig): void {
+        containerEl.createEl('div', {
+            cls: 'quill-provider-models-heading',
+            text: 'Models',
+        });
+
+        for (const [mIdx, model] of provider.models.entries()) {
+            const modelCard = containerEl.createEl('div', { cls: 'quill-provider-model-card' });
+
+            new Setting(modelCard)
+                .setName(`Model ${mIdx + 1}`)
+                .addDropdown((dropdown) =>
+                    dropdown
+                        .addOption('chat', 'Chat')
+                        .addOption('embed', 'Embed')
+                        .addOption('both', 'Both')
+                        .setValue(model.role)
+                        .onChange(async (value) => {
+                            model.role = value as 'chat' | 'embed' | 'both';
+                            this.validateDefaultProviders();
+                            await this.plugin.saveSettings();
+                        }),
+                );
+
+            new Setting(modelCard)
+                .setName('Model ID')
+                .setDesc('The model identifier sent to the API.')
+                .addText((text) =>
+                    text
+                        .setValue(model.model)
+                        // eslint-disable-next-line obsidianmd/ui/sentence-case
+                        .setPlaceholder('llama-3.3-70b')
+                        .onChange(async (value) => {
+                            model.model = value;
+                            await this.plugin.saveSettings();
+                        }),
+                )
+                .addButton((button) =>
+                    button
+                        .setButtonText('Fetch models')
+                        .setIcon('search')
+                        .onClick(async () => {
+                            await this.fetchAndSuggestModels(provider, model);
+                        }),
+                );
+
+            // Remove model button
+            new Setting(modelCard)
+                .addButton((button) =>
+                    button
+                        .setButtonText('Remove model')
+                        .onClick(async () => {
+                            const idx = provider.models.indexOf(model);
+                            if (idx !== -1) {
+                                provider.models.splice(idx, 1);
+                                this.validateDefaultProviders();
+                                await this.plugin.saveSettings();
+                                this.display();
+                            }
+                        }),
+                );
+        }
+
+        // Add model button
+        new Setting(containerEl)
+            .addButton((button) =>
+                button
+                    .setButtonText('Add model')
+                    .onClick(async () => {
+                        const role = provider.models.length === 0 ? 'chat' : 'embed';
+                        const newModelId = generateModelId(`model-${provider.models.length + 1}`, role);
+                        provider.models.push({
+                            id: newModelId,
+                            role,
+                            model: '',
+                        });
+                        await this.plugin.saveSettings();
+                        this.display();
+                    }),
+            );
+    }
+
+    /** Render test connection and test embeddings buttons. */
+    private renderTestButtons(containerEl: HTMLElement, provider: ProviderConfig): void {
+        const testRow = containerEl.createEl('div', { cls: 'quill-provider-test-row' });
+
+        new Setting(testRow)
+            .addButton((button) =>
+                button
+                    .setButtonText('Test connection')
+                    .onClick(async () => {
+                        button.setDisabled(true);
+                        button.setButtonText('Testing...');
+                        try {
+                            const ai = createProvider(provider);
+                            const result = await ai.testConnection();
+                            if (result.ok) {
+                                new Notice(`Connected to "${provider.name}"`);
+                            } else {
+                                new Notice(`Connection failed: ${result.error}`);
+                            }
+                        } catch (err: unknown) {
+                            const msg = err instanceof Error ? err.message : String(err);
+                            new Notice(`Connection test error: ${msg}`);
+                        } finally {
+                            button.setDisabled(false);
+                            button.setButtonText('Test connection');
+                        }
+                    }),
+            )
+            .addButton((button) =>
+                button
+                    .setButtonText('Test embeddings')
+                    .onClick(async () => {
+                        button.setDisabled(true);
+                        button.setButtonText('Testing...');
+                        try {
+                            const ai = createProvider(provider);
+                            const result = await ai.testEmbeddings();
+                            if (result.ok) {
+                                new Notice(`Embeddings endpoint works for "${provider.name}"`);
+                            } else {
+                                new Notice(`Embeddings test failed: ${result.error}`);
+                            }
+                        } catch (err: unknown) {
+                            const msg = err instanceof Error ? err.message : String(err);
+                            new Notice(`Embeddings test error: ${msg}`);
+                        } finally {
+                            button.setDisabled(false);
+                            button.setButtonText('Test embeddings');
+                        }
+                    }),
+            );
+    }
+
+    /** Render the default chat/embed model dropdowns. */
+    private renderDefaultModelSettings(containerEl: HTMLElement): void {
+        // Collect all chat-capable and embed-capable models
+        const chatModels: { key: string; name: string }[] = [];
+        const embedModels: { key: string; name: string }[] = [];
+
+        for (const provider of this.plugin.settings.aiProviders) {
+            for (const model of provider.models) {
+                const key = `${provider.id}/${model.id}`;
+                const name = `${provider.name} — ${model.model}`;
+                if (model.role === 'chat' || model.role === 'both') {
+                    chatModels.push({ key, name });
+                }
+                if (model.role === 'embed' || model.role === 'both') {
+                    embedModels.push({ key, name });
+                }
+            }
+        }
+
+        new Setting(containerEl)
+            .setName('Default models')
+            .setHeading();
+
+        new Setting(containerEl)
+            .setName('Default chat model')
+            .setDesc('The default model used for chat completions.')
+            .addDropdown((dropdown) => {
+                if (chatModels.length === 0) {
+                    dropdown.addOption('', 'No chat models configured');
+                } else {
+                    for (const m of chatModels) {
+                        dropdown.addOption(m.key, m.name);
+                    }
+                }
+                dropdown.setValue(
+                    chatModels.some((m) => m.key === this.plugin.settings.aiDefaultChatProvider)
+                        ? this.plugin.settings.aiDefaultChatProvider
+                        : '',
+                );
+                dropdown.onChange(async (value) => {
+                    this.plugin.settings.aiDefaultChatProvider = value;
+                    await this.plugin.saveSettings();
+                });
+            });
+
+        new Setting(containerEl)
+            .setName('Default embed model')
+            .setDesc('The default model used for embeddings.')
+            .addDropdown((dropdown) => {
+                if (embedModels.length === 0) {
+                    dropdown.addOption('', 'No embed models configured');
+                } else {
+                    for (const m of embedModels) {
+                        dropdown.addOption(m.key, m.name);
+                    }
+                }
+                dropdown.setValue(
+                    embedModels.some((m) => m.key === this.plugin.settings.aiDefaultEmbedProvider)
+                        ? this.plugin.settings.aiDefaultEmbedProvider
+                        : '',
+                );
+                dropdown.onChange(async (value) => {
+                    this.plugin.settings.aiDefaultEmbedProvider = value;
+                    await this.plugin.saveSettings();
+                });
+            });
+    }
+
+    /** Fetch models from the provider endpoint and show a suggester. */
+    private async fetchAndSuggestModels(provider: ProviderConfig, modelConfig: { model: string }): Promise<void> {
+        try {
+            const ai = createProvider(provider);
+            const models = await ai.listModels();
+
+            if (models.length === 0) {
+                new Notice(
+                    'Could not fetch models from this endpoint. ' +
+                    'Make sure your endpoint URL includes the full base path ' +
+                    '(e.g. http://localhost:1234/v1). You can still enter the model ID manually.',
+                );
+                return;
+            }
+
+            new ModelFetchModal(this.app, models, (modelId) => {
+                modelConfig.model = modelId;
+                void this.plugin.saveSettings().then(() => this.display());
+            }).open();
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            new Notice(`Failed to fetch models: ${msg}`);
+        }
+    }
+
+    /**
+     * Ensure aiDefaultChatProvider and aiDefaultEmbedProvider still reference
+     * valid provider+model keys. Clears any key whose provider or model has
+     * been removed. Call after mutating aiProviders and before saveSettings().
+     */
+    private validateDefaultProviders(): void {
+        const { aiProviders } = this.plugin.settings;
+
+        const isValid = (key: string): boolean => {
+            const parts = key.split('/', 2);
+            if (parts.length !== 2 || !parts[0] || !parts[1]) return false;
+            const provider = aiProviders.find((p) => p.id === parts[0]);
+            if (!provider) return false;
+            return provider.models.some((m) => m.id === parts[1]);
+        };
+
+        if (this.plugin.settings.aiDefaultChatProvider && !isValid(this.plugin.settings.aiDefaultChatProvider)) {
+            this.plugin.settings.aiDefaultChatProvider = '';
+        }
+        if (this.plugin.settings.aiDefaultEmbedProvider && !isValid(this.plugin.settings.aiDefaultEmbedProvider)) {
+            this.plugin.settings.aiDefaultEmbedProvider = '';
+        }
+    }
+
+    /** Add a new provider with the given type and default endpoint. */
+    private addProvider(type: ProviderType, defaultEndpoint: string): void {
+        const name = type === 'ollama' ? 'Ollama local' : 'New OpenAI-compatible';
+        const newProvider: ProviderConfig = {
+            id: generateProviderId(name),
+            name,
+            type,
+            endpoint: defaultEndpoint,
+            apiKey: '',
+            models: [],
+            maxContextTokens: 32768,
+            maxOutputTokens: 4096,
+        };
+        this.plugin.settings.aiProviders.push(newProvider);
+        void this.plugin.saveSettings().then(() => this.display());
     }
 }
