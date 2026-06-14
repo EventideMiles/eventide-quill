@@ -14,6 +14,8 @@ import {
 import { QUILL_VIEW_TYPE, QuillSidebarView } from './ui/quill-sidebar';
 import { LintResult, FIXABLE_RULES } from './core/linter/types';
 import { FIXES } from './core/linter/fixes';
+import { AiProvider } from './ai/provider';
+import { createProvider, parseProviderKey } from './ai/provider-registry';
 
 export default class EventideQuillPlugin extends Plugin {
     settings!: EventideQuillSettings;
@@ -21,10 +23,12 @@ export default class EventideQuillPlugin extends Plugin {
     private lintActive = false;
     private lintActiveFile: string | null = null;
     private currentResults: LintResult[] = [];
+    private providerMap = new Map<string, AiProvider>();
 
     /** Plugin entry point: register commands, views, extensions, and event handlers. */
     async onload() {
         await this.loadSettings();
+        this.rebuildProviders();
 
         this.registerEditorExtension(
             getLintExtension(
@@ -251,6 +255,7 @@ export default class EventideQuillPlugin extends Plugin {
     /** Persist current settings and re-lint the active document if the linter is active. */
     async saveSettings() {
         await this.saveData(this.settings);
+        this.rebuildProviders();
         if (!this.lintActive) return;
 
         const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -268,6 +273,42 @@ export default class EventideQuillPlugin extends Plugin {
         });
 
         this.lintPanel?.setResults(results);
+    }
+
+    /** Rebuild the provider map from current settings. Call after loading or saving settings. */
+    private rebuildProviders(): void {
+        this.providerMap.clear();
+        for (const config of this.settings.aiProviders) {
+            try {
+                const provider = createProvider(config);
+                this.providerMap.set(config.id, provider);
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.warn(`Failed to create provider "${config.id}": ${msg}`);
+            }
+        }
+    }
+
+    /**
+     * Get an AI provider by its config ID.
+     * Returns null if the provider is not found or failed to initialize.
+     */
+    getProvider(providerId: string): AiProvider | null {
+        return this.providerMap.get(providerId) ?? null;
+    }
+
+    /** Get the default chat provider based on settings. Returns null if not configured. */
+    getDefaultChatProvider(): AiProvider | null {
+        const key = parseProviderKey(this.settings.aiDefaultChatProvider);
+        if (!key) return null;
+        return this.getProvider(key.providerId);
+    }
+
+    /** Get the default embed provider based on settings. Returns null if not configured. */
+    getDefaultEmbedProvider(): AiProvider | null {
+        const key = parseProviderKey(this.settings.aiDefaultEmbedProvider);
+        if (!key) return null;
+        return this.getProvider(key.providerId);
     }
 
     /** Open or reveal the Quill sidebar panel. */

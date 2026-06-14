@@ -261,3 +261,85 @@
     border-radius: 2px;
     padding: 0 1px;
 }
+
+/* Settings tab bar */
+.quill-settings-tab-bar {
+    display: flex;
+    border-bottom: 1px solid var(--background-modifier-border);
+    margin-bottom: 16px;
+    flex-shrink: 0;
+}
+
+.quill-settings-tab {
+    flex: 1;
+    padding: 10px 16px;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--font-ui-medium);
+    font-family: var(--font-interface);
+    text-align: center;
+    transition: color 0.15s, border-color 0.15s;
+    border-bottom: 2px solid transparent;
+}
+
+.quill-settings-tab:hover {
+    color: var(--text-normal);
+}
+
+.quill-settings-tab-active {
+    color: var(--text-accent);
+    border-bottom-color: var(--text-accent);
+}
+
+/* Provider cards */
+.quill-provider-card {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 16px;
+}
+
+.quill-provider-heading {
+    border-bottom: 1px solid var(--background-modifier-border);
+    margin-bottom: 8px;
+}
+
+.quill-provider-models-heading {
+    font-weight: 600;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    margin: 12px 0 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.quill-provider-model-card {
+    border-left: 2px solid var(--background-modifier-border);
+    padding-left: 12px;
+    margin-bottom: 8px;
+}
+
+.quill-provider-test-row {
+    border-top: 1px solid var(--background-modifier-border);
+    margin-top: 12px;
+    padding-top: 8px;
+}
+
+.quill-provider-setting-extra {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+.quill-input-modal-input {
+    width: 100%;
+    margin-bottom: 12px;
+}
+
+.quill-input-modal-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
