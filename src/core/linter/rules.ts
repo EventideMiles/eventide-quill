@@ -48,6 +48,7 @@ interface Position {
     column: number;
 }
 
+/** Convert a character offset into a 1-based line and 0-based column position. */
 function posAtOffset(text: string, offset: number): Position {
     const before = text.slice(0, offset);
     const lines = before.split('\n');
@@ -58,6 +59,7 @@ function posAtOffset(text: string, offset: number): Position {
     };
 }
 
+/** Return true if the character at `offset` lies between double quotes. */
 function isInsideQuotes(text: string, offset: number): boolean {
     let inQuotes = false;
     for (let i = 0; i < offset; i++) {
@@ -66,6 +68,7 @@ function isInsideQuotes(text: string, offset: number): boolean {
     return inQuotes;
 }
 
+/** Return true if a dialogue tag immediately precedes the character at `offset`. */
 function isAfterDialogueTag(text: string, offset: number): boolean {
     const before = text.slice(Math.max(0, offset - 16), offset);
     return PRECEDING_DIALOGUE_TAG.test(before);
@@ -82,10 +85,12 @@ interface SentenceRange {
 const SENTENCE_END = /[.!?:;](?=[\s"'\u201c\u201d\u2018\u2019]|$)/g;
 const QUOTE_AFTER = /["'\u201c\u201d\u2018\u2019]/;
 
+/** Check whether `text` ends with a known abbreviation (Dr., Mr., etc.). */
 function isAbbreviation(text: string): boolean {
     return ABBREVIATIONS.test(text);
 }
 
+/** Split `text` into sentence ranges with 1-based line/col positions. */
 function splitSentences(text: string): SentenceRange[] {
     const ranges: SentenceRange[] = [];
     let lastIndex = 0;
@@ -139,6 +144,7 @@ function splitSentences(text: string): SentenceRange[] {
     return ranges;
 }
 
+/** Flag sentences exceeding `maxWords` in length. */
 export function checkLongSentences(text: string, maxWords: number = 40): LintResult[] {
     const results: LintResult[] = [];
     const sentences = splitSentences(text);
@@ -162,6 +168,7 @@ export function checkLongSentences(text: string, maxWords: number = 40): LintRes
 
 const PASSIVE_PATTERN = /\b(am|is|are|was|were|be|been|being)\s+(\w+ed|(\w+en)|(\w+t))\b/gi;
 
+/** Flag passive-voice constructions (be-verb + past participle). */
 export function checkPassiveVoice(text: string): LintResult[] {
     const results: LintResult[] = [];
     let match: RegExpExecArray | null;
@@ -189,6 +196,7 @@ export function checkPassiveVoice(text: string): LintResult[] {
 
 const ADVERB_PATTERN = /\b(\w+ly)\b(?!-)/gi;
 
+/** Flag -ly adverbs longer than four characters, excluding common non-adverb forms. */
 export function checkAdverbs(text: string): LintResult[] {
     const results: LintResult[] = [];
     let match: RegExpExecArray | null;
@@ -215,6 +223,7 @@ export function checkAdverbs(text: string): LintResult[] {
     return results;
 }
 
+/** Flag weak qualifiers such as very, really, and quite. */
 export function checkQualifiers(text: string): LintResult[] {
     const results: LintResult[] = [];
     let match: RegExpExecArray | null;
@@ -235,6 +244,7 @@ export function checkQualifiers(text: string): LintResult[] {
     return results;
 }
 
+/** Flag words appearing three or more times within a single sentence. */
 export function checkRepeatedWords(text: string, minLength: number = 4): LintResult[] {
     const results: LintResult[] = [];
     const sentences = splitSentences(text);
@@ -274,6 +284,7 @@ export function checkRepeatedWords(text: string, minLength: number = 4): LintRes
 
 const ECHO_THRESHOLD = 3;
 
+/** Flag paragraphs where multiple sentences start with the same two words. */
 export function checkEchoes(text: string): LintResult[] {
     const results: LintResult[] = [];
     const PARA_BREAK = /\n\n+/g;
@@ -365,6 +376,7 @@ export function checkEchoes(text: string): LintResult[] {
 
 const TELLING_PATTERN = /\b(he|she|they|it|i|we)\s+(was|were|felt|feels|seemed|seems|looked|looks|appeared|appears|became|becomes|grew|grows)\s+(\w+)\b/gi;
 
+/** Flag direct emotion statements (telling) that could be shown through action. */
 export function checkTellingVsShowing(text: string): LintResult[] {
     const results: LintResult[] = [];
     let match: RegExpExecArray | null;
@@ -388,6 +400,7 @@ export function checkTellingVsShowing(text: string): LintResult[] {
     return results;
 }
 
+/** Flag non-said/asked dialogue tags used more than once in the text. */
 export function checkDialogueTags(text: string): LintResult[] {
     const results: LintResult[] = [];
     const tagCount = new Map<string, number[]>();
@@ -421,6 +434,7 @@ export function checkDialogueTags(text: string): LintResult[] {
     return results;
 }
 
+/** Estimate the number of syllables in `word` using vowel-group heuristics. */
 function countSyllables(word: string): number {
     const lower = word.toLowerCase();
     if (lower.length <= 3) return 1;
@@ -440,6 +454,7 @@ function countSyllables(word: string): number {
     return count;
 }
 
+/** Flag long words whose syllable count meets or exceeds `maxSyllables`. */
 export function checkComplexWords(text: string, maxSyllables: number = 5): LintResult[] {
     const results: LintResult[] = [];
     const words = text.match(/\b\w+\b/g);
@@ -470,6 +485,7 @@ export function checkComplexWords(text: string, maxSyllables: number = 5): LintR
     return results;
 }
 
+/** Flag overused AI-generated cliché phrases (tapestry, delve, realm, etc.). */
 export function checkAiCliches(text: string): LintResult[] {
     const results: LintResult[] = [];
     let match: RegExpExecArray | null;
@@ -493,6 +509,7 @@ export function checkAiCliches(text: string): LintResult[] {
 const NEGATION_PATTERN = /\bit'?s?\s+not\s+[^,.;!?]{1,60}\s*,?\s*(?:but|it'?s?)\s+/gi;
 const NEGATION_BECAUSE_PATTERN = /\bnot\s+because\s+[^,.;!?]{1,60}\s*,?\s*but\s+because\s+/gi;
 
+/** Flag AI-style negation patterns ("It's not X, it's Y"). */
 export function checkAiNegation(text: string): LintResult[] {
     const results: LintResult[] = [];
     let match: RegExpExecArray | null;
@@ -526,6 +543,7 @@ export function checkAiNegation(text: string): LintResult[] {
     return results;
 }
 
+/** Flag filler adverbs common in AI prose (quietly, gently, slowly, etc.). */
 export function checkAiFillerAdverbs(text: string): LintResult[] {
     const results: LintResult[] = [];
     let match: RegExpExecArray | null;
@@ -547,6 +565,7 @@ export function checkAiFillerAdverbs(text: string): LintResult[] {
     return results;
 }
 
+/** Flag hedging words (perhaps, maybe, possibly) that weaken certainty. */
 export function checkAiHedging(text: string): LintResult[] {
     const results: LintResult[] = [];
     let match: RegExpExecArray | null;
@@ -568,6 +587,7 @@ export function checkAiHedging(text: string): LintResult[] {
     return results;
 }
 
+/** Flag concluding wrap-up phrases (in conclusion, ultimately, etc.). */
 export function checkAiWrapUps(text: string): LintResult[] {
     const results: LintResult[] = [];
     let match: RegExpExecArray | null;
@@ -590,6 +610,7 @@ export function checkAiWrapUps(text: string): LintResult[] {
 
 const EM_DASH = /\u2014|\u2015|—/g;
 
+/** Flag em dashes, which AI prose tends to overuse. */
 export function checkAiEmDashes(text: string): LintResult[] {
     const results: LintResult[] = [];
     let match: RegExpExecArray | null;

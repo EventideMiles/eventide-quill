@@ -52,6 +52,7 @@ class LintDecorations {
     private debounceTimer: number | null = null;
     private active = false;
 
+    /** Create a LintDecorations plugin instance bound to the given lint function. */
     constructor(
         view: EditorView,
         lintFn: (text: string) => LintResult[],
@@ -61,6 +62,7 @@ class LintDecorations {
         this.onResults = onResults ?? null;
     }
 
+    /** Process ViewUpdates: apply state effects and re-lint on document changes. */
     update(update: ViewUpdate) {
         let decorationsUpdated = false;
 
@@ -87,12 +89,14 @@ class LintDecorations {
         }
     }
 
+    /** Clean up the debounce timer when the view is destroyed. */
     destroy() {
         if (this.debounceTimer !== null) {
             window.clearTimeout(this.debounceTimer);
         }
     }
 
+    /** Schedule a debounced lint run after document changes. */
     private scheduleLint(view: EditorView) {
         if (this.debounceTimer !== null) {
             window.clearTimeout(this.debounceTimer);
@@ -108,6 +112,7 @@ class LintDecorations {
         }, DEBOUNCE_MS);
     }
 
+    /** Build a DecorationSet from lint results, creating wavy underlines for each issue. */
     private buildFromResults(results: LintResult[], view: EditorView): DecorationSet {
         const ranges: { from: number; to: number; value: Decoration }[] = [];
 
@@ -133,6 +138,7 @@ class LintDecorations {
     }
 }
 
+/** Apply an auto-fix for a lint result to the editor document. */
 function applyFix(view: EditorView, result: LintResult): void {
     if (!FIXABLE_RULES.has(result.rule)) return;
     const fix = FIXES[result.rule];
@@ -151,6 +157,7 @@ function applyFix(view: EditorView, result: LintResult): void {
     });
 }
 
+/** Find the lint result whose range includes `pos`, or null. */
 function resultAtPos(view: EditorView, pos: number): { pos: number; result: LintResult } | null {
     const results = view.state.field(lintResultsField);
     for (const r of results) {
@@ -163,6 +170,7 @@ function resultAtPos(view: EditorView, pos: number): { pos: number; result: Lint
     return null;
 }
 
+/** Return a CodeMirror extension bundle that wires up lint decorations, tooltips, and click handling. */
 export function getLintExtension(
     lintFn: (text: string) => LintResult[],
     onResults?: (results: LintResult[]) => void,

@@ -22,6 +22,7 @@ export default class EventideQuillPlugin extends Plugin {
     private lintActiveFile: string | null = null;
     private currentResults: LintResult[] = [];
 
+    /** Plugin entry point: register commands, views, extensions, and event handlers. */
     async onload() {
         await this.loadSettings();
 
@@ -153,12 +154,15 @@ export default class EventideQuillPlugin extends Plugin {
         this.addSettingTab(new EventideQuillSettingTab(this.app, this));
     }
 
+    /** Clean up resources when the plugin is unloaded. */
     onunload() {}
 
+    /** Retrieve the CodeMirror EditorView from an Obsidian Editor instance. */
     private getCmView(editor: Editor): EditorView | undefined {
         return (editor as unknown as { cm: EditorView }).cm;
     }
 
+    /** Toggle the prose linter on or off for the active editor, dispatching state to CodeMirror. */
     private toggleLint(editor: Editor) {
         const cm = this.getCmView(editor);
         if (!cm) return;
@@ -207,6 +211,7 @@ export default class EventideQuillPlugin extends Plugin {
         );
     }
 
+    /** Run the linter against `text` using the current settings and mode. */
     private runLint(text: string): LintResult[] {
         const mode = this.settings.linterMode;
         const prose = mode === 'all' || mode === 'prose';
@@ -234,6 +239,7 @@ export default class EventideQuillPlugin extends Plugin {
         });
     }
 
+    /** Load persisted settings, merging with defaults. */
     async loadSettings() {
         this.settings = Object.assign(
             {},
@@ -242,6 +248,7 @@ export default class EventideQuillPlugin extends Plugin {
         );
     }
 
+    /** Persist current settings and re-lint the active document if the linter is active. */
     async saveSettings() {
         await this.saveData(this.settings);
         if (!this.lintActive) return;
@@ -263,6 +270,7 @@ export default class EventideQuillPlugin extends Plugin {
         this.lintPanel?.setResults(results);
     }
 
+    /** Open or reveal the Quill sidebar panel. */
     private async openLintPanel() {
         const { workspace } = this.app;
 
@@ -281,6 +289,7 @@ export default class EventideQuillPlugin extends Plugin {
         this.lintPanel = leaf.view as QuillSidebarView;
     }
 
+    /** Fire-and-forget wrapper around `openLintPanel`. */
     private openLintPanelNoAsync() {
         void this.openLintPanel();
     }

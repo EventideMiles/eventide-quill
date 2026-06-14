@@ -16,22 +16,27 @@ export class QuillSidebarView extends ItemView {
     private content!: HTMLElement;
     private renderEvents: Component | null = null;
 
+    /** Create the sidebar view for the given workspace leaf. */
     constructor(leaf: WorkspaceLeaf) {
         super(leaf);
     }
 
+    /** Return the unique view type identifier. */
     getViewType(): string {
         return QUILL_VIEW_TYPE;
     }
 
+    /** Return the human-readable view title. */
     getDisplayText(): string {
         return 'Quill';
     }
 
+    /** Return the icon name used in the sidebar tab. */
     getIcon(): string {
         return 'feather';
     }
 
+    /** Initialize the sidebar DOM structure on first open. */
     async onOpen() {
         this.container = this.contentEl.createDiv({ cls: 'quill-sidebar' });
         this.tabBar = this.container.createDiv({ cls: 'quill-sidebar-tab-bar' });
@@ -39,6 +44,7 @@ export class QuillSidebarView extends ItemView {
         this.render();
     }
 
+    /** Update the stored results and re-render if the results tab is active. */
     setResults(results: LintResult[]) {
         this.results = results;
         if (this.activeTab === 'results') {
@@ -46,6 +52,7 @@ export class QuillSidebarView extends ItemView {
         }
     }
 
+    /** Switch to the details tab for the given result and scroll the editor to it. */
     showResultDetail(result: LintResult) {
         this.selectedResult = result;
         this.activeTab = 'details';
@@ -53,10 +60,12 @@ export class QuillSidebarView extends ItemView {
         this.jumpToResult(result);
     }
 
+    /** Return the currently active MarkdownView, or null if none is focused. */
     private getMarkdownView(): MarkdownView | null {
         return this.app.workspace.getActiveViewOfType(MarkdownView);
     }
 
+    /** Scroll the editor cursor to the position described by `result`. */
     private jumpToResult(result: LintResult) {
         const markdownView = this.getMarkdownView();
         if (!markdownView) return;
@@ -69,6 +78,7 @@ export class QuillSidebarView extends ItemView {
         editor.scrollIntoView({ from: { line, ch: col }, to: { line, ch: col } }, true);
     }
 
+    /** Apply the auto-fix associated with `result` to the active editor. */
     private applyFix(result: LintResult) {
         const fix = FIXES[result.rule];
         if (!fix) return;
@@ -90,6 +100,7 @@ export class QuillSidebarView extends ItemView {
         cm.dispatch({ changes: { from, to, insert: replacement } });
     }
 
+    /** Retrieve the source line text and character offset for a lint result. */
     private getContextLine(result: LintResult): { text: string; offsetInLine: number } | null {
         const markdownView = this.getMarkdownView();
         if (!markdownView) return null;
@@ -100,11 +111,13 @@ export class QuillSidebarView extends ItemView {
         return { text: lineText, offsetInLine: result.column };
     }
 
+    /** Switch the active tab and re-render the sidebar. */
     private switchTab(tab: TabId) {
         this.activeTab = tab;
         this.render();
     }
 
+    /** Tear down event listeners and rebuild the sidebar DOM for the current tab. */
     private render() {
         this.renderEvents?.unload();
         this.renderEvents = new Component();
@@ -121,6 +134,7 @@ export class QuillSidebarView extends ItemView {
         }
     }
 
+    /** Render the tab bar with Results and Details buttons. */
     private renderTabBar() {
         const tabs: { id: TabId; label: string }[] = [
             { id: 'results', label: 'Results' },
@@ -136,6 +150,7 @@ export class QuillSidebarView extends ItemView {
         }
     }
 
+    /** Render the list of lint results with severity badges and location info. */
     private renderResultsTab() {
         if (this.results.length === 0) {
             this.content.createEl('p', {
@@ -173,6 +188,7 @@ export class QuillSidebarView extends ItemView {
         }
     }
 
+    /** Render the detail view for the currently selected lint result. */
     private renderDetailsTab() {
         const result = this.selectedResult;
         if (!result) {

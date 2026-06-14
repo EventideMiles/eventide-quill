@@ -52,11 +52,13 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
 export class EventideQuillSettingTab extends PluginSettingTab {
     plugin: EventideQuillPlugin;
 
+    /** Create the settings tab and bind it to the plugin instance. */
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app, plugin);
         this.plugin = plugin;
     }
 
+    /** Build and display the full settings UI, recreating all controls from current values. */
     display(): void {
         const { containerEl } = this;
 

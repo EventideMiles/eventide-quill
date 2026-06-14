@@ -40,10 +40,12 @@ export interface LintOptions {
     enableAiWrapUps?: boolean;
 }
 
+/** Run all enabled lint rules against `text` and return the combined results. */
 export function lint(text: string, options?: LintOptions): LintResult[] {
     const results: LintResult[] = [];
     const opts = options ?? {};
 
+    /** Execute a rule function, catching and logging any errors. */
     const run = (fn: () => LintResult[], name: string) => {
         try {
             results.push(...fn());
