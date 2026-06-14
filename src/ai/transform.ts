@@ -3,7 +3,7 @@ import { EditorView } from '@codemirror/view';
 import type EventideQuillPlugin from '../main';
 import { gatherVaultContext } from '../core/context-engine';
 import { ChatMessage } from './provider';
-import { NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS } from '../types';
+import { getSystemPrompt } from './prompts';
 
 /** Describes a single transformation action available in the editor context menu. */
 export interface TransformAction {
@@ -41,57 +41,8 @@ export const TRANSFORM_ACTIONS: TransformAction[] = [
     { id: 'custom', label: 'Custom instruction', icon: 'message-square' },
 ];
 
-/**
- * Build the shared style-constraints system prompt used for all transformations.
- * Optionally includes vault-derived context (character notes, worldbuilding, etc.).
- *
- * @param vaultContext - Vault-derived context notes (character, worldbuilding, etc.).
- * @param narrativePreset - The selected narrative voice preset identifier.
- * @returns The assembled system prompt string.
- */
-function getSystemPrompt(vaultContext: string, narrativePreset: NarrativeVoicePreset): string {
-    const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === narrativePreset)
-        ?? NARRATIVE_VOICE_PRESETS[0];
-    if (!def) {
-        throw new Error('NARRATIVE_VOICE_PRESETS must not be empty');
-    }
 
-    const perspectiveRules = def.rules.map((r, i) => `${9 + i}. ${r}`).join('\n');
 
-    const parts = [
-        'You are a thoughtful prose editor for a novelist. You rewrite passages of narrative fiction.',
-        'Follow these style rules strictly:',
-        '',
-        '1. No em dashes. Use commas, colons, semicolons, or split the sentence instead.',
-        '2. No negation structures like "it\'s not X, it\'s Y." State what things are directly.',
-        '3. Avoid cliché words: tapestry, testament, delve, vibrant, nestled, thriving, nascent, weaving, realm, unlock, game-changer, pivotal, intricate, elucidate.',
-        '4. No wrap-up summaries or moral conclusions. End on action, dialogue, or unresolved tension.',
-        '5. Show emotion through physical reaction, blocking, and dialogue. Do not name emotions directly.',
-        '6. Vary sentence cadence. Mix short, punchy sentences with longer, complex ones.',
-        '7. Avoid filler adverbs (quietly, deliberately, gently, suddenly). Use concrete action.',
-        '8. Use active voice. Avoid hedging (might, could, perhaps, maybe).',
-        '',
-        `Narrative perspective — ${def.label}, ${def.tense}:`,
-        perspectiveRules,
-        '',
-        'Formatting:',
-        `${9 + def.rules.length}. No bold text in the narrative.`,
-        `${9 + def.rules.length + 1}. Italics allowed sparingly for internal thoughts or emphasis.`,
-        `${9 + def.rules.length + 2}. No bullet lists in the narrative.`,
-        `${9 + def.rules.length + 3}. Output only the rewritten passage. No introductory text, no apologies, no meta-commentary.`,
-    ];
-
-    if (vaultContext) {
-        parts.push(
-            '',
-            '---',
-            'Reference material from your vault (character notes, worldbuilding, outlines):',
-            vaultContext,
-        );
-    }
-
-    return parts.join('\n');
-}
 
 /**
  * Build the user message for a given transformation type.
@@ -197,7 +148,7 @@ export async function applyTransformation(
             : '';
 
         const { narrativeVoicePreset, transformTemperature, transformMaxOutputTokens, transformAppendNewline } = plugin.settings;
-        const systemPrompt = getSystemPrompt(vaultContext, narrativeVoicePreset);
+        const systemPrompt = getSystemPrompt('narrative', { vaultContext, narrativePreset: narrativeVoicePreset });
 
         // Budget the context window holistically.
         // Rough token estimates (English: ~4 chars per token):
