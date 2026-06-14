@@ -46,6 +46,7 @@ src/
 - **camelCase** for functions and variables.
 - **UPPER_SNAKE_CASE** for magic constants.
 - Keep imports sorted: external → internal, absolute → relative.
+- **JSDoc on every function.** All functions and methods must have a `/** ... */` docstring. Coverage threshold is 80%; aim for 100%.
 
 ## Branch strategy
 
@@ -85,9 +86,17 @@ src/
 9. **Writer Guidance Layers** — inline directives (`<!-- quill: -->`) + plot map.
 10. **AI Generation Style Constraints** — 18 rules + 6 narrative perspective presets.
 
+## Committing
+
+- Do not commit or push unless the user explicitly asks you to. Build and lint to verify your work, but leave the commits to the user.
+
+## Planning files
+
+- `.planning/` is gitignored and local-only. Never force-add (`git add -f`) or commit planning files.
+- `.planning/pr-prose-linter.md` — prose linter scope, rules, fixes, tooltip model, known issues.
+- `.planning/pr-lint-suggestions-panel.md` — tabbed sidebar panel (results + details), states, data flow.
+
 ## References
 
 - Obsidian API docs: https://docs.obsidian.md
 - Obsidian plugin guidelines: https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines
-- Feature spec: `.planning/eventide-quill-features.md`
-- Session log: `.planning/issue-1.md`
