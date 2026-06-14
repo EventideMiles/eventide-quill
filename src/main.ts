@@ -16,6 +16,11 @@ import { LintResult, FIXABLE_RULES } from './core/linter/types';
 import { FIXES } from './core/linter/fixes';
 import { AiProvider } from './ai/provider';
 import { createProvider, parseProviderKey } from './ai/provider-registry';
+import {
+    applyTransformation,
+    TRANSFORM_ACTIONS,
+} from './ai/transform';
+import { ToneSuggestModal, TransformModal } from './ui/transform-modal';
 
 export default class EventideQuillPlugin extends Plugin {
     settings!: EventideQuillSettings;
@@ -24,6 +29,8 @@ export default class EventideQuillPlugin extends Plugin {
     private lintActiveFile: string | null = null;
     private currentResults: LintResult[] = [];
     private providerMap = new Map<string, AiProvider>();
+    /** True while a selection transformation is being processed. Used to gate the context menu. */
+    transformInProgress = false;
 
     /** Plugin entry point: register commands, views, extensions, and event handlers. */
     async onload() {
@@ -104,41 +111,97 @@ export default class EventideQuillPlugin extends Plugin {
                         });
                 });
 
-                if (!this.lintActive || this.currentResults.length === 0) return;
+                // Linter fix items
+                if (this.lintActive && this.currentResults.length > 0) {
+                    const cursor = editor.getCursor();
+                    const cursorLine = cursor.line + 1;
+                    const cursorCh = cursor.ch;
 
-                const cursor = editor.getCursor();
-                const cursorLine = cursor.line + 1;
-                const cursorCh = cursor.ch;
-
-                const fixableAtCursor = this.currentResults.filter((r) => {
-                    if (!FIXABLE_RULES.has(r.rule)) return false;
-                    if (r.line !== cursorLine) return false;
-                    return cursorCh >= r.column && cursorCh <= r.column + r.length;
-                });
-
-                if (fixableAtCursor.length === 0) return;
-
-                menu.addSeparator();
-
-                for (const result of fixableAtCursor) {
-                    const fix = FIXES[result.rule];
-                    if (!fix) continue;
-                    menu.addItem((item) => {
-                        item
-                            .setTitle(`Quill: ${fix.description}`)
-                            .setIcon('wrench')
-                            .onClick(() => {
-                                const cm = this.getCmView(editor);
-                                if (!cm) return;
-                                const doc = cm.state.doc;
-                                const from = doc.line(result.line).from + result.column;
-                                const to = Math.min(from + result.length, doc.length);
-                                const text = doc.toString();
-                                const replacement = fix.apply(text, result.line, result.column, result.length);
-                                if (replacement === null) return;
-                                cm.dispatch({ changes: { from, to, insert: replacement } });
-                            });
+                    const fixableAtCursor = this.currentResults.filter((r) => {
+                        if (!FIXABLE_RULES.has(r.rule)) return false;
+                        if (r.line !== cursorLine) return false;
+                        return cursorCh >= r.column && cursorCh <= r.column + r.length;
                     });
+
+                    if (fixableAtCursor.length > 0) {
+                        menu.addSeparator();
+
+                        for (const result of fixableAtCursor) {
+                            const fix = FIXES[result.rule];
+                            if (!fix) continue;
+                            menu.addItem((item) => {
+                                item
+                                    .setTitle(`Quill: ${fix.description}`)
+                                    .setIcon('wrench')
+                                    .onClick(() => {
+                                        const cm = this.getCmView(editor);
+                                        if (!cm) return;
+                                        const doc = cm.state.doc;
+                                        const from = doc.line(result.line).from + result.column;
+                                        const to = Math.min(from + result.length, doc.length);
+                                        const text = doc.toString();
+                                        const replacement = fix.apply(text, result.line, result.column, result.length);
+                                        if (replacement === null) return;
+                                        cm.dispatch({ changes: { from, to, insert: replacement } });
+                                    });
+                            });
+                        }
+                    }
+                }
+
+                // Selection transformation items — hidden while one is in flight
+                const selection = editor.getSelection();
+                if (selection && !this.transformInProgress) {
+                    const fullText = editor.getValue();
+                    menu.addSeparator();
+
+                    for (const action of TRANSFORM_ACTIONS) {
+                        if (action.id === 'change-tone') {
+                            menu.addItem((item) => {
+                                item
+                                    .setTitle(`Quill: ${action.label}`)
+                                    .setIcon(action.icon)
+                                    .onClick(() => {
+                                        new ToneSuggestModal(
+                                            this.app,
+                                            (tone) => {
+                                                void applyTransformation(
+                                                    this, editor, 'change-tone', selection, fullText, tone,
+                                                );
+                                            },
+                                        ).open();
+                                    });
+                            });
+                        } else if (action.id === 'custom') {
+                            menu.addItem((item) => {
+                                item
+                                    .setTitle(`Quill: ${action.label}`)
+                                    .setIcon(action.icon)
+                                    .onClick(() => {
+                                        new TransformModal(
+                                            this.app,
+                                            selection,
+                                            (instruction) => {
+                                                void applyTransformation(
+                                                    this, editor, 'custom', selection, fullText, instruction,
+                                                );
+                                            },
+                                        ).open();
+                                    });
+                            });
+                        } else {
+                            menu.addItem((item) => {
+                                item
+                                    .setTitle(`Quill: ${action.label}`)
+                                    .setIcon(action.icon)
+                                    .onClick(() => {
+                                        void applyTransformation(
+                                            this, editor, action.id, selection, fullText,
+                                        );
+                                    });
+                            });
+                        }
+                    }
                 }
             }),
         );
