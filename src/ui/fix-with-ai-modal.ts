@@ -48,7 +48,7 @@ export class FixWithAiModal extends Modal {
         this.editorText = editorText;
         this.onAccept = onAccept;
         this.customInstruction = initialCustom ?? '';
-        this.viewState = initialCustom ? 'custom-input' : 'loading';
+        this.viewState = initialCustom != null ? 'custom-input' : 'loading';
 
         const lines = editorText.split('\n');
         this.lineText = lines[result.line - 1] ?? '';
@@ -80,6 +80,11 @@ export class FixWithAiModal extends Modal {
     private render(): void {
         const { contentEl } = this;
         contentEl.empty();
+        contentEl.removeClass(
+            'quill-fix-ai-loading',
+            'quill-fix-ai-diff',
+            'quill-fix-ai-custom',
+        );
 
         switch (this.viewState) {
             case 'loading':
@@ -272,11 +277,6 @@ export class FixWithAiModal extends Modal {
             return;
         }
 
-        // If this is the first fetch (default), store it as backup
-        if (!customInstruction && this.suggestion === null) {
-            this.suggestionBackup = this.suggestion;
-        }
-
         this.currentAbort?.abort();
         this.currentAbort = new AbortController();
 
@@ -297,6 +297,11 @@ export class FixWithAiModal extends Modal {
                 new Notice('AI could not suggest a fix for this issue.');
                 this.close();
                 return;
+            }
+
+            // Save the default suggestion before switching to custom.
+            if (!customInstruction && !this.suggestionBackup) {
+                this.suggestionBackup = result;
             }
 
             this.suggestion = result;

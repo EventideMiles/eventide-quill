@@ -124,8 +124,20 @@ function extractReplacement(
 ): string {
     let cleaned = raw;
 
-    // Strip multi-line markdown code blocks first: ```\n...\n``` or ```word```
-    cleaned = cleaned.replace(/^```[\s\S]*?^```/gm, '');
+    // Strip multi-line markdown code blocks first: ```\n...\n```: extract inner content instead of deleting.
+    const fencedMatch = cleaned.match(/^```[\s\S]*?^```$/gm);
+    if (fencedMatch && fencedMatch.length > 0) {
+        const block = fencedMatch[0];
+        const m = block.match(/^```\n([\s\S]*?)\n```$/);
+        cleaned = (m?.[1] ?? '').trim();
+    } else {
+        // If no full fenced block, fall back to empty string (previous behavior for that path).
+        if (/^```[\s\S]*?^```$/.test(cleaned)) {
+            cleaned = '';
+        }
+    }
+
+    // Strip inline triple-backtick wrappers while preserving content.
     cleaned = cleaned.replace(/```([\s\S]*?)```/g, '$1');
 
     // Strip inline code backticks

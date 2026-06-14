@@ -122,7 +122,7 @@ function cleanupBoundaries(
         editor.replaceRange(' ', { line: lineIndex, ch: col - 1 }, { line: lineIndex, ch: col + 1 });
         offset -= 1; // removed one character (two spaces → one space)
         lineText = editor.getLine(lineIndex);
-    } else if (col > 0 && replacement.length > 0 && needsSpaceBetween(lineText, col - 1, col)) {
+    } else if (col > 0 && needsSpaceBetween(lineText, col - 1, col)) {
         // 2. Insert space at the left boundary
         editor.replaceRange(' ', { line: lineIndex, ch: col }, { line: lineIndex, ch: col });
         offset += 1;

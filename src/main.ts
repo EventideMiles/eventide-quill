@@ -318,8 +318,9 @@ export default class EventideQuillPlugin extends Plugin {
             enableAiWrapUps: ai && this.settings.enableAiWrapUps,
         });
 
+        const lines = text.split('\n');
+
         return rawResults.filter((r) => {
-            const lines = text.split('\n');
             const lineText = lines[r.line - 1] ?? '';
             return !this.dismissedFingerprints.has(lintFingerprint(r, lineText));
         });

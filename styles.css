@@ -4,7 +4,6 @@
     line-height: var(--line-height-normal);
     max-width: min(320px, calc(100vw - 32px));
     border-radius: 4px;
-    word-wrap: break-word;
     overflow-wrap: break-word;
     display: flex;
     flex-direction: column;
@@ -301,7 +300,6 @@
 .quill-details-context-line {
     font-family: var(--font-monospace);
     font-size: var(--font-ui-small);
-    word-break: break-word;
     overflow-wrap: break-word;
 }
 
@@ -312,13 +310,11 @@
 }
 
 .quill-details-context-text {
-    word-break: break-word;
     overflow-wrap: break-word;
 }
 
 .quill-details-context-before,
 .quill-details-context-after {
-    word-break: break-word;
     overflow-wrap: break-word;
 }
 
@@ -327,7 +323,6 @@
     color: var(--text-normal);
     border-radius: 2px;
     padding: 0 1px;
-    word-break: break-word;
     overflow-wrap: break-word;
 }
 
@@ -350,7 +345,6 @@
     border-radius: 4px;
     margin-bottom: 8px;
     line-height: var(--line-height-normal);
-    word-break: break-word;
     overflow-wrap: break-word;
 }
 
