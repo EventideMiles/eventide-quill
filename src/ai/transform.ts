@@ -123,7 +123,8 @@ export async function applyTransformation(
     fullDocumentText: string,
     tone?: string,
 ): Promise<void> {
-    const provider = plugin.getDefaultChatProvider();
+    const defaultChat = plugin.getDefaultChatProvider();
+    const provider = defaultChat.provider;
     if (!provider) {
         new Notice(
             'Quill: No AI provider configured. Set one up in settings → AI providers.',
@@ -193,6 +194,7 @@ export async function applyTransformation(
         try {
             const stream = provider.chatCompletion({
                 messages,
+                model: defaultChat.modelId,
                 temperature: transformTemperature,
                 maxTokens: transformMaxOutputTokens,
                 signal: undefined,

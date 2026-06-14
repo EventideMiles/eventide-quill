@@ -800,11 +800,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         .addOption('embed', 'Embed')
                         .addOption('both', 'Both')
                         .setValue(model.role)
-                        .onChange(async (value) => {
-                            model.role = value as 'chat' | 'embed' | 'both';
-                            this.validateDefaultProviders();
-                            await this.plugin.saveSettings();
-                        }),
+                    .onChange(async (value) => {
+                        model.role = value as 'chat' | 'embed' | 'both';
+                        this.validateDefaultProviders();
+                        await this.plugin.saveSettings();
+                        this.display();
+                    }),
                 );
 
             new Setting(modelCard)

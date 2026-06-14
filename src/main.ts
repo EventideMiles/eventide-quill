@@ -410,11 +410,15 @@ export default class EventideQuillPlugin extends Plugin {
         return this.providerMap.get(providerId) ?? null;
     }
 
-    /** Get the default chat provider based on settings. Returns null if not configured. */
-    getDefaultChatProvider(): AiProvider | null {
+    /**
+     * Get the default chat provider and model based on settings.
+     * Returns { provider, modelId } or { provider: null } if not configured.
+     */
+    getDefaultChatProvider(): { provider: AiProvider | null; modelId?: string } {
         const key = parseProviderKey(this.settings.aiDefaultChatProvider);
-        if (!key) return null;
-        return this.getProvider(key.providerId);
+        if (!key) return { provider: null };
+        const provider = this.getProvider(key.providerId);
+        return { provider, modelId: key.modelId || undefined };
     }
 
     /** Get the default embed provider based on settings. Returns null if not configured. */

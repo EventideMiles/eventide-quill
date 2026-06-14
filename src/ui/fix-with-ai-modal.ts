@@ -270,7 +270,8 @@ export class FixWithAiModal extends Modal {
      * Stores the default suggestion before making a custom request.
      */
     private async fetchSuggestion(customInstruction?: string): Promise<void> {
-        const provider = this.plugin.getDefaultChatProvider();
+        const defaultChat = this.plugin.getDefaultChatProvider();
+        const provider = defaultChat.provider;
         if (!provider) {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
             this.close();
@@ -286,6 +287,7 @@ export class FixWithAiModal extends Modal {
                 this.editorText,
                 provider,
                 {
+                    model: defaultChat.modelId,
                     temperature: this.plugin.settings.linterTemperature,
                     maxTokens: this.plugin.settings.linterMaxOutputTokens,
                     signal: this.currentAbort.signal,

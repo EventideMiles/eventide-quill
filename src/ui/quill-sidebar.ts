@@ -348,7 +348,7 @@ export class QuillSidebarView extends ItemView {
 
         if (
             this.plugin.settings.enableLinterAiFixes &&
-            this.plugin.getDefaultChatProvider()
+            this.plugin.getDefaultChatProvider().provider
         ) {
             const aiFixBtn = this.content.createEl('button', {
                 cls: 'quill-details-fix-btn quill-details-ai-fix-btn',

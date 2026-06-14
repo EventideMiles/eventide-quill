@@ -6,6 +6,8 @@ import { getSystemPrompt, getLinterUserPrompt } from './prompts';
 export interface LinterAiOptions {
     temperature: number;
     maxTokens: number;
+    /** Override the provider's default chat model. */
+    model?: string;
     signal?: AbortSignal;
 }
 
@@ -74,6 +76,7 @@ export async function suggestLintFix(
     try {
         const stream = provider.chatCompletion({
             messages,
+            model: options.model,
             temperature: options.temperature,
             maxTokens: options.maxTokens,
             signal: options.signal,
