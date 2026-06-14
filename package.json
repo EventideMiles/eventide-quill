@@ -23,5 +23,9 @@
 		"obsidian": "latest",
 		"typescript": "^5.8.3",
 		"typescript-eslint": "^8.59.1"
+	},
+	"dependencies": {
+		"@codemirror/state": "6.5.0",
+		"@codemirror/view": "6.38.6"
 	}
 }
