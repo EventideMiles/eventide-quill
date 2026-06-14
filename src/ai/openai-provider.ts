@@ -10,7 +10,8 @@ import {
     ProviderConfig,
     ProviderError,
 } from './provider';
-import { openAiEventsToChunks, parseSseEvents } from './streaming';
+import { openAiEventsToChunks, openAiSseDataToChunk, OpenAiSseData, parseSseEvents, parseSseStream } from './streaming';
+import { HttpError, isStreamingSupported, streamResponse } from './transport';
 
 /** Maximum characters to include in error messages from response bodies. */
 const ERROR_BODY_TRUNCATE_LENGTH = 500;
@@ -111,9 +112,8 @@ export class OpenAiCompatibleProvider implements AiProvider {
     /**
      * {@inheritDoc AiProvider.chatCompletion}
      *
-     * Note: This implementation buffers the entire SSE response before yielding
-     * chunks. Obsidian's requestUrl does not support incremental streaming, so
-     * cancellation via options.signal only takes effect after buffering completes.
+     * On desktop this streams the SSE response incrementally via native fetch.
+     * On mobile it falls back to a buffered requestUrl call.
      */
     async *chatCompletion(options: ChatOptions): AsyncGenerator<ChatChunk> {
         const modelConfig = this.resolveModel('chat', options.model);
@@ -132,6 +132,46 @@ export class OpenAiCompatibleProvider implements AiProvider {
             stream: true,
         });
 
+        if (isStreamingSupported()) {
+            let reader: ReadableStreamDefaultReader<Uint8Array>;
+            try {
+                const result = await streamResponse(url, {
+                    method: 'POST',
+                    headers,
+                    body,
+                    signal: options.signal,
+                });
+                reader = result.reader;
+            } catch (err: unknown) {
+                if (err instanceof HttpError) {
+                    throw new ProviderError(
+                        `Chat completion failed (HTTP ${err.status}): ${err.body.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
+                        err.status,
+                        err.body,
+                    );
+                }
+                throw err;
+            }
+
+            for await (const event of parseSseStream(reader, options.signal)) {
+                if (event.data === '[DONE]') {
+                    yield { text: '', done: true };
+                    continue;
+                }
+
+                try {
+                    const parsed = JSON.parse(event.data) as OpenAiSseData;
+                    const chunk = openAiSseDataToChunk(parsed);
+                    if (chunk) yield chunk;
+                } catch {
+                    continue;
+                }
+            }
+
+            return;
+        }
+
+        // Mobile fallback: buffer the full response
         const response: RequestUrlResponse = await requestUrl({
             url,
             method: 'POST',

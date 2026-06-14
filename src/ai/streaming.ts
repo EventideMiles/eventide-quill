@@ -45,7 +45,7 @@ interface UsageData {
  * The top-level shape of a parsed OpenAI SSE `data: {...}` line.
  * Maps directly to the JSON payload sent over the SSE stream.
  */
-interface OpenAiSseData {
+export interface OpenAiSseData {
     choices?: Choice[];
     model?: string;
     usage?: UsageData;
@@ -212,4 +212,149 @@ export function ollamaNdjsonToChunks(lines: Record<string, unknown>[]): ChatChun
     }
 
     return chunks;
+}
+
+/**
+ * Incremental SSE stream parser. Reads raw bytes from a ReadableStream reader,
+ * splits on `\n\n` SSE boundaries, and yields fully-formed SseEvent objects as
+ * they arrive.
+ */
+export async function* parseSseStream(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    signal?: AbortSignal,
+): AsyncGenerator<SseEvent> {
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+        if (signal?.aborted) return;
+
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
+
+        for (const part of parts) {
+            if (!part.trim()) continue;
+            const event = parseSseBlock(part);
+            if (event) yield event;
+        }
+    }
+
+    if (buffer.trim()) {
+        const event = parseSseBlock(buffer);
+        if (event) yield event;
+    }
+}
+
+/** Parse a single SSE block (lines separated by \n, no trailing \n\n). */
+function parseSseBlock(block: string): SseEvent | null {
+    const event: Partial<SseEvent> = {};
+    for (const line of block.split('\n')) {
+        if (line.startsWith('data: ')) {
+            event.data = line.slice(6);
+        } else if (line.startsWith('event: ')) {
+            event.event = line.slice(7);
+        } else if (line.startsWith('id: ')) {
+            event.id = line.slice(4);
+        }
+    }
+    return event.data !== undefined ? (event as SseEvent) : null;
+}
+
+/**
+ * Incremental NDJSON stream parser. Reads raw bytes from a ReadableStream
+ * reader, splits on newline boundaries, and yields fully-parsed JSON objects as
+ * complete lines arrive.
+ */
+export async function* parseNdjsonStream(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    signal?: AbortSignal,
+): AsyncGenerator<Record<string, unknown>> {
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+        if (signal?.aborted) return;
+
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+                yield JSON.parse(trimmed) as Record<string, unknown>;
+            } catch {
+                continue;
+            }
+        }
+    }
+
+    const remaining = buffer.trim();
+    if (remaining) {
+        try {
+            yield JSON.parse(remaining) as Record<string, unknown>;
+        } catch {
+            // Skip malformed trailing data
+        }
+    }
+}
+
+/**
+ * Convert a single OpenAiSseData payload into a ChatChunk.
+ */
+export function openAiSseDataToChunk(parsed: OpenAiSseData): ChatChunk | null {
+    if (!parsed.choices || parsed.choices.length === 0) return null;
+    const firstChoice = parsed.choices[0];
+    if (!firstChoice) return null;
+
+    const delta = firstChoice.delta;
+    const text = delta?.content ?? '';
+    const finishReason = firstChoice.finish_reason;
+
+    const chunk: ChatChunk = {
+        text,
+        done: finishReason !== null && finishReason !== undefined,
+    };
+
+    if (parsed.model) {
+        chunk.model = parsed.model;
+    }
+
+    if (parsed.usage) {
+        chunk.usage = {
+            promptTokens: parsed.usage.prompt_tokens ?? parsed.usage.promptTokens ?? 0,
+            completionTokens: parsed.usage.completion_tokens ?? parsed.usage.completionTokens ?? 0,
+            totalTokens: parsed.usage.total_tokens ?? parsed.usage.totalTokens ?? 0,
+        };
+    }
+
+    return chunk;
+}
+
+/**
+ * Convert a single Ollama NDJSON line into a ChatChunk.
+ */
+export function ollamaNdjsonLineToChunk(raw: Record<string, unknown>): ChatChunk {
+    const line = raw as unknown as OllamaChatLine;
+    const message = line.message;
+    const text = message?.content ?? '';
+    const done = line.done === true;
+
+    const chunk: ChatChunk = { text, done };
+
+    if (typeof line.model === 'string') {
+        chunk.model = line.model;
+    }
+
+    return chunk;
 }
