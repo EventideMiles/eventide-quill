@@ -113,6 +113,8 @@ function getInstruction(type: TransformType, toneOrInstruction?: string): string
  * Apply a transformation to the selected text by streaming the AI response
  * and replacing the selection when complete.
  *
+ * @param filePath - The path of the file being transformed. Used to ensure
+ *   the context assembly matches the document being edited.
  * @returns A promise that resolves when the transformation is done.
  */
 export async function applyTransformation(
@@ -122,6 +124,7 @@ export async function applyTransformation(
     selectedText: string,
     fullDocumentText: string,
     tone?: string,
+    filePath?: string,
 ): Promise<void> {
     const defaultChat = plugin.getDefaultChatProvider();
     const provider = defaultChat.provider;
@@ -144,8 +147,21 @@ export async function applyTransformation(
     plugin.transformInProgress = true;
 
     try {
+        // Ensure context is assembled for the correct document.
+        // If context is stale or missing, refresh it before proceeding.
+        let assembly: ReturnType<typeof plugin.assembleDocumentContext> extends Promise<infer T> ? T : never;
+        if (filePath && plugin.contextActiveFile !== filePath) {
+            assembly = await plugin.assembleDocumentContext(fullDocumentText, filePath);
+        } else if (plugin.currentAssembly && plugin.contextActiveFile === filePath) {
+            assembly = plugin.currentAssembly;
+        } else if (filePath) {
+            assembly = await plugin.assembleDocumentContext(fullDocumentText, filePath);
+        } else {
+            assembly = plugin.currentAssembly ?? await plugin.assembleDocumentContext(fullDocumentText, filePath);
+        }
+
         const vaultContext = plugin.settings.transformVaultContext
-            ? await gatherVaultContext(plugin.app.vault, fullDocumentText)
+            ? await gatherVaultContext(plugin.app.vault, fullDocumentText, assembly)
             : '';
 
         const { narrativeVoicePreset, transformTemperature, transformMaxOutputTokens, transformAppendNewline } = plugin.settings;

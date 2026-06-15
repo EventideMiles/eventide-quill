@@ -508,3 +508,243 @@
     color: var(--text-normal);
     border: 1px solid var(--interactive-accent);
 }
+
+/* Linter sub-tab bar */
+.quill-sidebar-subtab-bar {
+    display: flex;
+    border-bottom: 1px solid var(--background-modifier-border);
+    flex-shrink: 0;
+    margin-bottom: 8px;
+}
+
+.quill-sidebar-subtab {
+    flex: 1;
+    padding: 6px 10px;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    font-family: var(--font-interface);
+    text-align: center;
+    transition: color 0.15s, border-color 0.15s;
+    border-bottom: 2px solid transparent;
+}
+
+.quill-sidebar-subtab:hover {
+    color: var(--text-normal);
+}
+
+.quill-sidebar-subtab-active {
+    color: var(--text-accent);
+    border-bottom-color: var(--text-accent);
+}
+
+/* Linter results container */
+.quill-linter-results {
+    flex: 1;
+    overflow-y: auto;
+}
+
+/* Linter details container */
+.quill-linter-details {
+    flex: 1;
+    overflow-y: auto;
+}
+
+/* Context panel styles */
+.quill-context-section {
+    margin-bottom: 16px;
+}
+
+.quill-context-section-heading {
+    font-weight: 600;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.quill-context-voice {
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+    padding: 8px;
+    background: var(--background-primary-alt);
+    border-radius: 4px;
+    margin-bottom: 12px;
+    line-height: var(--line-height-normal);
+}
+
+.quill-context-entity {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    cursor: pointer;
+    transition: background 0.1s;
+}
+
+.quill-context-entity:hover {
+    background: var(--background-modifier-hover);
+}
+
+.quill-context-entity-name {
+    font-weight: 500;
+}
+
+.quill-context-entity-count {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+}
+
+.quill-context-entity-aliases {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.quill-context-entity-lines {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+}
+
+.quill-context-pin-btn,
+.quill-context-remove-btn {
+    cursor: pointer;
+    border: none;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: var(--font-ui-smaller);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.quill-context-pin-btn:hover,
+.quill-context-remove-btn:hover {
+    color: var(--text-normal);
+    background: var(--background-modifier-hover);
+}
+
+.quill-context-pinned {
+    color: var(--text-accent);
+    background: rgba(var(--color-blue-rgb), 0.1);
+}
+
+.quill-context-item {
+    padding: 6px 8px;
+    border-left: 2px solid var(--background-modifier-border);
+    border-radius: 2px;
+    margin-bottom: 6px;
+    font-size: var(--font-ui-small);
+}
+
+.quill-context-item-pinned {
+    border-left-color: var(--color-blue);
+    background: rgba(var(--color-blue-rgb), 0.05);
+}
+
+.quill-context-item-manual {
+    border-left-color: var(--color-green);
+    background: rgba(var(--color-green-rgb), 0.05);
+}
+
+.quill-context-item-manual.quill-context-item-pinned {
+    border-left-color: var(--color-green);
+}
+
+.quill-context-item-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.quill-context-item-name {
+    font-weight: 600;
+    color: var(--text-normal);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.quill-context-item-details {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+    padding-left: 0;
+}
+
+.quill-context-item-path {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.quill-context-item-matched {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    white-space: normal;
+    word-break: break-word;
+}
+
+.quill-context-budget {
+    margin-top: 12px;
+    padding: 8px;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+}
+
+.quill-context-budget-bar {
+    height: 4px;
+    background: var(--background-modifier-border);
+    border-radius: 2px;
+    margin-top: 4px;
+    overflow: hidden;
+}
+
+.quill-context-budget-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.2s, background 0.2s;
+}
+
+.quill-context-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.quill-context-action-btn {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    transition: filter 0.1s, background 0.1s;
+}
+
+.quill-context-action-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.quill-context-empty {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    text-align: center;
+    padding: 24px 8px;
+}
+
+/* Deprecated: Add entity modal styles removed */
