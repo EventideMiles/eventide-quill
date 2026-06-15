@@ -59,7 +59,11 @@ export default class EventideQuillPlugin extends Plugin {
                 },
                 (result, view) => this.openInlineAiFix(result, view),
                 (result, view) => this.dismissResult(result, view),
-                () => this.settings.enableLinterAiFixes,
+                () => {
+                    if (!this.settings.enableLinterAiFixes) return false;
+                    const chat = this.getDefaultChatProvider();
+                    return !!chat.provider;
+                },
             ),
         );
 
@@ -437,12 +441,28 @@ export default class EventideQuillPlugin extends Plugin {
 
         const editorText = view.editor.getValue();
 
+        // Capture the original span at lint time so we can validate it later.
+        const lines = editorText.split('\n');
+        const lineIndex = result.line - 1;
+        const line = lines[lineIndex];
+        if (line === undefined) return;
+        const originalSpan = line.slice(result.column, result.column + result.length);
+
         new FixWithAiModal(
             this.app,
             this,
             result,
             editorText,
             (replacement: string) => {
+                // Validate that the span is still accurate before applying.
+                const currentLine = view.editor.getLine(lineIndex);
+                if (currentLine === undefined) return;
+                const currentSpan = currentLine.slice(result.column, result.column + result.length);
+                if (currentSpan !== originalSpan) {
+                    new Notice('Quill: Text has changed since this suggestion was generated.');
+                    return;
+                }
+
                 applyReplacement(view.editor, result, replacement);
             },
         ).open();
