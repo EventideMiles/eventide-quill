@@ -76,7 +76,7 @@ export function splitSentences(text: string, abbreviationsPattern: RegExp): Sent
         if (char === prev) continue;
 
         if (char === '.') {
-            const beforePeriod = text.slice(Math.max(0, match.index - 3), match.index);
+            const beforePeriod = text.slice(Math.max(0, match.index - 6), match.index);
             if (abbreviationsPattern.test(beforePeriod + '.')) continue;
         }
 

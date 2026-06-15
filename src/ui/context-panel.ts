@@ -13,24 +13,29 @@ class AddFileModal extends FuzzySuggestModal<TFile> {
         this.setPlaceholder('Search vault files to add to context...');
     }
 
+    /** Return all markdown files in the vault as search candidates. */
     getItems(): TFile[] {
         return this.app.vault.getMarkdownFiles();
     }
 
+    /** Return a searchable label for the given file. */
     getItemText(item: TFile): string {
         return item.path;
     }
 
+    /** Render a single suggestion row in the fuzzy finder. */
     renderSuggestion(item: FuzzyMatch<TFile>, el: HTMLElement): void {
         el.createEl('div', { text: item.item.basename });
         el.createEl('div', { cls: 'quill-context-item-matched', text: item.item.path });
     }
 
+    /** Handle the user choosing a file and add it as a manual context item. */
     onChooseItem(item: TFile): void {
         void this.plugin.addManualContextItem(item.path);
     }
 }
 
+/** Uppercase the first character of a string, replacing hyphens with spaces in the remainder. */
 function capitalize(s: string): string {
     return s.charAt(0).toUpperCase() + s.slice(1).replace(/-/g, ' ');
 }
@@ -146,6 +151,7 @@ export function renderContextTab(
     }
 }
 
+/** Render a section of entities (characters, locations, or plot threads). */
 function renderEntitySection(
     container: HTMLElement,
     heading: string,
@@ -177,7 +183,7 @@ function renderEntitySection(
         if (entity.aliases.length > 0) {
             card.createEl('div', {
                 cls: 'quill-context-entity-aliases',
-                text: `aliases: ${entity.aliases.join(', ')}`,
+                text: `Aliases: ${entity.aliases.join(', ')}`,
             });
         }
 
@@ -200,6 +206,7 @@ function renderEntitySection(
     }
 }
 
+/** Render the vault context items section. */
 function renderVaultContextSection(
     container: HTMLElement,
     items: ContextItem[],
@@ -242,12 +249,13 @@ function renderVaultContextSection(
         if (item.matchedEntities.length > 0) {
             details.createEl('span', {
                 cls: 'quill-context-item-matched',
-                text: `matched: ${item.matchedEntities.join(', ')}`,
+                text: `Matched: ${item.matchedEntities.join(', ')}`,
             });
         }
     }
 }
 
+/** Render the token budget indicator using a label and progress bar. */
 function renderTokenBudget(container: HTMLElement, assembly: ContextAssembly): void {
     const section = container.createEl('div', { cls: 'quill-context-budget' });
     const used = assembly.totalTokens;
@@ -264,6 +272,7 @@ function renderTokenBudget(container: HTMLElement, assembly: ContextAssembly): v
     fill.style.backgroundColor = getBudgetColor(pct);
 }
 
+/** Return a CSS color token based on the current budget usage percentage. */
 function getBudgetColor(pct: number): string {
     if (pct < 60) return 'var(--color-green)';
     if (pct < 80) return 'var(--color-yellow)';
@@ -271,6 +280,7 @@ function getBudgetColor(pct: number): string {
     return 'var(--color-red)';
 }
 
+/** Scroll the active editor to a specific line, if applicable. */
 function jumpToLine(plugin: EventideQuillPlugin, line: number | undefined): void {
     if (!line) return;
     const filePath = plugin.contextActiveFile;

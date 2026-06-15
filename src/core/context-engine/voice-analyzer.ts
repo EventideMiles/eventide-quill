@@ -38,6 +38,7 @@ export function analyzeVoice(text: string): VoiceMarker {
     };
 }
 
+/** Detect the narrative point of view based on pronoun usage. */
 function detectPov(text: string): string {
     const firstCount = countMatches(text, FIRST_PERSON_PRONOUNS);
     const thirdCount = countMatches(text, THIRD_PERSON_PRONOUNS);
@@ -56,6 +57,7 @@ function detectPov(text: string): string {
     return 'unknown';
 }
 
+/** Detect the narrative tense based on verb indicators. */
 function detectTense(text: string): string {
     const pastCount = countMatches(text, PAST_INDICATORS);
     const presentCount = countMatches(text, PRESENT_INDICATORS);
@@ -65,6 +67,7 @@ function detectTense(text: string): string {
     return 'mixed';
 }
 
+/** Count the number of regex matches in a string using matchAll. */
 function countMatches(text: string, pattern: RegExp): number {
     let count = 0;
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -74,6 +77,7 @@ function countMatches(text: string, pattern: RegExp): number {
     return count;
 }
 
+/** Compute the average sentence length in words from the given text. */
 function computeAvgSentenceLength(text: string): number {
     const sentences = splitSentences(text, ABBREVIATIONS_PATTERN);
     if (sentences.length === 0) return 0;
@@ -87,6 +91,7 @@ function computeAvgSentenceLength(text: string): number {
     return sentences.length > 0 ? Math.round(totalWords / sentences.length) : 0;
 }
 
+/** Compute the ratio of dialogue (quoted text) and description in the given text. */
 function computeDialogueRatio(text: string): { dialogueRatio: number; descriptionRatio: number } {
     let inQuotes = false;
     let quotedChars = 0;
@@ -107,7 +112,7 @@ function computeDialogueRatio(text: string): { dialogueRatio: number; descriptio
     if (total === 0) return { dialogueRatio: 0, descriptionRatio: 1 };
 
     const dialogueRatio = quotedChars / total;
-    const descriptionRatio = Math.max(0, Math.min(1, 1 - dialogueRatio - 0.05));
+    const descriptionRatio = Math.max(0, Math.min(1, 1 - dialogueRatio));
 
     return { dialogueRatio: Math.round(dialogueRatio * 100) / 100, descriptionRatio: Math.round(descriptionRatio * 100) / 100 };
 }

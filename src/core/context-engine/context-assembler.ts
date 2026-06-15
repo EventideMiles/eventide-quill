@@ -54,7 +54,7 @@ export async function assembleContext(
         const result = compactContext(contextItems, totalTokens, opts.tokenBudget, opts.compactAtPercent);
         contextItems.length = 0;
         contextItems.push(...result.items);
-        totalTokens = result.tokens;
+        totalTokens = baseTokens + result.tokens;
         compacted = result.compacted;
     }
 
@@ -217,24 +217,23 @@ export async function gatherVaultContext(
     documentText: string,
     cachedAssembly?: ContextAssembly | null,
 ): Promise<string> {
-    let entities: ExtractedEntity[];
-    let voice: VoiceMarker;
+    let assembly: ContextAssembly;
 
-    // Use cached assembly if available (respects user pins/removals).
     if (cachedAssembly) {
-        entities = cachedAssembly.entities;
-        voice = cachedAssembly.voice;
+        // Use cached assembly directly to preserve user pins, removals, and manual adjustments.
+        assembly = cachedAssembly;
     } else {
         // Import entity extraction here to avoid circular dependency.
         const { extractAllEntities } = await import('./entity-extractor');
         const { analyzeVoice } = await import('./voice-analyzer');
-        entities = extractAllEntities(documentText);
-        voice = analyzeVoice(documentText);
+        const entities = extractAllEntities(documentText);
+        const voice = analyzeVoice(documentText);
+
+        assembly = await assembleContext(vault, documentText, entities, voice);
     }
 
-    const assembly = await assembleContext(vault, documentText, entities, voice);
+    const names = assembly.entities.filter(e => !e.removed).map(e => e.name);
 
-    const names = entities.filter(e => !e.removed).map(e => e.name);
     if (names.length === 0) return '';
 
     const lines: string[] = [`Characters and references found in vault:`];
