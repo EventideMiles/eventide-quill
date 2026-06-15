@@ -74,7 +74,9 @@
 
 .quill-sidebar-content {
     flex: 1;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     padding: 8px;
 }
 
@@ -544,12 +546,21 @@
 .quill-linter-results {
     flex: 1;
     overflow-y: auto;
+    min-height: 0;
 }
 
 /* Linter details container */
 .quill-linter-details {
     flex: 1;
     overflow-y: auto;
+    min-height: 0;
+}
+
+/* Scrollable wrapper for context tab content */
+.quill-context-scroll {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
 }
 
 /* Context panel styles */
@@ -748,3 +759,719 @@
 }
 
 /* Deprecated: Add entity modal styles removed */
+
+/* Feedback panel styles */
+.quill-feedback-context {
+    border-bottom: 1px solid var(--background-modifier-border);
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+}
+
+.quill-feedback-context-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.quill-feedback-context-label {
+    font-size: var(--font-ui-small);
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.quill-feedback-context-empty {
+    font-size: var(--font-ui-small);
+    color: var(--text-faint);
+    margin: 4px 0;
+}
+
+.quill-feedback-context-list {
+    margin-bottom: 6px;
+}
+
+.quill-feedback-context-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-size: var(--font-ui-small);
+    background: var(--background-primary-alt);
+    margin-bottom: 4px;
+}
+
+.quill-feedback-context-item-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-ui-small);
+}
+
+.quill-feedback-context-remove-btn {
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--font-ui-medium);
+    padding: 0 4px;
+    line-height: 1;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.quill-feedback-context-remove-btn:hover {
+    color: var(--text-normal);
+    background: var(--background-modifier-hover);
+}
+
+.quill-feedback-context-add-btn {
+    cursor: pointer;
+    border: 1px dashed var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    width: 100%;
+    text-align: center;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.quill-feedback-context-add-btn:hover {
+    color: var(--text-normal);
+    border-color: var(--text-muted);
+}
+
+.quill-feedback-content {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.quill-feedback-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    font-size: var(--font-ui-small);
+}
+
+.quill-feedback-persona {
+    font-weight: 600;
+    color: var(--text-normal);
+}
+
+.quill-feedback-status {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.quill-feedback-status-done {
+    color: var(--color-green);
+    font-style: normal;
+}
+
+.quill-feedback-report {
+    font-size: var(--font-ui-small);
+    line-height: var(--line-height-normal);
+    color: var(--text-normal);
+    padding: 8px;
+    background: var(--background-primary-alt);
+    border-radius: 4px;
+    margin-bottom: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+
+.quill-feedback-empty-text {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    text-align: center;
+    padding: 16px 8px;
+}
+
+.quill-feedback-commands {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0;
+}
+
+.quill-feedback-commands li {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+    padding: 4px 8px;
+    text-align: center;
+}
+
+.quill-feedback-clear-btn {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    transition: filter 0.1s, background 0.1s;
+}
+
+.quill-feedback-clear-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.quill-feedback-error-title {
+    font-weight: 600;
+    color: var(--color-red);
+    margin-bottom: 4px;
+}
+
+.quill-feedback-error-message {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    margin-bottom: 12px;
+}
+
+.quill-suggestion-title {
+    font-weight: 500;
+}
+
+.quill-suggestion-desc {
+    color: var(--text-muted);
+}
+
+/* Feedback panel Create tab */
+
+.quill-sidebar-content-plain {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.quill-feedback-section {
+    margin-bottom: 16px;
+}
+
+.quill-feedback-section-label {
+    font-size: var(--font-ui-small);
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.quill-feedback-hint {
+    font-size: var(--font-ui-small);
+    color: var(--text-faint);
+    margin: 4px 0;
+}
+
+.quill-feedback-source-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    background: var(--background-primary-alt);
+    border-radius: 4px;
+    margin-bottom: 6px;
+    font-size: var(--font-ui-small);
+}
+
+.quill-feedback-source-label {
+    font-weight: 600;
+    color: var(--text-normal);
+}
+
+.quill-feedback-source-words {
+    color: var(--text-muted);
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+.quill-feedback-budget {
+    font-size: var(--font-ui-small);
+    margin-bottom: 8px;
+}
+
+.quill-feedback-budget-text {
+    color: var(--text-muted);
+    display: block;
+    margin-bottom: 4px;
+}
+
+.quill-feedback-budget-bar {
+    height: 4px;
+    background: var(--background-modifier-border);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 4px;
+}
+
+.quill-feedback-budget-fill {
+    height: 100%;
+    background: var(--interactive-accent);
+    border-radius: 2px;
+    transition: width 0.2s;
+}
+
+.quill-feedback-budget-over {
+    background: var(--color-red);
+}
+
+.quill-feedback-budget-warn {
+    color: var(--color-red);
+    font-size: var(--font-ui-smaller);
+    display: block;
+}
+
+.quill-feedback-file-list {
+    margin-bottom: 8px;
+}
+
+.quill-feedback-file-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    background: var(--background-primary-alt);
+    border-radius: 4px;
+    margin-bottom: 4px;
+    font-size: var(--font-ui-small);
+}
+
+.quill-feedback-file-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+.quill-feedback-file-tokens {
+    color: var(--text-faint);
+    white-space: nowrap;
+}
+
+.quill-feedback-file-remove {
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--font-ui-medium);
+    padding: 0 4px;
+    line-height: 1;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.quill-feedback-file-remove:hover {
+    color: var(--text-normal);
+    background: var(--background-modifier-hover);
+}
+
+.quill-feedback-file-add {
+    cursor: pointer;
+    border: 1px dashed var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    width: 100%;
+    text-align: center;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.quill-feedback-file-add:hover {
+    color: var(--text-normal);
+    border-color: var(--text-muted);
+}
+
+.quill-feedback-personas {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+button.quill-feedback-persona-btn {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding-top: 12px !important;
+    padding-bottom: 12px !important;
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    background: transparent;
+    text-align: left;
+    font-family: var(--font-interface);
+    font-size: var(--font-ui-small);
+    line-height: 1.4;
+    white-space: normal;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start;
+    gap: 4px;
+    width: 100%;
+    box-sizing: border-box;
+    min-height: unset !important;
+    height: unset !important;
+    transition: background 0.1s, border-color 0.1s;
+}
+
+button.quill-feedback-persona-btn:hover {
+    background: var(--background-modifier-hover);
+    border-color: var(--interactive-accent);
+}
+
+.quill-feedback-persona-name {
+    font-size: var(--font-ui-medium);
+    font-weight: 600;
+    color: var(--text-normal);
+}
+
+.quill-feedback-persona-desc {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.quill-feedback-divider {
+    border: none;
+    border-top: 1px solid var(--background-modifier-border);
+    margin: 12px 0;
+}
+
+.quill-feedback-custom-input {
+    width: 100%;
+    min-height: 60px;
+    padding: 8px;
+    margin-bottom: 8px;
+    font-family: var(--font-interface);
+    font-size: var(--font-ui-small);
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    resize: vertical;
+    box-sizing: border-box;
+}
+
+.quill-feedback-generate-btn {
+    cursor: pointer;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    width: 100%;
+    text-align: center;
+    transition: filter 0.1s;
+}
+
+.quill-feedback-generate-btn:hover {
+    filter: brightness(1.15);
+}
+
+/* Feedback panel Results tab */
+
+.quill-feedback-report-rendered {
+    font-size: var(--font-ui-small);
+    line-height: var(--line-height-normal);
+    color: var(--text-normal);
+    padding: 8px;
+    background: var(--background-primary-alt);
+    border-radius: 4px;
+    margin-bottom: 12px;
+    overflow-wrap: break-word;
+}
+
+.quill-feedback-report-rendered p {
+    margin: 0 0 0.25em 0;
+}
+.quill-feedback-report-rendered p:last-child {
+    margin-bottom: 0;
+}
+
+.quill-feedback-report-rendered br {
+    display: none;
+}
+
+.quill-feedback-report-rendered ul,
+.quill-feedback-report-rendered ol {
+    padding-left: 20px;
+    margin: 0.25em 0;
+}
+
+.quill-feedback-report-rendered li {
+    margin: 0.1em 0;
+}
+
+.quill-feedback-report-rendered h1,
+.quill-feedback-report-rendered h2,
+.quill-feedback-report-rendered h3,
+.quill-feedback-report-rendered h4 {
+    margin: 0.4em 0 0.1em;
+    color: var(--text-normal);
+}
+
+.quill-feedback-report-rendered strong {
+    color: var(--text-normal);
+}
+
+.quill-feedback-report-rendered em {
+    color: var(--text-muted);
+}
+
+.quill-feedback-controls {
+    display: flex;
+    gap: 8px;
+}
+
+.quill-feedback-nav-btn {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    transition: background 0.1s, color 0.1s;
+}
+
+.quill-feedback-nav-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.quill-feedback-error-text {
+    font-size: var(--font-ui-small);
+    color: var(--color-red);
+    padding: 8px;
+    background: var(--background-primary-alt);
+    border-radius: 4px;
+    margin-bottom: 12px;
+    line-height: var(--line-height-normal);
+}
+
+/* --- Feedback chat section --- */
+
+.quill-feedback-chat-section {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.quill-feedback-chat-bubble {
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    border-radius: 6px;
+    font-size: var(--font-ui-small);
+    line-height: var(--line-height-normal);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.quill-feedback-chat-user {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    margin-left: 20px;
+}
+
+.quill-feedback-chat-assistant {
+    background: var(--background-primary-alt);
+    color: var(--text-normal);
+    margin-right: 20px;
+}
+
+.quill-feedback-chat-streaming {
+    opacity: 0.7;
+}
+
+/* Context head — system message shown when compaction occurs */
+.quill-feedback-chat-context-head {
+    text-align: left;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    border-top: 1px solid var(--background-modifier-border);
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    border-radius: 4px;
+}
+
+/* Compact paragraphs inside assistant chat bubbles (rendered by MarkdownRenderer) */
+.quill-feedback-chat-assistant {
+    white-space: normal;
+}
+.quill-feedback-chat-assistant p {
+    margin: 0 0 0.25em 0;
+}
+.quill-feedback-chat-assistant p:last-child {
+    margin-bottom: 0;
+}
+.quill-feedback-chat-assistant br {
+    display: none;
+}
+.quill-feedback-chat-assistant ul,
+.quill-feedback-chat-assistant ol {
+    padding-left: 20px;
+    margin: 0.25em 0;
+}
+.quill-feedback-chat-assistant li {
+    margin: 0.1em 0;
+}
+.quill-feedback-chat-assistant h1,
+.quill-feedback-chat-assistant h2,
+.quill-feedback-chat-assistant h3,
+.quill-feedback-chat-assistant h4 {
+    margin: 0.4em 0 0.1em;
+    color: var(--text-normal);
+}
+
+/* Chat bottom area — wraps context bar and input row */
+.quill-feedback-chat-bottom {
+    flex-shrink: 0;
+}
+
+.quill-feedback-chat-ctx-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px 0;
+}
+
+.quill-feedback-chat-ctx-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--font-ui-smaller);
+    background: var(--background-modifier-hover);
+    border-radius: 3px;
+    padding: 2px 6px;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.quill-feedback-chat-ctx-remove {
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    padding: 0 2px;
+    line-height: 1;
+}
+
+.quill-feedback-chat-ctx-remove:hover {
+    color: var(--text-normal);
+}
+
+.quill-feedback-chat-input-row {
+    display: flex;
+    gap: 6px;
+    align-items: flex-end;
+    flex-shrink: 0;
+}
+
+.quill-feedback-chat-ctx-add {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    height: 36px;
+    line-height: 1.4;
+    transition: background 0.1s, color 0.1s;
+    flex-shrink: 0;
+    box-sizing: border-box;
+}
+
+.quill-feedback-chat-ctx-add:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.quill-feedback-chat-save {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    height: 36px;
+    line-height: 1.4;
+    transition: background 0.1s, color 0.1s;
+    flex-shrink: 0;
+    box-sizing: border-box;
+}
+
+.quill-feedback-chat-save:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.quill-feedback-chat-input {
+    flex: 1;
+    height: 36px;
+    min-height: 36px;
+    max-height: 120px;
+    resize: vertical;
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    line-height: 1.4;
+    padding: 6px 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    box-sizing: border-box;
+}
+
+.quill-feedback-chat-input:focus {
+    border-color: var(--interactive-accent);
+    outline: none;
+}
+
+.quill-feedback-chat-send {
+    cursor: pointer;
+    border: 1px solid var(--interactive-accent);
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    transition: opacity 0.1s;
+    flex-shrink: 0;
+    height: 36px;
+    line-height: 1.4;
+    box-sizing: border-box;
+}
+
+.quill-feedback-chat-send:hover {
+    opacity: 0.85;
+}
+
+.quill-feedback-chat-ctx-indicator {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    padding: 4px 0 2px 0;
+    text-align: center;
+}

@@ -43,6 +43,7 @@ export interface EventideQuillSettings {
     enableLinterAiFixes: boolean;
     contextTokenBudget: number;
     contextCompactAtPercent: number;
+    compactSummarySentences: number;
     contextIncludeVaultContext: boolean;
     contextMaxVaultFiles: number;
     contextMaxCharsPerFile: number;
@@ -100,6 +101,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     enableLinterAiFixes: true,
     contextTokenBudget: 8192,
     contextCompactAtPercent: 80,
+    compactSummarySentences: 3,
     contextIncludeVaultContext: true,
     contextMaxVaultFiles: 20,
     contextMaxCharsPerFile: 2000,
@@ -345,11 +347,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.maxSentenceWords))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 1) {
                             this.plugin.settings.maxSentenceWords = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.maxSentenceWords));
                             new Notice('Value must be a number ≥ 1');
@@ -411,11 +413,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.minRepeatedWordLength))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 1) {
                             this.plugin.settings.minRepeatedWordLength = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.minRepeatedWordLength));
                             new Notice('Value must be a number ≥ 1');
@@ -477,11 +479,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.maxSyllablesPerWord))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 1) {
                             this.plugin.settings.maxSyllablesPerWord = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.maxSyllablesPerWord));
                             new Notice('Value must be a number ≥ 1');
@@ -775,11 +777,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(provider.maxOutputTokens))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 1) {
                             provider.maxOutputTokens = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(provider.maxOutputTokens));
                             new Notice('Value must be a number ≥ 1');
@@ -1036,11 +1038,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.transformTemperature))
-                    .onChange(async (value) => {
-                        const n = parseFloat(value);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseFloat(text.inputEl.value);
                         if (!isNaN(n) && n >= 0 && n <= 2) {
                             this.plugin.settings.transformTemperature = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.transformTemperature));
                             new Notice('Value must be a number between 0.0 and 2.0');
@@ -1066,11 +1068,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.transformMaxOutputTokens))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 1) {
                             this.plugin.settings.transformMaxOutputTokens = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.transformMaxOutputTokens));
                             new Notice('Value must be a number ≥ 1');
@@ -1100,11 +1102,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.analysisTemperature))
-                    .onChange(async (value) => {
-                        const n = parseFloat(value);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseFloat(text.inputEl.value);
                         if (!isNaN(n) && n >= 0 && n <= 2) {
                             this.plugin.settings.analysisTemperature = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.analysisTemperature));
                             new Notice('Value must be a number between 0.0 and 2.0');
@@ -1118,11 +1120,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.analysisMaxOutputTokens))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 1) {
                             this.plugin.settings.analysisMaxOutputTokens = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.analysisMaxOutputTokens));
                             new Notice('Value must be a number ≥ 1');
@@ -1152,20 +1154,40 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         new Setting(containerEl)
             .setName('Compaction threshold')
             .setDesc('Percentage of token budget at which context is compacted (50-95).')
-            .addText((text) =>
+            .addText((text) => {
                 text
                     .setValue(String(this.plugin.settings.contextCompactAtPercent))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+                    .inputEl.addEventListener('blur', () => {
+                        const raw = text.inputEl.value;
+                        const n = parseInt(raw, 10);
                         if (!isNaN(n) && n >= 50 && n <= 95) {
                             this.plugin.settings.contextCompactAtPercent = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.contextCompactAtPercent));
                             new Notice('Value must be between 50 and 95');
                         }
-                    }),
-            );
+                    });
+            });
+
+        new Setting(containerEl)
+            .setName('Compact summary length')
+            .setDesc('Number of sentences in the AI-generated compaction summary (1-20).')
+            .addText((text) => {
+                text
+                    .setValue(String(this.plugin.settings.compactSummarySentences))
+                    .inputEl.addEventListener('blur', () => {
+                        const raw = text.inputEl.value;
+                        const n = parseInt(raw, 10);
+                        if (!isNaN(n) && n >= 1 && n <= 20) {
+                            this.plugin.settings.compactSummarySentences = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.compactSummarySentences));
+                            new Notice('Value must be between 1 and 20');
+                        }
+                    });
+            });
 
         new Setting(containerEl)
             .setName('Include vault context')
@@ -1185,11 +1207,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.contextMaxVaultFiles))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 1 && n <= 100) {
                             this.plugin.settings.contextMaxVaultFiles = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.contextMaxVaultFiles));
                             new Notice('Value must be between 1 and 100');
@@ -1203,11 +1225,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.contextMaxCharsPerFile))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 500 && n <= 10000) {
                             this.plugin.settings.contextMaxCharsPerFile = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.contextMaxCharsPerFile));
                             new Notice('Value must be between 500 and 10000');
@@ -1249,11 +1271,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.linterTemperature))
-                    .onChange(async (value) => {
-                        const n = parseFloat(value);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseFloat(text.inputEl.value);
                         if (!isNaN(n) && n >= 0 && n <= 2) {
                             this.plugin.settings.linterTemperature = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.linterTemperature));
                             new Notice('Value must be a number between 0.0 and 2.0');
@@ -1267,11 +1289,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.linterMaxOutputTokens))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 1) {
                             this.plugin.settings.linterMaxOutputTokens = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.linterMaxOutputTokens));
                             new Notice('Value must be a number ≥ 1');
@@ -1299,6 +1321,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
                         this.plugin.settings.contextTokenBudget = DEFAULT_SETTINGS.contextTokenBudget;
                         this.plugin.settings.contextCompactAtPercent = DEFAULT_SETTINGS.contextCompactAtPercent;
+                        this.plugin.settings.compactSummarySentences = DEFAULT_SETTINGS.compactSummarySentences;
                         this.plugin.settings.contextIncludeVaultContext = DEFAULT_SETTINGS.contextIncludeVaultContext;
                         this.plugin.settings.contextMaxVaultFiles = DEFAULT_SETTINGS.contextMaxVaultFiles;
                         this.plugin.settings.contextMaxCharsPerFile = DEFAULT_SETTINGS.contextMaxCharsPerFile;

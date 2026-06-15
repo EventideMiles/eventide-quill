@@ -28,6 +28,16 @@ import { ContextCache } from './core/context-engine';
 import { extractAllEntities, analyzeVoice, assembleContext } from './core/context-engine';
 import type { ContextAssembly, ContextItem, ExtractedEntity, EntityType } from './core/context-engine/types';
 import { loadQuillContextData, writeQuillContextData, buildQuillContextData, entityFromId } from './utils/frontmatter';
+import { buildFeedbackMessages, getPersonaById, getFeedback, summarizeConversation } from './ai/feedback';
+import type { ChatMessage } from './ai/provider';
+import { AI_MODE_CONFIGS } from './ai/modes';
+
+/** Estimate token count from message content using the chars/4 heuristic. */
+function estimateTokens(msgs: ChatMessage[]): number {
+    let total = 0;
+    for (const m of msgs) total += Math.ceil(m.content.length / 4);
+    return total;
+}
 
 /** Generate a content-based fingerprint for a lint result. Uses the flagged
  *  text plus the line it appears on to distinguish multiple instances of the
@@ -82,6 +92,13 @@ function applyContextItemMods(
 export default class EventideQuillPlugin extends Plugin {
     settings!: EventideQuillSettings;
     private lintPanel: QuillSidebarView | null = null;
+    /** Abort controller for the current feedback request, if any. */
+    private feedbackAbort: AbortController | null = null;
+/** Full message history (system + context heads + chat turns) for continued chat.
+ *  Manuscript and reference file content is NOT stored here — it is injected
+ *  fresh as system messages on every API call so it always survives compaction
+ *  and never double-counts in token estimates. */
+private feedbackCurrentMessages: ChatMessage[] = [];
     private lintActive = false;
     lintActiveFile: string | null = null;
     /** File path for the currently assembled context. Tracked separately from lintActiveFile. */
@@ -250,6 +267,17 @@ export default class EventideQuillPlugin extends Plugin {
                         });
                 });
 
+                // Feedback menu item
+                menu.addSeparator();
+                menu.addItem((item) => {
+                    item
+                        .setTitle('Quill: Get AI feedback')
+                        .setIcon('message-square')
+                        .onClick(() => {
+                            void this.openFeedbackPanel();
+                        });
+                });
+
                 // Linter fix items
                 if (this.lintActive && this.currentResults.length > 0) {
                     const cursor = editor.getCursor();
@@ -374,6 +402,14 @@ export default class EventideQuillPlugin extends Plugin {
             name: 'Quill: Toggle prose linter',
             editorCallback: (editor) => {
                 this.toggleLint(editor);
+            },
+        });
+
+        this.addCommand({
+            id: 'quill-feedback-open',
+            name: 'Quill: Get AI feedback',
+            callback: () => {
+                void this.openFeedbackPanel();
             },
         });
 
@@ -905,6 +941,342 @@ export default class EventideQuillPlugin extends Plugin {
                     await this.assembleDocumentContext(view.editor.getValue(), target);
                 }
             }
+        }
+    }
+
+    /** Open the sidebar and switch to the Feedback tab. */
+    async openFeedbackPanel(): Promise<void> {
+        await this.openLintPanel();
+        this.lintPanel?.switchToFeedbackTab();
+        // Auto-add the active document to manuscripts
+        const activeFile = this.app.workspace.getActiveFile();
+        if (activeFile && activeFile.extension === 'md') {
+            this.lintPanel?.feedbackPanelAddContextFile(activeFile.path);
+        }
+    }
+
+    /**
+     * Request AI feedback on the context manuscripts with the selected persona.
+     * Streams the response into the Results sub-tab.
+     *
+     * Manuscript content is injected as system messages on every API call, not
+     * stored in feedbackCurrentMessages, so it always survives compaction and
+     * never pollutes token counts.
+     */
+    async requestFeedback(personaId: string, customInstruction?: string): Promise<void> {
+        const persona = personaId === 'custom' ? undefined : getPersonaById(personaId);
+        if (personaId !== 'custom' && !persona) {
+            new Notice('Quill: Unknown feedback persona.');
+            return;
+        }
+
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: No AI provider configured. Set one up in settings.');
+            return;
+        }
+
+        // Cancel any in-flight feedback request
+        this.feedbackAbort?.abort();
+        this.feedbackAbort = new AbortController();
+
+        // Start loading state in the Feedback tab
+        this.lintPanel?.feedbackStartLoading(personaId);
+
+        const feedbackContextPaths = this.lintPanel?.feedbackPanelContextFiles() ?? [];
+        if (feedbackContextPaths.length === 0) {
+            new Notice('Quill: Add manuscripts to the feedback tab before requesting analysis.');
+            this.lintPanel?.feedbackError('No manuscripts selected.');
+            return;
+        }
+
+        // Include context engine items (vault auto-scan) as reference context
+        // in the system prompt, not in the user message.
+        const contextParts: string[] = [];
+        try {
+            const assembly = this.currentAssembly;
+            if (assembly && assembly.contextItems.length > 0) {
+                for (const item of assembly.contextItems) {
+                    if (item.excerpt) {
+                        contextParts.push(
+                            `--- ${item.filePath} ---`,
+                            item.excerpt,
+                        );
+                    }
+                }
+            }
+        } catch {
+            // Vault context is best-effort
+        }
+
+        // Read manuscript files and inject them as system messages.
+        // They are NOT stored in feedbackCurrentMessages — injected fresh on
+        // every API call so they always survive compaction.
+        const manuscriptMessages: ChatMessage[] = [];
+        for (const filePath of feedbackContextPaths) {
+            try {
+                const file = this.app.vault.getAbstractFileByPath(filePath);
+                if (file instanceof TFile) {
+                    const content = await this.app.vault.cachedRead(file);
+                    const excerpt = content.slice(0, this.settings.contextMaxCharsPerFile);
+                    manuscriptMessages.push({
+                        role: 'system',
+                        content: `Manuscript (${filePath}):\n${excerpt}`,
+                    });
+                }
+            } catch {
+                // Best-effort
+            }
+        }
+
+        if (manuscriptMessages.length === 0) {
+            new Notice('Quill: Could not read any content from the selected manuscripts.');
+            this.lintPanel?.feedbackError('Could not read manuscript content.');
+            return;
+        }
+
+        const vaultContext = contextParts.length > 0 ? contextParts.join('\n\n') : '';
+
+        // Build and store the initial conversation messages (system prompt + user
+        // instruction only — no manuscript content).
+        const initialMessages = buildFeedbackMessages(
+            persona,
+            {
+                vaultContext,
+                narrativePreset: this.settings.narrativeVoicePreset,
+                customInstruction,
+            },
+        );
+        this.feedbackCurrentMessages = [...initialMessages];
+
+        // Build the full API payload: system prompt + manuscripts + user instruction.
+        const apiMessages: ChatMessage[] = [
+            this.feedbackCurrentMessages[0]!, // system prompt
+            ...manuscriptMessages,
+            this.feedbackCurrentMessages[1]!, // user instruction
+        ];
+
+        try {
+            const stream = getFeedback(
+                chat.provider,
+                persona,
+                {
+                    vaultContext,
+                    narrativePreset: this.settings.narrativeVoicePreset,
+                    signal: this.feedbackAbort.signal,
+                    customInstruction,
+                    existingMessages: apiMessages,
+                },
+            );
+
+            let fullResponse = '';
+            for await (const chunk of stream) {
+                if (chunk.done) {
+                    this.feedbackCurrentMessages.push({ role: 'assistant', content: fullResponse });
+                    // Push conversation-only tokens to the panel. The panel
+                    // adds manuscript and reference file tokens on top so the
+                    // indicator updates immediately when files change.
+                    this.lintPanel?.feedbackSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
+                    await this.lintPanel?.feedbackFinished();
+                } else {
+                    fullResponse += chunk.text;
+                    this.lintPanel?.feedbackAppendChunk(chunk.text);
+                }
+            }
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') return;
+            const msg = err instanceof Error ? err.message : String(err);
+            this.lintPanel?.feedbackError(msg);
+            new Notice('Quill: Feedback request failed.');
+        } finally {
+            this.feedbackAbort = null;
+        }
+    }
+
+    /**
+     * Send a follow-up chat message in the current feedback conversation.
+     * Manuscripts and reference files are injected fresh as system messages on
+     * every API call — they are never stored in feedbackCurrentMessages, so they
+     * always survive compaction and never double-count in token estimates.
+     *
+     * Compaction strategy (rolling context head):
+     *  - When the token budget (conversation + files + new message) meets or
+     *    exceeds the compaction threshold as a percentage of the context window,
+     *    the older portion of the conversation is summarized by the AI.
+     *  - The generated summary replaces the older turns as a system "context head".
+     *  - The new user message is always preserved below the context head.
+     *  - On the next compaction, the previous context head is included in what
+     *    gets summarized (rolling forward), producing a new consolidated head.
+     */
+    async sendFeedbackChatMessage(message: string): Promise<void> {
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: No AI provider configured.');
+            return;
+        }
+
+        this.feedbackAbort?.abort();
+        this.feedbackAbort = new AbortController();
+
+        this.lintPanel?.chatStartLoading();
+
+        // Manuscripts and reference files are always injected fresh as system
+        // messages. They are NOT stored in feedbackCurrentMessages, so they
+        // survive compaction and never pollute the conversation history.
+        const manuscriptPaths = this.lintPanel?.feedbackPanelContextFiles() ?? [];
+        const chatContextFilePaths = this.lintPanel?.feedbackChatContextFiles() ?? [];
+
+        const manuscriptMessages: ChatMessage[] = [];
+        for (const filePath of manuscriptPaths) {
+            try {
+                const file = this.app.vault.getAbstractFileByPath(filePath);
+                if (file instanceof TFile) {
+                    const content = await this.app.vault.cachedRead(file);
+                    const excerpt = content.slice(0, this.settings.contextMaxCharsPerFile);
+                    manuscriptMessages.push({
+                        role: 'system',
+                        content: `Manuscript (${filePath}):\n${excerpt}`,
+                    });
+                }
+            } catch {
+                // Best-effort
+            }
+        }
+        const referenceMessages: ChatMessage[] = [];
+        for (const filePath of chatContextFilePaths) {
+            try {
+                const file = this.app.vault.getAbstractFileByPath(filePath);
+                if (file instanceof TFile) {
+                    const content = await this.app.vault.cachedRead(file);
+                    const excerpt = content.slice(0, this.settings.contextMaxCharsPerFile);
+                    referenceMessages.push({
+                        role: 'system',
+                        content: `Reference file (${filePath}):\n${excerpt}`,
+                    });
+                }
+            } catch {
+                // Best-effort
+            }
+        }
+
+        const injectedContext: ChatMessage[] = [
+            ...manuscriptMessages,
+            ...referenceMessages,
+        ];
+
+        const injectedTokens = estimateTokens(injectedContext);
+        const maxTokens = chat.provider.config.maxContextTokens;
+        const compactPct = Math.max(50, Math.min(95, this.settings.contextCompactAtPercent)) / 100;
+
+        // Compute total tokens INCLUDING the new message to decide whether to
+        // compact. The new message is part of the context the AI must process.
+        const hypotheticalConversation = [
+            ...this.feedbackCurrentMessages,
+            { role: 'user' as const, content: message },
+        ];
+        const conversationTokens = estimateTokens(hypotheticalConversation);
+        const totalTokens = conversationTokens + injectedTokens;
+
+        // Push conversation-only tokens (without new message) to the panel.
+        // The panel adds manuscript and reference file tokens on top.
+        this.lintPanel?.feedbackSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
+
+        // --- AI-powered compaction ---
+        // Compact if the total (conversation + files + new message) meets or
+        // exceeds the threshold percentage of the context window.
+        if (totalTokens / maxTokens >= compactPct) {
+            const systemPrompt = this.feedbackCurrentMessages[0]!;
+            const contextHeads: ChatMessage[] = [];
+            let firstChatIdx = 1;
+            while (firstChatIdx < this.feedbackCurrentMessages.length && this.feedbackCurrentMessages[firstChatIdx]?.role === 'system') {
+                contextHeads.push(this.feedbackCurrentMessages[firstChatIdx]!);
+                firstChatIdx++;
+            }
+            const chatTurns = this.feedbackCurrentMessages.slice(firstChatIdx);
+
+            // Need at least 2 chat turns to compact meaningfully.
+            if (chatTurns.length >= 2) {
+                // Keep the last 2 turns so the AI retains immediate context.
+                // Everything older gets summarized. The new user message will
+                // be appended after compaction, ensuring it stays below the
+                // context head.
+                const keepCount = Math.min(2, chatTurns.length);
+                const recentTurns = chatTurns.slice(-keepCount);
+                const toSummarize = chatTurns.slice(0, -keepCount);
+
+                try {
+                    const sentenceCount = Math.max(1, Math.min(20, this.settings.compactSummarySentences));
+                    const summary = await summarizeConversation(
+                        chat.provider,
+                        toSummarize,
+                        sentenceCount,
+                        { signal: this.feedbackAbort.signal },
+                    );
+
+                    if (summary) {
+                        this.feedbackCurrentMessages = [
+                            systemPrompt,
+                            ...contextHeads,
+                            { role: 'system', content: summary },
+                            ...recentTurns,
+                        ];
+
+                        // Show the summary as a context head bubble in the chat
+                        // UI. The full message history remains visible — only the
+                        // API payload is compacted.
+                        this.lintPanel?.feedbackAppendChatSystemMessageInPlace(summary);
+
+                        // Update the indicator with the compacted token count.
+                        this.lintPanel?.feedbackSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
+                    }
+                } catch (err: unknown) {
+                    // If summarization fails, fall through — the conversation continues
+                    // without compaction. The AI may still handle it or error out.
+                    if (err instanceof Error && err.name === 'AbortError') return;
+                    console.warn('Quill: Compaction summarization failed, continuing without compaction.', err);
+                }
+            }
+        }
+
+        // Append the user message after compaction so it's always below any
+        // new context head.
+        this.feedbackCurrentMessages.push({ role: 'user', content: message });
+
+        // Build the full API payload: system prompt + injected context + conversation.
+        const baseMessages: ChatMessage[] = [
+            this.feedbackCurrentMessages[0]!, // system prompt
+            ...injectedContext,
+            ...this.feedbackCurrentMessages.slice(1), // context heads + chat turns (including new message)
+        ];
+
+        try {
+            const config = AI_MODE_CONFIGS.analysis;
+            const stream = chat.provider.chatCompletion({
+                messages: baseMessages,
+                temperature: config.defaultTemperature,
+                maxTokens: config.defaultMaxOutputTokens,
+                signal: this.feedbackAbort.signal,
+            });
+
+            let fullResponse = '';
+            for await (const chunk of stream) {
+                if (chunk.done) {
+                    this.feedbackCurrentMessages.push({ role: 'assistant', content: fullResponse });
+                    // Push conversation-only tokens. The panel adds file tokens on top.
+                    this.lintPanel?.feedbackSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
+                    await this.lintPanel?.chatFinished();
+                } else {
+                    fullResponse += chunk.text;
+                    this.lintPanel?.chatAppendChunk(chunk.text);
+                }
+            }
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') return;
+            const msg = err instanceof Error ? err.message : String(err);
+            await this.lintPanel?.chatError(msg);
+            new Notice('Quill: Chat response failed.');
+        } finally {
+            this.feedbackAbort = null;
         }
     }
 }
