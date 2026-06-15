@@ -133,11 +133,6 @@ function extractReplacement(
         const block = fencedMatch[0];
         const m = block.match(/^```\n([\s\S]*?)\n```$/);
         cleaned = (m?.[1] ?? '').trim();
-    } else {
-        // If no full fenced block, fall back to empty string (previous behavior for that path).
-        if (/^```[\s\S]*?^```$/.test(cleaned)) {
-            cleaned = '';
-        }
     }
 
     // Strip inline triple-backtick wrappers while preserving content.
@@ -255,8 +250,7 @@ function sanitizeReplacement(
     if (beforeFlagged.length > 0 && result.startsWith(beforeFlagged.slice(-Math.min(beforeFlagged.length, 20)))) {
         const overlap = beforeFlagged.slice(-Math.min(beforeFlagged.length, 20));
         // Only strip if the overlap is non-trivial (more than a couple chars)
-        // and the overlap is at the very end of beforeFlagged.
-        if (overlap.length > 2 && result.startsWith(overlap)) {
+        if (overlap.length > 2) {
             result = result.slice(overlap.length);
         }
     }

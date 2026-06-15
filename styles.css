@@ -37,10 +37,6 @@
     filter: brightness(1.15);
 }
 
-.quill-lint-dismiss-btn {
-    cursor: pointer;
-}
-
 .quill-sidebar {
     display: flex;
     flex-direction: column;
@@ -280,10 +276,6 @@
 .quill-details-dismiss-btn:hover {
     background: var(--background-modifier-hover);
     color: var(--text-normal);
-}
-
-.quill-lint-dismiss-btn {
-    cursor: pointer;
 }
 
 .quill-details-context {

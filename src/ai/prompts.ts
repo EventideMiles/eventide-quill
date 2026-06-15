@@ -122,10 +122,6 @@ export function getSystemPrompt(
     options?: {
         vaultContext?: string;
         narrativePreset?: NarrativeVoicePreset;
-        ruleInfo?: { rule: string; name: string; description: string };
-        contextLines?: { before: string; line: string; after: string };
-        flaggedSpan?: string;
-        customInstruction?: string;
     },
 ): string {
     switch (mode) {
