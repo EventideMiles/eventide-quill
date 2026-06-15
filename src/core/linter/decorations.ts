@@ -10,10 +10,20 @@ import {
 } from '@codemirror/view';
 import { LintResult, FIXABLE_RULES } from './types';
 import { FIXES } from './fixes';
+import { applyCmReplacement } from './apply-fix';
+
+/** Callback for when the user clicks "Fix with AI" in the in-editor tooltip. Includes originating EditorView for split-view correctness. */
+export type AiFixTooltipHandler = (result: LintResult, view: EditorView) => void;
+
+/** Callback for when the user dismisses a lint result from the in-editor tooltip. Includes originating EditorView for split-view correctness. */
+export type DismissHandler = (result: LintResult, view: EditorView) => void;
+
+/** Returns whether the "Fix with AI" button should appear in tooltips. Evaluated at tooltip creation time so setting changes take effect immediately. */
+export type AiFixEnabledGetter = () => boolean;
 
 export const setLintResults = StateEffect.define<LintResult[]>();
 export const toggleLintActive = StateEffect.define<boolean>();
-export const setPinnedTooltip = StateEffect.define<{ pos: number; result: LintResult } | null>();
+export const setPinnedTooltip = StateEffect.define<{ pos: number; end: number; result: LintResult } | null>();
 
 export const lintResultsField = StateField.define<LintResult[]>({
     create: () => [],
@@ -25,7 +35,7 @@ export const lintResultsField = StateField.define<LintResult[]>({
     },
 });
 
-const pinnedTooltipField = StateField.define<{ pos: number; result: LintResult } | null>({
+const pinnedTooltipField = StateField.define<{ pos: number; end: number; result: LintResult } | null>({
     create: () => null,
     update(value, tr) {
         for (const e of tr.effects) {
@@ -145,26 +155,21 @@ function applyFix(view: EditorView, result: LintResult): void {
     if (!fix) return;
 
     const doc = view.state.doc;
-    const from = doc.line(result.line).from + result.column;
-    const to = Math.min(from + result.length, doc.length);
-
     const text = doc.toString();
     const replacement = fix.apply(text, result.line, result.column, result.length);
     if (replacement === null) return;
 
-    view.dispatch({
-        changes: { from, to, insert: replacement },
-    });
+    applyCmReplacement(view, result, replacement);
 }
 
 /** Find the lint result whose range includes `pos`, or null. */
-function resultAtPos(view: EditorView, pos: number): { pos: number; result: LintResult } | null {
+function resultAtPos(view: EditorView, pos: number): { pos: number; end: number; result: LintResult } | null {
     const results = view.state.field(lintResultsField);
     for (const r of results) {
         const from = view.state.doc.line(r.line).from + r.column;
         const to = from + r.length;
         if (pos >= from && pos < to) {
-            return { pos: from, result: r };
+            return { pos: from, end: to, result: r };
         }
     }
     return null;
@@ -174,6 +179,9 @@ function resultAtPos(view: EditorView, pos: number): { pos: number; result: Lint
 export function getLintExtension(
     lintFn: (text: string) => LintResult[],
     onResults?: (results: LintResult[]) => void,
+    onAiFix?: AiFixTooltipHandler,
+    onDismiss?: DismissHandler,
+    isAiFixEnabled?: AiFixEnabledGetter,
 ) {
     return [
         lintResultsField,
@@ -183,7 +191,10 @@ export function getLintExtension(
 
             return {
                 pos: pinned.pos,
+                end: pinned.end,
                 above: true,
+                clip: false,
+                arrow: true,
                 create(view: EditorView) {
                     const resolved = getComputedStyle(view.dom);
 
@@ -200,6 +211,10 @@ export function getLintExtension(
                     msg.textContent = `[${pinned.result.rule}] ${pinned.result.message}`;
                     dom.appendChild(msg);
 
+                    const btnRow = window.activeDocument.createElement('div');
+                    btnRow.className = 'quill-lint-tooltip-btns';
+                    dom.appendChild(btnRow);
+
                     const fix = FIXES[pinned.result.rule];
                     if (fix) {
                         const btn = window.activeDocument.createElement('button');
@@ -211,7 +226,35 @@ export function getLintExtension(
                             e.stopPropagation();
                             applyFix(view, pinned.result);
                         });
-                        dom.appendChild(btn);
+                        btnRow.appendChild(btn);
+                    }
+
+                    if (onAiFix && isAiFixEnabled?.() !== false) {
+                        const aiBtn = window.activeDocument.createElement('button');
+                        aiBtn.className = 'quill-lint-ai-fix-btn';
+                        aiBtn.textContent = 'Fix with AI';
+                        aiBtn.addEventListener('click', (e: MouseEvent) => {
+                            e.stopPropagation();
+                            view.dispatch({
+                                effects: setPinnedTooltip.of(null),
+                            });
+                            onAiFix(pinned.result, view);
+                        });
+                        btnRow.appendChild(aiBtn);
+                    }
+
+                    if (onDismiss) {
+                        const dismissBtn = window.activeDocument.createElement('button');
+                        dismissBtn.className = 'quill-lint-dismiss-btn';
+                        dismissBtn.textContent = 'Dismiss';
+                        dismissBtn.addEventListener('click', (e: MouseEvent) => {
+                            e.stopPropagation();
+                            view.dispatch({
+                                effects: setPinnedTooltip.of(null),
+                            });
+                            onDismiss(pinned.result, view);
+                        });
+                        btnRow.appendChild(dismissBtn);
                     }
 
                     return { dom };

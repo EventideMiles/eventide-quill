@@ -14,6 +14,8 @@ import {
 import { QUILL_VIEW_TYPE, QuillSidebarView } from './ui/quill-sidebar';
 import { LintResult, FIXABLE_RULES } from './core/linter/types';
 import { FIXES } from './core/linter/fixes';
+import { applyReplacement } from './core/linter/apply-fix';
+import { findEditorView } from './utils/find-editor';
 import { AiProvider } from './ai/provider';
 import { createProvider, parseProviderKey } from './ai/provider-registry';
 import {
@@ -21,16 +23,27 @@ import {
     TRANSFORM_ACTIONS,
 } from './ai/transform';
 import { ToneSuggestModal, TransformModal } from './ui/transform-modal';
+import { FixWithAiModal } from './ui/fix-with-ai-modal';
+
+/** Generate a content-based fingerprint for a lint result. Uses the flagged
+ *  text plus the line it appears on to distinguish multiple instances of the
+ *  same rule on different lines, while remaining resilient to position shifts. */
+function lintFingerprint(result: LintResult, lineText?: string): string {
+    const text = lineText ?? '';
+    return `${result.rule}::${result.column}::${text}`;
+}
 
 export default class EventideQuillPlugin extends Plugin {
     settings!: EventideQuillSettings;
     private lintPanel: QuillSidebarView | null = null;
     private lintActive = false;
-    private lintActiveFile: string | null = null;
+    lintActiveFile: string | null = null;
     private currentResults: LintResult[] = [];
     private providerMap = new Map<string, AiProvider>();
     /** True while a selection transformation is being processed. Used to gate the context menu. */
     transformInProgress = false;
+    /** Dismissed lint fingerprints for the current session. Cleared when the linter is deactivated. */
+    private dismissedFingerprints = new Set<string>();
 
     /** Plugin entry point: register commands, views, extensions, and event handlers. */
     async onload() {
@@ -44,13 +57,20 @@ export default class EventideQuillPlugin extends Plugin {
                     this.currentResults = results;
                     this.lintPanel?.setResults(results);
                 },
+                (result, view) => this.openInlineAiFix(result, view),
+                (result, view) => this.dismissResult(result, view),
+                () => {
+                    if (!this.settings.enableLinterAiFixes) return false;
+                    const chat = this.getDefaultChatProvider();
+                    return !!chat.provider;
+                },
             ),
         );
 
         this.registerView(
             QUILL_VIEW_TYPE,
             (leaf: WorkspaceLeaf) => {
-                const view = new QuillSidebarView(leaf);
+                const view = new QuillSidebarView(leaf, this);
                 this.lintPanel = view;
                 return view;
             },
@@ -71,6 +91,7 @@ export default class EventideQuillPlugin extends Plugin {
                     this.lintActive = false;
                     this.lintActiveFile = null;
                     this.currentResults = [];
+                    this.dismissedFingerprints.clear();
                     this.lintPanel?.setResults([]);
                 }
             }),
@@ -134,15 +155,10 @@ export default class EventideQuillPlugin extends Plugin {
                                     .setTitle(`Quill: ${fix.description}`)
                                     .setIcon('wrench')
                                     .onClick(() => {
-                                        const cm = this.getCmView(editor);
-                                        if (!cm) return;
-                                        const doc = cm.state.doc;
-                                        const from = doc.line(result.line).from + result.column;
-                                        const to = Math.min(from + result.length, doc.length);
-                                        const text = doc.toString();
+                                        const text = editor.getValue();
                                         const replacement = fix.apply(text, result.line, result.column, result.length);
                                         if (replacement === null) return;
-                                        cm.dispatch({ changes: { from, to, insert: replacement } });
+                                        applyReplacement(editor, result, replacement);
                                     });
                             });
                         }
@@ -242,6 +258,7 @@ export default class EventideQuillPlugin extends Plugin {
             });
             this.lintActiveFile = null;
             this.currentResults = [];
+            this.dismissedFingerprints.clear();
             this.lintPanel?.setResults([]);
             new Notice('Prose linter: deactivated');
             return;
@@ -278,13 +295,13 @@ export default class EventideQuillPlugin extends Plugin {
         );
     }
 
-    /** Run the linter against `text` using the current settings and mode. */
+    /** Run the linter against `text` using the current settings and mode, filtering out dismissed results. */
     private runLint(text: string): LintResult[] {
         const mode = this.settings.linterMode;
         const prose = mode === 'all' || mode === 'prose';
         const ai = mode === 'all' || mode === 'ai';
 
-        return lint(text, {
+        const rawResults = lint(text, {
             enableLongSentences: prose && this.settings.enableLongSentences,
             maxSentenceWords: this.settings.maxSentenceWords,
             enablePassiveVoice: prose && this.settings.enablePassiveVoice,
@@ -304,6 +321,42 @@ export default class EventideQuillPlugin extends Plugin {
             enableAiHedging: ai && this.settings.enableAiHedging,
             enableAiWrapUps: ai && this.settings.enableAiWrapUps,
         });
+
+        const lines = text.split('\n');
+
+        return rawResults.filter((r) => {
+            const lineText = lines[r.line - 1] ?? '';
+            return !this.dismissedFingerprints.has(lintFingerprint(r, lineText));
+        });
+    }
+
+    /** Generate a fingerprint for a lint result: rule + column + line content. */
+    lintFingerprint(result: LintResult): string | null {
+        const view = findEditorView(this.app, this.lintActiveFile);
+        if (!view) return null;
+
+        const lineText = view.editor.getLine(result.line - 1);
+        return lintFingerprint(result, lineText ?? '');
+    }
+
+    /** Dismiss a lint result for the current session. It will reappear after reactivation. */
+    dismissResult(result: LintResult, _view?: EditorView): void {
+        const view = findEditorView(this.app, this.lintActiveFile);
+        if (!view) return;
+
+        const lineText = view.editor.getLine(result.line - 1);
+        this.dismissedFingerprints.add(lintFingerprint(result, lineText));
+        // Re-lint with the dismissal applied
+        const text = view.editor.getValue();
+        const results = this.runLint(text);
+        this.currentResults = results;
+
+        const cm = this.getCmView(view.editor);
+        if (cm) {
+            cm.dispatch({ effects: setLintResults.of(results) });
+        }
+
+        this.lintPanel?.setResults(results);
     }
 
     /** Load persisted settings, merging with defaults. */
@@ -363,11 +416,15 @@ export default class EventideQuillPlugin extends Plugin {
         return this.providerMap.get(providerId) ?? null;
     }
 
-    /** Get the default chat provider based on settings. Returns null if not configured. */
-    getDefaultChatProvider(): AiProvider | null {
+    /**
+     * Get the default chat provider and model based on settings.
+     * Returns { provider, modelId } or { provider: null } if not configured.
+     */
+    getDefaultChatProvider(): { provider: AiProvider | null; modelId?: string } {
         const key = parseProviderKey(this.settings.aiDefaultChatProvider);
-        if (!key) return null;
-        return this.getProvider(key.providerId);
+        if (!key) return { provider: null };
+        const provider = this.getProvider(key.providerId);
+        return { provider, modelId: key.modelId || undefined };
     }
 
     /** Get the default embed provider based on settings. Returns null if not configured. */
@@ -375,6 +432,40 @@ export default class EventideQuillPlugin extends Plugin {
         const key = parseProviderKey(this.settings.aiDefaultEmbedProvider);
         if (!key) return null;
         return this.getProvider(key.providerId);
+    }
+
+    /** Open the Fix with AI modal for a lint result triggered from an in-editor tooltip. */
+    private openInlineAiFix(result: LintResult, _view: EditorView): void {
+        const view = findEditorView(this.app, this.lintActiveFile);
+        if (!view) return;
+
+        const editorText = view.editor.getValue();
+
+        // Capture the original span at lint time so we can validate it later.
+        const lines = editorText.split('\n');
+        const lineIndex = result.line - 1;
+        const line = lines[lineIndex];
+        if (line === undefined) return;
+        const originalSpan = line.slice(result.column, result.column + result.length);
+
+        new FixWithAiModal(
+            this.app,
+            this,
+            result,
+            editorText,
+            (replacement: string) => {
+                // Validate that the span is still accurate before applying.
+                const currentLine = view.editor.getLine(lineIndex);
+                if (currentLine === undefined) return;
+                const currentSpan = currentLine.slice(result.column, result.column + result.length);
+                if (currentSpan !== originalSpan) {
+                    new Notice('Quill: Text has changed since this suggestion was generated.');
+                    return;
+                }
+
+                applyReplacement(view.editor, result, replacement);
+            },
+        ).open();
     }
 
     /** Open or reveal the Quill sidebar panel. */

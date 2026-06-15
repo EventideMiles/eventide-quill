@@ -1,7 +1,10 @@
 import { Component, ItemView, MarkdownView, WorkspaceLeaf } from 'obsidian';
-import { EditorView } from '@codemirror/view';
 import { LintResult, RULE_INFO, FIXABLE_RULES } from '../core/linter/types';
 import { FIXES } from '../core/linter/fixes';
+import { applyReplacement } from '../core/linter/apply-fix';
+import { findEditorView } from '../utils/find-editor';
+import { FixWithAiModal } from './fix-with-ai-modal';
+import type EventideQuillPlugin from '../main';
 
 export const QUILL_VIEW_TYPE = 'quill-sidebar';
 
@@ -15,10 +18,14 @@ export class QuillSidebarView extends ItemView {
     private tabBar!: HTMLElement;
     private content!: HTMLElement;
     private renderEvents: Component | null = null;
+    private plugin: EventideQuillPlugin;
+    /** Captured at lint time so the passage context is available even when the sidebar has focus. */
+    private cachedEditorText: string | null = null;
 
     /** Create the sidebar view for the given workspace leaf. */
-    constructor(leaf: WorkspaceLeaf) {
+    constructor(leaf: WorkspaceLeaf, plugin: EventideQuillPlugin) {
         super(leaf);
+        this.plugin = plugin;
     }
 
     /** Return the unique view type identifier. */
@@ -44,9 +51,13 @@ export class QuillSidebarView extends ItemView {
         this.render();
     }
 
-    /** Update the stored results and re-render if the results tab is active. */
+    /** Update the stored results and cache the editor text for passage context. */
     setResults(results: LintResult[]) {
         this.results = results;
+        const view = this.getEditorView();
+        if (view) {
+            this.cachedEditorText = view.editor.getValue();
+        }
         if (this.activeTab === 'results') {
             this.render();
         }
@@ -56,21 +67,25 @@ export class QuillSidebarView extends ItemView {
     showResultDetail(result: LintResult) {
         this.selectedResult = result;
         this.activeTab = 'details';
+        const view = this.getEditorView();
+        if (view) {
+            this.cachedEditorText = view.editor.getValue();
+        }
         this.render();
         this.jumpToResult(result);
     }
 
-    /** Return the currently active MarkdownView, or null if none is focused. */
-    private getMarkdownView(): MarkdownView | null {
-        return this.app.workspace.getActiveViewOfType(MarkdownView);
+    /** Find the editor for the linted file, even if the sidebar has focus. */
+    private getEditorView(): MarkdownView | null {
+        return findEditorView(this.app, this.plugin.lintActiveFile);
     }
 
     /** Scroll the editor cursor to the position described by `result`. */
     private jumpToResult(result: LintResult) {
-        const markdownView = this.getMarkdownView();
-        if (!markdownView) return;
+        const view = this.getEditorView();
+        if (!view) return;
 
-        const editor = markdownView.editor;
+        const editor = view.editor;
         const line = result.line - 1;
         const col = result.column;
 
@@ -83,32 +98,93 @@ export class QuillSidebarView extends ItemView {
         const fix = FIXES[result.rule];
         if (!fix) return;
 
-        const markdownView = this.getMarkdownView();
-        if (!markdownView) return;
+        const view = this.getEditorView();
+        if (!view) return;
 
-        const editor = markdownView.editor;
-        const cm = (editor as unknown as { cm: EditorView }).cm;
-        if (!cm) return;
-
-        const doc = cm.state.doc;
-        const from = doc.line(result.line).from + result.column;
-        const to = Math.min(from + result.length, doc.length);
-        const text = doc.toString();
+        const editor = view.editor;
+        const text = editor.getValue();
         const replacement = fix.apply(text, result.line, result.column, result.length);
         if (replacement === null) return;
 
-        cm.dispatch({ changes: { from, to, insert: replacement } });
+        applyReplacement(editor, result, replacement);
     }
 
-    /** Retrieve the source line text and character offset for a lint result. */
-    private getContextLine(result: LintResult): { text: string; offsetInLine: number } | null {
-        const markdownView = this.getMarkdownView();
-        if (!markdownView) return null;
+    /** Retrieve the full text of the active editor document. */
+    private getEditorText(): string | null {
+        const view = this.getEditorView();
+        if (view) return view.editor.getValue();
+        return this.cachedEditorText;
+    }
 
-        const lineText = markdownView.editor.getLine(result.line - 1);
-        if (lineText === undefined) return null;
+    /** Apply an AI-suggested replacement to the flagged span in the editor. */
+    private applyAiFix(result: LintResult, replacement: string): void {
+        const view = this.getEditorView();
+        if (!view) return;
 
-        return { text: lineText, offsetInLine: result.column };
+        applyReplacement(view.editor, result, replacement);
+    }
+
+    /** Open the Fix with AI modal for a given lint result. */
+    private openFixWithAiModal(result: LintResult, customInstruction?: string): void {
+        const editorText = this.getEditorText();
+        if (!editorText) return;
+
+        new FixWithAiModal(
+            this.app,
+            this.plugin,
+            result,
+            editorText,
+            (replacement: string) => {
+                this.applyAiFix(result, replacement);
+                this.switchTab('results');
+            },
+            customInstruction,
+        ).open();
+    }
+
+    /** Get the full paragraph (contiguous non-blank lines) containing the lint result. */
+    private getPassageContext(result: LintResult): {
+        lines: { text: string; index: number; isFlagged: boolean }[];
+        flaggedStart: number;
+        flaggedEnd: number;
+    } | null {
+        const view = this.getEditorView();
+        const editorText = view
+            ? view.editor.getValue()
+            : this.cachedEditorText;
+
+        if (!editorText) return null;
+
+        const allLines = editorText.split('\n');
+        const totalLines = allLines.length;
+        const lineIndex = result.line - 1;
+        const flaggedStart = result.column;
+        const flaggedEnd = result.column + result.length;
+
+        const isBlank = (text: string) => text.trim().length === 0;
+
+        let paraStart = lineIndex;
+        while (paraStart > 0) {
+            if (isBlank(allLines[paraStart - 1] ?? '')) break;
+            paraStart--;
+        }
+
+        let paraEnd = lineIndex;
+        while (paraEnd < totalLines - 1) {
+            if (isBlank(allLines[paraEnd + 1] ?? '')) break;
+            paraEnd++;
+        }
+
+        const lines: { text: string; index: number; isFlagged: boolean }[] = [];
+        for (let i = paraStart; i <= paraEnd; i++) {
+            lines.push({
+                text: allLines[i] ?? '',
+                index: i + 1,
+                isFlagged: i === lineIndex,
+            });
+        }
+
+        return { lines, flaggedStart, flaggedEnd };
     }
 
     /** Switch the active tab and re-render the sidebar. */
@@ -216,20 +292,33 @@ export class QuillSidebarView extends ItemView {
         const severityEl = header.createEl('span', { cls: `quill-lint-badge quill-lint-${result.severity}` });
         severityEl.setText(result.severity);
 
-        const context = this.getContextLine(result);
-        if (context !== null) {
+        const passage = this.getPassageContext(result);
+        if (passage !== null) {
             const ctxLabel = this.content.createEl('p', { cls: 'quill-details-label' });
             ctxLabel.setText('In text');
 
             const ctxBlock = this.content.createEl('div', { cls: 'quill-details-context' });
-            const before = ctxBlock.createEl('span', { cls: 'quill-details-context-before' });
-            before.setText(context.text.slice(0, context.offsetInLine));
 
-            const highlight = ctxBlock.createEl('span', { cls: 'quill-details-context-highlight' });
-            highlight.setText(context.text.slice(context.offsetInLine, context.offsetInLine + result.length));
+            for (const lineInfo of passage.lines) {
+                const lineEl = ctxBlock.createEl('div', { cls: 'quill-details-context-line' });
 
-            const after = ctxBlock.createEl('span', { cls: 'quill-details-context-after' });
-            after.setText(context.text.slice(context.offsetInLine + result.length));
+                const lineNum = lineEl.createEl('span', { cls: 'quill-details-context-linenum' });
+                lineNum.setText(String(lineInfo.index) + ' ');
+
+                if (lineInfo.isFlagged) {
+                    lineEl.createEl('span', { cls: 'quill-details-context-before' })
+                        .setText(lineInfo.text.slice(0, passage.flaggedStart));
+
+                    lineEl.createEl('span', { cls: 'quill-details-context-highlight' })
+                        .setText(lineInfo.text.slice(passage.flaggedStart, passage.flaggedEnd));
+
+                    lineEl.createEl('span', { cls: 'quill-details-context-after' })
+                        .setText(lineInfo.text.slice(passage.flaggedEnd));
+                } else {
+                    lineEl.createEl('span', { cls: 'quill-details-context-text' })
+                        .setText(lineInfo.text);
+                }
+            }
         }
 
         if (info) {
@@ -256,6 +345,36 @@ export class QuillSidebarView extends ItemView {
                 });
             }
         }
+
+        if (
+            this.plugin.settings.enableLinterAiFixes &&
+            this.plugin.getDefaultChatProvider().provider
+        ) {
+            const aiFixBtn = this.content.createEl('button', {
+                cls: 'quill-details-fix-btn quill-details-ai-fix-btn',
+                text: 'Fix with AI',
+            });
+            this.renderEvents!.registerDomEvent(aiFixBtn, 'click', () => {
+                this.openFixWithAiModal(result);
+            });
+
+            const aiCustomBtn = this.content.createEl('button', {
+                cls: 'quill-details-fix-btn quill-details-ai-custom-btn',
+                text: 'Fix with AI (custom)',
+            });
+            this.renderEvents!.registerDomEvent(aiCustomBtn, 'click', () => {
+                this.openFixWithAiModal(result, '');
+            });
+        }
+
+        const dismissBtn = this.content.createEl('button', {
+            cls: 'quill-details-dismiss-btn',
+            text: 'Dismiss',
+        });
+        this.renderEvents!.registerDomEvent(dismissBtn, 'click', () => {
+            this.plugin.dismissResult(result);
+            this.switchTab('results');
+        });
 
         const locationEl = this.content.createEl('p', { cls: 'quill-details-location' });
         locationEl.setText(`At line ${result.line}, column ${result.column + 1}`);
