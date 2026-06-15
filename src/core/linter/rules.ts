@@ -1,5 +1,12 @@
 import { LintResult } from './types';
 import wordLists from './word-lists.json';
+import {
+    splitSentences,
+    posAtOffset,
+    isInsideQuotes,
+    isAfterDialogueTag,
+    countSyllables,
+} from '../../utils/text-analysis';
 
 // --- Build patterns from word lists ---
 
@@ -43,111 +50,10 @@ const PASSIVE_EXCLUSIONS = new Set(wordLists.passiveExclusions);
 
 // --- End word list patterns ---
 
-interface Position {
-    line: number;
-    column: number;
-}
-
-/** Convert a character offset into a 1-based line and 0-based column position. */
-function posAtOffset(text: string, offset: number): Position {
-    const before = text.slice(0, offset);
-    const lines = before.split('\n');
-    const lastLine = lines[lines.length - 1];
-    return {
-        line: lines.length,
-        column: lastLine ? lastLine.length : 0,
-    };
-}
-
-/** Return true if the character at `offset` lies between double quotes. */
-function isInsideQuotes(text: string, offset: number): boolean {
-    let inQuotes = false;
-    for (let i = 0; i < offset; i++) {
-        if (text[i] === '"') inQuotes = !inQuotes;
-    }
-    return inQuotes;
-}
-
-/** Return true if a dialogue tag immediately precedes the character at `offset`. */
-function isAfterDialogueTag(text: string, offset: number): boolean {
-    const before = text.slice(Math.max(0, offset - 16), offset);
-    return PRECEDING_DIALOGUE_TAG.test(before);
-}
-
-interface SentenceRange {
-    start: number;
-    end: number;
-    text: string;
-    line: number;
-    column: number;
-}
-
-const SENTENCE_END = /[.!?:;](?=[\s"'\u201c\u201d\u2018\u2019]|$)/g;
-const QUOTE_AFTER = /["'\u201c\u201d\u2018\u2019]/;
-
-/** Check whether `text` ends with a known abbreviation (Dr., Mr., etc.). */
-function isAbbreviation(text: string): boolean {
-    return ABBREVIATIONS.test(text);
-}
-
-/** Split `text` into sentence ranges with 1-based line/col positions. */
-function splitSentences(text: string): SentenceRange[] {
-    const ranges: SentenceRange[] = [];
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    SENTENCE_END.lastIndex = 0;
-
-    while ((match = SENTENCE_END.exec(text)) !== null) {
-        const char = match[0];
-        const prev = text[match.index - 1];
-        if (char === prev) continue;
-
-        if (char === '.') {
-            const beforePeriod = text.slice(Math.max(0, match.index - 3), match.index);
-            if (isAbbreviation(beforePeriod + '.')) continue;
-        }
-
-        let end = match.index + 1;
-        while (QUOTE_AFTER.test(text.charAt(end))) {
-            end++;
-        }
-
-        const sentenceText = text.slice(lastIndex, end);
-        const trimmed = sentenceText.trim();
-        if (trimmed) {
-            const pos = posAtOffset(text, lastIndex);
-            ranges.push({
-                start: lastIndex,
-                end,
-                text: trimmed,
-                line: pos.line,
-                column: pos.column,
-            });
-        }
-
-        lastIndex = end;
-    }
-
-    const remaining = text.slice(lastIndex).trim();
-    if (remaining) {
-        const pos = posAtOffset(text, lastIndex);
-        ranges.push({
-            start: lastIndex,
-            end: text.length,
-            text: remaining,
-            line: pos.line,
-            column: pos.column,
-        });
-    }
-
-    return ranges;
-}
-
 /** Flag sentences exceeding `maxWords` in length. */
 export function checkLongSentences(text: string, maxWords: number = 40): LintResult[] {
     const results: LintResult[] = [];
-    const sentences = splitSentences(text);
+    const sentences = splitSentences(text, ABBREVIATIONS);
 
     for (const sentence of sentences) {
         const words = sentence.text.split(/\s+/);
@@ -207,7 +113,7 @@ export function checkAdverbs(text: string): LintResult[] {
         if (COMMON_ADVERBS.has(word)) continue;
         if (word.length > 4) {
             if (isInsideQuotes(text, match.index)) continue;
-            if (isAfterDialogueTag(text, match.index)) continue;
+            if (isAfterDialogueTag(text, match.index, PRECEDING_DIALOGUE_TAG)) continue;
             const pos = posAtOffset(text, match.index);
             results.push({
                 line: pos.line,
@@ -247,7 +153,7 @@ export function checkQualifiers(text: string): LintResult[] {
 /** Flag words appearing three or more times within a single sentence. */
 export function checkRepeatedWords(text: string, minLength: number = 4): LintResult[] {
     const results: LintResult[] = [];
-    const sentences = splitSentences(text);
+    const sentences = splitSentences(text, ABBREVIATIONS);
 
     for (const sentence of sentences) {
         const words = sentence.text.toLowerCase().match(/\b\w+\b/g);
@@ -300,7 +206,7 @@ export function checkEchoes(text: string): LintResult[] {
 
         const leadingTrim = paraText.length - paraText.trimStart().length;
         const paraPos = posAtOffset(text, match.index - paraText.length + leadingTrim);
-        const sentences = splitSentences(trimmed);
+        const sentences = splitSentences(trimmed, ABBREVIATIONS);
         if (sentences.length < ECHO_THRESHOLD) continue;
 
         const starts = sentences.map((s) => {
@@ -337,7 +243,7 @@ export function checkEchoes(text: string): LintResult[] {
     const remaining = text.slice(searchFrom).trim();
     if (remaining) {
         const paraPos = posAtOffset(text, text.length - remaining.length);
-        const sentences = splitSentences(remaining);
+        const sentences = splitSentences(remaining, ABBREVIATIONS);
         if (sentences.length >= ECHO_THRESHOLD) {
             const starts = sentences.map((s) => {
                 const words = s.text.match(/\b\w+\b/g);
@@ -432,26 +338,6 @@ export function checkDialogueTags(text: string): LintResult[] {
     }
 
     return results;
-}
-
-/** Estimate the number of syllables in `word` using vowel-group heuristics. */
-function countSyllables(word: string): number {
-    const lower = word.toLowerCase();
-    if (lower.length <= 3) return 1;
-
-    const vowels = lower.match(/[aeiouy]+/g);
-    if (!vowels) return 1;
-
-    let count = vowels.length;
-
-    if (lower.endsWith('e')) count--;
-    if (lower.endsWith('le') && lower.length > 2) {
-        const prev = lower[lower.length - 3];
-        if (prev && !'aeiouy'.includes(prev)) count++;
-    }
-    if (count === 0) count = 1;
-
-    return count;
 }
 
 /** Flag long words whose syllable count meets or exceeds `maxSyllables`. */
@@ -550,7 +436,7 @@ export function checkAiFillerAdverbs(text: string): LintResult[] {
 
     while ((match = AI_FILLER_ADVERBS.exec(text)) !== null) {
         if (isInsideQuotes(text, match.index)) continue;
-        if (isAfterDialogueTag(text, match.index)) continue;
+        if (isAfterDialogueTag(text, match.index, PRECEDING_DIALOGUE_TAG)) continue;
         const pos = posAtOffset(text, match.index);
         results.push({
             line: pos.line,
@@ -630,4 +516,3 @@ export function checkAiEmDashes(text: string): LintResult[] {
 
     return results;
 }
-
