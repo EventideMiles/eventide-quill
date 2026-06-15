@@ -327,10 +327,12 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /** Generate a fingerprint for a lint result: rule + column + line content. */
-    lintFingerprint(result: LintResult): string {
+    lintFingerprint(result: LintResult): string | null {
         const view = findEditorView(this.app, this.lintActiveFile);
-        const lineText = view ? view.editor.getLine(result.line - 1) : '';
-        return lintFingerprint(result, lineText);
+        if (!view) return null;
+
+        const lineText = view.editor.getLine(result.line - 1);
+        return lintFingerprint(result, lineText ?? '');
     }
 
     /** Dismiss a lint result for the current session. It will reappear after reactivation. */
