@@ -41,6 +41,12 @@ export interface EventideQuillSettings {
     linterTemperature: number;
     linterMaxOutputTokens: number;
     enableLinterAiFixes: boolean;
+    contextTokenBudget: number;
+    contextCompactAtPercent: number;
+    contextIncludeVaultContext: boolean;
+    contextMaxVaultFiles: number;
+    contextMaxCharsPerFile: number;
+    contextAutoScan: boolean;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -92,6 +98,12 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     linterTemperature: 0.3,
     linterMaxOutputTokens: 512,
     enableLinterAiFixes: true,
+    contextTokenBudget: 8192,
+    contextCompactAtPercent: 80,
+    contextIncludeVaultContext: true,
+    contextMaxVaultFiles: 20,
+    contextMaxCharsPerFile: 2000,
+    contextAutoScan: true,
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -1119,6 +1131,103 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(containerEl)
+            .setName('Context engine')
+            .setHeading();
+
+        new Setting(containerEl)
+            .setName('Token budget')
+            .setDesc('Maximum tokens for assembled context. Higher values use more context window.')
+            .addDropdown((dropdown) => {
+                for (const opt of [4096, 8192, 16384, 32768]) {
+                    dropdown.addOption(String(opt), String(opt));
+                }
+                dropdown
+                    .setValue(String(this.plugin.settings.contextTokenBudget))
+                    .onChange(async (value) => {
+                        this.plugin.settings.contextTokenBudget = parseInt(value, 10);
+                        await this.plugin.saveSettings();
+                    });
+            });
+
+        new Setting(containerEl)
+            .setName('Compaction threshold')
+            .setDesc('Percentage of token budget at which context is compacted (50-95).')
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.contextCompactAtPercent))
+                    .onChange(async (value) => {
+                        const n = parseInt(value, 10);
+                        if (!isNaN(n) && n >= 50 && n <= 95) {
+                            this.plugin.settings.contextCompactAtPercent = n;
+                            await this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.contextCompactAtPercent));
+                            new Notice('Value must be between 50 and 95');
+                        }
+                    }),
+            );
+
+        new Setting(containerEl)
+            .setName('Include vault context')
+            .setDesc('Search the vault for related notes when assembling context.')
+            .addToggle((toggle) =>
+                toggle
+                    .setValue(this.plugin.settings.contextIncludeVaultContext)
+                    .onChange(async (value) => {
+                        this.plugin.settings.contextIncludeVaultContext = value;
+                        await this.plugin.saveSettings();
+                    }),
+            );
+
+        new Setting(containerEl)
+            .setName('Max vault files')
+            .setDesc('Maximum number of vault files to examine for context (1-100).')
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.contextMaxVaultFiles))
+                    .onChange(async (value) => {
+                        const n = parseInt(value, 10);
+                        if (!isNaN(n) && n >= 1 && n <= 100) {
+                            this.plugin.settings.contextMaxVaultFiles = n;
+                            await this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.contextMaxVaultFiles));
+                            new Notice('Value must be between 1 and 100');
+                        }
+                    }),
+            );
+
+        new Setting(containerEl)
+            .setName('Max chars per file')
+            .setDesc('Maximum characters to read from each vault file (500-10000).')
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.contextMaxCharsPerFile))
+                    .onChange(async (value) => {
+                        const n = parseInt(value, 10);
+                        if (!isNaN(n) && n >= 500 && n <= 10000) {
+                            this.plugin.settings.contextMaxCharsPerFile = n;
+                            await this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.contextMaxCharsPerFile));
+                            new Notice('Value must be between 500 and 10000');
+                        }
+                    }),
+            );
+
+        new Setting(containerEl)
+            .setName('Auto-scan on open')
+            .setDesc('Automatically scan documents for context when opened.')
+            .addToggle((toggle) =>
+                toggle
+                    .setValue(this.plugin.settings.contextAutoScan)
+                    .onChange(async (value) => {
+                        this.plugin.settings.contextAutoScan = value;
+                        await this.plugin.saveSettings();
+                    }),
+            );
+
+        new Setting(containerEl)
             .setName('Linter AI')
             .setHeading();
 
@@ -1188,6 +1297,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
                         this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
                         this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
+                        this.plugin.settings.contextTokenBudget = DEFAULT_SETTINGS.contextTokenBudget;
+                        this.plugin.settings.contextCompactAtPercent = DEFAULT_SETTINGS.contextCompactAtPercent;
+                        this.plugin.settings.contextIncludeVaultContext = DEFAULT_SETTINGS.contextIncludeVaultContext;
+                        this.plugin.settings.contextMaxVaultFiles = DEFAULT_SETTINGS.contextMaxVaultFiles;
+                        this.plugin.settings.contextMaxCharsPerFile = DEFAULT_SETTINGS.contextMaxCharsPerFile;
+                        this.plugin.settings.contextAutoScan = DEFAULT_SETTINGS.contextAutoScan;
                         await this.plugin.saveSettings();
                         this.display();
                     }),

@@ -1,4 +1,4 @@
-import { Editor, MarkdownView, Menu, Notice, Plugin, TAbstractFile, WorkspaceLeaf } from 'obsidian';
+import { Editor, MarkdownView, Menu, Notice, Plugin, TAbstractFile, TFile, WorkspaceLeaf } from 'obsidian';
 import { EditorView } from '@codemirror/view';
 import {
     DEFAULT_SETTINGS,
@@ -24,6 +24,10 @@ import {
 } from './ai/transform';
 import { ToneSuggestModal, TransformModal } from './ui/transform-modal';
 import { FixWithAiModal } from './ui/fix-with-ai-modal';
+import { ContextCache } from './core/context-engine';
+import { extractAllEntities, analyzeVoice, assembleContext } from './core/context-engine';
+import type { ContextAssembly, ContextItem, ExtractedEntity, EntityType } from './core/context-engine/types';
+import { loadQuillContextData, writeQuillContextData, buildQuillContextData, entityFromId } from './utils/frontmatter';
 
 /** Generate a content-based fingerprint for a lint result. Uses the flagged
  *  text plus the line it appears on to distinguish multiple instances of the
@@ -33,17 +37,73 @@ function lintFingerprint(result: LintResult, lineText?: string): string {
     return `${result.rule}::${result.column}::${text}`;
 }
 
+/** Apply persisted entity modifications (pins, removals, manual adds) to freshly extracted entities. */
+function applyEntityMods(
+    entities: ExtractedEntity[],
+    mods: Map<string, { pinned: boolean; removed: boolean; manual: boolean; entity: ExtractedEntity }>,
+): void {
+    for (const [id, mod] of mods) {
+        if (mod.removed) {
+            const entity = entities.find(e => e.id === id);
+            if (entity) entity.removed = true;
+            continue;
+        }
+        if (mod.manual) {
+            if (!entities.some(e => e.id === id)) {
+                entities.push({ ...mod.entity });
+            }
+        }
+        const entity = entities.find(e => e.id === id);
+        if (entity && mod.pinned) {
+            entity.pinned = true;
+        }
+    }
+}
+
+/** Apply persisted context item modifications (pins, removals) to freshly assembled items. */
+function applyContextItemMods(
+    items: ContextItem[],
+    pinnedPaths: Set<string>,
+    removedPaths: Set<string>,
+): void {
+    for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i]!;
+        if (removedPaths.has(item.filePath)) {
+            items.splice(i, 1);
+        }
+    }
+    for (const item of items) {
+        if (pinnedPaths.has(item.filePath)) {
+            item.pinned = true;
+        }
+    }
+}
+
 export default class EventideQuillPlugin extends Plugin {
     settings!: EventideQuillSettings;
     private lintPanel: QuillSidebarView | null = null;
     private lintActive = false;
     lintActiveFile: string | null = null;
+    /** File path for the currently assembled context. Tracked separately from lintActiveFile. */
+    contextActiveFile: string | null = null;
     private currentResults: LintResult[] = [];
     private providerMap = new Map<string, AiProvider>();
     /** True while a selection transformation is being processed. Used to gate the context menu. */
     transformInProgress = false;
     /** Dismissed lint fingerprints for the current session. Cleared when the linter is deactivated. */
     private dismissedFingerprints = new Set<string>();
+    /** Context cache for extracted entities and voice markers. */
+    private contextCache = new ContextCache();
+    /** Current context assembly for the active document. */
+    currentAssembly: ContextAssembly | null = null;
+    /** User modifications to entities (pins, removals, manual adds) keyed by entity ID. */
+    private entityMods = new Map<string, { pinned: boolean; removed: boolean; manual: boolean; entity: ExtractedEntity }>();
+    /** Paths of context items the user has pinned. */
+    private pinnedContextPaths = new Set<string>();
+    /** Paths of context items the user has removed. */
+    removedContextPaths = new Set<string>();
+    /** Manual context items added by the user (not auto-discovered). */
+    private manualContextItems: ContextItem[] = [];
 
     /** Plugin entry point: register commands, views, extensions, and event handlers. */
     async onload() {
@@ -76,10 +136,16 @@ export default class EventideQuillPlugin extends Plugin {
             },
         );
 
+        // Context is not auto-loaded on startup.
+        // User must explicitly refresh via right-click, command palette, or transform.
+
         this.registerEvent(
             this.app.workspace.on('active-leaf-change', () => {
                 const activeFile = this.app.workspace.getActiveFile();
-                if (activeFile?.path !== this.lintActiveFile) {
+
+                // Linter: reset when the tracked linter file changes
+                const lintFileChange = activeFile?.path !== this.lintActiveFile;
+                if (lintFileChange) {
                     for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
                         if (leaf.view instanceof MarkdownView) {
                             const cm = this.getCmView(leaf.view.editor);
@@ -94,10 +160,36 @@ export default class EventideQuillPlugin extends Plugin {
                     this.dismissedFingerprints.clear();
                     this.lintPanel?.setResults([]);
                 }
+
+                // Context: only reset when the context file is no longer open.
+                // Does NOT auto-scan on leaf focus changes — user must explicitly
+                // refresh via right-click, command palette, or a transform operation.
+                if (this.contextActiveFile) {
+                    const stillOpen = this.app.workspace.getLeavesOfType('markdown')
+                        .some(leaf => {
+                            if (leaf.view instanceof MarkdownView) {
+                                return leaf.view.file?.path === this.contextActiveFile;
+                            }
+                            return false;
+                        });
+                    if (!stillOpen) {
+                        this.currentAssembly = null;
+                        this.contextActiveFile = null;
+                        this.entityMods.clear();
+                        this.pinnedContextPaths.clear();
+                        this.removedContextPaths.clear();
+                        this.manualContextItems = [];
+                        this.lintPanel?.setContextAssembly(null);
+                    }
+                }
             }),
         );
 
         this.registerEvent(this.app.vault.on('modify', (file: TAbstractFile) => {
+            if (file instanceof TFile) {
+                this.contextCache.invalidate(file.path);
+            }
+
             if (
                 !this.lintActive ||
                 !this.settings.lintOnSave ||
@@ -129,6 +221,32 @@ export default class EventideQuillPlugin extends Plugin {
                         .setIcon('checkmark')
                         .onClick(() => {
                             this.toggleLint(editor);
+                        });
+                });
+
+                menu.addItem((item) => {
+                    item
+                        .setTitle('Quill: Refresh context')
+                        .setIcon('refresh-cw')
+                        .onClick(() => {
+                            // Find the file for the editor that was right-clicked.
+                            // In split view, getActiveFile() returns the focused leaf's file,
+                            // which may differ from the leaf where the right-click occurred.
+                            // Walk all leaves to find the one whose editor matches.
+                            let targetFile: TFile | null = null;
+                            for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+                                if (leaf.view instanceof MarkdownView) {
+                                    const viewEditor = leaf.view.editor;
+                                    if (viewEditor === editor) {
+                                        targetFile = leaf.view.file;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (targetFile) {
+                                this.scanContext(editor.getValue(), targetFile.path);
+                                void this.assembleDocumentContext(editor.getValue(), targetFile.path);
+                            }
                         });
                 });
 
@@ -169,6 +287,21 @@ export default class EventideQuillPlugin extends Plugin {
                 const selection = editor.getSelection();
                 if (selection && !this.transformInProgress) {
                     const fullText = editor.getValue();
+
+                    // Find the file for the editor where the right-click occurred.
+                    let targetFile: TFile | null = null;
+                    for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+                        if (leaf.view instanceof MarkdownView) {
+                            const viewEditor = leaf.view.editor;
+                            if (viewEditor === editor) {
+                                targetFile = leaf.view.file;
+                                break;
+                            }
+                        }
+                    }
+
+                    const filePath = targetFile?.path;
+
                     menu.addSeparator();
 
                     for (const action of TRANSFORM_ACTIONS) {
@@ -182,7 +315,7 @@ export default class EventideQuillPlugin extends Plugin {
                                             this.app,
                                             (tone) => {
                                                 void applyTransformation(
-                                                    this, editor, 'change-tone', selection, fullText, tone,
+                                                    this, editor, 'change-tone', selection, fullText, tone, filePath,
                                                 );
                                             },
                                         ).open();
@@ -199,7 +332,7 @@ export default class EventideQuillPlugin extends Plugin {
                                             selection,
                                             (instruction) => {
                                                 void applyTransformation(
-                                                    this, editor, 'custom', selection, fullText, instruction,
+                                                    this, editor, 'custom', selection, fullText, instruction, filePath,
                                                 );
                                             },
                                         ).open();
@@ -212,7 +345,7 @@ export default class EventideQuillPlugin extends Plugin {
                                     .setIcon(action.icon)
                                     .onClick(() => {
                                         void applyTransformation(
-                                            this, editor, action.id, selection, fullText,
+                                            this, editor, action.id, selection, fullText, undefined, filePath,
                                         );
                                     });
                             });
@@ -222,8 +355,18 @@ export default class EventideQuillPlugin extends Plugin {
             }),
         );
 
-        this.addRibbonIcon('feather', 'Show lint results', () => {
+        this.addRibbonIcon('feather', 'Eventide quill sidebar', () => {
             this.openLintPanelNoAsync();
+        });
+
+        this.addCommand({
+            id: 'scan-document-context',
+            name: 'Quill: Scan document context',
+            editorCallback: (editor) => {
+                const file = this.app.workspace.getActiveFile();
+                this.scanContext(editor.getValue(), file?.path ?? '');
+                void this.assembleDocumentContext(editor.getValue());
+            },
         });
 
         this.addCommand({
@@ -490,5 +633,278 @@ export default class EventideQuillPlugin extends Plugin {
     /** Fire-and-forget wrapper around `openLintPanel`. */
     private openLintPanelNoAsync() {
         void this.openLintPanel();
+    }
+
+    /** Extract entities and voice markers from the active document and cache the results. */
+    scanContext(text: string, filePath: string): void {
+        const entities = extractAllEntities(text);
+        const voice = analyzeVoice(text);
+        this.contextCache.set(filePath, { entities, voice });
+    }
+
+    /** Run full context assembly including vault search. Applies any
+     *  user modifications (pins, removals, manual adds) from entityMods
+     *  and pinnedContextPaths/removedContextPaths/manualContextItems.
+     *  On first assembly for a file, loads persisted mods from frontmatter. */
+    async assembleDocumentContext(text: string, filePath?: string): Promise<ContextAssembly> {
+        const path = filePath ?? this.contextActiveFile ?? '';
+        if (path !== this.contextActiveFile && this.contextActiveFile !== null) {
+            this.entityMods.clear();
+            this.pinnedContextPaths.clear();
+            this.removedContextPaths.clear();
+            this.manualContextItems = [];
+        }
+        let cached = this.contextCache.get(path);
+        if (!cached) {
+            this.scanContext(text, path);
+            cached = this.contextCache.get(path);
+            if (!cached) {
+                return {
+                    entities: [],
+                    voice: { pov: 'unknown', tense: 'unknown', avgSentenceLength: 0, dialogueRatio: 0, descriptionRatio: 1 },
+                    contextItems: [],
+                    totalTokens: 0,
+                    tokenBudget: this.settings.contextTokenBudget,
+                    budgetExceeded: false,
+                    compacted: false,
+                };
+            }
+        }
+
+        if (this.entityMods.size === 0 && this.pinnedContextPaths.size === 0 && this.removedContextPaths.size === 0 && this.manualContextItems.length === 0) {
+            const file = this.app.vault.getAbstractFileByPath(path);
+            if (file instanceof TFile) {
+                this.loadModsFromFrontmatter(file);
+            }
+        }
+
+        const activeEntities = cached.entities.filter(e => !e.removed);
+        const assembly = await assembleContext(
+            this.app.vault, text, activeEntities, cached.voice,
+            {
+                tokenBudget: this.settings.contextTokenBudget,
+                compactAtPercent: this.settings.contextCompactAtPercent,
+                includeVaultContext: this.settings.contextIncludeVaultContext,
+                maxVaultFiles: this.settings.contextMaxVaultFiles,
+                maxCharsPerFile: this.settings.contextMaxCharsPerFile,
+            },
+        );
+
+        applyEntityMods(assembly.entities, this.entityMods);
+        applyContextItemMods(assembly.contextItems, this.pinnedContextPaths, this.removedContextPaths);
+
+        for (const item of this.manualContextItems) {
+            if (!assembly.contextItems.some(i => i.filePath === item.filePath)) {
+                if (!item.excerpt) {
+                    const mf = this.app.vault.getAbstractFileByPath(item.filePath);
+                    if (mf instanceof TFile) {
+                        const content = await this.app.vault.cachedRead(mf);
+                        item.excerpt = content.slice(0, this.settings.contextMaxCharsPerFile);
+                        item.tokenEstimate = Math.ceil(item.excerpt.length / 4);
+                    }
+                }
+                assembly.contextItems.push(item);
+                assembly.totalTokens += item.tokenEstimate;
+            }
+        }
+
+        this.currentAssembly = assembly;
+        this.contextActiveFile = path;
+        this.lintPanel?.setContextAssembly(assembly);
+        return assembly;
+    }
+
+    /** Load persisted context modifications from the file's frontmatter
+     *  into in-memory tracking structures. Only runs when those
+     *  structures are still empty (first assembly for this file). */
+    loadModsFromFrontmatter(file: TFile): void {
+        const fm = loadQuillContextData(this.app, file);
+
+        for (const id of fm.pinnedEntities ?? []) {
+            this.entityMods.set(id, { pinned: true, removed: false, manual: false, entity: entityFromId(id) });
+        }
+        for (const id of fm.removedEntities ?? []) {
+            this.entityMods.set(id, { pinned: false, removed: true, manual: false, entity: entityFromId(id) });
+        }
+        for (const id of fm.addedEntities ?? []) {
+            this.entityMods.set(id, { pinned: true, removed: false, manual: true, entity: entityFromId(id) });
+        }
+
+        for (const p of fm.pinnedFiles ?? []) {
+            this.pinnedContextPaths.add(p);
+        }
+        for (const p of fm.removedFiles ?? []) {
+            this.removedContextPaths.add(p);
+        }
+
+        for (const fp of fm.addedFiles ?? []) {
+            if (!this.manualContextItems.some(i => i.filePath === fp)) {
+                this.manualContextItems.push({
+                    filePath: fp,
+                    excerpt: '',
+                    matchedEntities: [],
+                    tokenEstimate: 0,
+                    pinned: true,
+                    relevanceScore: 10,
+                    manual: true,
+                });
+            }
+        }
+    }
+
+    /** Sync current in-memory mods to the document's frontmatter.
+     *  Fire-and-forget — errors are logged, not thrown. */
+    syncQuillFrontmatter(): void {
+        if (!this.contextActiveFile) return;
+        const file = this.app.vault.getAbstractFileByPath(this.contextActiveFile);
+        if (!(file instanceof TFile)) return;
+        const data = buildQuillContextData({
+            entityMods: this.entityMods,
+            pinnedContextPaths: this.pinnedContextPaths,
+            removedContextPaths: this.removedContextPaths,
+            manualContextItems: this.manualContextItems,
+        });
+        writeQuillContextData(this.app, file, data).catch(err => {
+            console.warn('Quill: failed to sync context data', err);
+        });
+    }
+
+    /** Toggle the pinned state of an entity. Persists across re-assemblies and to frontmatter. */
+    toggleEntityPin(entityId: string): void {
+        if (!this.currentAssembly) return;
+        const entity = this.currentAssembly.entities.find(e => e.id === entityId);
+        if (entity) {
+            entity.pinned = !entity.pinned;
+            this.entityMods.set(entityId, { pinned: entity.pinned, removed: entity.removed, manual: entity.manual, entity });
+            this.lintPanel?.setContextAssembly(this.currentAssembly);
+            this.syncQuillFrontmatter();
+        }
+    }
+
+    /** Remove an entity from the current context. Persists across re-assemblies and to frontmatter. */
+    removeEntity(entityId: string): void {
+        if (!this.currentAssembly) return;
+        const entity = this.currentAssembly.entities.find(e => e.id === entityId);
+        if (entity) {
+            entity.removed = true;
+            this.entityMods.set(entityId, { pinned: entity.pinned, removed: true, manual: entity.manual, entity });
+            this.lintPanel?.setContextAssembly(this.currentAssembly);
+            this.syncQuillFrontmatter();
+        }
+    }
+
+    /** Add a manual entity to the current context. Persists across re-assemblies and to frontmatter. */
+    addManualEntity(name: string, type: EntityType): void {
+        if (!this.currentAssembly) return;
+        const id = `${type}:${name.toLowerCase().replace(/\s+/g, '-')}`;
+        const entity: ExtractedEntity = {
+            id,
+            type,
+            name,
+            occurrences: 0,
+            lines: [],
+            aliases: [],
+            pinned: true,
+            removed: false,
+            manual: true,
+        };
+        this.currentAssembly.entities.push(entity);
+        this.entityMods.set(id, { pinned: true, removed: false, manual: true, entity });
+        this.lintPanel?.setContextAssembly(this.currentAssembly);
+        this.syncQuillFrontmatter();
+    }
+
+    /** Toggle the pinned state of a context item. Persists across re-assemblies and to frontmatter. */
+    toggleContextItemPin(filePath: string): void {
+        if (!this.currentAssembly) return;
+        const item = this.currentAssembly.contextItems.find(i => i.filePath === filePath);
+        if (item) {
+            item.pinned = !item.pinned;
+            if (item.pinned) {
+                this.pinnedContextPaths.add(filePath);
+            } else {
+                this.pinnedContextPaths.delete(filePath);
+            }
+            this.lintPanel?.setContextAssembly(this.currentAssembly);
+            this.syncQuillFrontmatter();
+        }
+    }
+
+    /** Remove a context item from the assembly. Persists across re-assemblies and to frontmatter. */
+    removeContextItem(filePath: string): void {
+        if (!this.currentAssembly) return;
+        const idx = this.currentAssembly.contextItems.findIndex(i => i.filePath === filePath);
+        if (idx !== -1) {
+            this.currentAssembly.contextItems.splice(idx, 1);
+            this.removedContextPaths.add(filePath);
+            this.pinnedContextPaths.delete(filePath);
+            this.manualContextItems = this.manualContextItems.filter(i => i.filePath !== filePath);
+            this.lintPanel?.setContextAssembly(this.currentAssembly);
+            this.syncQuillFrontmatter();
+        }
+    }
+
+    /** Add a vault file as a manual context item. Reads the file content for the excerpt. Persists to frontmatter. */
+    async addManualContextItem(filePath: string): Promise<void> {
+        if (!this.currentAssembly) return;
+        if (this.removedContextPaths.has(filePath)) {
+            this.removedContextPaths.delete(filePath);
+        }
+        if (this.currentAssembly.contextItems.some(i => i.filePath === filePath)) {
+            return;
+        }
+        const file = this.app.vault.getAbstractFileByPath(filePath);
+        if (!(file instanceof TFile)) return;
+        const content = await this.app.vault.cachedRead(file);
+        const excerpt = content.slice(0, this.settings.contextMaxCharsPerFile);
+        const tokenEstimate = Math.ceil(excerpt.length / 4);
+        const item: ContextItem = {
+            filePath,
+            excerpt,
+            matchedEntities: [],
+            tokenEstimate,
+            pinned: true,
+            relevanceScore: 10,
+            manual: true,
+        };
+        this.manualContextItems.push(item);
+        this.pinnedContextPaths.add(filePath);
+        this.currentAssembly.contextItems.push(item);
+        this.currentAssembly.totalTokens += tokenEstimate;
+        this.lintPanel?.setContextAssembly(this.currentAssembly);
+        this.syncQuillFrontmatter();
+    }
+
+    /** Check whether any entities or context items have been removed. */
+    hasRemovedItems(): boolean {
+        if (this.removedContextPaths.size > 0) return true;
+        for (const [, mod] of this.entityMods) {
+            if (mod.removed) return true;
+        }
+        return false;
+    }
+
+    /** Restore all removed entities and context items, then re-assemble. */
+    async restoreRemovedItems(text?: string, filePath?: string): Promise<void> {
+        this.removedContextPaths.clear();
+        const removedEntries = [...this.entityMods.entries()].filter(([, m]) => m.removed);
+        for (const [id] of removedEntries) {
+            this.entityMods.delete(id);
+        }
+        const target = filePath ?? this.contextActiveFile;
+        if (target) {
+            this.contextCache.invalidate(target);
+            this.syncQuillFrontmatter();
+            if (text) {
+                this.scanContext(text, target);
+                await this.assembleDocumentContext(text, target);
+            } else {
+                const view = findEditorView(this.app, target);
+                if (view) {
+                    this.scanContext(view.editor.getValue(), target);
+                    await this.assembleDocumentContext(view.editor.getValue(), target);
+                }
+            }
+        }
     }
 }
