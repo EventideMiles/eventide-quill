@@ -36,6 +36,11 @@ export interface EventideQuillSettings {
     transformMaxOutputTokens: number;
     narrativeVoicePreset: NarrativeVoicePreset;
     customNarrativeVoiceRules: string;
+    analysisTemperature: number;
+    analysisMaxOutputTokens: number;
+    linterTemperature: number;
+    linterMaxOutputTokens: number;
+    enableLinterAiFixes: boolean;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -82,6 +87,11 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     transformMaxOutputTokens: 4096,
     narrativeVoicePreset: 'third-limited',
     customNarrativeVoiceRules: 'No genre-specific or context-specific rules configured.',
+    analysisTemperature: 0.7,
+    analysisMaxOutputTokens: 2048,
+    linterTemperature: 0.3,
+    linterMaxOutputTokens: 512,
+    enableLinterAiFixes: true,
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -790,11 +800,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         .addOption('embed', 'Embed')
                         .addOption('both', 'Both')
                         .setValue(model.role)
-                        .onChange(async (value) => {
-                            model.role = value as 'chat' | 'embed' | 'both';
-                            this.validateDefaultProviders();
-                            await this.plugin.saveSettings();
-                        }),
+                    .onChange(async (value) => {
+                        model.role = value as 'chat' | 'embed' | 'both';
+                        this.validateDefaultProviders();
+                        await this.plugin.saveSettings();
+                        this.display();
+                    }),
                 );
 
             new Setting(modelCard)
@@ -1068,8 +1079,100 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(containerEl)
+            .setName('Analysis')
+            .setHeading();
+
+        new Setting(containerEl)
+            .setName('Analysis temperature')
+            .setDesc('Temperature for AI analysis and feedback responses (companion mode). Range: 0.0 – 2.0.')
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.analysisTemperature))
+                    .onChange(async (value) => {
+                        const n = parseFloat(value);
+                        if (!isNaN(n) && n >= 0 && n <= 2) {
+                            this.plugin.settings.analysisTemperature = n;
+                            await this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.analysisTemperature));
+                            new Notice('Value must be a number between 0.0 and 2.0');
+                        }
+                    }),
+            );
+
+        new Setting(containerEl)
+            .setName('Analysis max output tokens')
+            .setDesc('Maximum tokens per analysis response.')
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.analysisMaxOutputTokens))
+                    .onChange(async (value) => {
+                        const n = parseInt(value, 10);
+                        if (!isNaN(n) && n >= 1) {
+                            this.plugin.settings.analysisMaxOutputTokens = n;
+                            await this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.analysisMaxOutputTokens));
+                            new Notice('Value must be a number ≥ 1');
+                        }
+                    }),
+            );
+
+        new Setting(containerEl)
+            .setName('Linter AI')
+            .setHeading();
+
+        new Setting(containerEl)
+            .setName('Enable AI-powered lint fixes')
+            .setDesc('Show "fix with AI" buttons in the linter sidebar and editor tooltips for intelligent fixes.')
+            .addToggle((toggle) =>
+                toggle
+                    .setValue(this.plugin.settings.enableLinterAiFixes)
+                    .onChange(async (value) => {
+                        this.plugin.settings.enableLinterAiFixes = value;
+                        await this.plugin.saveSettings();
+                    }),
+            );
+
+        new Setting(containerEl)
+            .setName('Linter AI temperature')
+            .setDesc('Lower values produce more conservative, precise fixes. Range: 0.0 – 2.0.')
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.linterTemperature))
+                    .onChange(async (value) => {
+                        const n = parseFloat(value);
+                        if (!isNaN(n) && n >= 0 && n <= 2) {
+                            this.plugin.settings.linterTemperature = n;
+                            await this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.linterTemperature));
+                            new Notice('Value must be a number between 0.0 and 2.0');
+                        }
+                    }),
+            );
+
+        new Setting(containerEl)
+            .setName('Linter AI max output tokens')
+            .setDesc('Maximum tokens per AI lint fix response.')
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.linterMaxOutputTokens))
+                    .onChange(async (value) => {
+                        const n = parseInt(value, 10);
+                        if (!isNaN(n) && n >= 1) {
+                            this.plugin.settings.linterMaxOutputTokens = n;
+                            await this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.linterMaxOutputTokens));
+                            new Notice('Value must be a number ≥ 1');
+                        }
+                    }),
+            );
+
+        new Setting(containerEl)
             .setName('Restore defaults')
-            .setDesc('Reset all model behavior settings to their default values.')
+            .setDesc('Reset all AI behavior settings to their default values.')
             .addButton((button) =>
                 button
                     .setButtonText('Restore defaults')
@@ -1080,6 +1183,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.transformMaxOutputTokens = DEFAULT_SETTINGS.transformMaxOutputTokens;
                         this.plugin.settings.narrativeVoicePreset = DEFAULT_SETTINGS.narrativeVoicePreset;
                         this.plugin.settings.customNarrativeVoiceRules = DEFAULT_SETTINGS.customNarrativeVoiceRules;
+                        this.plugin.settings.analysisTemperature = DEFAULT_SETTINGS.analysisTemperature;
+                        this.plugin.settings.analysisMaxOutputTokens = DEFAULT_SETTINGS.analysisMaxOutputTokens;
+                        this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
+                        this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
+                        this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
                         await this.plugin.saveSettings();
                         this.display();
                     }),
