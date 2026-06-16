@@ -13,8 +13,9 @@ MIT license. Built from scratch. Mobile-ready. Local-model first.
 
 - **Package manager: npm**
 - **Bundler: esbuild** (configured in `esbuild.config.mjs`)
-- **Linting: ESLint** with `eslint-plugin-obsidianmd`
-- **Types: `obsidian`** type definitions
+- **Linting: ESLint** with `eslint-plugin-obsidianmd` (configured in `eslint.config.mts`)
+- **Types: `obsidian`** type definitions (configured in `tsconfig.json`)
+- **Editor config: `.editorconfig`**
 - Run `npm run dev` for watch mode, `npm run build` for production.
 - Run `npm run lint` to lint.
 
@@ -40,13 +41,40 @@ src/
 
 ## Coding conventions
 
-- **Spaces, not tabs.** Indent size: 4 spaces.
-- **kebab-case.ts** for modules, **PascalCase.ts** for classes.
-- **PascalCase** for interfaces and types (no `I` prefix).
-- **camelCase** for functions and variables.
-- **UPPER_SNAKE_CASE** for magic constants.
-- Keep imports sorted: external → internal, absolute → relative.
-- **JSDoc on every function.** All functions and methods must have a `/** ... */` docstring. Coverage threshold is 80%; aim for 100%.
+### Naming
+
+- **kebab-case.ts** for module files (e.g., `feedback-panel.ts`).
+- **PascalCase** for interfaces, types, and type aliases (no `I` prefix).
+- **camelCase** for functions, variables, parameters, and private fields.
+- **UPPER_SNAKE_CASE** for module-level exported constants (e.g., `DEFAULT_SETTINGS`, `FEEDBACK_PERSONAS`).
+- **camelCase** for local `const` declarations inside functions (e.g., `const doc = view.state.doc`).
+- **camelCase** for settings object properties; the settings object itself is UPPER_SNAKE_CASE (e.g., `DEFAULT_SETTINGS` with properties like `linterMode`, `enableLongSentences`).
+- **Boolean variables:** predicates (functions returning boolean) use `is-`/`has-`/`needs-` prefixes (e.g., `isBlank`, `hasContent`, `needsSpaceBetween`). Class state properties use descriptive names without prefixes (e.g., `chatLoading`, `userScrolledUp`).
+- **Event handlers:** use `on<EventName>` pattern (e.g., `onChoose`, `onSubmit`, `onGenerate`).
+- **Settings booleans:** use `enable<RuleName>` prefix (e.g., `enableLongSentences`, `enablePassiveVoice`).
+
+### Code style
+
+- **Spaces, not tabs.** Indent size: 4 (enforced in `.editorconfig`).
+- Keep imports sorted: external → internal, `type` imports last.
+- **JSDoc on every function.** All functions and methods must have a `/** ... */` docstring.
+
+### Error handling
+
+- Use typed error classes (extend `Error`) rather than throwing raw strings or generic `Error`.
+- Example: `ProviderError` in `src/ai/provider.ts`, `HttpError` in `src/ai/transport.ts`.
+- Propagate errors with `throw` rather than returning error objects, unless the function signature explicitly supports `Result<T, E>` or similar patterns.
+
+## Coding rules — enforced vs. convention
+
+| Rule | Enforced by | Notes |
+|------|-------------|-------|
+| Spaces (4), UTF-8, LF, trailing newline | `.editorconfig` | Auto-applied by editors |
+| Quote style (single) | **Not enforced** | Convention only; no ESLint/Prettier rule |
+| `strict`, `noImplicitReturns`, `noUncheckedIndexedAccess`, `forceConsistentCasingInFileNames` | `tsconfig.json` | TypeScript compiler |
+| Obsidian-specific lint rules | `eslint.config.mts` + `eslint-plugin-obsidianmd` | |
+| Naming conventions (case, prefixes) | **Code review only** | No ESLint rules for naming yet |
+| JSDoc coverage | **Code review only** | Aim for 100% |
 
 ## Branch strategy
 
@@ -61,17 +89,19 @@ src/
 ## Security & compliance
 
 - No `innerHTML`. Use `createEl()` + `textContent`.
-- No raw timers. Use `registerInterval()`.
-- No raw DOM listeners. Use `registerDomEvent()`.
-- No `fetch`. Use `requestUrl()` for HTTP (mobile-compatible).
+- No raw timers. Use `registerInterval()` (exceptions: known debounced timers in `decorations.ts`).
+- No raw DOM listeners. Use `registerDomEvent()` (exceptions: raw `addEventListener` in `feedback-panel.ts`).
+- No `fetch`. Use `requestUrl()` for HTTP (mobile-compatible) (exception: `fetch` in `transport.ts` for SSE streaming, guarded by `isStreamingSupported()`).
 - Use `Component` lifecycle + `register()` for proper teardown.
 - All UI text is sentence-case.
 - No telemetry. Never send vault contents without explicit opt-in.
+- No hardcoded secrets or API keys. Use Obsidian's `pluginDataDir` for persistent files.
 
 ## Commands & settings
 
 - Use stable command IDs; never rename after release.
 - Persist settings via `loadData()` / `saveData()`.
+- `src/settings.ts` is the single source of truth for the settings schema.
 
 ## Key feature areas
 
@@ -93,8 +123,12 @@ src/
 ## Planning files
 
 - `.planning/` is gitignored and local-only. Never force-add (`git add -f`) or commit planning files.
-- `.planning/pr-prose-linter.md` — prose linter scope, rules, fixes, tooltip model, known issues.
-- `.planning/pr-lint-suggestions-panel.md` — tabbed sidebar panel (results + details), states, data flow.
+- Use `.planning/pr-<feature>.md` for PR scope documents (scope, rules, fixes, known issues, data flow).
+
+## When in doubt
+
+- Prefer the existing code's pattern over any convention described here.
+- If a convention conflicts with an enforced config rule (e.g., `.editorconfig` vs. AGENTS.md), the config file wins.
 
 ## References
 

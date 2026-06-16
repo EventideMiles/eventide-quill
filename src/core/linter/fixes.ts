@@ -1,28 +1,28 @@
 import { LintFix } from './types';
 
 export const FIXES: Record<string, LintFix> = {
-    'qualifiers': {
+    qualifiers: {
         description: 'Remove qualifier',
-        apply: () => '',
+        apply: () => ''
     },
-    'adverbs': {
+    adverbs: {
         description: 'Remove adverb',
-        apply: () => '',
+        apply: () => ''
     },
     'ai-filler-adverbs': {
         description: 'Remove filler adverb',
-        apply: () => '',
+        apply: () => ''
     },
     'ai-hedging': {
         description: 'Remove hedging language',
-        apply: () => '',
+        apply: () => ''
     },
     'ai-wrap-ups': {
         description: 'Remove wrap-up phrase',
-        apply: () => '',
+        apply: () => ''
     },
     'ai-em-dashes': {
         description: 'Replace em dash with period',
-        apply: () => '.',
-    },
+        apply: () => '.'
+    }
 };

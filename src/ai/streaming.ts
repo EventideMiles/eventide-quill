@@ -161,7 +161,7 @@ export function openAiEventsToChunks(events: SseEvent[]): ChatChunk[] {
             // Only the final chunk carries a non-null finish_reason ("stop" or "length")
             const chunk: ChatChunk = {
                 text,
-                done: finishReason !== null && finishReason !== undefined,
+                done: finishReason !== null && finishReason !== undefined
             };
 
             if (parsed.model) {
@@ -172,7 +172,7 @@ export function openAiEventsToChunks(events: SseEvent[]): ChatChunk[] {
                 chunk.usage = {
                     promptTokens: parsed.usage.prompt_tokens ?? parsed.usage.promptTokens ?? 0,
                     completionTokens: parsed.usage.completion_tokens ?? parsed.usage.completionTokens ?? 0,
-                    totalTokens: parsed.usage.total_tokens ?? parsed.usage.totalTokens ?? 0,
+                    totalTokens: parsed.usage.total_tokens ?? parsed.usage.totalTokens ?? 0
                 };
             }
 
@@ -201,7 +201,7 @@ export function ollamaNdjsonToChunks(lines: Record<string, unknown>[]): ChatChun
 
         const chunk: ChatChunk = {
             text,
-            done,
+            done
         };
 
         if (typeof line.model === 'string') {
@@ -227,7 +227,7 @@ export function ollamaNdjsonToChunks(lines: Record<string, unknown>[]): ChatChun
  */
 export async function* parseSseStream(
     reader: ReadableStreamDefaultReader<Uint8Array>,
-    signal?: AbortSignal,
+    signal?: AbortSignal
 ): AsyncGenerator<SseEvent> {
     const decoder = new TextDecoder();
     let buffer = '';
@@ -286,7 +286,7 @@ function parseSseBlock(block: string): SseEvent | null {
  */
 export async function* parseNdjsonStream(
     reader: ReadableStreamDefaultReader<Uint8Array>,
-    signal?: AbortSignal,
+    signal?: AbortSignal
 ): AsyncGenerator<Record<string, unknown>> {
     const decoder = new TextDecoder();
     let buffer = '';
@@ -340,7 +340,7 @@ export function openAiSseDataToChunk(parsed: OpenAiSseData): ChatChunk | null {
 
     const chunk: ChatChunk = {
         text,
-        done: finishReason !== null && finishReason !== undefined,
+        done: finishReason !== null && finishReason !== undefined
     };
 
     if (parsed.model) {
@@ -351,7 +351,7 @@ export function openAiSseDataToChunk(parsed: OpenAiSseData): ChatChunk | null {
         chunk.usage = {
             promptTokens: parsed.usage.prompt_tokens ?? parsed.usage.promptTokens ?? 0,
             completionTokens: parsed.usage.completion_tokens ?? parsed.usage.completionTokens ?? 0,
-            totalTokens: parsed.usage.total_tokens ?? parsed.usage.totalTokens ?? 0,
+            totalTokens: parsed.usage.total_tokens ?? parsed.usage.totalTokens ?? 0
         };
     }
 

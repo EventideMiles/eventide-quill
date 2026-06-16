@@ -8,7 +8,7 @@ import {
     ModelConfig,
     ModelInfo,
     ProviderConfig,
-    ProviderError,
+    ProviderError
 } from './provider';
 import { ollamaNdjsonLineToChunk, ollamaNdjsonToChunks, parseNdjsonStream } from './streaming';
 import { HttpError, isStreamingSupported, streamResponse } from './transport';
@@ -72,15 +72,13 @@ export class OllamaProvider implements AiProvider {
             return { id: modelId, role, model: modelId };
         }
 
-        const fallback = this.config.models.find(
-            (m) => m.role === role || m.role === 'both',
-        );
+        const fallback = this.config.models.find((m) => m.role === role || m.role === 'both');
         if (!fallback) {
             throw new ProviderError(
                 `No ${role} model configured for provider "${this.name}". ` +
-                'Add a model with the appropriate role in settings.',
+                    'Add a model with the appropriate role in settings.',
                 0,
-                '',
+                ''
             );
         }
 
@@ -111,13 +109,13 @@ export class OllamaProvider implements AiProvider {
             model: modelConfig.model,
             messages: options.messages.map((m) => ({
                 role: m.role,
-                content: m.content,
+                content: m.content
             })),
             stream: true,
             options: {
                 temperature: options.temperature ?? 0.7,
-                num_predict: options.maxTokens ?? this.config.maxOutputTokens,
-            },
+                num_predict: options.maxTokens ?? this.config.maxOutputTokens
+            }
         });
 
         const headers = { 'Content-Type': 'application/json' };
@@ -129,7 +127,7 @@ export class OllamaProvider implements AiProvider {
                     method: 'POST',
                     headers,
                     body,
-                    signal: options.signal,
+                    signal: options.signal
                 });
                 reader = result.reader;
             } catch (err: unknown) {
@@ -137,7 +135,7 @@ export class OllamaProvider implements AiProvider {
                     throw new ProviderError(
                         `Chat completion failed (HTTP ${err.status}): ${err.body.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
                         err.status,
-                        err.body,
+                        err.body
                     );
                 }
                 throw err;
@@ -163,14 +161,14 @@ export class OllamaProvider implements AiProvider {
             method: 'POST',
             headers,
             body,
-            throw: false,
+            throw: false
         });
 
         if (response.status !== 200) {
             throw new ProviderError(
                 `Chat completion failed (HTTP ${response.status}): ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
                 response.status,
-                response.text,
+                response.text
             );
         }
 
@@ -202,17 +200,17 @@ export class OllamaProvider implements AiProvider {
         if (Array.isArray(options.input)) {
             throw new ProviderError(
                 'Batch embeddings are not supported by the Ollama provider. ' +
-                'The /api/embeddings endpoint only accepts a single prompt. ' +
-                'Send one document at a time or use an OpenAI-compatible provider.',
+                    'The /api/embeddings endpoint only accepts a single prompt. ' +
+                    'Send one document at a time or use an OpenAI-compatible provider.',
                 0,
-                '',
+                ''
             );
         }
 
         const url = this.buildUrl('/api/embeddings');
         const body = JSON.stringify({
             model: modelConfig.model,
-            prompt: options.input,
+            prompt: options.input
         });
 
         const response: RequestUrlResponse = await requestUrl({
@@ -220,14 +218,14 @@ export class OllamaProvider implements AiProvider {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body,
-            throw: false,
+            throw: false
         });
 
         if (response.status !== 200) {
             throw new ProviderError(
                 `Embedding request failed (HTTP ${response.status}): ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
                 response.status,
-                response.text,
+                response.text
             );
         }
 
@@ -243,22 +241,21 @@ export class OllamaProvider implements AiProvider {
             embeddings = [data.embedding];
         } else {
             throw new ProviderError(
-                'Embedding response did not contain an embedding array. ' +
-                'The endpoint may not support embeddings.',
+                'Embedding response did not contain an embedding array. ' + 'The endpoint may not support embeddings.',
                 0,
-                response.text,
+                response.text
             );
         }
 
         const result: EmbedResult = {
             embeddings,
-            model: data.model ?? modelConfig.model,
+            model: data.model ?? modelConfig.model
         };
 
         if (data.prompt_eval_count !== undefined) {
             result.usage = {
                 promptTokens: data.prompt_eval_count,
-                totalTokens: data.prompt_eval_count,
+                totalTokens: data.prompt_eval_count
             };
         }
 
@@ -273,7 +270,7 @@ export class OllamaProvider implements AiProvider {
             const response: RequestUrlResponse = await requestUrl({
                 url,
                 method: 'GET',
-                throw: false,
+                throw: false
             });
 
             if (response.status !== 200) {
@@ -286,12 +283,10 @@ export class OllamaProvider implements AiProvider {
                 return [];
             }
 
-            return data.models.map(
-                (item: OllamaTagModel) => ({
-                    id: item.name,
-                    ownedBy: item.details?.family ?? 'ollama',
-                }),
-            );
+            return data.models.map((item: OllamaTagModel) => ({
+                id: item.name,
+                ownedBy: item.details?.family ?? 'ollama'
+            }));
         } catch {
             return [];
         }
@@ -305,7 +300,7 @@ export class OllamaProvider implements AiProvider {
             const response: RequestUrlResponse = await requestUrl({
                 url,
                 method: 'GET',
-                throw: false,
+                throw: false
             });
 
             if (response.status === 200) {
@@ -314,13 +309,13 @@ export class OllamaProvider implements AiProvider {
 
             return {
                 ok: false,
-                error: `HTTP ${response.status}: ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
+                error: `HTTP ${response.status}: ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`
             };
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             return {
                 ok: false,
-                error: `Connection failed: ${message}. Make sure Ollama is running and your endpoint URL is correct (e.g., http://localhost:11434).`,
+                error: `Connection failed: ${message}. Make sure Ollama is running and your endpoint URL is correct (e.g., http://localhost:11434).`
             };
         }
     }
@@ -332,7 +327,7 @@ export class OllamaProvider implements AiProvider {
 
         const body = JSON.stringify({
             model: modelConfig.model,
-            prompt: 'test',
+            prompt: 'test'
         });
 
         try {
@@ -341,7 +336,7 @@ export class OllamaProvider implements AiProvider {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body,
-                throw: false,
+                throw: false
             });
 
             if (response.status === 200) {
@@ -350,7 +345,7 @@ export class OllamaProvider implements AiProvider {
 
             return {
                 ok: false,
-                error: `HTTP ${response.status}: ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
+                error: `HTTP ${response.status}: ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`
             };
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);

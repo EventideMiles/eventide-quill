@@ -22,9 +22,16 @@ const DOUBLABLE_PUNCT = new Set(['.', '!', '?', ',', ';', ':']);
  * - Insert a space where words or punctuation+word are jammed together
  */
 export function applyReplacement(
-    editor: { replaceRange: (replacement: string, from: { line: number; ch: number }, to?: { line: number; ch: number }) => void; getLine: (n: number) => string },
+    editor: {
+        replaceRange: (
+            replacement: string,
+            from: { line: number; ch: number },
+            to?: { line: number; ch: number }
+        ) => void;
+        getLine: (n: number) => string;
+    },
     result: LintResult,
-    replacement: string,
+    replacement: string
 ): void {
     const lineIndex = result.line - 1;
     const from = { line: lineIndex, ch: result.column };
@@ -39,11 +46,7 @@ export function applyReplacement(
  * Apply a text replacement for a lint result using CodeMirror's EditorView,
  * then clean up spacing and punctuation boundaries.
  */
-export function applyCmReplacement(
-    view: EditorView,
-    result: LintResult,
-    replacement: string,
-): void {
+export function applyCmReplacement(view: EditorView, result: LintResult, replacement: string): void {
     const doc = view.state.doc;
     const from = doc.line(result.line).from + result.column;
     const to = from + result.length;
@@ -104,9 +107,16 @@ function needsSpaceBetween(line: string, leftIdx: number, rightIdx: number): boo
  * 3. Insert spaces where words/punctuation+word are jammed together
  */
 function cleanupBoundaries(
-    editor: { replaceRange: (replacement: string, from: { line: number; ch: number }, to?: { line: number; ch: number }) => void; getLine: (n: number) => string },
+    editor: {
+        replaceRange: (
+            replacement: string,
+            from: { line: number; ch: number },
+            to?: { line: number; ch: number }
+        ) => void;
+        getLine: (n: number) => string;
+    },
     result: LintResult,
-    replacement: string,
+    replacement: string
 ): void {
     const lineIndex = result.line - 1;
     let lineText = editor.getLine(lineIndex);
@@ -143,7 +153,11 @@ function cleanupBoundaries(
 
     // 4. Insert space at the right boundary if needed
     const newEndCol = col + replacement.length + offset;
-    if (replacement.length > 0 && newEndCol < lineText.length && needsSpaceBetween(lineText, newEndCol - 1, newEndCol)) {
+    if (
+        replacement.length > 0 &&
+        newEndCol < lineText.length &&
+        needsSpaceBetween(lineText, newEndCol - 1, newEndCol)
+    ) {
         editor.replaceRange(' ', { line: lineIndex, ch: newEndCol }, { line: lineIndex, ch: newEndCol });
     }
 }

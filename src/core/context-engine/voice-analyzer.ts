@@ -1,16 +1,16 @@
 import { VoiceMarker } from './types';
 import { splitSentences } from '../../utils/text-analysis';
 
-const ABBREVIATIONS_PATTERN = new RegExp(
-    '\\b(Mr|Mrs|Ms|Dr|Sr|Jr|St|Rev|Prof|Gen|Capt|Maj)\\.$', 'i'
-);
+const ABBREVIATIONS_PATTERN = new RegExp('\\b(Mr|Mrs|Ms|Dr|Sr|Jr|St|Rev|Prof|Gen|Capt|Maj)\\.$', 'i');
 
 const FIRST_PERSON_PRONOUNS = /\b(I|me|my|mine|myself)\b/gi;
 const THIRD_PERSON_PRONOUNS = /\b(he|she|him|her|his|hers|himself|herself|they|them|their|theirs|themselves)\b/gi;
 const SECOND_PERSON_PRONOUNS = /\b(you|your|yours|yourself)\b/gi;
 
-const PAST_INDICATORS = /\b(was|were|had|been|did|went|came|said|took|gave|made|knew|thought|felt|saw|heard|looked|turned|walked|stood|sat)\b/gi;
-const PRESENT_INDICATORS = /\b(is|are|has|have|does|goes|comes|says|takes|gives|makes|knows|thinks|feels|sees|hears|looks|turns|walks|stands|sits)\b/gi;
+const PAST_INDICATORS =
+    /\b(was|were|had|been|did|went|came|said|took|gave|made|knew|thought|felt|saw|heard|looked|turned|walked|stood|sat)\b/gi;
+const PRESENT_INDICATORS =
+    /\b(is|are|has|have|does|goes|comes|says|takes|gives|makes|knows|thinks|feels|sees|hears|looks|turns|walks|stands|sits)\b/gi;
 
 /** Analyze narrative voice markers in text. */
 export function analyzeVoice(text: string): VoiceMarker {
@@ -20,7 +20,7 @@ export function analyzeVoice(text: string): VoiceMarker {
             tense: 'unknown',
             avgSentenceLength: 0,
             dialogueRatio: 0,
-            descriptionRatio: 1,
+            descriptionRatio: 1
         };
     }
 
@@ -34,7 +34,7 @@ export function analyzeVoice(text: string): VoiceMarker {
         tense,
         avgSentenceLength,
         dialogueRatio,
-        descriptionRatio,
+        descriptionRatio
     };
 }
 
@@ -84,7 +84,7 @@ function computeAvgSentenceLength(text: string): number {
 
     let totalWords = 0;
     for (const s of sentences) {
-        const words = s.text.split(/\s+/).filter(w => w.length > 0);
+        const words = s.text.split(/\s+/).filter((w) => w.length > 0);
         totalWords += words.length;
     }
 
@@ -114,5 +114,8 @@ function computeDialogueRatio(text: string): { dialogueRatio: number; descriptio
     const dialogueRatio = quotedChars / total;
     const descriptionRatio = Math.max(0, Math.min(1, 1 - dialogueRatio));
 
-    return { dialogueRatio: Math.round(dialogueRatio * 100) / 100, descriptionRatio: Math.round(descriptionRatio * 100) / 100 };
+    return {
+        dialogueRatio: Math.round(dialogueRatio * 100) / 100,
+        descriptionRatio: Math.round(descriptionRatio * 100) / 100
+    };
 }

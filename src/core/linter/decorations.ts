@@ -1,13 +1,5 @@
 import { StateEffect, StateField } from '@codemirror/state';
-import {
-    Decoration,
-    DecorationSet,
-    EditorView,
-    ViewPlugin,
-    ViewUpdate,
-    showTooltip,
-    Tooltip,
-} from '@codemirror/view';
+import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate, showTooltip, Tooltip } from '@codemirror/view';
 import { LintResult, FIXABLE_RULES } from './types';
 import { FIXES } from './fixes';
 import { applyCmReplacement } from './apply-fix';
@@ -32,7 +24,7 @@ export const lintResultsField = StateField.define<LintResult[]>({
             if (e.is(setLintResults)) return e.value;
         }
         return results;
-    },
+    }
 });
 
 const pinnedTooltipField = StateField.define<{ pos: number; end: number; result: LintResult } | null>({
@@ -44,13 +36,13 @@ const pinnedTooltipField = StateField.define<{ pos: number; end: number; result:
         }
         if (tr.docChanged) return null;
         return value;
-    },
+    }
 });
 
 const severityColors: Record<string, string> = {
     error: 'var(--color-red)',
     warning: 'var(--color-orange)',
-    info: 'var(--color-cyan)',
+    info: 'var(--color-cyan)'
 };
 
 const DEBOUNCE_MS = 500;
@@ -63,11 +55,7 @@ class LintDecorations {
     private active = false;
 
     /** Create a LintDecorations plugin instance bound to the given lint function. */
-    constructor(
-        view: EditorView,
-        lintFn: (text: string) => LintResult[],
-        onResults?: (results: LintResult[]) => void,
-    ) {
+    constructor(view: EditorView, lintFn: (text: string) => LintResult[], onResults?: (results: LintResult[]) => void) {
         this.lintFn = lintFn;
         this.onResults = onResults ?? null;
     }
@@ -115,7 +103,7 @@ class LintDecorations {
             const text = view.state.doc.toString();
             const results = this.lintFn(text);
             view.dispatch({
-                effects: setLintResults.of(results),
+                effects: setLintResults.of(results)
             });
             this.onResults?.(results);
             this.debounceTimer = null;
@@ -137,8 +125,8 @@ class LintDecorations {
             const mark = Decoration.mark({
                 class: 'quill-lint-rule',
                 attributes: {
-                    style: `text-decoration: underline wavy ${color}; text-underline-offset: 2px;`,
-                },
+                    style: `text-decoration: underline wavy ${color}; text-underline-offset: 2px;`
+                }
             });
 
             ranges.push(mark.range(from, to));
@@ -181,7 +169,7 @@ export function getLintExtension(
     onResults?: (results: LintResult[]) => void,
     onAiFix?: AiFixTooltipHandler,
     onDismiss?: DismissHandler,
-    isAiFixEnabled?: AiFixEnabledGetter,
+    isAiFixEnabled?: AiFixEnabledGetter
 ) {
     return [
         lintResultsField,
@@ -236,7 +224,7 @@ export function getLintExtension(
                         aiBtn.addEventListener('click', (e: MouseEvent) => {
                             e.stopPropagation();
                             view.dispatch({
-                                effects: setPinnedTooltip.of(null),
+                                effects: setPinnedTooltip.of(null)
                             });
                             onAiFix(pinned.result, view);
                         });
@@ -250,7 +238,7 @@ export function getLintExtension(
                         dismissBtn.addEventListener('click', (e: MouseEvent) => {
                             e.stopPropagation();
                             view.dispatch({
-                                effects: setPinnedTooltip.of(null),
+                                effects: setPinnedTooltip.of(null)
                             });
                             onDismiss(pinned.result, view);
                         });
@@ -258,13 +246,12 @@ export function getLintExtension(
                     }
 
                     return { dom };
-                },
+                }
             };
         }),
-        ViewPlugin.define(
-            (view: EditorView) => new LintDecorations(view, lintFn, onResults),
-            { decorations: (instance) => instance.decorations },
-        ),
+        ViewPlugin.define((view: EditorView) => new LintDecorations(view, lintFn, onResults), {
+            decorations: (instance) => instance.decorations
+        }),
         EditorView.domEventHandlers({
             click: (event: MouseEvent, view: EditorView) => {
                 const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
@@ -273,13 +260,13 @@ export function getLintExtension(
                 const hit = resultAtPos(view, pos);
                 if (hit) {
                     view.dispatch({
-                        effects: setPinnedTooltip.of(hit),
+                        effects: setPinnedTooltip.of(hit)
                     });
                     return false;
                 }
 
                 view.dispatch({
-                    effects: setPinnedTooltip.of(null),
+                    effects: setPinnedTooltip.of(null)
                 });
                 return false;
             },
@@ -288,12 +275,12 @@ export function getLintExtension(
                     const pinned = view.state.field(pinnedTooltipField);
                     if (pinned) {
                         view.dispatch({
-                            effects: setPinnedTooltip.of(null),
+                            effects: setPinnedTooltip.of(null)
                         });
                     }
                 }
                 return false;
-            },
-        }),
+            }
+        })
     ];
 }
