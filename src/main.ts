@@ -983,6 +983,9 @@ private feedbackCurrentMessages: ChatMessage[] = [];
         // Start loading state in the Feedback tab
         this.lintPanel?.feedbackStartLoading(personaId);
 
+        // Capture the controller for this specific request so we can guard its cleanup.
+        const myFeedbackAbort = this.feedbackAbort;
+
         const feedbackContextPaths = this.lintPanel?.feedbackPanelContextFiles() ?? [];
         if (feedbackContextPaths.length === 0) {
             new Notice('Quill: Add manuscripts to the feedback tab before requesting analysis.');
@@ -1018,10 +1021,9 @@ private feedbackCurrentMessages: ChatMessage[] = [];
                 const file = this.app.vault.getAbstractFileByPath(filePath);
                 if (file instanceof TFile) {
                     const content = await this.app.vault.cachedRead(file);
-                    const excerpt = content.slice(0, this.settings.contextMaxCharsPerFile);
                     manuscriptMessages.push({
                         role: 'system',
-                        content: `Manuscript (${filePath}):\n${excerpt}`,
+                        content: `Manuscript (${filePath}):\n${content}`,
                     });
                 }
             } catch {
@@ -1063,6 +1065,7 @@ private feedbackCurrentMessages: ChatMessage[] = [];
                 {
                     vaultContext,
                     narrativePreset: this.settings.narrativeVoicePreset,
+                    model: chat.modelId,
                     signal: this.feedbackAbort.signal,
                     customInstruction,
                     existingMessages: apiMessages,
@@ -1089,7 +1092,11 @@ private feedbackCurrentMessages: ChatMessage[] = [];
             this.lintPanel?.feedbackError(msg);
             new Notice('Quill: Feedback request failed.');
         } finally {
-            this.feedbackAbort = null;
+            // Only clear feedbackAbort if it still matches our controller,
+            // so a newer request's controller is not accidentally cleared.
+            if (this.feedbackAbort === myFeedbackAbort) {
+                this.feedbackAbort = null;
+            }
         }
     }
 
@@ -1118,6 +1125,9 @@ private feedbackCurrentMessages: ChatMessage[] = [];
         this.feedbackAbort?.abort();
         this.feedbackAbort = new AbortController();
 
+        // Capture the controller for this specific request so we can guard its cleanup.
+        const myFeedbackAbort = this.feedbackAbort;
+
         this.lintPanel?.chatStartLoading();
 
         // Manuscripts and reference files are always injected fresh as system
@@ -1132,10 +1142,9 @@ private feedbackCurrentMessages: ChatMessage[] = [];
                 const file = this.app.vault.getAbstractFileByPath(filePath);
                 if (file instanceof TFile) {
                     const content = await this.app.vault.cachedRead(file);
-                    const excerpt = content.slice(0, this.settings.contextMaxCharsPerFile);
                     manuscriptMessages.push({
                         role: 'system',
-                        content: `Manuscript (${filePath}):\n${excerpt}`,
+                        content: `Manuscript (${filePath}):\n${content}`,
                     });
                 }
             } catch {
@@ -1202,7 +1211,12 @@ private feedbackCurrentMessages: ChatMessage[] = [];
                 // context head.
                 const keepCount = Math.min(2, chatTurns.length);
                 const recentTurns = chatTurns.slice(-keepCount);
-                const toSummarize = chatTurns.slice(0, -keepCount);
+                const toSummarize = [
+                    ...chatTurns.slice(0, -keepCount),
+                    // Include existing contextHeads as user messages so they are
+                    // rolled into the new summary instead of accumulating unchanged.
+                    ...contextHeads.map(head => ({ role: 'user' as const, content: head.content })),
+                ];
 
                 try {
                     const sentenceCount = Math.max(1, Math.min(20, this.settings.compactSummarySentences));
@@ -1214,9 +1228,9 @@ private feedbackCurrentMessages: ChatMessage[] = [];
                     );
 
                     if (summary) {
+                        // contextHeads are now consolidated into the new summary.
                         this.feedbackCurrentMessages = [
                             systemPrompt,
-                            ...contextHeads,
                             { role: 'system', content: summary },
                             ...recentTurns,
                         ];
@@ -1253,6 +1267,7 @@ private feedbackCurrentMessages: ChatMessage[] = [];
             const config = AI_MODE_CONFIGS.analysis;
             const stream = chat.provider.chatCompletion({
                 messages: baseMessages,
+                model: chat.modelId,
                 temperature: config.defaultTemperature,
                 maxTokens: config.defaultMaxOutputTokens,
                 signal: this.feedbackAbort.signal,
@@ -1276,7 +1291,11 @@ private feedbackCurrentMessages: ChatMessage[] = [];
             await this.lintPanel?.chatError(msg);
             new Notice('Quill: Chat response failed.');
         } finally {
-            this.feedbackAbort = null;
+            // Only clear feedbackAbort if it still matches our controller,
+            // so a newer request's controller is not accidentally cleared.
+            if (this.feedbackAbort === myFeedbackAbort) {
+                this.feedbackAbort = null;
+            }
         }
     }
 }

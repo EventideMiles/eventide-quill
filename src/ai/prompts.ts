@@ -1,4 +1,5 @@
 import { type AiMode } from './modes';
+import { type FeedbackPersona } from './feedback';
 import { type LintResult, RULE_INFO } from '../core/linter/types';
 import { type NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS } from '../types';
 
@@ -53,8 +54,6 @@ function getNarrativeSystemPrompt(
 
     return parts.join('\n');
 }
-
-import type { FeedbackPersona } from './feedback';
 
 /**
  * Build the analysis-mode system prompt.

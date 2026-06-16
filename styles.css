@@ -1277,7 +1277,7 @@ button.quill-feedback-persona-btn:hover {
     font-size: var(--font-ui-small);
     line-height: var(--line-height-normal);
     white-space: pre-wrap;
-    word-wrap: break-word;
+    overflow-wrap: break-word;
 }
 
 .quill-feedback-chat-user {

@@ -250,6 +250,9 @@ export class FeedbackPanel {
         this.chatLoading = false;
         this.contextTokenOverride = null;
         this.subtab = 'results';
+        // Clear conversation-scoped chat context files for a fresh start.
+        this.chatContextFiles = [];
+        this.chatContextFileTokens.clear();
         if (this.containerEl) this.render();
     }
 
@@ -283,6 +286,9 @@ export class FeedbackPanel {
         this.chatHistory = [];
         this.chatLoading = false;
         this.contextTokenOverride = null;
+        // Clear conversation-scoped chat context files when resetting results.
+        this.chatContextFiles = [];
+        this.chatContextFileTokens.clear();
         if (this.containerEl) this.render();
     }
 
@@ -508,11 +514,13 @@ export class FeedbackPanel {
 
     /** Append a chunk of text to the streaming chat response. */
     chatAppendChunk(text: string): void {
-        const last = this.chatHistory[this.chatHistory.length - 1];
+        let last = this.chatHistory[this.chatHistory.length - 1];
         if (last && last.role === 'assistant') {
             last.content += text;
         } else {
             this.chatHistory.push({ role: 'assistant', content: text });
+            // Update `last` to the newly added assistant message so we render its content.
+            last = this.chatHistory[this.chatHistory.length - 1];
         }
         if (!this.containerEl) return;
         const el = this.containerEl.querySelector('.quill-feedback-chat-streaming');
@@ -526,6 +534,8 @@ export class FeedbackPanel {
     /** Re-render the results tab and wait for async rendering (markdown, etc.) to complete. */
     private async rerenderResultsTab(): Promise<void> {
         if (!this.containerEl) return;
+        this.renderEvents?.unload();
+        this.renderEvents = new Component();
         this.containerEl.empty();
         this.renderSubtabBar();
         await this.renderResultsTab();
@@ -600,6 +610,8 @@ export class FeedbackPanel {
 
     private render(): void {
         if (!this.containerEl) return;
+        this.renderEvents?.unload();
+        this.renderEvents = new Component();
         this.containerEl.empty();
         this.renderSubtabBar();
         if (this.subtab === 'create') {
@@ -874,6 +886,8 @@ export class FeedbackPanel {
                 text: 'Send',
             });
             const doSend = () => {
+                if (this.chatLoading) return;
+
                 const text = input.value.trim();
                 if (!text) return;
                 this.chatHistory.push({ role: 'user', content: text });
