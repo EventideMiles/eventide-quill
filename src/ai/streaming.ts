@@ -3,6 +3,86 @@ import { ChatChunk } from './provider';
 /** Sentinel value emitted by OpenAI as the final SSE data line. */
 const SSE_DONE_SENTINEL = '[DONE]';
 
+/**
+ * Extract thought/reasoning content from a text string by detecting common
+ * thinking tag patterns. Currently supports:
+ *   - DeepSeek R1 / local models: `<think>...</think>`
+ *   - Gemma / LM Studio: `<|channel>...<channel|>`
+ *
+ * Returns the thought content and the cleaned text with tags removed.
+ * Handles partial/incomplete tags by accumulating unclosed thought content
+ * into `pendingThought`, which should be passed back on subsequent calls.
+ */
+export function extractThoughtContent(
+    text: string,
+    pendingThought?: string
+): { text: string; thought: string; pendingThought: string } {
+    const tagPairs: [string, string][] = [
+        ['<think>', '</think>'],
+        ['<|channel>', '<channel|>']
+    ];
+
+    let thought = pendingThought ?? '';
+    let clean = '';
+    let remainder = text;
+
+    while (remainder.length > 0) {
+        // Find the earliest opening tag across all tag pairs
+        let earliestOpenIdx = -1;
+        let earliestPair = 0;
+        let earliestOpenTagLen = 0;
+
+        for (let p = 0; p < tagPairs.length; p++) {
+            const [openTag] = tagPairs[p]!;
+            const idx = remainder.indexOf(openTag);
+            if (idx !== -1 && (earliestOpenIdx === -1 || idx < earliestOpenIdx)) {
+                earliestOpenIdx = idx;
+                earliestPair = p;
+                earliestOpenTagLen = openTag.length;
+            }
+        }
+
+        const [, closeTag] = tagPairs[earliestPair]!;
+
+        // No opening tag at all
+        if (earliestOpenIdx === -1) {
+            if (thought) {
+                // We're inside a thought block but haven't found the close tag yet
+                thought += remainder;
+            } else {
+                clean += remainder;
+            }
+            break;
+        }
+
+        // Content before the opening tag
+        if (earliestOpenIdx > 0) {
+            if (thought) {
+                thought += remainder.slice(0, earliestOpenIdx);
+            } else {
+                clean += remainder.slice(0, earliestOpenIdx);
+            }
+        }
+
+        // Strip the opening tag
+        const afterOpen = remainder.slice(earliestOpenIdx + earliestOpenTagLen);
+        const closeIdx = afterOpen.indexOf(closeTag);
+
+        if (closeIdx !== -1) {
+            // Complete thought block — extract inner content
+            const thoughtContent = afterOpen.slice(0, closeIdx);
+            thought += thoughtContent;
+            remainder = afterOpen.slice(closeIdx + closeTag.length);
+        } else {
+            // Opening tag without close — rest is thought
+            thought += afterOpen;
+            remainder = '';
+        }
+    }
+
+    return { text: clean, thought, pendingThought: thought };
+}
+
 /** A single SSE event parsed from a stream. */
 export interface SseEvent {
     data: string;
@@ -16,6 +96,10 @@ export interface SseEvent {
  */
 interface Delta {
     content?: string;
+    /** Reasoning / thinking content from OpenAI reasoning models (o1, o3) or compatible. */
+    reasoning_content?: string;
+    /** Generic thinking field used by some OpenAI-compatible providers. */
+    thinking?: string;
 }
 
 /**
@@ -336,10 +420,12 @@ export function openAiSseDataToChunk(parsed: OpenAiSseData): ChatChunk | null {
 
     const delta = firstChoice.delta;
     const text = delta?.content ?? '';
+    const reasoning = delta?.reasoning_content ?? delta?.thinking ?? '';
     const finishReason = firstChoice.finish_reason;
 
     const chunk: ChatChunk = {
         text,
+        thought: reasoning || undefined,
         done: finishReason !== null && finishReason !== undefined
     };
 

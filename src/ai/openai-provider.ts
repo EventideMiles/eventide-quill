@@ -10,7 +10,14 @@ import {
     ProviderConfig,
     ProviderError
 } from './provider';
-import { openAiEventsToChunks, openAiSseDataToChunk, OpenAiSseData, parseSseEvents, parseSseStream } from './streaming';
+import {
+    extractThoughtContent,
+    openAiEventsToChunks,
+    openAiSseDataToChunk,
+    OpenAiSseData,
+    parseSseEvents,
+    parseSseStream
+} from './streaming';
 import { HttpError, isStreamingSupported, streamResponse } from './transport';
 
 /** Maximum characters to include in error messages from response bodies. */
@@ -151,6 +158,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
                 throw err;
             }
 
+            let pendingThought = '';
             for await (const event of parseSseStream(reader, options.signal)) {
                 if (event.data === '[DONE]') {
                     yield { text: '', done: true };
@@ -160,7 +168,20 @@ export class OpenAiCompatibleProvider implements AiProvider {
                 try {
                     const parsed = JSON.parse(event.data) as OpenAiSseData;
                     const chunk = openAiSseDataToChunk(parsed);
-                    if (chunk) yield chunk;
+                    if (chunk) {
+                        // Also run tag-aware extraction as a fallback for models
+                        // that embed thinking in  tags rather than using the
+                        // structured reasoning_content field.
+                        if (chunk.text) {
+                            const extracted = extractThoughtContent(chunk.text, pendingThought);
+                            chunk.text = extracted.text;
+                            if (extracted.thought && !chunk.thought) {
+                                chunk.thought = extracted.thought;
+                            }
+                            pendingThought = extracted.pendingThought;
+                        }
+                        yield chunk;
+                    }
                 } catch {
                     continue;
                 }
@@ -189,8 +210,17 @@ export class OpenAiCompatibleProvider implements AiProvider {
         const events = parseSseEvents(response.text);
         const chunks = openAiEventsToChunks(events);
 
+        let pendingThought = '';
         for (const chunk of chunks) {
             if (options.signal?.aborted) return;
+            if (chunk.text) {
+                const extracted = extractThoughtContent(chunk.text, pendingThought);
+                chunk.text = extracted.text;
+                if (extracted.thought && !chunk.thought) {
+                    chunk.thought = extracted.thought;
+                }
+                pendingThought = extracted.pendingThought;
+            }
             yield chunk;
         }
     }

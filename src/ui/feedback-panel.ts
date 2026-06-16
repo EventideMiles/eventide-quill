@@ -128,6 +128,12 @@ export class FeedbackPanel {
     setContainer(containerEl: HTMLElement): void {
         this.containerEl = containerEl;
         this.render();
+        containerEl.addEventListener('keydown', (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && this.chatLoading) {
+                e.preventDefault();
+                this.onCancelGeneration?.();
+            }
+        });
     }
 
     /** Register the callback for when feedback should be generated. */
@@ -235,6 +241,7 @@ export class FeedbackPanel {
     private chatLoading = false;
     private userScrolledUp = false;
     private onChatMessage: ((message: string) => void) | null = null;
+    private onCancelGeneration: (() => void) | null = null;
 
     /** Files added as persistent context for the entire chat conversation. */
     private chatContextFiles: string[] = [];
@@ -334,6 +341,11 @@ export class FeedbackPanel {
         this.onChatMessage = handler;
     }
 
+    /** Register the callback for canceling an in-flight generation. */
+    setCancelGenerationHandler(handler: () => void): void {
+        this.onCancelGeneration = handler;
+    }
+
     /** Get the list of follow-up chat messages (including system context heads). */
     getChatHistory(): { role: 'user' | 'assistant' | 'system'; content: string }[] {
         return this.chatHistory;
@@ -416,7 +428,7 @@ export class FeedbackPanel {
         const oldCtxBar = bottomArea.querySelector('.quill-feedback-chat-ctx-bar');
         if (oldCtxBar) oldCtxBar.remove();
 
-        const inputRow = bottomArea.querySelector('.quill-feedback-chat-input-row');
+        const inputRow = bottomArea.querySelector('.quill-feedback-chat-btn-row');
 
         if (this.chatContextFiles.length > 0) {
             const ctxBar = bottomArea.createDiv({ cls: 'quill-feedback-chat-ctx-bar' });
@@ -877,9 +889,9 @@ export class FeedbackPanel {
                 }
             }
 
-            // Input row
-            const inputRow = bottomArea.createDiv({ cls: 'quill-feedback-chat-input-row' });
-            const addCtxBtn = inputRow.createEl('button', {
+            // Buttons row — context add, save, send/stop
+            const btnRow = bottomArea.createDiv({ cls: 'quill-feedback-chat-btn-row' });
+            const addCtxBtn = btnRow.createEl('button', {
                 cls: 'quill-feedback-chat-ctx-add',
                 text: '\u00b1', // ± symbol as add-file icon
                 title: 'Add file to context'
@@ -894,19 +906,23 @@ export class FeedbackPanel {
                     exclude
                 ).open();
             });
-            const saveBtn = inputRow.createEl('button', {
+            const saveBtn = btnRow.createEl('button', {
                 cls: 'quill-feedback-chat-save',
                 text: '\ud83d\udcbe', // 💾 floppy disk
                 title: 'Save conversation to file'
             });
             saveBtn.addEventListener('click', () => this.saveConversation());
-            const input = inputRow.createEl('textarea', {
+            btnRow.createEl('div', { cls: 'quill-feedback-chat-btn-spacer' });
+            const actionBtn = btnRow.createEl('button', {
+                cls: `quill-cowriter-send-btn mod-cta${this.chatLoading ? ' quill-cowriter-stop-btn' : ''}`,
+                text: this.chatLoading ? 'Stop' : 'Send'
+            });
+
+            // Textarea row — below the buttons, ~10 lines tall
+            const taRow = bottomArea.createDiv({ cls: 'quill-feedback-chat-ta-row' });
+            const input = taRow.createEl('textarea', {
                 cls: 'quill-feedback-chat-input',
                 placeholder: 'Ask a follow-up about the feedback\u2026'
-            });
-            const sendBtn = inputRow.createEl('button', {
-                cls: 'quill-feedback-chat-send',
-                text: 'Send'
             });
             const doSend = () => {
                 if (this.chatLoading) return;
@@ -917,6 +933,10 @@ export class FeedbackPanel {
                 input.value = '';
                 this.chatLoading = true;
                 this.userScrolledUp = false;
+
+                // Immediate DOM updates
+                actionBtn.setText('Stop');
+                actionBtn.addClass('quill-cowriter-stop-btn');
 
                 // Add user bubble + streaming assistant bubble directly to DOM
                 const chatSection = this.containerEl?.querySelector('.quill-feedback-chat-section');
@@ -933,8 +953,18 @@ export class FeedbackPanel {
                 this.scrollToBottom();
                 this.onChatMessage?.(text);
             };
-            sendBtn.addEventListener('click', doSend);
+            const doStop = () => {
+                this.onCancelGeneration?.();
+            };
+            actionBtn.addEventListener('click', () => {
+                if (this.chatLoading) {
+                    doStop();
+                } else {
+                    doSend();
+                }
+            });
             input.addEventListener('keydown', (e) => {
+                if (this.chatLoading) return;
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     doSend();

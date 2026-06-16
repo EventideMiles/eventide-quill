@@ -20,6 +20,7 @@ import { loadQuillContextData, writeQuillContextData, buildQuillContextData, ent
 import { buildFeedbackMessages, getPersonaById, getFeedback, summarizeConversation } from './ai/feedback';
 import type { ChatMessage } from './ai/provider';
 import { AI_MODE_CONFIGS } from './ai/modes';
+import { CoWriterSession } from './ai/co-writer';
 
 /** Estimate token count from message content using the chars/4 heuristic. */
 function estimateTokens(msgs: ChatMessage[]): number {
@@ -109,6 +110,8 @@ export default class EventideQuillPlugin extends Plugin {
     removedContextPaths = new Set<string>();
     /** Manual context items added by the user (not auto-discovered). */
     private manualContextItems: ContextItem[] = [];
+    /** Co-writer session for the collaborative drafting feature. */
+    coWriterSession: CoWriterSession = new CoWriterSession();
 
     /** Plugin entry point: register commands, views, extensions, and event handlers. */
     async onload() {
@@ -183,6 +186,11 @@ export default class EventideQuillPlugin extends Plugin {
                         this.lintPanel?.setContextAssembly(null);
                     }
                 }
+
+                // Co-writer: clear voice profile when the active file changes
+                if (lintFileChange) {
+                    this.coWriterSession.clearVoiceProfile();
+                }
             })
         );
 
@@ -255,6 +263,16 @@ export default class EventideQuillPlugin extends Plugin {
                         .setIcon('message-square')
                         .onClick(() => {
                             void this.openFeedbackPanel();
+                        });
+                });
+
+                // Co-writer: open panel
+                menu.addSeparator();
+                menu.addItem((item) => {
+                    item.setTitle('Quill: Co-writer')
+                        .setIcon('arrow-right')
+                        .onClick(() => {
+                            void this.openCoWriterPanel();
                         });
                 });
 
@@ -397,6 +415,14 @@ export default class EventideQuillPlugin extends Plugin {
             name: 'Quill: Get AI feedback',
             callback: () => {
                 void this.openFeedbackPanel();
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-cowriter-open',
+            name: 'Quill: Open co-writer',
+            callback: () => {
+                void this.openCoWriterPanel();
             }
         });
 
@@ -929,6 +955,100 @@ export default class EventideQuillPlugin extends Plugin {
                 }
             }
         }
+    }
+
+    /** Wire up the co-writer session's callbacks to the sidebar panel. */
+    private wireCoWriterPanel(): void {
+        const session = this.coWriterSession;
+        session.onThought = (thought: string) => {
+            this.lintPanel?.coWriterSetThoughtContent(thought);
+        };
+        session.onStateChange = (state) => {
+            this.lintPanel?.coWriterSetDraftState(state);
+        };
+        session.onChatUpdate = () => {
+            if (this.lintPanel) {
+                this.lintPanel.coWriterSetChatHistory(session.chatHistory);
+                this.lintPanel.coWriterSetCurrentOptions(session.currentOptions);
+                this.lintPanel.coWriterSetOptionsLoading(session.optionsLoading);
+            }
+        };
+        session.onOptionsLoading = (loading: boolean) => {
+            this.lintPanel?.coWriterSetOptionsLoading(loading);
+        };
+    }
+
+    /**
+     * Send a direction to the co-writer in Direct mode.
+     * Streams the continuation directly into the editor at the cursor position.
+     */
+    async sendCoWriterMessage(direction: string): Promise<void> {
+        this.coWriterSession.manuscriptPath = this.app.workspace.getActiveFile()?.path ?? null;
+        await this.openCoWriterPanel();
+        this.wireCoWriterPanel();
+        await this.coWriterSession.generateDirect(this, direction);
+    }
+
+    /**
+     * Generate 3 continuation options from the cursor position (Initialize / Refresh).
+     */
+    async sendCoWriterOptions(direction: string): Promise<void> {
+        this.coWriterSession.manuscriptPath = this.app.workspace.getActiveFile()?.path ?? null;
+        await this.openCoWriterPanel();
+        this.wireCoWriterPanel();
+        await this.coWriterSession.generateOptions(this, direction);
+    }
+
+    /**
+     * Apply a selected co-writer option, streaming the full continuation
+     * into the editor at the cursor position.
+     */
+    async applyCoWriterOption(editor: Editor, optionIndex: number): Promise<void> {
+        this.wireCoWriterPanel();
+        await this.coWriterSession.applyOption(this, editor, optionIndex);
+    }
+
+    /**
+     * Send a discussion message to the co-writer (brainstorming mode, no options).
+     */
+    async sendCoWriterDiscussion(message: string): Promise<void> {
+        this.coWriterSession.manuscriptPath = this.app.workspace.getActiveFile()?.path ?? null;
+        await this.openCoWriterPanel();
+        this.wireCoWriterPanel();
+        await this.coWriterSession.sendDiscussion(this, message);
+    }
+
+    /** Cancel the current feedback generation request. */
+    cancelFeedbackGeneration(): void {
+        this.feedbackAbort?.abort();
+    }
+
+    /** Accept the current co-writer draft. */
+    acceptCoWriterDraft(): void {
+        this.coWriterSession.acceptDraft();
+    }
+
+    /** Revert the current co-writer draft, removing the inserted text. */
+    revertCoWriterDraft(editor: Editor): void {
+        this.coWriterSession.revertDraft(editor);
+    }
+
+    /** Add a context file to the co-writer session. */
+    addCoWriterContextFile(filePath: string): void {
+        this.coWriterSession.addContextFile(filePath);
+        this.lintPanel?.coWriterRefresh();
+    }
+
+    /** Remove a context file from the co-writer session. */
+    removeCoWriterContextFile(filePath: string): void {
+        this.coWriterSession.removeContextFile(filePath);
+        this.lintPanel?.coWriterRefresh();
+    }
+
+    /** Open the sidebar and switch to the Co-writer tab. */
+    async openCoWriterPanel(): Promise<void> {
+        await this.openLintPanel();
+        this.lintPanel?.switchToCoWriterTab();
     }
 
     /** Open the sidebar and switch to the Feedback tab. */

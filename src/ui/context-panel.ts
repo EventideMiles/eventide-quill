@@ -50,10 +50,29 @@ export function renderContextTab(
     container.empty();
 
     if (!assembly) {
-        container.createEl('p', {
-            text: 'Open a manuscript to extract context.',
-            cls: 'quill-context-empty'
-        });
+        const activeFile = plugin.app.workspace.getActiveFile();
+        if (activeFile) {
+            container.createEl('p', {
+                text: `Context not yet assembled for ${activeFile.basename}.`,
+                cls: 'quill-context-empty'
+            });
+            const rescanBtn = container.createEl('button', {
+                cls: 'quill-context-action-btn',
+                text: 'Scan context'
+            });
+            component.registerDomEvent(rescanBtn, 'click', () => {
+                const editorView = findEditorView(plugin.app, activeFile.path);
+                if (editorView) {
+                    plugin.scanContext(editorView.editor.getValue(), activeFile.path);
+                    void plugin.assembleDocumentContext(editorView.editor.getValue(), activeFile.path);
+                }
+            });
+        } else {
+            container.createEl('p', {
+                text: 'Open a manuscript to extract context.',
+                cls: 'quill-context-empty'
+            });
+        }
         return;
     }
 

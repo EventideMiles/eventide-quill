@@ -1,12 +1,12 @@
 import { type AiMode } from './modes';
 import { type FeedbackPersona } from './feedback';
 import { type LintResult, RULE_INFO } from '../core/linter/types';
-import { type NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS } from '../types';
+import { type NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS, type VoiceProfile } from '../types';
 
 /**
  * Build the narrative-mode system prompt for prose generation.
  * This is the existing style-constraints prompt used for selection transformations,
- * collaborative drafting, and guided plot branching.
+ * co-writer continuations, and guided plot branching.
  */
 function getNarrativeSystemPrompt(vaultContext: string, narrativePreset: NarrativeVoicePreset): string {
     const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === narrativePreset) ?? NARRATIVE_VOICE_PRESETS[0];
@@ -152,6 +152,185 @@ export function getSystemPrompt(
         case 'linter':
             return getLinterSystemPrompt();
     }
+}
+
+/**
+ * Build a voice analysis prompt for co-writer voice matching.
+ * Asks the AI to analyze a passage of prose and return a structured profile.
+ */
+export function getCoWriterVoicePrompt(prose: string): string {
+    return [
+        'Analyze the narrative voice of the following passage of fiction. Return a concise analysis covering:',
+        '1. Sentence length distribution (e.g., "mostly short, 8-12 words" or "varied, 10-30 words").',
+        '2. Dialogue-to-description ratio (rough estimate as a number between 0 and 1, where 1 is all dialogue).',
+        '3. Vocabulary register (e.g., "colloquial", "literary", "formal", "spare", "ornate").',
+        '4. Key patterns (2-3 notable characteristics: frequent sentence fragments, long descriptive passages,',
+        '   heavy internal monologue, terse action beats, etc.).',
+        '',
+        'Output your analysis as a JSON object with these four keys:',
+        '{\n  "sentenceLengthDistribution": "string",\n  "dialogueRatio": number,\n  "vocabularyRegister": "string",\n  "keyPatterns": ["string"]\n}',
+        '',
+        'Output ONLY the JSON object. No introductory text, no explanations, no markdown.',
+        '',
+        '--- Passage ---',
+        prose
+    ].join('\n');
+}
+
+/**
+ * Build a prompt asking the AI to suggest 3 distinct continuation options.
+ * Each option should be a short 1-2 sentence description of a possible direction.
+ */
+export function getCoWriterOptionPrompt(proseBeforeCursor: string, direction: string): string {
+    return [
+        'The writer has written a passage of fiction and wants to continue from the cursor position.',
+        'Suggest 3 distinct possible directions the scene could go next.',
+        '',
+        'First, think through the scene carefully. Consider character motivation, pacing,',
+        'narrative voice, and what would make the most compelling next beat.',
+        'If your model supports reasoning tags (e.g., <think> or <|channel>),',
+        'wrap your internal reasoning in those tags before outputting the options.',
+        '',
+        'For each option, provide:',
+        '- A short label (2-4 words)',
+        '- A 1-2 sentence description of what happens and why it fits the scene',
+        '',
+        'The options should be:',
+        '- Faithful to the established voice, perspective, and style',
+        '- Distinct from each other in mood, pacing, or focus',
+        '- Plausible next beats in the scene — not wild turns',
+        '- True to the characters and situation so far',
+        '',
+        ...(direction ? [`The writer's direction: ${direction}`] : []),
+        '',
+        'Output your response as a JSON array of exactly 3 objects:',
+        '[',
+        '  { "label": "short label", "description": "1-2 sentence description" },',
+        '  { "label": "short label", "description": "1-2 sentence description" },',
+        '  { "label": "short label", "description": "1-2 sentence description" }',
+        ']',
+        '',
+        'Output the reasoning tags first (if supported), then ONLY the JSON array.',
+        'No introductory text, no explanations, no markdown outside the reasoning tags.',
+        '',
+        '--- Passage up to cursor ---',
+        proseBeforeCursor
+    ].join('\n');
+}
+
+/**
+ * Build a prompt for when the writer wants to discuss the scene (not direct it).
+ * The AI responds with analysis, thoughts, and suggestions — not continuation options.
+ */
+export function getCoWriterDiscussPrompt(proseBeforeCursor: string, message: string): string {
+    return [
+        'The writer is working on a passage of fiction and wants to talk through what happens next.',
+        'They are not asking you to write — they want to discuss possibilities, get your thoughts,',
+        'or think through a problem in the scene.',
+        '',
+        "First, think through the writer's question carefully. Consider the scene structure,",
+        'character arcs, and narrative possibilities before crafting your response.',
+        'If your model supports reasoning tags (e.g., <think> or <|channel>),',
+        'wrap your internal reasoning in those tags before your response.',
+        '',
+        'Respond as a thoughtful, knowledgeable editor who understands narrative craft. Be specific:',
+        '- Reference details from the passage',
+        '- Discuss character motivation, pacing, tension, and structure',
+        '- Offer perspectives on where the scene could go',
+        '- Ask thoughtful questions if it helps the writer clarify their intent',
+        '',
+        'If the writer seems stuck, offer a few brief possibilities but frame them as suggestions,',
+        'not as final directions. Keep the tone collaborative — you are thinking together.',
+        '',
+        'Do NOT generate prose for the writer. Do NOT write continuation text.',
+        'Stay in discussion mode unless the writer explicitly asks for options.',
+        '',
+        `--- Writer's message ---`,
+        message,
+        '',
+        '--- Passage up to cursor ---',
+        proseBeforeCursor
+    ].join('\n');
+}
+
+/**
+ * Build the system prompt for co-writer continuation generation.
+ * Injects the voice profile, narrative preset rules, style constraints,
+ * optional vault context, and optional inline directives context.
+ */
+export function getCoWriterGenerationPrompt(
+    voiceProfile: VoiceProfile,
+    narrativePreset: NarrativeVoicePreset,
+    vaultContext?: string,
+    hasDirectives?: boolean
+): string {
+    const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === narrativePreset) ?? NARRATIVE_VOICE_PRESETS[0];
+    if (!def) {
+        throw new Error('NARRATIVE_VOICE_PRESETS must not be empty');
+    }
+
+    const perspectiveRules = def.rules.map((r, i) => `${9 + i}. ${r}`).join('\n');
+
+    const parts = [
+        'You are a thoughtful prose collaborator writing narrative fiction with a novelist.',
+        'The writer has written a passage and you are extending it forward — continuing the scene in the same voice, perspective, and style.',
+        '',
+        'Follow these style rules strictly:',
+        '',
+        '1. No em dashes. Use commas, colons, semicolons, or split the sentence instead.',
+        '2. No negation structures like "it\'s not X, it\'s Y." State what things are directly.',
+        '3. Avoid cliché words: tapestry, testament, delve, vibrant, nestled, thriving, nascent, weaving, realm, unlock, game-changer, pivotal, intricate, elucidate.',
+        '4. No wrap-up summaries or moral conclusions. End on action, dialogue, or unresolved tension.',
+        '5. Show emotion through physical reaction, blocking, and dialogue. Do not name emotions directly.',
+        '6. Vary sentence cadence. Mix short, punchy sentences with longer, complex ones.',
+        '7. Avoid filler adverbs (quietly, deliberately, gently, suddenly). Use concrete action.',
+        '8. Use active voice. Avoid hedging (might, could, perhaps, maybe).',
+        '',
+        `Narrative perspective — ${def.label}, ${def.tense}:`,
+        perspectiveRules,
+        '',
+        "--- Voice profile of the writer's passage ---",
+        `Sentence length distribution: ${voiceProfile.sentenceLengthDistribution}`,
+        `Dialogue-to-description ratio: ${voiceProfile.dialogueRatio.toFixed(2)}`,
+        `Vocabulary register: ${voiceProfile.vocabularyRegister}`,
+        `Key patterns: ${voiceProfile.keyPatterns.join('; ')}`,
+        '',
+        "Match the writer's voice closely. Use a similar sentence rhythm, vocabulary register, and dialogue-to-description balance. The goal is continuity — the reader should not notice the transition.",
+        '',
+        '--- Your role ---',
+        '- Extend the scene naturally. Advance action, dialogue, or sensory detail.',
+        '- Do not summarize, conclude, or wrap up. End with momentum.',
+        '- Do not introduce new characters the writer has not established.',
+        '- Do not write ahead of the current narrative position.',
+        "- Stay within the established POV character's senses and knowledge.",
+        '',
+        'Formatting:',
+        `${9 + def.rules.length}. No bold text in the narrative.`,
+        `${9 + def.rules.length + 1}. Italics allowed sparingly for internal thoughts or emphasis.`,
+        `${9 + def.rules.length + 2}. No bullet lists in the narrative.`,
+        `${9 + def.rules.length + 3}. Output only the continuation. No introductory text, no apologies, no meta-commentary.`
+    ];
+
+    if (vaultContext) {
+        parts.push(
+            '',
+            '--- Reference material from your vault (character notes, worldbuilding, outlines) ---',
+            vaultContext
+        );
+    }
+
+    if (hasDirectives) {
+        parts.push(
+            '',
+            '--- Inline directives ---',
+            'The writer has placed inline directives (HTML comments) in the passage above.',
+            'Read the directive(s) immediately preceding the cursor position.',
+            'Follow any instructions in those directives when writing the continuation.',
+            'The directives are invisible in preview mode — write the scene, not the directive.'
+        );
+    }
+
+    return parts.join('\n');
 }
 
 /**

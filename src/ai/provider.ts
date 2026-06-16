@@ -75,6 +75,9 @@ export interface EmbedResult {
 /** A single chunk from a streaming chat completion. */
 export interface ChatChunk {
     text: string;
+    /** Reasoning / thinking content, if the model supports it (Claude extended thinking,
+     *  OpenAI reasoning, or DeepSeek R1 style  tags). */
+    thought?: string;
     /** True for the final chunk in the stream. */
     done: boolean;
     model?: string;

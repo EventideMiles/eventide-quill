@@ -10,7 +10,7 @@ import {
     ProviderConfig,
     ProviderError
 } from './provider';
-import { ollamaNdjsonLineToChunk, ollamaNdjsonToChunks, parseNdjsonStream } from './streaming';
+import { extractThoughtContent, ollamaNdjsonLineToChunk, ollamaNdjsonToChunks, parseNdjsonStream } from './streaming';
 import { HttpError, isStreamingSupported, streamResponse } from './transport';
 
 /** Maximum characters to include in error messages from response bodies. */
@@ -142,8 +142,17 @@ export class OllamaProvider implements AiProvider {
             }
 
             let lastChunkDone = false;
+            let pendingThought = '';
             for await (const rawLine of parseNdjsonStream(reader, options.signal)) {
                 const chunk = ollamaNdjsonLineToChunk(rawLine);
+                if (chunk.text) {
+                    const extracted = extractThoughtContent(chunk.text, pendingThought);
+                    chunk.text = extracted.text;
+                    if (extracted.thought) {
+                        chunk.thought = extracted.thought;
+                    }
+                    pendingThought = extracted.pendingThought;
+                }
                 if (chunk.done) lastChunkDone = true;
                 yield chunk;
             }
@@ -187,8 +196,17 @@ export class OllamaProvider implements AiProvider {
 
         const chunks = ollamaNdjsonToChunks(lines);
 
+        let pendingThought = '';
         for (const chunk of chunks) {
             if (options.signal?.aborted) return;
+            if (chunk.text) {
+                const extracted = extractThoughtContent(chunk.text, pendingThought);
+                chunk.text = extracted.text;
+                if (extracted.thought) {
+                    chunk.thought = extracted.thought;
+                }
+                pendingThought = extracted.pendingThought;
+            }
             yield chunk;
         }
     }

@@ -48,6 +48,12 @@ export interface EventideQuillSettings {
     contextMaxVaultFiles: number;
     contextMaxCharsPerFile: number;
     contextAutoScan: boolean;
+    coWriterTemperature: number;
+    coWriterMaxOutputTokens: number;
+    coWriterVaultContext: boolean;
+    coWriterAppendNewline: boolean;
+    enableCoWriterThought: boolean;
+    coWriterVoiceMatch: boolean;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -105,7 +111,13 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     contextIncludeVaultContext: true,
     contextMaxVaultFiles: 20,
     contextMaxCharsPerFile: 2000,
-    contextAutoScan: true
+    contextAutoScan: true,
+    coWriterTemperature: 1.0,
+    coWriterMaxOutputTokens: 2048,
+    coWriterVaultContext: true,
+    coWriterAppendNewline: true,
+    enableCoWriterThought: true,
+    coWriterVoiceMatch: true
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -1016,6 +1028,86 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addToggle((toggle) =>
                 toggle.setValue(this.plugin.settings.transformAppendNewline).onChange(async (value) => {
                     this.plugin.settings.transformAppendNewline = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(containerEl).setName('Co-writer').setHeading();
+
+        new Setting(containerEl)
+            .setName('Temperature')
+            .setDesc('Higher values produce more creative continuations. Range: 0.0 – 2.0.')
+            .addText((text) =>
+                text.setValue(String(this.plugin.settings.coWriterTemperature)).inputEl.addEventListener('blur', () => {
+                    const n = parseFloat(text.inputEl.value);
+                    if (!isNaN(n) && n >= 0 && n <= 2) {
+                        this.plugin.settings.coWriterTemperature = n;
+                        void this.plugin.saveSettings();
+                    } else {
+                        text.setValue(String(this.plugin.settings.coWriterTemperature));
+                        new Notice('Value must be a number between 0.0 and 2.0');
+                    }
+                })
+            );
+
+        new Setting(containerEl)
+            .setName('Max output tokens')
+            .setDesc('Maximum tokens per continuation. Higher values allow longer passages.')
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.coWriterMaxOutputTokens))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 1) {
+                            this.plugin.settings.coWriterMaxOutputTokens = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.coWriterMaxOutputTokens));
+                            new Notice('Value must be a number ≥ 1');
+                        }
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName('Vault context')
+            .setDesc(
+                'Include cross-document vault context (character notes, worldbuilding, etc.) in co-writer prompts.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.coWriterVaultContext).onChange(async (value) => {
+                    this.plugin.settings.coWriterVaultContext = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(containerEl)
+            .setName('Append trailing newline')
+            .setDesc('Add a blank line after the continuation so you can keep writing without pressing enter twice.')
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.coWriterAppendNewline).onChange(async (value) => {
+                    this.plugin.settings.coWriterAppendNewline = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(containerEl)
+            .setName('Show AI reasoning')
+            .setDesc("Display the AI's thought process in the co-writer panel. Disable for a cleaner interface.")
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.enableCoWriterThought).onChange(async (value) => {
+                    this.plugin.settings.enableCoWriterThought = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(containerEl)
+            .setName('Voice matching')
+            .setDesc(
+                'Analyze the voice of your prose before generating to produce more consistent continuations. Adds a small delay before generation starts.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.coWriterVoiceMatch).onChange(async (value) => {
+                    this.plugin.settings.coWriterVoiceMatch = value;
                     await this.plugin.saveSettings();
                 })
             );
