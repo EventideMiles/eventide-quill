@@ -304,6 +304,9 @@ export class FeedbackPanel {
         this.customInstruction = '';
         this.chatHistory = [];
         this.chatLoading = false;
+        // Clear conversation-scoped chat context files when resetting all state.
+        this.chatContextFiles = [];
+        this.chatContextFileTokens.clear();
         if (this.containerEl) this.render();
     }
 
