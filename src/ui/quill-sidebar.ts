@@ -5,12 +5,13 @@ import { applyReplacement } from '../core/linter/apply-fix';
 import { findEditorView } from '../utils/find-editor';
 import { FixWithAiModal } from './fix-with-ai-modal';
 import { renderContextTab } from './context-panel';
+import { FeedbackPanel } from './feedback-panel';
 import type EventideQuillPlugin from '../main';
 import type { ContextAssembly } from '../core/context-engine/types';
 
 export const QUILL_VIEW_TYPE = 'quill-sidebar';
 
-type TopTab = 'linter' | 'context';
+type TopTab = 'linter' | 'context' | 'feedback';
 type LinterSubTab = 'results' | 'details';
 
 export class QuillSidebarView extends ItemView {
@@ -27,6 +28,8 @@ export class QuillSidebarView extends ItemView {
     private cachedEditorText: string | null = null;
     /** Current context assembly to display in the Context tab. */
     private currentAssembly: ContextAssembly | null = null;
+    /** Feedback panel for the Feedback tab. */
+    private feedbackPanel: FeedbackPanel | null = null;
 
     /** Create the sidebar view for the given workspace leaf. */
     constructor(leaf: WorkspaceLeaf, plugin: EventideQuillPlugin) {
@@ -152,7 +155,7 @@ export class QuillSidebarView extends ItemView {
                 this.activeLinterSubTab = 'results';
                 this.render();
             },
-            customInstruction,
+            customInstruction
         ).open();
     }
 
@@ -163,9 +166,7 @@ export class QuillSidebarView extends ItemView {
         flaggedEnd: number;
     } | null {
         const view = this.getEditorView();
-        const editorText = view
-            ? view.editor.getValue()
-            : this.cachedEditorText;
+        const editorText = view ? view.editor.getValue() : this.cachedEditorText;
 
         if (!editorText) return null;
 
@@ -194,7 +195,7 @@ export class QuillSidebarView extends ItemView {
             lines.push({
                 text: allLines[i] ?? '',
                 index: i + 1,
-                isFlagged: i === lineIndex,
+                isFlagged: i === lineIndex
             });
         }
 
@@ -234,22 +235,26 @@ export class QuillSidebarView extends ItemView {
             } else {
                 this.renderDetailsTab();
             }
+        } else if (this.activeTopTab === 'context') {
+            const ctxScroll = this.content.createDiv({ cls: 'quill-context-scroll' });
+            renderContextTab(ctxScroll, this.currentAssembly, this.plugin, this.renderEvents);
         } else {
-            renderContextTab(this.content, this.currentAssembly, this.plugin, this.renderEvents);
+            this.renderFeedbackTab();
         }
     }
 
-    /** Render the top-level tab bar (Linter / Context). */
+    /** Render the top-level tab bar (Linter / Context / Feedback). */
     private renderTopTabBar() {
         const tabs: { id: TopTab; label: string }[] = [
             { id: 'linter', label: 'Linter' },
             { id: 'context', label: 'Context' },
+            { id: 'feedback', label: 'Feedback' }
         ];
 
         for (const tab of tabs) {
             const btn = this.tabBar.createEl('button', {
                 cls: `quill-sidebar-tab${this.activeTopTab === tab.id ? ' quill-sidebar-tab-active' : ''}`,
-                text: tab.label,
+                text: tab.label
             });
             this.renderEvents!.registerDomEvent(btn, 'click', () => this.switchTopTab(tab.id));
         }
@@ -261,16 +266,132 @@ export class QuillSidebarView extends ItemView {
 
         const tabs: { id: LinterSubTab; label: string }[] = [
             { id: 'results', label: 'Results' },
-            { id: 'details', label: 'Details' },
+            { id: 'details', label: 'Details' }
         ];
 
         for (const tab of tabs) {
             const btn = subTabBar.createEl('button', {
                 cls: `quill-sidebar-subtab${this.activeLinterSubTab === tab.id ? ' quill-sidebar-subtab-active' : ''}`,
-                text: tab.label,
+                text: tab.label
             });
             this.renderEvents!.registerDomEvent(btn, 'click', () => this.switchLinterSubTab(tab.id));
         }
+    }
+
+    /** Render the feedback tab, initializing or re-attaching the FeedbackPanel. */
+    private renderFeedbackTab() {
+        if (!this.feedbackPanel) {
+            this.feedbackPanel = new FeedbackPanel(this.app);
+            this.feedbackPanel.setGenerateHandler((personaId: string, customInstruction?: string) => {
+                void this.plugin.requestFeedback(personaId, customInstruction);
+            });
+            this.feedbackPanel.setChatMessageHandler((message: string) => {
+                void this.plugin.sendFeedbackChatMessage(message);
+            });
+        }
+        const chat = this.plugin.getDefaultChatProvider();
+        if (chat.provider) {
+            this.feedbackPanel.setMaxAllowedTokens(chat.provider.config.maxContextTokens);
+        }
+        this.feedbackPanel.setContainer(this.content);
+    }
+
+    /** Switch to the Feedback tab and show the Create sub-tab. */
+    switchToFeedbackTab(): void {
+        this.activeTopTab = 'feedback';
+        this.render();
+    }
+
+    /** Start the loading state in the Feedback panel for the given persona ID. */
+    feedbackStartLoading(personaId: string): void {
+        this.feedbackPanel?.startLoading(personaId);
+    }
+
+    /** Append a chunk of text to the current feedback report. */
+    feedbackAppendChunk(text: string): void {
+        this.feedbackPanel?.appendChunk(text);
+    }
+
+    /** Mark the current feedback report as complete. */
+    async feedbackFinished(): Promise<void> {
+        await this.feedbackPanel?.finishLoading();
+    }
+
+    /** Show an error in the feedback panel. */
+    feedbackError(message: string): void {
+        this.feedbackPanel?.showError(message);
+    }
+
+    /** Get the list of context file paths the user has selected in the Feedback panel. */
+    feedbackPanelContextFiles(): string[] {
+        return this.feedbackPanel?.getContextFilePaths() ?? [];
+    }
+
+    /** Add a file to the manuscript context list in the feedback panel. */
+    feedbackPanelAddContextFile(filePath: string): void {
+        if (this.feedbackPanel) {
+            void this.feedbackPanel.addContextFile(filePath);
+        }
+    }
+
+    /** Get the chat history from the Feedback panel. */
+    feedbackChatHistory(): { role: 'user' | 'assistant' | 'system'; content: string }[] {
+        return this.feedbackPanel?.getChatHistory() ?? [];
+    }
+
+    /** Append a system message to the feedback panel's chat (e.g. compaction notice). */
+    feedbackAppendChatSystemMessage(content: string): void {
+        this.feedbackPanel?.appendChatSystemMessage(content);
+    }
+
+    /** Append a system message in-place without a full DOM rebuild (avoids flicker during streaming). */
+    feedbackAppendChatSystemMessageInPlace(content: string): void {
+        this.feedbackPanel?.appendChatSystemMessageInPlace(content);
+    }
+
+    /** Replace the chat history in the Feedback panel. */
+    replaceChatHistory(history: { role: 'user' | 'assistant' | 'system'; content: string }[]): void {
+        this.feedbackPanel?.replaceChatHistory(history);
+    }
+
+    /** Get the chat context file paths from the Feedback panel. */
+    feedbackChatContextFiles(): string[] {
+        return this.feedbackPanel?.getChatContextFiles() ?? [];
+    }
+
+    /** Get the chat context token count from the Feedback panel. */
+    feedbackChatContextTokens(): number {
+        return this.feedbackPanel?.getChatContextTokens() ?? 0;
+    }
+
+    /** Set the context token estimate from the plugin layer. */
+    feedbackSetContextTokenEstimate(tokens: number): void {
+        this.feedbackPanel?.setContextTokenEstimate(tokens);
+    }
+
+    /** Export the current feedback conversation to a markdown file. */
+    feedbackSaveConversation(): void {
+        this.feedbackPanel?.saveConversation();
+    }
+
+    /** Start loading state for a chat follow-up. */
+    chatStartLoading(): void {
+        this.feedbackPanel?.chatStartLoading();
+    }
+
+    /** Append a chunk of text to the streaming chat response. */
+    chatAppendChunk(text: string): void {
+        this.feedbackPanel?.chatAppendChunk(text);
+    }
+
+    /** Mark the current chat response as complete. */
+    async chatFinished(): Promise<void> {
+        await this.feedbackPanel?.chatFinished();
+    }
+
+    /** Show an error in the chat response. */
+    async chatError(message: string): Promise<void> {
+        await this.feedbackPanel?.chatError(message);
     }
 
     /** Render the list of lint results with severity badges and location info. */
@@ -280,14 +401,14 @@ export class QuillSidebarView extends ItemView {
         if (this.results.length === 0) {
             resultsContainer.createEl('p', {
                 text: 'No issues found.',
-                cls: 'quill-lint-empty',
+                cls: 'quill-lint-empty'
             });
             return;
         }
 
         const header = resultsContainer.createEl('div', { cls: 'quill-lint-header' });
         header.createEl('span', {
-            text: `${this.results.length} issue${this.results.length !== 1 ? 's' : ''} found`,
+            text: `${this.results.length} issue${this.results.length !== 1 ? 's' : ''} found`
         });
 
         const list = resultsContainer.createEl('ul', { cls: 'quill-lint-list' });
@@ -295,7 +416,7 @@ export class QuillSidebarView extends ItemView {
         for (const result of this.results) {
             const info = RULE_INFO[result.rule];
             const item = list.createEl('li', {
-                cls: `quill-lint-item quill-lint-${result.severity}`,
+                cls: `quill-lint-item quill-lint-${result.severity}`
             });
             this.renderEvents!.registerDomEvent(item, 'click', () => this.showResultDetail(result));
 
@@ -321,7 +442,7 @@ export class QuillSidebarView extends ItemView {
         if (!result) {
             detailsContainer.createEl('p', {
                 text: 'Click a lint result to see details about its rule.',
-                cls: 'quill-details-empty',
+                cls: 'quill-details-empty'
             });
             return;
         }
@@ -333,7 +454,7 @@ export class QuillSidebarView extends ItemView {
 
         const backBtn = header.createEl('button', {
             cls: 'quill-details-back',
-            text: 'Back',
+            text: 'Back'
         });
         this.renderEvents!.registerDomEvent(backBtn, 'click', () => this.switchLinterSubTab('results'));
 
@@ -357,17 +478,19 @@ export class QuillSidebarView extends ItemView {
                 lineNum.setText(String(lineInfo.index) + ' ');
 
                 if (lineInfo.isFlagged) {
-                    lineEl.createEl('span', { cls: 'quill-details-context-before' })
+                    lineEl
+                        .createEl('span', { cls: 'quill-details-context-before' })
                         .setText(lineInfo.text.slice(0, passage.flaggedStart));
 
-                    lineEl.createEl('span', { cls: 'quill-details-context-highlight' })
+                    lineEl
+                        .createEl('span', { cls: 'quill-details-context-highlight' })
                         .setText(lineInfo.text.slice(passage.flaggedStart, passage.flaggedEnd));
 
-                    lineEl.createEl('span', { cls: 'quill-details-context-after' })
+                    lineEl
+                        .createEl('span', { cls: 'quill-details-context-after' })
                         .setText(lineInfo.text.slice(passage.flaggedEnd));
                 } else {
-                    lineEl.createEl('span', { cls: 'quill-details-context-text' })
-                        .setText(lineInfo.text);
+                    lineEl.createEl('span', { cls: 'quill-details-context-text' }).setText(lineInfo.text);
                 }
             }
         }
@@ -388,7 +511,7 @@ export class QuillSidebarView extends ItemView {
             if (fix) {
                 const fixBtn = detailsContainer.createEl('button', {
                     cls: 'quill-details-fix-btn',
-                    text: fix.description,
+                    text: fix.description
                 });
                 this.renderEvents!.registerDomEvent(fixBtn, 'click', () => {
                     this.applyFix(result);
@@ -397,13 +520,10 @@ export class QuillSidebarView extends ItemView {
             }
         }
 
-        if (
-            this.plugin.settings.enableLinterAiFixes &&
-            this.plugin.getDefaultChatProvider().provider
-        ) {
+        if (this.plugin.settings.enableLinterAiFixes && this.plugin.getDefaultChatProvider().provider) {
             const aiFixBtn = detailsContainer.createEl('button', {
                 cls: 'quill-details-fix-btn quill-details-ai-fix-btn',
-                text: 'Fix with AI',
+                text: 'Fix with AI'
             });
             this.renderEvents!.registerDomEvent(aiFixBtn, 'click', () => {
                 this.openFixWithAiModal(result);
@@ -411,7 +531,7 @@ export class QuillSidebarView extends ItemView {
 
             const aiCustomBtn = detailsContainer.createEl('button', {
                 cls: 'quill-details-fix-btn quill-details-ai-custom-btn',
-                text: 'Fix with AI (custom)',
+                text: 'Fix with AI (custom)'
             });
             this.renderEvents!.registerDomEvent(aiCustomBtn, 'click', () => {
                 this.openFixWithAiModal(result, '');
@@ -420,7 +540,7 @@ export class QuillSidebarView extends ItemView {
 
         const dismissBtn = detailsContainer.createEl('button', {
             cls: 'quill-details-dismiss-btn',
-            text: 'Dismiss',
+            text: 'Dismiss'
         });
         this.renderEvents!.registerDomEvent(dismissBtn, 'click', () => {
             this.plugin.dismissResult(result);

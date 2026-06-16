@@ -43,6 +43,7 @@ export interface EventideQuillSettings {
     enableLinterAiFixes: boolean;
     contextTokenBudget: number;
     contextCompactAtPercent: number;
+    compactSummarySentences: number;
     contextIncludeVaultContext: boolean;
     contextMaxVaultFiles: number;
     contextMaxCharsPerFile: number;
@@ -79,11 +80,11 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
             apiKey: '',
             models: [
                 { id: 'local-chat', role: 'chat', model: 'local-model' },
-                { id: 'local-embed', role: 'embed', model: 'local-model' },
+                { id: 'local-embed', role: 'embed', model: 'local-model' }
             ],
             maxContextTokens: 32768,
-            maxOutputTokens: 4096,
-        },
+            maxOutputTokens: 4096
+        }
     ] as ProviderConfig[],
     aiDefaultChatProvider: 'local-default/local-chat',
     aiDefaultEmbedProvider: 'local-default/local-embed',
@@ -100,10 +101,11 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     enableLinterAiFixes: true,
     contextTokenBudget: 8192,
     contextCompactAtPercent: 80,
+    compactSummarySentences: 3,
     contextIncludeVaultContext: true,
     contextMaxVaultFiles: 20,
     contextMaxCharsPerFile: 2000,
-    contextAutoScan: true,
+    contextAutoScan: true
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -116,7 +118,7 @@ class InputModal extends Modal {
         app: App,
         private title: string,
         private placeholder: string,
-        private onSubmit: (value: string) => void,
+        private onSubmit: (value: string) => void
     ) {
         super(app);
     }
@@ -128,13 +130,12 @@ class InputModal extends Modal {
         const input = contentEl.createEl('input', {
             type: 'text',
             cls: 'quill-input-modal-input',
-            attr: { placeholder: this.placeholder },
+            attr: { placeholder: this.placeholder }
         });
 
         const buttonRow = contentEl.createEl('div', { cls: 'quill-input-modal-actions' });
 
-        buttonRow.createEl('button', { text: 'Cancel' })
-            .addEventListener('click', () => this.close());
+        buttonRow.createEl('button', { text: 'Cancel' }).addEventListener('click', () => this.close());
 
         const submitBtn = buttonRow.createEl('button', { text: 'OK', cls: 'mod-cta' });
         submitBtn.addEventListener('click', () => {
@@ -166,7 +167,7 @@ class ModelFetchModal extends SuggestModal<ModelInfo> {
     constructor(
         app: App,
         models: ModelInfo[],
-        private onSelect: (modelId: string) => void,
+        private onSelect: (modelId: string) => void
     ) {
         super(app);
         this.models = models;
@@ -184,7 +185,10 @@ class ModelFetchModal extends SuggestModal<ModelInfo> {
     renderSuggestion(model: ModelInfo, el: HTMLElement): void {
         el.createEl('div', { text: model.id });
         if (model.ownedBy) {
-            el.createEl('small', { text: model.ownedBy, attr: { style: 'color: var(--text-muted); margin-left: 8px;' } });
+            el.createEl('small', {
+                text: model.ownedBy,
+                attr: { style: 'color: var(--text-muted); margin-left: 8px;' }
+            });
         }
     }
 
@@ -198,12 +202,12 @@ class ModelFetchModal extends SuggestModal<ModelInfo> {
 class AddProviderModal extends SuggestModal<{ type: ProviderType; label: string; defaultEndpoint: string }> {
     private options: { type: ProviderType; label: string; defaultEndpoint: string }[] = [
         { type: 'openai-compatible', label: 'OpenAI-compatible', defaultEndpoint: 'http://localhost:1234/v1' },
-        { type: 'ollama', label: 'Ollama', defaultEndpoint: 'http://localhost:11434' },
+        { type: 'ollama', label: 'Ollama', defaultEndpoint: 'http://localhost:11434' }
     ];
 
     constructor(
         app: App,
-        private onChoose: (type: ProviderType, defaultEndpoint: string) => void,
+        private onChoose: (type: ProviderType, defaultEndpoint: string) => void
     ) {
         super(app);
         this.setPlaceholder('Choose provider type...');
@@ -255,14 +259,14 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         const tabs: { id: 'linter' | 'ai-providers' | 'model-behaviors'; label: string }[] = [
             { id: 'linter', label: 'Linter' },
             { id: 'ai-providers', label: 'AI providers' },
-            { id: 'model-behaviors', label: 'Model behaviors' },
+            { id: 'model-behaviors', label: 'Model behaviors' }
         ];
 
         for (const tab of tabs) {
             const btn = tabBar.createEl('button', {
                 cls: `quill-settings-tab${this.activeTab === tab.id ? ' quill-settings-tab-active' : ''}`,
                 text: tab.label,
-                attr: { 'data-tab': tab.id },
+                attr: { 'data-tab': tab.id }
             });
             btn.addEventListener('click', () => {
                 this.activeTab = tab.id;
@@ -275,12 +279,15 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     private showActiveTab(): void {
         const linterContent = this.containerEl.querySelector('.quill-settings-content-linter') as HTMLElement;
         const aiContent = this.containerEl.querySelector('.quill-settings-content-ai') as HTMLElement;
-        const modelBehaviorsContent = this.containerEl.querySelector('.quill-settings-content-model-behaviors') as HTMLElement;
+        const modelBehaviorsContent = this.containerEl.querySelector(
+            '.quill-settings-content-model-behaviors'
+        ) as HTMLElement;
         const tabs = this.containerEl.querySelectorAll('.quill-settings-tab');
 
         if (linterContent) linterContent.style.display = this.activeTab === 'linter' ? 'block' : 'none';
         if (aiContent) aiContent.style.display = this.activeTab === 'ai-providers' ? 'block' : 'none';
-        if (modelBehaviorsContent) modelBehaviorsContent.style.display = this.activeTab === 'model-behaviors' ? 'block' : 'none';
+        if (modelBehaviorsContent)
+            modelBehaviorsContent.style.display = this.activeTab === 'model-behaviors' ? 'block' : 'none';
 
         tabs.forEach((tab) => {
             const el = tab as HTMLElement;
@@ -296,9 +303,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     private renderLinterTab(containerEl: HTMLElement): void {
         const content = containerEl.createEl('div', { cls: 'quill-settings-content-linter' });
 
-        new Setting(content)
-            .setName('Prose linter')
-            .setHeading();
+        new Setting(content).setName('Prose linter').setHeading();
 
         new Setting(content)
             .setName('Linter mode')
@@ -312,97 +317,87 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     .onChange(async (value) => {
                         this.plugin.settings.linterMode = value as LinterMode;
                         await this.plugin.saveSettings();
-                    }),
+                    })
             );
 
         new Setting(content)
             .setName('Lint on save')
             .setDesc('Automatically run the prose linter when the document is saved.')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.lintOnSave)
-                    .onChange(async (value) => {
-                        this.plugin.settings.lintOnSave = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.lintOnSave).onChange(async (value) => {
+                    this.plugin.settings.lintOnSave = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(content)
             .setName('Long sentences')
             .setDesc('Flag sentences exceeding the word limit below.')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableLongSentences)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableLongSentences = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.enableLongSentences).onChange(async (value) => {
+                    this.plugin.settings.enableLongSentences = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(content)
             .setName('Max words per sentence')
             .setDesc('Sentences longer than this many words will be flagged.')
             .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.maxSentenceWords))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
-                        if (!isNaN(n) && n >= 1) {
-                            this.plugin.settings.maxSentenceWords = n;
-                            await this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.maxSentenceWords));
-                            new Notice('Value must be a number ≥ 1');
-                        }
-                    }),
+                text.setValue(String(this.plugin.settings.maxSentenceWords)).inputEl.addEventListener('blur', () => {
+                    const n = parseInt(text.inputEl.value, 10);
+                    if (!isNaN(n) && n >= 1) {
+                        this.plugin.settings.maxSentenceWords = n;
+                        void this.plugin.saveSettings();
+                    } else {
+                        text.setValue(String(this.plugin.settings.maxSentenceWords));
+                        new Notice('Value must be a number ≥ 1');
+                    }
+                })
             );
 
         new Setting(content)
             .setName('Passive voice')
-            .setDesc('Flag instances of passive voice. Disabled by default — it is often a valid stylistic choice in fiction.')
+            .setDesc(
+                'Flag instances of passive voice. Disabled by default — it is often a valid stylistic choice in fiction.'
+            )
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enablePassiveVoice)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enablePassiveVoice = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.enablePassiveVoice).onChange(async (value) => {
+                    this.plugin.settings.enablePassiveVoice = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(content)
             .setName('Adverbs')
-            .setDesc('Flag adverbs (e.g. Quickly, slowly, very). Enabled by default — a common teaching tool for new writers.')
+            .setDesc(
+                'Flag adverbs (e.g. Quickly, slowly, very). Enabled by default — a common teaching tool for new writers.'
+            )
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableAdverbCheck)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableAdverbCheck = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.enableAdverbCheck).onChange(async (value) => {
+                    this.plugin.settings.enableAdverbCheck = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(content)
             .setName('Qualifiers')
             .setDesc('Flag weak qualifiers (very, really, quite, etc.).')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableQualifierCheck)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableQualifierCheck = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.enableQualifierCheck).onChange(async (value) => {
+                    this.plugin.settings.enableQualifierCheck = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(content)
             .setName('Repeated words')
             .setDesc('Flag words repeated 3+ times in a single line.')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableRepeatedWords)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableRepeatedWords = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.enableRepeatedWords).onChange(async (value) => {
+                    this.plugin.settings.enableRepeatedWords = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(content)
@@ -411,191 +406,165 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.minRepeatedWordLength))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 1) {
                             this.plugin.settings.minRepeatedWordLength = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.minRepeatedWordLength));
                             new Notice('Value must be a number ≥ 1');
                         }
-                    }),
+                    })
             );
 
         new Setting(content)
             .setName('Echoes')
             .setDesc('Flag sentences in a paragraph that start with the same two words.')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableEchoes)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableEchoes = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.enableEchoes).onChange(async (value) => {
+                    this.plugin.settings.enableEchoes = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(content)
             .setName('Telling vs showing')
             .setDesc('Flag emotional tells (e.g. He felt angry) that could be shown instead.')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableTellingVsShowing)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableTellingVsShowing = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.enableTellingVsShowing).onChange(async (value) => {
+                    this.plugin.settings.enableTellingVsShowing = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(content)
             .setName('Dialogue tags')
             .setDesc('Flag overused or repetitive dialogue tags.')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableDialogueTags)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableDialogueTags = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.enableDialogueTags).onChange(async (value) => {
+                    this.plugin.settings.enableDialogueTags = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(content)
             .setName('Complex words')
             .setDesc('Flag words with many syllables that may be hard to read.')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableComplexWords)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableComplexWords = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.enableComplexWords).onChange(async (value) => {
+                    this.plugin.settings.enableComplexWords = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(content)
             .setName('Max syllables per word')
             .setDesc('Words with at least this many syllables are flagged by the complex-words rule.')
             .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.maxSyllablesPerWord))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
-                        if (!isNaN(n) && n >= 1) {
-                            this.plugin.settings.maxSyllablesPerWord = n;
-                            await this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.maxSyllablesPerWord));
-                            new Notice('Value must be a number ≥ 1');
-                        }
-                    }),
+                text.setValue(String(this.plugin.settings.maxSyllablesPerWord)).inputEl.addEventListener('blur', () => {
+                    const n = parseInt(text.inputEl.value, 10);
+                    if (!isNaN(n) && n >= 1) {
+                        this.plugin.settings.maxSyllablesPerWord = n;
+                        void this.plugin.saveSettings();
+                    } else {
+                        text.setValue(String(this.plugin.settings.maxSyllablesPerWord));
+                        new Notice('Value must be a number ≥ 1');
+                    }
+                })
             );
 
-        new Setting(content)
-            .setName('AI detection')
-            .setHeading();
+        new Setting(content).setName('AI detection').setHeading();
 
         new Setting(content)
             .setName('AI clichés')
             .setDesc('Flag overused AI words (tapestry, testament, delve, vibrant, realm, etc.).')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableAiCliches)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableAiCliches = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.enableAiCliches).onChange(async (value) => {
+                    this.plugin.settings.enableAiCliches = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(content)
             .setName('Em dashes')
             .setDesc('Flag em dashes (—). Common AI overuse — consider commas, colons, or sentence breaks.')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableAiEmDashes)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableAiEmDashes = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.enableAiEmDashes).onChange(async (value) => {
+                    this.plugin.settings.enableAiEmDashes = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(content)
             .setName('Negation patterns')
             .setDesc('Flag "it\'s not X, it\'s y" constructions. State what things are directly.')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableAiNegation)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableAiNegation = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.enableAiNegation).onChange(async (value) => {
+                    this.plugin.settings.enableAiNegation = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(content)
             .setName('Filler adverbs')
             .setDesc('Flag strategy adverbs common in AI prose (quietly, deliberately, gently, etc.).')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableAiFillerAdverbs)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableAiFillerAdverbs = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.enableAiFillerAdverbs).onChange(async (value) => {
+                    this.plugin.settings.enableAiFillerAdverbs = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(content)
             .setName('Hedging language')
             .setDesc('Flag hedging words (might, could, perhaps, maybe) that weaken prose.')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableAiHedging)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableAiHedging = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.enableAiHedging).onChange(async (value) => {
+                    this.plugin.settings.enableAiHedging = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(content)
             .setName('Wrap-up phrases')
             .setDesc('Flag concluding phrases (in conclusion, to summarize, ultimately, etc.).')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableAiWrapUps)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableAiWrapUps = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.enableAiWrapUps).onChange(async (value) => {
+                    this.plugin.settings.enableAiWrapUps = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(content)
             .setName('Restore defaults')
             .setDesc('Reset all linter settings to their default values.')
             .addButton((button) =>
-                button
-                    .setButtonText('Restore defaults')
-                    .onClick(async () => {
-                        // Only reset linter-related fields, not AI provider settings
-                        this.plugin.settings.linterMode = DEFAULT_SETTINGS.linterMode;
-                        this.plugin.settings.lintOnSave = DEFAULT_SETTINGS.lintOnSave;
-                        this.plugin.settings.enableLongSentences = DEFAULT_SETTINGS.enableLongSentences;
-                        this.plugin.settings.maxSentenceWords = DEFAULT_SETTINGS.maxSentenceWords;
-                        this.plugin.settings.enablePassiveVoice = DEFAULT_SETTINGS.enablePassiveVoice;
-                        this.plugin.settings.enableAdverbCheck = DEFAULT_SETTINGS.enableAdverbCheck;
-                        this.plugin.settings.enableQualifierCheck = DEFAULT_SETTINGS.enableQualifierCheck;
-                        this.plugin.settings.enableRepeatedWords = DEFAULT_SETTINGS.enableRepeatedWords;
-                        this.plugin.settings.minRepeatedWordLength = DEFAULT_SETTINGS.minRepeatedWordLength;
-                        this.plugin.settings.enableEchoes = DEFAULT_SETTINGS.enableEchoes;
-                        this.plugin.settings.enableTellingVsShowing = DEFAULT_SETTINGS.enableTellingVsShowing;
-                        this.plugin.settings.enableDialogueTags = DEFAULT_SETTINGS.enableDialogueTags;
-                        this.plugin.settings.enableComplexWords = DEFAULT_SETTINGS.enableComplexWords;
-                        this.plugin.settings.maxSyllablesPerWord = DEFAULT_SETTINGS.maxSyllablesPerWord;
-                        this.plugin.settings.enableAiCliches = DEFAULT_SETTINGS.enableAiCliches;
-                        this.plugin.settings.enableAiEmDashes = DEFAULT_SETTINGS.enableAiEmDashes;
-                        this.plugin.settings.enableAiNegation = DEFAULT_SETTINGS.enableAiNegation;
-                        this.plugin.settings.enableAiFillerAdverbs = DEFAULT_SETTINGS.enableAiFillerAdverbs;
-                        this.plugin.settings.enableAiHedging = DEFAULT_SETTINGS.enableAiHedging;
-                        this.plugin.settings.enableAiWrapUps = DEFAULT_SETTINGS.enableAiWrapUps;
-                        await this.plugin.saveSettings();
-                        this.display();
-                    }),
+                button.setButtonText('Restore defaults').onClick(async () => {
+                    // Only reset linter-related fields, not AI provider settings
+                    this.plugin.settings.linterMode = DEFAULT_SETTINGS.linterMode;
+                    this.plugin.settings.lintOnSave = DEFAULT_SETTINGS.lintOnSave;
+                    this.plugin.settings.enableLongSentences = DEFAULT_SETTINGS.enableLongSentences;
+                    this.plugin.settings.maxSentenceWords = DEFAULT_SETTINGS.maxSentenceWords;
+                    this.plugin.settings.enablePassiveVoice = DEFAULT_SETTINGS.enablePassiveVoice;
+                    this.plugin.settings.enableAdverbCheck = DEFAULT_SETTINGS.enableAdverbCheck;
+                    this.plugin.settings.enableQualifierCheck = DEFAULT_SETTINGS.enableQualifierCheck;
+                    this.plugin.settings.enableRepeatedWords = DEFAULT_SETTINGS.enableRepeatedWords;
+                    this.plugin.settings.minRepeatedWordLength = DEFAULT_SETTINGS.minRepeatedWordLength;
+                    this.plugin.settings.enableEchoes = DEFAULT_SETTINGS.enableEchoes;
+                    this.plugin.settings.enableTellingVsShowing = DEFAULT_SETTINGS.enableTellingVsShowing;
+                    this.plugin.settings.enableDialogueTags = DEFAULT_SETTINGS.enableDialogueTags;
+                    this.plugin.settings.enableComplexWords = DEFAULT_SETTINGS.enableComplexWords;
+                    this.plugin.settings.maxSyllablesPerWord = DEFAULT_SETTINGS.maxSyllablesPerWord;
+                    this.plugin.settings.enableAiCliches = DEFAULT_SETTINGS.enableAiCliches;
+                    this.plugin.settings.enableAiEmDashes = DEFAULT_SETTINGS.enableAiEmDashes;
+                    this.plugin.settings.enableAiNegation = DEFAULT_SETTINGS.enableAiNegation;
+                    this.plugin.settings.enableAiFillerAdverbs = DEFAULT_SETTINGS.enableAiFillerAdverbs;
+                    this.plugin.settings.enableAiHedging = DEFAULT_SETTINGS.enableAiHedging;
+                    this.plugin.settings.enableAiWrapUps = DEFAULT_SETTINGS.enableAiWrapUps;
+                    await this.plugin.saveSettings();
+                    this.display();
+                })
             );
     }
 
@@ -603,9 +572,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     private renderAiProvidersTab(containerEl: HTMLElement): void {
         const content = containerEl.createEl('div', { cls: 'quill-settings-content-ai' });
 
-        new Setting(content)
-            .setName('AI providers')
-            .setHeading();
+        new Setting(content).setName('AI providers').setHeading();
 
         // Render each provider card
         const providers = this.plugin.settings.aiProviders;
@@ -618,13 +585,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .setName('Add provider')
             .setDesc('Add a new AI provider endpoint.')
             .addButton((button) =>
-                button
-                    .setButtonText('Add provider')
-                    .onClick(() => {
-                        new AddProviderModal(this.app, (type, defaultEndpoint) => {
-                            this.addProvider(type, defaultEndpoint);
-                        }).open();
-                    }),
+                button.setButtonText('Add provider').onClick(() => {
+                    new AddProviderModal(this.app, (type, defaultEndpoint) => {
+                        this.addProvider(type, defaultEndpoint);
+                    }).open();
+                })
             );
 
         // Default model dropdowns
@@ -632,40 +597,30 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 
     /** Render a single provider card. */
-    private renderProviderCard(
-        containerEl: HTMLElement,
-        provider: ProviderConfig,
-        index: number,
-    ): void {
+    private renderProviderCard(containerEl: HTMLElement, provider: ProviderConfig, index: number): void {
         const card = containerEl.createEl('div', { cls: 'quill-provider-card' });
 
         // Provider heading row
         const headingRow = card.createEl('div', { cls: 'quill-provider-heading' });
 
-        new Setting(headingRow)
-            .setName(provider.name || 'Unnamed provider')
-            .addButton((button) =>
-                button
-                    .setButtonText('Remove')
-                    .onClick(async () => {
-                        this.plugin.settings.aiProviders.splice(index, 1);
-                        this.validateDefaultProviders();
-                        await this.plugin.saveSettings();
-                        this.display();
-                    }),
-            );
+        new Setting(headingRow).setName(provider.name || 'Unnamed provider').addButton((button) =>
+            button.setButtonText('Remove').onClick(async () => {
+                this.plugin.settings.aiProviders.splice(index, 1);
+                this.validateDefaultProviders();
+                await this.plugin.saveSettings();
+                this.display();
+            })
+        );
 
         // Name
         new Setting(card)
             .setName('Name')
             .setDesc('A display name for this provider.')
             .addText((text) =>
-                text
-                    .setValue(provider.name)
-                    .onChange(async (value) => {
-                        provider.name = value;
-                        await this.plugin.saveSettings();
-                    }),
+                text.setValue(provider.name).onChange(async (value) => {
+                    provider.name = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         // Type
@@ -686,7 +641,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         }
                         await this.plugin.saveSettings();
                         this.display();
-                    }),
+                    })
             );
 
         // Endpoint URL
@@ -701,7 +656,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     .onChange(async (value) => {
                         provider.endpoint = value;
                         await this.plugin.saveSettings();
-                    }),
+                    })
             );
 
         // API Key — only show for OpenAI-compatible
@@ -717,7 +672,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         .onChange(async (value) => {
                             provider.apiKey = value;
                             await this.plugin.saveSettings();
-                        }),
+                        })
                 )
                 .then((setting) => {
                     // Make it a password field
@@ -742,25 +697,20 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     dropdown.setValue('custom');
                     card.createEl('div', {
                         cls: 'quill-provider-setting-extra',
-                        text: `Custom value: ${current}`,
+                        text: `Custom value: ${current}`
                     });
                 }
                 dropdown.onChange(async (value) => {
                     if (value === 'custom') {
-                        new InputModal(
-                            this.app,
-                            'Enter context token count',
-                            'e.g. 24576',
-                            (customVal) => {
-                                const n = parseInt(customVal, 10);
-                                if (!isNaN(n) && n > 0) {
-                                    provider.maxContextTokens = n;
-                                    void this.plugin.saveSettings().then(() => this.display());
-                                } else {
-                                    new Notice('Value must be a positive number');
-                                }
-                            },
-                        ).open();
+                        new InputModal(this.app, 'Enter context token count', 'e.g. 24576', (customVal) => {
+                            const n = parseInt(customVal, 10);
+                            if (!isNaN(n) && n > 0) {
+                                provider.maxContextTokens = n;
+                                void this.plugin.saveSettings().then(() => this.display());
+                            } else {
+                                new Notice('Value must be a positive number');
+                            }
+                        }).open();
                         return;
                     }
                     provider.maxContextTokens = parseInt(value, 10);
@@ -773,18 +723,16 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .setName('Max output tokens')
             .setDesc('Maximum tokens per response for all models on this endpoint.')
             .addText((text) =>
-                text
-                    .setValue(String(provider.maxOutputTokens))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
-                        if (!isNaN(n) && n >= 1) {
-                            provider.maxOutputTokens = n;
-                            await this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(provider.maxOutputTokens));
-                            new Notice('Value must be a number ≥ 1');
-                        }
-                    }),
+                text.setValue(String(provider.maxOutputTokens)).inputEl.addEventListener('blur', () => {
+                    const n = parseInt(text.inputEl.value, 10);
+                    if (!isNaN(n) && n >= 1) {
+                        provider.maxOutputTokens = n;
+                        void this.plugin.saveSettings();
+                    } else {
+                        text.setValue(String(provider.maxOutputTokens));
+                        new Notice('Value must be a number ≥ 1');
+                    }
+                })
             );
 
         // Models sub-list
@@ -798,27 +746,25 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     private renderModelList(containerEl: HTMLElement, provider: ProviderConfig): void {
         containerEl.createEl('div', {
             cls: 'quill-provider-models-heading',
-            text: 'Models',
+            text: 'Models'
         });
 
         for (const [mIdx, model] of provider.models.entries()) {
             const modelCard = containerEl.createEl('div', { cls: 'quill-provider-model-card' });
 
-            new Setting(modelCard)
-                .setName(`Model ${mIdx + 1}`)
-                .addDropdown((dropdown) =>
-                    dropdown
-                        .addOption('chat', 'Chat')
-                        .addOption('embed', 'Embed')
-                        .addOption('both', 'Both')
-                        .setValue(model.role)
+            new Setting(modelCard).setName(`Model ${mIdx + 1}`).addDropdown((dropdown) =>
+                dropdown
+                    .addOption('chat', 'Chat')
+                    .addOption('embed', 'Embed')
+                    .addOption('both', 'Both')
+                    .setValue(model.role)
                     .onChange(async (value) => {
                         model.role = value as 'chat' | 'embed' | 'both';
                         this.validateDefaultProviders();
                         await this.plugin.saveSettings();
                         this.display();
-                    }),
-                );
+                    })
+            );
 
             new Setting(modelCard)
                 .setName('Model ID')
@@ -831,7 +777,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         .onChange(async (value) => {
                             model.model = value;
                             await this.plugin.saveSettings();
-                        }),
+                        })
                 )
                 .addButton((button) =>
                     button
@@ -839,43 +785,37 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         .setIcon('search')
                         .onClick(async () => {
                             await this.fetchAndSuggestModels(provider, model);
-                        }),
+                        })
                 );
 
             // Remove model button
-            new Setting(modelCard)
-                .addButton((button) =>
-                    button
-                        .setButtonText('Remove model')
-                        .onClick(async () => {
-                            const idx = provider.models.indexOf(model);
-                            if (idx !== -1) {
-                                provider.models.splice(idx, 1);
-                                this.validateDefaultProviders();
-                                await this.plugin.saveSettings();
-                                this.display();
-                            }
-                        }),
-                );
+            new Setting(modelCard).addButton((button) =>
+                button.setButtonText('Remove model').onClick(async () => {
+                    const idx = provider.models.indexOf(model);
+                    if (idx !== -1) {
+                        provider.models.splice(idx, 1);
+                        this.validateDefaultProviders();
+                        await this.plugin.saveSettings();
+                        this.display();
+                    }
+                })
+            );
         }
 
         // Add model button
-        new Setting(containerEl)
-            .addButton((button) =>
-                button
-                    .setButtonText('Add model')
-                    .onClick(async () => {
-                        const role = provider.models.length === 0 ? 'chat' : 'embed';
-                        const newModelId = generateModelId(`model-${provider.models.length + 1}`, role);
-                        provider.models.push({
-                            id: newModelId,
-                            role,
-                            model: '',
-                        });
-                        await this.plugin.saveSettings();
-                        this.display();
-                    }),
-            );
+        new Setting(containerEl).addButton((button) =>
+            button.setButtonText('Add model').onClick(async () => {
+                const role = provider.models.length === 0 ? 'chat' : 'embed';
+                const newModelId = generateModelId(`model-${provider.models.length + 1}`, role);
+                provider.models.push({
+                    id: newModelId,
+                    role,
+                    model: ''
+                });
+                await this.plugin.saveSettings();
+                this.display();
+            })
+        );
     }
 
     /** Render test connection and test embeddings buttons. */
@@ -884,50 +824,46 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
         new Setting(testRow)
             .addButton((button) =>
-                button
-                    .setButtonText('Test connection')
-                    .onClick(async () => {
-                        button.setDisabled(true);
-                        button.setButtonText('Testing...');
-                        try {
-                            const ai = createProvider(provider);
-                            const result = await ai.testConnection();
-                            if (result.ok) {
-                                new Notice(`Connected to "${provider.name}"`);
-                            } else {
-                                new Notice(`Connection failed: ${result.error}`);
-                            }
-                        } catch (err: unknown) {
-                            const msg = err instanceof Error ? err.message : String(err);
-                            new Notice(`Connection test error: ${msg}`);
-                        } finally {
-                            button.setDisabled(false);
-                            button.setButtonText('Test connection');
+                button.setButtonText('Test connection').onClick(async () => {
+                    button.setDisabled(true);
+                    button.setButtonText('Testing...');
+                    try {
+                        const ai = createProvider(provider);
+                        const result = await ai.testConnection();
+                        if (result.ok) {
+                            new Notice(`Connected to "${provider.name}"`);
+                        } else {
+                            new Notice(`Connection failed: ${result.error}`);
                         }
-                    }),
+                    } catch (err: unknown) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        new Notice(`Connection test error: ${msg}`);
+                    } finally {
+                        button.setDisabled(false);
+                        button.setButtonText('Test connection');
+                    }
+                })
             )
             .addButton((button) =>
-                button
-                    .setButtonText('Test embeddings')
-                    .onClick(async () => {
-                        button.setDisabled(true);
-                        button.setButtonText('Testing...');
-                        try {
-                            const ai = createProvider(provider);
-                            const result = await ai.testEmbeddings();
-                            if (result.ok) {
-                                new Notice(`Embeddings endpoint works for "${provider.name}"`);
-                            } else {
-                                new Notice(`Embeddings test failed: ${result.error}`);
-                            }
-                        } catch (err: unknown) {
-                            const msg = err instanceof Error ? err.message : String(err);
-                            new Notice(`Embeddings test error: ${msg}`);
-                        } finally {
-                            button.setDisabled(false);
-                            button.setButtonText('Test embeddings');
+                button.setButtonText('Test embeddings').onClick(async () => {
+                    button.setDisabled(true);
+                    button.setButtonText('Testing...');
+                    try {
+                        const ai = createProvider(provider);
+                        const result = await ai.testEmbeddings();
+                        if (result.ok) {
+                            new Notice(`Embeddings endpoint works for "${provider.name}"`);
+                        } else {
+                            new Notice(`Embeddings test failed: ${result.error}`);
                         }
-                    }),
+                    } catch (err: unknown) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        new Notice(`Embeddings test error: ${msg}`);
+                    } finally {
+                        button.setDisabled(false);
+                        button.setButtonText('Test embeddings');
+                    }
+                })
             );
     }
 
@@ -950,9 +886,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             }
         }
 
-        new Setting(containerEl)
-            .setName('Default models')
-            .setHeading();
+        new Setting(containerEl).setName('Default models').setHeading();
 
         new Setting(containerEl)
             .setName('Default chat model')
@@ -968,7 +902,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 dropdown.setValue(
                     chatModels.some((m) => m.key === this.plugin.settings.aiDefaultChatProvider)
                         ? this.plugin.settings.aiDefaultChatProvider
-                        : '',
+                        : ''
                 );
                 dropdown.onChange(async (value) => {
                     this.plugin.settings.aiDefaultChatProvider = value;
@@ -990,7 +924,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 dropdown.setValue(
                     embedModels.some((m) => m.key === this.plugin.settings.aiDefaultEmbedProvider)
                         ? this.plugin.settings.aiDefaultEmbedProvider
-                        : '',
+                        : ''
                 );
                 dropdown.onChange(async (value) => {
                     this.plugin.settings.aiDefaultEmbedProvider = value;
@@ -1007,9 +941,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render model behavior settings. */
     private renderModelBehaviorsSettings(containerEl: HTMLElement): void {
-        new Setting(containerEl)
-            .setName('Selection transformations')
-            .setHeading();
+        new Setting(containerEl).setName('Selection transformations').setHeading();
 
         new Setting(containerEl)
             .setName('Narrative voice')
@@ -1018,13 +950,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 for (const preset of NARRATIVE_VOICE_PRESETS) {
                     dropdown.addOption(preset.id, preset.label);
                 }
-                dropdown
-                    .setValue(this.plugin.settings.narrativeVoicePreset)
-                    .onChange(async (value) => {
-                        this.plugin.settings.narrativeVoicePreset = value as NarrativeVoicePreset;
-                        await this.plugin.saveSettings();
-                        this.updateNarrativeVoiceRulesDisplay(value as NarrativeVoicePreset, rulesArea);
-                    });
+                dropdown.setValue(this.plugin.settings.narrativeVoicePreset).onChange(async (value) => {
+                    this.plugin.settings.narrativeVoicePreset = value as NarrativeVoicePreset;
+                    await this.plugin.saveSettings();
+                    this.updateNarrativeVoiceRulesDisplay(value as NarrativeVoicePreset, rulesArea);
+                });
             });
 
         const rulesArea = containerEl.createEl('div', { cls: 'quill-narrative-rules-area' });
@@ -1036,28 +966,28 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.transformTemperature))
-                    .onChange(async (value) => {
-                        const n = parseFloat(value);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseFloat(text.inputEl.value);
                         if (!isNaN(n) && n >= 0 && n <= 2) {
                             this.plugin.settings.transformTemperature = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.transformTemperature));
                             new Notice('Value must be a number between 0.0 and 2.0');
                         }
-                    }),
+                    })
             );
 
         new Setting(containerEl)
             .setName('Vault context')
-            .setDesc('Include cross-document vault context (character notes, worldbuilding, etc.) in transformation prompts.')
+            .setDesc(
+                'Include cross-document vault context (character notes, worldbuilding, etc.) in transformation prompts.'
+            )
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.transformVaultContext)
-                    .onChange(async (value) => {
-                        this.plugin.settings.transformVaultContext = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.transformVaultContext).onChange(async (value) => {
+                    this.plugin.settings.transformVaultContext = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(containerEl)
@@ -1066,50 +996,46 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.transformMaxOutputTokens))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 1) {
                             this.plugin.settings.transformMaxOutputTokens = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.transformMaxOutputTokens));
                             new Notice('Value must be a number ≥ 1');
                         }
-                    }),
+                    })
             );
 
         new Setting(containerEl)
             .setName('Append trailing blank line')
-            .setDesc('Add a blank line after the transformed text so you can continue writing without pressing enter twice.')
+            .setDesc(
+                'Add a blank line after the transformed text so you can continue writing without pressing enter twice.'
+            )
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.transformAppendNewline)
-                    .onChange(async (value) => {
-                        this.plugin.settings.transformAppendNewline = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.transformAppendNewline).onChange(async (value) => {
+                    this.plugin.settings.transformAppendNewline = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
-        new Setting(containerEl)
-            .setName('Analysis')
-            .setHeading();
+        new Setting(containerEl).setName('Analysis').setHeading();
 
         new Setting(containerEl)
             .setName('Analysis temperature')
             .setDesc('Temperature for AI analysis and feedback responses (companion mode). Range: 0.0 – 2.0.')
             .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.analysisTemperature))
-                    .onChange(async (value) => {
-                        const n = parseFloat(value);
-                        if (!isNaN(n) && n >= 0 && n <= 2) {
-                            this.plugin.settings.analysisTemperature = n;
-                            await this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.analysisTemperature));
-                            new Notice('Value must be a number between 0.0 and 2.0');
-                        }
-                    }),
+                text.setValue(String(this.plugin.settings.analysisTemperature)).inputEl.addEventListener('blur', () => {
+                    const n = parseFloat(text.inputEl.value);
+                    if (!isNaN(n) && n >= 0 && n <= 2) {
+                        this.plugin.settings.analysisTemperature = n;
+                        void this.plugin.saveSettings();
+                    } else {
+                        text.setValue(String(this.plugin.settings.analysisTemperature));
+                        new Notice('Value must be a number between 0.0 and 2.0');
+                    }
+                })
             );
 
         new Setting(containerEl)
@@ -1118,21 +1044,19 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.analysisMaxOutputTokens))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 1) {
                             this.plugin.settings.analysisMaxOutputTokens = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.analysisMaxOutputTokens));
                             new Notice('Value must be a number ≥ 1');
                         }
-                    }),
+                    })
             );
 
-        new Setting(containerEl)
-            .setName('Context engine')
-            .setHeading();
+        new Setting(containerEl).setName('Context engine').setHeading();
 
         new Setting(containerEl)
             .setName('Token budget')
@@ -1141,42 +1065,60 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 for (const opt of [4096, 8192, 16384, 32768]) {
                     dropdown.addOption(String(opt), String(opt));
                 }
-                dropdown
-                    .setValue(String(this.plugin.settings.contextTokenBudget))
-                    .onChange(async (value) => {
-                        this.plugin.settings.contextTokenBudget = parseInt(value, 10);
-                        await this.plugin.saveSettings();
-                    });
+                dropdown.setValue(String(this.plugin.settings.contextTokenBudget)).onChange(async (value) => {
+                    this.plugin.settings.contextTokenBudget = parseInt(value, 10);
+                    await this.plugin.saveSettings();
+                });
             });
 
         new Setting(containerEl)
             .setName('Compaction threshold')
             .setDesc('Percentage of token budget at which context is compacted (50-95).')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.contextCompactAtPercent))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+            .addText((text) => {
+                text.setValue(String(this.plugin.settings.contextCompactAtPercent)).inputEl.addEventListener(
+                    'blur',
+                    () => {
+                        const raw = text.inputEl.value;
+                        const n = parseInt(raw, 10);
                         if (!isNaN(n) && n >= 50 && n <= 95) {
                             this.plugin.settings.contextCompactAtPercent = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.contextCompactAtPercent));
                             new Notice('Value must be between 50 and 95');
                         }
-                    }),
-            );
+                    }
+                );
+            });
+
+        new Setting(containerEl)
+            .setName('Compact summary length')
+            .setDesc('Number of sentences in the AI-generated compaction summary (1-20).')
+            .addText((text) => {
+                text.setValue(String(this.plugin.settings.compactSummarySentences)).inputEl.addEventListener(
+                    'blur',
+                    () => {
+                        const raw = text.inputEl.value;
+                        const n = parseInt(raw, 10);
+                        if (!isNaN(n) && n >= 1 && n <= 20) {
+                            this.plugin.settings.compactSummarySentences = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.compactSummarySentences));
+                            new Notice('Value must be between 1 and 20');
+                        }
+                    }
+                );
+            });
 
         new Setting(containerEl)
             .setName('Include vault context')
             .setDesc('Search the vault for related notes when assembling context.')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.contextIncludeVaultContext)
-                    .onChange(async (value) => {
-                        this.plugin.settings.contextIncludeVaultContext = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.contextIncludeVaultContext).onChange(async (value) => {
+                    this.plugin.settings.contextIncludeVaultContext = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(containerEl)
@@ -1185,16 +1127,16 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.contextMaxVaultFiles))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 1 && n <= 100) {
                             this.plugin.settings.contextMaxVaultFiles = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.contextMaxVaultFiles));
                             new Notice('Value must be between 1 and 100');
                         }
-                    }),
+                    })
             );
 
         new Setting(containerEl)
@@ -1203,62 +1145,54 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.contextMaxCharsPerFile))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 500 && n <= 10000) {
                             this.plugin.settings.contextMaxCharsPerFile = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.contextMaxCharsPerFile));
                             new Notice('Value must be between 500 and 10000');
                         }
-                    }),
+                    })
             );
 
         new Setting(containerEl)
             .setName('Auto-scan on open')
             .setDesc('Automatically scan documents for context when opened.')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.contextAutoScan)
-                    .onChange(async (value) => {
-                        this.plugin.settings.contextAutoScan = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.contextAutoScan).onChange(async (value) => {
+                    this.plugin.settings.contextAutoScan = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
-        new Setting(containerEl)
-            .setName('Linter AI')
-            .setHeading();
+        new Setting(containerEl).setName('Linter AI').setHeading();
 
         new Setting(containerEl)
             .setName('Enable AI-powered lint fixes')
             .setDesc('Show "fix with AI" buttons in the linter sidebar and editor tooltips for intelligent fixes.')
             .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableLinterAiFixes)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableLinterAiFixes = value;
-                        await this.plugin.saveSettings();
-                    }),
+                toggle.setValue(this.plugin.settings.enableLinterAiFixes).onChange(async (value) => {
+                    this.plugin.settings.enableLinterAiFixes = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(containerEl)
             .setName('Linter AI temperature')
             .setDesc('Lower values produce more conservative, precise fixes. Range: 0.0 – 2.0.')
             .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.linterTemperature))
-                    .onChange(async (value) => {
-                        const n = parseFloat(value);
-                        if (!isNaN(n) && n >= 0 && n <= 2) {
-                            this.plugin.settings.linterTemperature = n;
-                            await this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.linterTemperature));
-                            new Notice('Value must be a number between 0.0 and 2.0');
-                        }
-                    }),
+                text.setValue(String(this.plugin.settings.linterTemperature)).inputEl.addEventListener('blur', () => {
+                    const n = parseFloat(text.inputEl.value);
+                    if (!isNaN(n) && n >= 0 && n <= 2) {
+                        this.plugin.settings.linterTemperature = n;
+                        void this.plugin.saveSettings();
+                    } else {
+                        text.setValue(String(this.plugin.settings.linterTemperature));
+                        new Notice('Value must be a number between 0.0 and 2.0');
+                    }
+                })
             );
 
         new Setting(containerEl)
@@ -1267,45 +1201,44 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.linterMaxOutputTokens))
-                    .onChange(async (value) => {
-                        const n = parseInt(value, 10);
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 1) {
                             this.plugin.settings.linterMaxOutputTokens = n;
-                            await this.plugin.saveSettings();
+                            void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.linterMaxOutputTokens));
                             new Notice('Value must be a number ≥ 1');
                         }
-                    }),
+                    })
             );
 
         new Setting(containerEl)
             .setName('Restore defaults')
             .setDesc('Reset all AI behavior settings to their default values.')
             .addButton((button) =>
-                button
-                    .setButtonText('Restore defaults')
-                    .onClick(async () => {
-                        this.plugin.settings.transformTemperature = DEFAULT_SETTINGS.transformTemperature;
-                        this.plugin.settings.transformAppendNewline = DEFAULT_SETTINGS.transformAppendNewline;
-                        this.plugin.settings.transformVaultContext = DEFAULT_SETTINGS.transformVaultContext;
-                        this.plugin.settings.transformMaxOutputTokens = DEFAULT_SETTINGS.transformMaxOutputTokens;
-                        this.plugin.settings.narrativeVoicePreset = DEFAULT_SETTINGS.narrativeVoicePreset;
-                        this.plugin.settings.customNarrativeVoiceRules = DEFAULT_SETTINGS.customNarrativeVoiceRules;
-                        this.plugin.settings.analysisTemperature = DEFAULT_SETTINGS.analysisTemperature;
-                        this.plugin.settings.analysisMaxOutputTokens = DEFAULT_SETTINGS.analysisMaxOutputTokens;
-                        this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
-                        this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
-                        this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
-                        this.plugin.settings.contextTokenBudget = DEFAULT_SETTINGS.contextTokenBudget;
-                        this.plugin.settings.contextCompactAtPercent = DEFAULT_SETTINGS.contextCompactAtPercent;
-                        this.plugin.settings.contextIncludeVaultContext = DEFAULT_SETTINGS.contextIncludeVaultContext;
-                        this.plugin.settings.contextMaxVaultFiles = DEFAULT_SETTINGS.contextMaxVaultFiles;
-                        this.plugin.settings.contextMaxCharsPerFile = DEFAULT_SETTINGS.contextMaxCharsPerFile;
-                        this.plugin.settings.contextAutoScan = DEFAULT_SETTINGS.contextAutoScan;
-                        await this.plugin.saveSettings();
-                        this.display();
-                    }),
+                button.setButtonText('Restore defaults').onClick(async () => {
+                    this.plugin.settings.transformTemperature = DEFAULT_SETTINGS.transformTemperature;
+                    this.plugin.settings.transformAppendNewline = DEFAULT_SETTINGS.transformAppendNewline;
+                    this.plugin.settings.transformVaultContext = DEFAULT_SETTINGS.transformVaultContext;
+                    this.plugin.settings.transformMaxOutputTokens = DEFAULT_SETTINGS.transformMaxOutputTokens;
+                    this.plugin.settings.narrativeVoicePreset = DEFAULT_SETTINGS.narrativeVoicePreset;
+                    this.plugin.settings.customNarrativeVoiceRules = DEFAULT_SETTINGS.customNarrativeVoiceRules;
+                    this.plugin.settings.analysisTemperature = DEFAULT_SETTINGS.analysisTemperature;
+                    this.plugin.settings.analysisMaxOutputTokens = DEFAULT_SETTINGS.analysisMaxOutputTokens;
+                    this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
+                    this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
+                    this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
+                    this.plugin.settings.contextTokenBudget = DEFAULT_SETTINGS.contextTokenBudget;
+                    this.plugin.settings.contextCompactAtPercent = DEFAULT_SETTINGS.contextCompactAtPercent;
+                    this.plugin.settings.compactSummarySentences = DEFAULT_SETTINGS.compactSummarySentences;
+                    this.plugin.settings.contextIncludeVaultContext = DEFAULT_SETTINGS.contextIncludeVaultContext;
+                    this.plugin.settings.contextMaxVaultFiles = DEFAULT_SETTINGS.contextMaxVaultFiles;
+                    this.plugin.settings.contextMaxCharsPerFile = DEFAULT_SETTINGS.contextMaxCharsPerFile;
+                    this.plugin.settings.contextAutoScan = DEFAULT_SETTINGS.contextAutoScan;
+                    await this.plugin.saveSettings();
+                    this.display();
+                })
             );
     }
 
@@ -1318,8 +1251,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             if (models.length === 0) {
                 new Notice(
                     'Could not fetch models from this endpoint. ' +
-                    'Make sure your endpoint URL includes the full base path ' +
-                    '(e.g. http://localhost:1234/v1). You can still enter the model ID manually.',
+                        'Make sure your endpoint URL includes the full base path ' +
+                        '(e.g. http://localhost:1234/v1). You can still enter the model ID manually.'
                 );
                 return;
             }
@@ -1363,8 +1296,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         const textarea = rulesArea.createEl('textarea', {
             attr: {
                 rows: '6',
-                placeholder: 'Rules for the custom narrative voice...',
-            },
+                placeholder: 'Rules for the custom narrative voice...'
+            }
         });
         this.updateNarrativeVoiceRulesDisplay(this.plugin.settings.narrativeVoicePreset, rulesArea);
 
@@ -1387,8 +1320,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         if (isCustom) {
             textarea.value = this.plugin.settings.customNarrativeVoiceRules;
         } else {
-            const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === preset)
-                ?? NARRATIVE_VOICE_PRESETS[0];
+            const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === preset) ?? NARRATIVE_VOICE_PRESETS[0];
             if (!def) return;
             textarea.value = def.rules.join('\n');
         }
@@ -1405,7 +1337,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             apiKey: '',
             models: [],
             maxContextTokens: 32768,
-            maxOutputTokens: 4096,
+            maxOutputTokens: 4096
         };
         this.plugin.settings.aiProviders.push(newProvider);
         void this.plugin.saveSettings().then(() => this.display());

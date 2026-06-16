@@ -15,7 +15,10 @@ export interface LinterAiOptions {
  * Extract context lines around a flagged lint result from the editor text.
  * Returns up to 2 lines before, the flagged line, and up to 2 lines after.
  */
-function extractContextLines(text: string, result: LintResult): {
+function extractContextLines(
+    text: string,
+    result: LintResult
+): {
     before: string;
     line: string;
     after: string;
@@ -36,7 +39,7 @@ function extractContextLines(text: string, result: LintResult): {
     return {
         before: beforeLines.join('\n'),
         line: lines[lineIndex] ?? '',
-        after: afterLines.join('\n'),
+        after: afterLines.join('\n')
     };
 }
 
@@ -58,7 +61,7 @@ export async function suggestLintFix(
     editorText: string,
     provider: AiProvider,
     options: LinterAiOptions,
-    customInstruction?: string,
+    customInstruction?: string
 ): Promise<string | null> {
     const contextLines = extractContextLines(editorText, result);
 
@@ -67,7 +70,7 @@ export async function suggestLintFix(
 
     const messages: ChatMessage[] = [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
+        { role: 'user', content: userPrompt }
     ];
 
     let responseText = '';
@@ -79,7 +82,7 @@ export async function suggestLintFix(
             model: options.model,
             temperature: options.temperature,
             maxTokens: options.maxTokens,
-            signal: options.signal,
+            signal: options.signal
         });
 
         for await (const chunk of stream) {
@@ -120,11 +123,7 @@ export async function suggestLintFix(
  *    to extract only what changed within the flagged span.
  * 3. The model wraps its response in markdown or quotes — we strip those first.
  */
-function extractReplacement(
-    raw: string,
-    originalLine: string,
-    result: LintResult,
-): string {
+function extractReplacement(raw: string, originalLine: string, result: LintResult): string {
     let cleaned = raw;
 
     // Strip multi-line markdown code blocks first: ```\n...\n```: extract inner content instead of deleting.
@@ -151,9 +150,7 @@ function extractReplacement(
     if (lines.length > 1) {
         // Check if any line exactly matches the original line (the model
         // reproduced the full original). If so, skip it and take the next.
-        const nonOriginalLines = lines.filter(
-            (l) => l.trim() !== originalLine.trim(),
-        );
+        const nonOriginalLines = lines.filter((l) => l.trim() !== originalLine.trim());
         if (nonOriginalLines.length > 0) {
             cleaned = nonOriginalLines[0] ?? '';
         } else {
@@ -162,8 +159,7 @@ function extractReplacement(
     }
 
     // Strip surrounding single or double quotes
-    if ((cleaned.startsWith('"') && cleaned.endsWith('"')) ||
-        (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+    if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
         cleaned = cleaned.slice(1, -1);
     }
 
@@ -238,11 +234,7 @@ function extractReplacement(
  * - When replacing with an empty string (deletion), preserves spacing by
  *   collapsing double spaces that would result from removing the flagged text.
  */
-function sanitizeReplacement(
-    replacement: string,
-    beforeFlagged: string,
-    afterFlagged: string,
-): string {
+function sanitizeReplacement(replacement: string, beforeFlagged: string, afterFlagged: string): string {
     let result = replacement;
 
     // If the replacement starts with text that matches what's already on the
@@ -278,11 +270,7 @@ function sanitizeReplacement(
  * Returns null if the diff is ambiguous (e.g., the response is completely
  * different from the original line).
  */
-function fuzzyExtract(
-    response: string,
-    originalLine: string,
-    result: LintResult,
-): string | null {
+function fuzzyExtract(response: string, originalLine: string, result: LintResult): string | null {
     // Find longest common prefix length
     let prefixLen = 0;
     const maxPrefix = Math.min(response.length, originalLine.length);
@@ -292,10 +280,7 @@ function fuzzyExtract(
 
     // Find longest common suffix length (from the end)
     let suffixLen = 0;
-    const maxSuffix = Math.min(
-        response.length - prefixLen,
-        originalLine.length - prefixLen,
-    );
+    const maxSuffix = Math.min(response.length - prefixLen, originalLine.length - prefixLen);
     while (
         suffixLen < maxSuffix &&
         response[response.length - 1 - suffixLen] === originalLine[originalLine.length - 1 - suffixLen]

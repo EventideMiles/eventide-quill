@@ -11,7 +11,7 @@ export class TransformModal extends Modal {
     constructor(
         app: App,
         private selectedText: string,
-        private onSubmit: (instruction: string) => void,
+        private onSubmit: (instruction: string) => void
     ) {
         super(app);
     }
@@ -23,18 +23,16 @@ export class TransformModal extends Modal {
 
         contentEl.createEl('p', {
             text: `Selected ${this.selectedText.split(/\s+/).filter(Boolean).length} words. Enter your instruction below.`,
-            cls: 'quill-transform-modal-hint',
+            cls: 'quill-transform-modal-hint'
         });
 
         new Setting(contentEl)
             .setName('Instruction')
             .setDesc('Describe how you want the selected passage rewritten.')
             .addTextArea((textarea) => {
-                textarea
-                    .setPlaceholder('E.g. Rewrite this from the antagonist\'s perspective')
-                    .onChange((value) => {
-                        this.instruction = value;
-                    });
+                textarea.setPlaceholder("E.g. Rewrite this from the antagonist's perspective").onChange((value) => {
+                    this.instruction = value;
+                });
                 textarea.inputEl.rows = 4;
                 textarea.inputEl.cols = 50;
                 textarea.inputEl.addClass('quill-transform-textarea');
@@ -42,12 +40,11 @@ export class TransformModal extends Modal {
 
         const buttonRow = contentEl.createEl('div', { cls: 'quill-transform-modal-actions' });
 
-        buttonRow.createEl('button', { text: 'Cancel' })
-            .addEventListener('click', () => this.close());
+        buttonRow.createEl('button', { text: 'Cancel' }).addEventListener('click', () => this.close());
 
         const submitBtn = buttonRow.createEl('button', {
             text: 'Transform',
-            cls: 'mod-cta',
+            cls: 'mod-cta'
         });
         submitBtn.addEventListener('click', () => {
             if (!this.instruction.trim()) return;
@@ -68,7 +65,7 @@ export class TransformModal extends Modal {
 export class ToneSuggestModal extends SuggestModal<ToneOption> {
     constructor(
         app: App,
-        private onChoose: (tone: ToneOption) => void,
+        private onChoose: (tone: ToneOption) => void
     ) {
         super(app);
         this.setPlaceholder('Choose a tone...');

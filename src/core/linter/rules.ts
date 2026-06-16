@@ -5,42 +5,26 @@ import {
     posAtOffset,
     isInsideQuotes,
     isAfterDialogueTag,
-    countSyllables,
+    countSyllables
 } from '../../utils/text-analysis';
 
 // --- Build patterns from word lists ---
 
-const DIALOGUE_TAG_PATTERN = new RegExp(
-    `\\b(${wordLists.dialogueTags.join('|')})\\b`, 'gi'
-);
+const DIALOGUE_TAG_PATTERN = new RegExp(`\\b(${wordLists.dialogueTags.join('|')})\\b`, 'gi');
 
-const PRECEDING_DIALOGUE_TAG = new RegExp(
-    `\\b(${wordLists.dialogueTags.join('|')})\\s+$`, 'i'
-);
+const PRECEDING_DIALOGUE_TAG = new RegExp(`\\b(${wordLists.dialogueTags.join('|')})\\s+$`, 'i');
 
-const QUALIFIER_PATTERN = new RegExp(
-    `\\b(${wordLists.qualifiers.join('|')})\\b`, 'gi'
-);
+const QUALIFIER_PATTERN = new RegExp(`\\b(${wordLists.qualifiers.join('|')})\\b`, 'gi');
 
-const AI_CLICHE_PHRASES = new RegExp(
-    `\\b(${wordLists.aiClichePhrases.join('|')})\\b`, 'gi'
-);
+const AI_CLICHE_PHRASES = new RegExp(`\\b(${wordLists.aiClichePhrases.join('|')})\\b`, 'gi');
 
-const AI_FILLER_ADVERBS = new RegExp(
-    `\\b(${wordLists.aiFillerAdverbs.join('|')})\\b`, 'gi'
-);
+const AI_FILLER_ADVERBS = new RegExp(`\\b(${wordLists.aiFillerAdverbs.join('|')})\\b`, 'gi');
 
-const AI_HEDGING = new RegExp(
-    `\\b(${wordLists.aiHedging.join('|')})\\b`, 'gi'
-);
+const AI_HEDGING = new RegExp(`\\b(${wordLists.aiHedging.join('|')})\\b`, 'gi');
 
-const AI_WRAP_UP = new RegExp(
-    `\\b(${wordLists.aiWrapUps.join('|')})\\b`, 'gi'
-);
+const AI_WRAP_UP = new RegExp(`\\b(${wordLists.aiWrapUps.join('|')})\\b`, 'gi');
 
-const ABBREVIATIONS = new RegExp(
-    `\\b(${wordLists.abbreviations.join('|')})\\.$`, 'i'
-);
+const ABBREVIATIONS = new RegExp(`\\b(${wordLists.abbreviations.join('|')})\\.$`, 'i');
 
 const COMMON_ADVERBS = new Set(wordLists.commonAdverbs);
 const SKIP_WORDS = new Set(wordLists.skipWords);
@@ -64,7 +48,7 @@ export function checkLongSentences(text: string, maxWords: number = 40): LintRes
                 length: sentence.text.length,
                 message: `Sentence is ${words.length} words long. Consider breaking it up.`,
                 severity: 'warning',
-                rule: 'long-sentences',
+                rule: 'long-sentences'
             });
         }
     }
@@ -93,7 +77,7 @@ export function checkPassiveVoice(text: string): LintResult[] {
             length: match[0].length,
             message: `Passive voice: "${match[0]}". Consider rewriting in active voice.`,
             severity: 'info',
-            rule: 'passive-voice',
+            rule: 'passive-voice'
         });
     }
 
@@ -121,7 +105,7 @@ export function checkAdverbs(text: string): LintResult[] {
                 length: match[0].length,
                 message: `Adverb: "${match[0]}". Consider describing the action directly.`,
                 severity: 'info',
-                rule: 'adverbs',
+                rule: 'adverbs'
             });
         }
     }
@@ -143,7 +127,7 @@ export function checkQualifiers(text: string): LintResult[] {
             length: match[0].length,
             message: `Qualifier: "${match[0]}". Can be removed or replaced with a stronger word.`,
             severity: 'warning',
-            rule: 'qualifiers',
+            rule: 'qualifiers'
         });
     }
 
@@ -179,7 +163,7 @@ export function checkRepeatedWords(text: string, minLength: number = 4): LintRes
                     length: word.length,
                     message: `Repeated word: "${word}" appears ${positions.length} times in this sentence.`,
                     severity: 'info',
-                    rule: 'repeated-words',
+                    rule: 'repeated-words'
                 });
             }
         }
@@ -234,7 +218,7 @@ export function checkEchoes(text: string): LintResult[] {
                     length: start.length,
                     message: `Echo: "${start}" starts ${indices.length} sentences in this paragraph.`,
                     severity: 'info',
-                    rule: 'echoes',
+                    rule: 'echoes'
                 });
             }
         }
@@ -270,7 +254,7 @@ export function checkEchoes(text: string): LintResult[] {
                         length: start.length,
                         message: `Echo: "${start}" starts ${indices.length} sentences in this paragraph.`,
                         severity: 'info',
-                        rule: 'echoes',
+                        rule: 'echoes'
                     });
                 }
             }
@@ -280,7 +264,8 @@ export function checkEchoes(text: string): LintResult[] {
     return results;
 }
 
-const TELLING_PATTERN = /\b(he|she|they|it|i|we)\s+(was|were|felt|feels|seemed|seems|looked|looks|appeared|appears|became|becomes|grew|grows)\s+(\w+)\b/gi;
+const TELLING_PATTERN =
+    /\b(he|she|they|it|i|we)\s+(was|were|felt|feels|seemed|seems|looked|looks|appeared|appears|became|becomes|grew|grows)\s+(\w+)\b/gi;
 
 /** Flag direct emotion statements (telling) that could be shown through action. */
 export function checkTellingVsShowing(text: string): LintResult[] {
@@ -298,7 +283,7 @@ export function checkTellingVsShowing(text: string): LintResult[] {
                 length: match[0].length,
                 message: `Telling: "${match[0]}". Show the emotion through action or dialogue instead.`,
                 severity: 'warning',
-                rule: 'telling-vs-showing',
+                rule: 'telling-vs-showing'
             });
         }
     }
@@ -332,7 +317,7 @@ export function checkDialogueTags(text: string): LintResult[] {
                 length: tag.length,
                 message: `Dialogue tag: "${tag}" used ${indices.length} times. Consider varying tags or using action beats.`,
                 severity: 'info',
-                rule: 'dialogue-tags',
+                rule: 'dialogue-tags'
             });
         }
     }
@@ -362,7 +347,7 @@ export function checkComplexWords(text: string, maxSyllables: number = 5): LintR
                 length: word.length,
                 message: `Complex word: "${word}" has ${countSyllables(word)} syllables. Consider a simpler alternative.`,
                 severity: 'info',
-                rule: 'complex-words',
+                rule: 'complex-words'
             });
             searchIndex = index + word.length;
         }
@@ -385,7 +370,7 @@ export function checkAiCliches(text: string): LintResult[] {
             length: match[0].length,
             message: `AI cliché: "${match[0]}". Consider more natural phrasing.`,
             severity: 'info',
-            rule: 'ai-cliches',
+            rule: 'ai-cliches'
         });
     }
 
@@ -409,7 +394,7 @@ export function checkAiNegation(text: string): LintResult[] {
             length: match[0].length,
             message: 'AI negation pattern: "It\'s not X, it\'s Y." State what things are directly.',
             severity: 'warning',
-            rule: 'ai-negation',
+            rule: 'ai-negation'
         });
     }
 
@@ -422,7 +407,7 @@ export function checkAiNegation(text: string): LintResult[] {
             length: match[0].length,
             message: 'AI negation pattern: "Not because X, but because Y." State what things are directly.',
             severity: 'warning',
-            rule: 'ai-negation',
+            rule: 'ai-negation'
         });
     }
 
@@ -444,7 +429,7 @@ export function checkAiFillerAdverbs(text: string): LintResult[] {
             length: match[0].length,
             message: `Filler adverb: "${match[0]}". Consider describing the concrete action instead.`,
             severity: 'info',
-            rule: 'ai-filler-adverbs',
+            rule: 'ai-filler-adverbs'
         });
     }
 
@@ -458,7 +443,11 @@ export function checkAiHedging(text: string): LintResult[] {
 
     while ((match = AI_HEDGING.exec(text)) !== null) {
         if (isInsideQuotes(text, match.index)) continue;
-        if (match[0].toLowerCase() === 'in a way' && /\sthat\b/i.test(text.slice(match.index + match[0].length, match.index + match[0].length + 8))) continue;
+        if (
+            match[0].toLowerCase() === 'in a way' &&
+            /\sthat\b/i.test(text.slice(match.index + match[0].length, match.index + match[0].length + 8))
+        )
+            continue;
         const pos = posAtOffset(text, match.index);
         results.push({
             line: pos.line,
@@ -466,7 +455,7 @@ export function checkAiHedging(text: string): LintResult[] {
             length: match[0].length,
             message: `Hedging: "${match[0]}". Use direct language unless character uncertainty is intentional.`,
             severity: 'info',
-            rule: 'ai-hedging',
+            rule: 'ai-hedging'
         });
     }
 
@@ -487,7 +476,7 @@ export function checkAiWrapUps(text: string): LintResult[] {
             length: match[0].length,
             message: `Wrap-up phrase: "${match[0]}". End on action or tension, not summary.`,
             severity: 'warning',
-            rule: 'ai-wrap-ups',
+            rule: 'ai-wrap-ups'
         });
     }
 
@@ -510,7 +499,7 @@ export function checkAiEmDashes(text: string): LintResult[] {
             length: 1,
             message: 'Em dash. Consider commas, colons, or sentence breaks instead.',
             severity: 'info',
-            rule: 'ai-em-dashes',
+            rule: 'ai-em-dashes'
         });
     }
 

@@ -1,16 +1,8 @@
 import { Editor, MarkdownView, Menu, Notice, Plugin, TAbstractFile, TFile, WorkspaceLeaf } from 'obsidian';
 import { EditorView } from '@codemirror/view';
-import {
-    DEFAULT_SETTINGS,
-    EventideQuillSettings,
-    EventideQuillSettingTab,
-} from './settings';
+import { DEFAULT_SETTINGS, EventideQuillSettings, EventideQuillSettingTab } from './settings';
 import { lint } from './core/linter/linter';
-import {
-    getLintExtension,
-    setLintResults,
-    toggleLintActive,
-} from './core/linter/decorations';
+import { getLintExtension, setLintResults, toggleLintActive } from './core/linter/decorations';
 import { QUILL_VIEW_TYPE, QuillSidebarView } from './ui/quill-sidebar';
 import { LintResult, FIXABLE_RULES } from './core/linter/types';
 import { FIXES } from './core/linter/fixes';
@@ -18,16 +10,23 @@ import { applyReplacement } from './core/linter/apply-fix';
 import { findEditorView } from './utils/find-editor';
 import { AiProvider } from './ai/provider';
 import { createProvider, parseProviderKey } from './ai/provider-registry';
-import {
-    applyTransformation,
-    TRANSFORM_ACTIONS,
-} from './ai/transform';
+import { applyTransformation, TRANSFORM_ACTIONS } from './ai/transform';
 import { ToneSuggestModal, TransformModal } from './ui/transform-modal';
 import { FixWithAiModal } from './ui/fix-with-ai-modal';
 import { ContextCache } from './core/context-engine';
 import { extractAllEntities, analyzeVoice, assembleContext } from './core/context-engine';
 import type { ContextAssembly, ContextItem, ExtractedEntity, EntityType } from './core/context-engine/types';
 import { loadQuillContextData, writeQuillContextData, buildQuillContextData, entityFromId } from './utils/frontmatter';
+import { buildFeedbackMessages, getPersonaById, getFeedback, summarizeConversation } from './ai/feedback';
+import type { ChatMessage } from './ai/provider';
+import { AI_MODE_CONFIGS } from './ai/modes';
+
+/** Estimate token count from message content using the chars/4 heuristic. */
+function estimateTokens(msgs: ChatMessage[]): number {
+    let total = 0;
+    for (const m of msgs) total += Math.ceil(m.content.length / 4);
+    return total;
+}
 
 /** Generate a content-based fingerprint for a lint result. Uses the flagged
  *  text plus the line it appears on to distinguish multiple instances of the
@@ -40,20 +39,20 @@ function lintFingerprint(result: LintResult, lineText?: string): string {
 /** Apply persisted entity modifications (pins, removals, manual adds) to freshly extracted entities. */
 function applyEntityMods(
     entities: ExtractedEntity[],
-    mods: Map<string, { pinned: boolean; removed: boolean; manual: boolean; entity: ExtractedEntity }>,
+    mods: Map<string, { pinned: boolean; removed: boolean; manual: boolean; entity: ExtractedEntity }>
 ): void {
     for (const [id, mod] of mods) {
         if (mod.removed) {
-            const entity = entities.find(e => e.id === id);
+            const entity = entities.find((e) => e.id === id);
             if (entity) entity.removed = true;
             continue;
         }
         if (mod.manual) {
-            if (!entities.some(e => e.id === id)) {
+            if (!entities.some((e) => e.id === id)) {
                 entities.push({ ...mod.entity });
             }
         }
-        const entity = entities.find(e => e.id === id);
+        const entity = entities.find((e) => e.id === id);
         if (entity && mod.pinned) {
             entity.pinned = true;
         }
@@ -61,11 +60,7 @@ function applyEntityMods(
 }
 
 /** Apply persisted context item modifications (pins, removals) to freshly assembled items. */
-function applyContextItemMods(
-    items: ContextItem[],
-    pinnedPaths: Set<string>,
-    removedPaths: Set<string>,
-): void {
+function applyContextItemMods(items: ContextItem[], pinnedPaths: Set<string>, removedPaths: Set<string>): void {
     for (let i = items.length - 1; i >= 0; i--) {
         const item = items[i]!;
         if (removedPaths.has(item.filePath)) {
@@ -82,6 +77,13 @@ function applyContextItemMods(
 export default class EventideQuillPlugin extends Plugin {
     settings!: EventideQuillSettings;
     private lintPanel: QuillSidebarView | null = null;
+    /** Abort controller for the current feedback request, if any. */
+    private feedbackAbort: AbortController | null = null;
+    /** Full message history (system + context heads + chat turns) for continued chat.
+     *  Manuscript and reference file content is NOT stored here — it is injected
+     *  fresh as system messages on every API call so it always survives compaction
+     *  and never double-counts in token estimates. */
+    private feedbackCurrentMessages: ChatMessage[] = [];
     private lintActive = false;
     lintActiveFile: string | null = null;
     /** File path for the currently assembled context. Tracked separately from lintActiveFile. */
@@ -97,7 +99,10 @@ export default class EventideQuillPlugin extends Plugin {
     /** Current context assembly for the active document. */
     currentAssembly: ContextAssembly | null = null;
     /** User modifications to entities (pins, removals, manual adds) keyed by entity ID. */
-    private entityMods = new Map<string, { pinned: boolean; removed: boolean; manual: boolean; entity: ExtractedEntity }>();
+    private entityMods = new Map<
+        string,
+        { pinned: boolean; removed: boolean; manual: boolean; entity: ExtractedEntity }
+    >();
     /** Paths of context items the user has pinned. */
     private pinnedContextPaths = new Set<string>();
     /** Paths of context items the user has removed. */
@@ -123,18 +128,15 @@ export default class EventideQuillPlugin extends Plugin {
                     if (!this.settings.enableLinterAiFixes) return false;
                     const chat = this.getDefaultChatProvider();
                     return !!chat.provider;
-                },
-            ),
+                }
+            )
         );
 
-        this.registerView(
-            QUILL_VIEW_TYPE,
-            (leaf: WorkspaceLeaf) => {
-                const view = new QuillSidebarView(leaf, this);
-                this.lintPanel = view;
-                return view;
-            },
-        );
+        this.registerView(QUILL_VIEW_TYPE, (leaf: WorkspaceLeaf) => {
+            const view = new QuillSidebarView(leaf, this);
+            this.lintPanel = view;
+            return view;
+        });
 
         // Context is not auto-loaded on startup.
         // User must explicitly refresh via right-click, command palette, or transform.
@@ -165,13 +167,12 @@ export default class EventideQuillPlugin extends Plugin {
                 // Does NOT auto-scan on leaf focus changes — user must explicitly
                 // refresh via right-click, command palette, or a transform operation.
                 if (this.contextActiveFile) {
-                    const stillOpen = this.app.workspace.getLeavesOfType('markdown')
-                        .some(leaf => {
-                            if (leaf.view instanceof MarkdownView) {
-                                return leaf.view.file?.path === this.contextActiveFile;
-                            }
-                            return false;
-                        });
+                    const stillOpen = this.app.workspace.getLeavesOfType('markdown').some((leaf) => {
+                        if (leaf.view instanceof MarkdownView) {
+                            return leaf.view.file?.path === this.contextActiveFile;
+                        }
+                        return false;
+                    });
                     if (!stillOpen) {
                         this.currentAssembly = null;
                         this.contextActiveFile = null;
@@ -182,42 +183,40 @@ export default class EventideQuillPlugin extends Plugin {
                         this.lintPanel?.setContextAssembly(null);
                     }
                 }
-            }),
+            })
         );
 
-        this.registerEvent(this.app.vault.on('modify', (file: TAbstractFile) => {
-            if (file instanceof TFile) {
-                this.contextCache.invalidate(file.path);
-            }
+        this.registerEvent(
+            this.app.vault.on('modify', (file: TAbstractFile) => {
+                if (file instanceof TFile) {
+                    this.contextCache.invalidate(file.path);
+                }
 
-            if (
-                !this.lintActive ||
-                !this.settings.lintOnSave ||
-                file !== this.app.workspace.getActiveFile()
-            ) return;
+                if (!this.lintActive || !this.settings.lintOnSave || file !== this.app.workspace.getActiveFile())
+                    return;
 
-            const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-            if (!markdownView) return;
+                const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+                if (!markdownView) return;
 
-            const text = markdownView.editor.getValue();
-            const results = this.runLint(text);
-            this.currentResults = results;
+                const text = markdownView.editor.getValue();
+                const results = this.runLint(text);
+                this.currentResults = results;
 
-            const cm = this.getCmView(markdownView.editor);
-            if (!cm) return;
+                const cm = this.getCmView(markdownView.editor);
+                if (!cm) return;
 
-            cm.dispatch({
-                effects: setLintResults.of(results),
-            });
+                cm.dispatch({
+                    effects: setLintResults.of(results)
+                });
 
-            this.lintPanel?.setResults(results);
-        }));
+                this.lintPanel?.setResults(results);
+            })
+        );
 
         this.registerEvent(
             this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor) => {
                 menu.addItem((item) => {
-                    item
-                        .setTitle('Quill: Toggle prose linter')
+                    item.setTitle('Quill: Toggle prose linter')
                         .setIcon('checkmark')
                         .onClick(() => {
                             this.toggleLint(editor);
@@ -225,8 +224,7 @@ export default class EventideQuillPlugin extends Plugin {
                 });
 
                 menu.addItem((item) => {
-                    item
-                        .setTitle('Quill: Refresh context')
+                    item.setTitle('Quill: Refresh context')
                         .setIcon('refresh-cw')
                         .onClick(() => {
                             // Find the file for the editor that was right-clicked.
@@ -250,6 +248,16 @@ export default class EventideQuillPlugin extends Plugin {
                         });
                 });
 
+                // Feedback menu item
+                menu.addSeparator();
+                menu.addItem((item) => {
+                    item.setTitle('Quill: Get AI feedback')
+                        .setIcon('message-square')
+                        .onClick(() => {
+                            void this.openFeedbackPanel();
+                        });
+                });
+
                 // Linter fix items
                 if (this.lintActive && this.currentResults.length > 0) {
                     const cursor = editor.getCursor();
@@ -269,8 +277,7 @@ export default class EventideQuillPlugin extends Plugin {
                             const fix = FIXES[result.rule];
                             if (!fix) continue;
                             menu.addItem((item) => {
-                                item
-                                    .setTitle(`Quill: ${fix.description}`)
+                                item.setTitle(`Quill: ${fix.description}`)
                                     .setIcon('wrench')
                                     .onClick(() => {
                                         const text = editor.getValue();
@@ -307,52 +314,60 @@ export default class EventideQuillPlugin extends Plugin {
                     for (const action of TRANSFORM_ACTIONS) {
                         if (action.id === 'change-tone') {
                             menu.addItem((item) => {
-                                item
-                                    .setTitle(`Quill: ${action.label}`)
+                                item.setTitle(`Quill: ${action.label}`)
                                     .setIcon(action.icon)
                                     .onClick(() => {
-                                        new ToneSuggestModal(
-                                            this.app,
-                                            (tone) => {
-                                                void applyTransformation(
-                                                    this, editor, 'change-tone', selection, fullText, tone, filePath,
-                                                );
-                                            },
-                                        ).open();
+                                        new ToneSuggestModal(this.app, (tone) => {
+                                            void applyTransformation(
+                                                this,
+                                                editor,
+                                                'change-tone',
+                                                selection,
+                                                fullText,
+                                                tone,
+                                                filePath
+                                            );
+                                        }).open();
                                     });
                             });
                         } else if (action.id === 'custom') {
                             menu.addItem((item) => {
-                                item
-                                    .setTitle(`Quill: ${action.label}`)
+                                item.setTitle(`Quill: ${action.label}`)
                                     .setIcon(action.icon)
                                     .onClick(() => {
-                                        new TransformModal(
-                                            this.app,
-                                            selection,
-                                            (instruction) => {
-                                                void applyTransformation(
-                                                    this, editor, 'custom', selection, fullText, instruction, filePath,
-                                                );
-                                            },
-                                        ).open();
+                                        new TransformModal(this.app, selection, (instruction) => {
+                                            void applyTransformation(
+                                                this,
+                                                editor,
+                                                'custom',
+                                                selection,
+                                                fullText,
+                                                instruction,
+                                                filePath
+                                            );
+                                        }).open();
                                     });
                             });
                         } else {
                             menu.addItem((item) => {
-                                item
-                                    .setTitle(`Quill: ${action.label}`)
+                                item.setTitle(`Quill: ${action.label}`)
                                     .setIcon(action.icon)
                                     .onClick(() => {
                                         void applyTransformation(
-                                            this, editor, action.id, selection, fullText, undefined, filePath,
+                                            this,
+                                            editor,
+                                            action.id,
+                                            selection,
+                                            fullText,
+                                            undefined,
+                                            filePath
                                         );
                                     });
                             });
                         }
                     }
                 }
-            }),
+            })
         );
 
         this.addRibbonIcon('feather', 'Eventide quill sidebar', () => {
@@ -366,7 +381,7 @@ export default class EventideQuillPlugin extends Plugin {
                 const file = this.app.workspace.getActiveFile();
                 this.scanContext(editor.getValue(), file?.path ?? '');
                 void this.assembleDocumentContext(editor.getValue());
-            },
+            }
         });
 
         this.addCommand({
@@ -374,7 +389,15 @@ export default class EventideQuillPlugin extends Plugin {
             name: 'Quill: Toggle prose linter',
             editorCallback: (editor) => {
                 this.toggleLint(editor);
-            },
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-feedback-open',
+            name: 'Quill: Get AI feedback',
+            callback: () => {
+                void this.openFeedbackPanel();
+            }
         });
 
         this.addSettingTab(new EventideQuillSettingTab(this.app, this));
@@ -397,7 +420,7 @@ export default class EventideQuillPlugin extends Plugin {
 
         if (!this.lintActive) {
             cm.dispatch({
-                effects: toggleLintActive.of(false),
+                effects: toggleLintActive.of(false)
             });
             this.lintActiveFile = null;
             this.currentResults = [];
@@ -415,10 +438,7 @@ export default class EventideQuillPlugin extends Plugin {
         this.currentResults = results;
 
         cm.dispatch({
-            effects: [
-                toggleLintActive.of(true),
-                setLintResults.of(results),
-            ],
+            effects: [toggleLintActive.of(true), setLintResults.of(results)]
         });
 
         this.lintPanel?.setResults(results);
@@ -434,7 +454,7 @@ export default class EventideQuillPlugin extends Plugin {
 
         new Notice(
             `Prose linter: activated, ${count} issues found ` +
-            `(${bySeverity.error} errors, ${bySeverity.warning} warnings, ${bySeverity.info} info)`,
+                `(${bySeverity.error} errors, ${bySeverity.warning} warnings, ${bySeverity.info} info)`
         );
     }
 
@@ -462,7 +482,7 @@ export default class EventideQuillPlugin extends Plugin {
             enableAiNegation: ai && this.settings.enableAiNegation,
             enableAiFillerAdverbs: ai && this.settings.enableAiFillerAdverbs,
             enableAiHedging: ai && this.settings.enableAiHedging,
-            enableAiWrapUps: ai && this.settings.enableAiWrapUps,
+            enableAiWrapUps: ai && this.settings.enableAiWrapUps
         });
 
         const lines = text.split('\n');
@@ -504,11 +524,7 @@ export default class EventideQuillPlugin extends Plugin {
 
     /** Load persisted settings, merging with defaults. */
     async loadSettings() {
-        this.settings = Object.assign(
-            {},
-            DEFAULT_SETTINGS,
-            (await this.loadData()) as Partial<EventideQuillSettings>,
-        );
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, (await this.loadData()) as Partial<EventideQuillSettings>);
     }
 
     /**
@@ -531,7 +547,7 @@ export default class EventideQuillPlugin extends Plugin {
         this.currentResults = results;
 
         cm.dispatch({
-            effects: setLintResults.of(results),
+            effects: setLintResults.of(results)
         });
 
         this.lintPanel?.setResults(results);
@@ -591,24 +607,18 @@ export default class EventideQuillPlugin extends Plugin {
         if (line === undefined) return;
         const originalSpan = line.slice(result.column, result.column + result.length);
 
-        new FixWithAiModal(
-            this.app,
-            this,
-            result,
-            editorText,
-            (replacement: string) => {
-                // Validate that the span is still accurate before applying.
-                const currentLine = view.editor.getLine(lineIndex);
-                if (currentLine === undefined) return;
-                const currentSpan = currentLine.slice(result.column, result.column + result.length);
-                if (currentSpan !== originalSpan) {
-                    new Notice('Quill: Text has changed since this suggestion was generated.');
-                    return;
-                }
+        new FixWithAiModal(this.app, this, result, editorText, (replacement: string) => {
+            // Validate that the span is still accurate before applying.
+            const currentLine = view.editor.getLine(lineIndex);
+            if (currentLine === undefined) return;
+            const currentSpan = currentLine.slice(result.column, result.column + result.length);
+            if (currentSpan !== originalSpan) {
+                new Notice('Quill: Text has changed since this suggestion was generated.');
+                return;
+            }
 
-                applyReplacement(view.editor, result, replacement);
-            },
-        ).open();
+            applyReplacement(view.editor, result, replacement);
+        }).open();
     }
 
     /** Open or reveal the Quill sidebar panel. */
@@ -661,40 +671,48 @@ export default class EventideQuillPlugin extends Plugin {
             if (!cached) {
                 return {
                     entities: [],
-                    voice: { pov: 'unknown', tense: 'unknown', avgSentenceLength: 0, dialogueRatio: 0, descriptionRatio: 1 },
+                    voice: {
+                        pov: 'unknown',
+                        tense: 'unknown',
+                        avgSentenceLength: 0,
+                        dialogueRatio: 0,
+                        descriptionRatio: 1
+                    },
                     contextItems: [],
                     totalTokens: 0,
                     tokenBudget: this.settings.contextTokenBudget,
                     budgetExceeded: false,
-                    compacted: false,
+                    compacted: false
                 };
             }
         }
 
-        if (this.entityMods.size === 0 && this.pinnedContextPaths.size === 0 && this.removedContextPaths.size === 0 && this.manualContextItems.length === 0) {
+        if (
+            this.entityMods.size === 0 &&
+            this.pinnedContextPaths.size === 0 &&
+            this.removedContextPaths.size === 0 &&
+            this.manualContextItems.length === 0
+        ) {
             const file = this.app.vault.getAbstractFileByPath(path);
             if (file instanceof TFile) {
                 this.loadModsFromFrontmatter(file);
             }
         }
 
-        const activeEntities = cached.entities.filter(e => !e.removed);
-        const assembly = await assembleContext(
-            this.app.vault, text, activeEntities, cached.voice,
-            {
-                tokenBudget: this.settings.contextTokenBudget,
-                compactAtPercent: this.settings.contextCompactAtPercent,
-                includeVaultContext: this.settings.contextIncludeVaultContext,
-                maxVaultFiles: this.settings.contextMaxVaultFiles,
-                maxCharsPerFile: this.settings.contextMaxCharsPerFile,
-            },
-        );
+        const activeEntities = cached.entities.filter((e) => !e.removed);
+        const assembly = await assembleContext(this.app.vault, text, activeEntities, cached.voice, {
+            tokenBudget: this.settings.contextTokenBudget,
+            compactAtPercent: this.settings.contextCompactAtPercent,
+            includeVaultContext: this.settings.contextIncludeVaultContext,
+            maxVaultFiles: this.settings.contextMaxVaultFiles,
+            maxCharsPerFile: this.settings.contextMaxCharsPerFile
+        });
 
         applyEntityMods(assembly.entities, this.entityMods);
         applyContextItemMods(assembly.contextItems, this.pinnedContextPaths, this.removedContextPaths);
 
         for (const item of this.manualContextItems) {
-            if (!assembly.contextItems.some(i => i.filePath === item.filePath)) {
+            if (!assembly.contextItems.some((i) => i.filePath === item.filePath)) {
                 if (!item.excerpt) {
                     const mf = this.app.vault.getAbstractFileByPath(item.filePath);
                     if (mf instanceof TFile) {
@@ -738,7 +756,7 @@ export default class EventideQuillPlugin extends Plugin {
         }
 
         for (const fp of fm.addedFiles ?? []) {
-            if (!this.manualContextItems.some(i => i.filePath === fp)) {
+            if (!this.manualContextItems.some((i) => i.filePath === fp)) {
                 this.manualContextItems.push({
                     filePath: fp,
                     excerpt: '',
@@ -746,7 +764,7 @@ export default class EventideQuillPlugin extends Plugin {
                     tokenEstimate: 0,
                     pinned: true,
                     relevanceScore: 10,
-                    manual: true,
+                    manual: true
                 });
             }
         }
@@ -762,9 +780,9 @@ export default class EventideQuillPlugin extends Plugin {
             entityMods: this.entityMods,
             pinnedContextPaths: this.pinnedContextPaths,
             removedContextPaths: this.removedContextPaths,
-            manualContextItems: this.manualContextItems,
+            manualContextItems: this.manualContextItems
         });
-        writeQuillContextData(this.app, file, data).catch(err => {
+        writeQuillContextData(this.app, file, data).catch((err) => {
             console.warn('Quill: failed to sync context data', err);
         });
     }
@@ -772,10 +790,15 @@ export default class EventideQuillPlugin extends Plugin {
     /** Toggle the pinned state of an entity. Persists across re-assemblies and to frontmatter. */
     toggleEntityPin(entityId: string): void {
         if (!this.currentAssembly) return;
-        const entity = this.currentAssembly.entities.find(e => e.id === entityId);
+        const entity = this.currentAssembly.entities.find((e) => e.id === entityId);
         if (entity) {
             entity.pinned = !entity.pinned;
-            this.entityMods.set(entityId, { pinned: entity.pinned, removed: entity.removed, manual: entity.manual, entity });
+            this.entityMods.set(entityId, {
+                pinned: entity.pinned,
+                removed: entity.removed,
+                manual: entity.manual,
+                entity
+            });
             this.lintPanel?.setContextAssembly(this.currentAssembly);
             this.syncQuillFrontmatter();
         }
@@ -784,7 +807,7 @@ export default class EventideQuillPlugin extends Plugin {
     /** Remove an entity from the current context. Persists across re-assemblies and to frontmatter. */
     removeEntity(entityId: string): void {
         if (!this.currentAssembly) return;
-        const entity = this.currentAssembly.entities.find(e => e.id === entityId);
+        const entity = this.currentAssembly.entities.find((e) => e.id === entityId);
         if (entity) {
             entity.removed = true;
             this.entityMods.set(entityId, { pinned: entity.pinned, removed: true, manual: entity.manual, entity });
@@ -806,7 +829,7 @@ export default class EventideQuillPlugin extends Plugin {
             aliases: [],
             pinned: true,
             removed: false,
-            manual: true,
+            manual: true
         };
         this.currentAssembly.entities.push(entity);
         this.entityMods.set(id, { pinned: true, removed: false, manual: true, entity });
@@ -817,7 +840,7 @@ export default class EventideQuillPlugin extends Plugin {
     /** Toggle the pinned state of a context item. Persists across re-assemblies and to frontmatter. */
     toggleContextItemPin(filePath: string): void {
         if (!this.currentAssembly) return;
-        const item = this.currentAssembly.contextItems.find(i => i.filePath === filePath);
+        const item = this.currentAssembly.contextItems.find((i) => i.filePath === filePath);
         if (item) {
             item.pinned = !item.pinned;
             if (item.pinned) {
@@ -833,12 +856,12 @@ export default class EventideQuillPlugin extends Plugin {
     /** Remove a context item from the assembly. Persists across re-assemblies and to frontmatter. */
     removeContextItem(filePath: string): void {
         if (!this.currentAssembly) return;
-        const idx = this.currentAssembly.contextItems.findIndex(i => i.filePath === filePath);
+        const idx = this.currentAssembly.contextItems.findIndex((i) => i.filePath === filePath);
         if (idx !== -1) {
             this.currentAssembly.contextItems.splice(idx, 1);
             this.removedContextPaths.add(filePath);
             this.pinnedContextPaths.delete(filePath);
-            this.manualContextItems = this.manualContextItems.filter(i => i.filePath !== filePath);
+            this.manualContextItems = this.manualContextItems.filter((i) => i.filePath !== filePath);
             this.lintPanel?.setContextAssembly(this.currentAssembly);
             this.syncQuillFrontmatter();
         }
@@ -850,7 +873,7 @@ export default class EventideQuillPlugin extends Plugin {
         if (this.removedContextPaths.has(filePath)) {
             this.removedContextPaths.delete(filePath);
         }
-        if (this.currentAssembly.contextItems.some(i => i.filePath === filePath)) {
+        if (this.currentAssembly.contextItems.some((i) => i.filePath === filePath)) {
             return;
         }
         const file = this.app.vault.getAbstractFileByPath(filePath);
@@ -865,7 +888,7 @@ export default class EventideQuillPlugin extends Plugin {
             tokenEstimate,
             pinned: true,
             relevanceScore: 10,
-            manual: true,
+            manual: true
         };
         this.manualContextItems.push(item);
         this.pinnedContextPaths.add(filePath);
@@ -904,6 +927,345 @@ export default class EventideQuillPlugin extends Plugin {
                     this.scanContext(view.editor.getValue(), target);
                     await this.assembleDocumentContext(view.editor.getValue(), target);
                 }
+            }
+        }
+    }
+
+    /** Open the sidebar and switch to the Feedback tab. */
+    async openFeedbackPanel(): Promise<void> {
+        await this.openLintPanel();
+        this.lintPanel?.switchToFeedbackTab();
+        // Auto-add the active document to manuscripts
+        const activeFile = this.app.workspace.getActiveFile();
+        if (activeFile && activeFile.extension === 'md') {
+            this.lintPanel?.feedbackPanelAddContextFile(activeFile.path);
+        }
+    }
+
+    /**
+     * Request AI feedback on the context manuscripts with the selected persona.
+     * Streams the response into the Results sub-tab.
+     *
+     * Manuscript content is injected as system messages on every API call, not
+     * stored in feedbackCurrentMessages, so it always survives compaction and
+     * never pollutes token counts.
+     */
+    async requestFeedback(personaId: string, customInstruction?: string): Promise<void> {
+        const persona = personaId === 'custom' ? undefined : getPersonaById(personaId);
+        if (personaId !== 'custom' && !persona) {
+            new Notice('Quill: Unknown feedback persona.');
+            return;
+        }
+
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: No AI provider configured. Set one up in settings.');
+            return;
+        }
+
+        // Cancel any in-flight feedback request
+        this.feedbackAbort?.abort();
+        this.feedbackAbort = new AbortController();
+
+        // Start loading state in the Feedback tab
+        this.lintPanel?.feedbackStartLoading(personaId);
+
+        // Capture the controller for this specific request so we can guard its cleanup.
+        const myFeedbackAbort = this.feedbackAbort;
+
+        const feedbackContextPaths = this.lintPanel?.feedbackPanelContextFiles() ?? [];
+        if (feedbackContextPaths.length === 0) {
+            new Notice('Quill: Add manuscripts to the feedback tab before requesting analysis.');
+            this.lintPanel?.feedbackError('No manuscripts selected.');
+            return;
+        }
+
+        // Include context engine items (vault auto-scan) as reference context
+        // in the system prompt, not in the user message.
+        const contextParts: string[] = [];
+        try {
+            const assembly = this.currentAssembly;
+            if (assembly && assembly.contextItems.length > 0) {
+                for (const item of assembly.contextItems) {
+                    if (item.excerpt) {
+                        contextParts.push(`--- ${item.filePath} ---`, item.excerpt);
+                    }
+                }
+            }
+        } catch {
+            // Vault context is best-effort
+        }
+
+        // Read manuscript files and inject them as system messages.
+        // They are NOT stored in feedbackCurrentMessages — injected fresh on
+        // every API call so they always survive compaction.
+        const manuscriptMessages: ChatMessage[] = [];
+        for (const filePath of feedbackContextPaths) {
+            try {
+                const file = this.app.vault.getAbstractFileByPath(filePath);
+                if (file instanceof TFile) {
+                    const content = await this.app.vault.cachedRead(file);
+                    manuscriptMessages.push({
+                        role: 'system',
+                        content: `Manuscript (${filePath}):\n${content}`
+                    });
+                }
+            } catch {
+                // Best-effort
+            }
+        }
+
+        if (manuscriptMessages.length === 0) {
+            new Notice('Quill: Could not read any content from the selected manuscripts.');
+            this.lintPanel?.feedbackError('Could not read manuscript content.');
+            return;
+        }
+
+        const vaultContext = contextParts.length > 0 ? contextParts.join('\n\n') : '';
+
+        // Build and store the initial conversation messages (system prompt + user
+        // instruction only — no manuscript content).
+        const initialMessages = buildFeedbackMessages(persona, {
+            vaultContext,
+            narrativePreset: this.settings.narrativeVoicePreset,
+            customInstruction
+        });
+        this.feedbackCurrentMessages = [...initialMessages];
+
+        // Build the full API payload: system prompt + manuscripts + user instruction.
+        const apiMessages: ChatMessage[] = [
+            this.feedbackCurrentMessages[0]!, // system prompt
+            ...manuscriptMessages,
+            this.feedbackCurrentMessages[1]! // user instruction
+        ];
+
+        try {
+            const stream = getFeedback(chat.provider, persona, {
+                vaultContext,
+                narrativePreset: this.settings.narrativeVoicePreset,
+                model: chat.modelId,
+                signal: this.feedbackAbort.signal,
+                customInstruction,
+                existingMessages: apiMessages
+            });
+
+            let fullResponse = '';
+            for await (const chunk of stream) {
+                if (chunk.done) {
+                    this.feedbackCurrentMessages.push({ role: 'assistant', content: fullResponse });
+                    // Push conversation-only tokens to the panel. The panel
+                    // adds manuscript and reference file tokens on top so the
+                    // indicator updates immediately when files change.
+                    this.lintPanel?.feedbackSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
+                    await this.lintPanel?.feedbackFinished();
+                } else {
+                    fullResponse += chunk.text;
+                    this.lintPanel?.feedbackAppendChunk(chunk.text);
+                }
+            }
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') return;
+            const msg = err instanceof Error ? err.message : String(err);
+            this.lintPanel?.feedbackError(msg);
+            new Notice('Quill: Feedback request failed.');
+        } finally {
+            // Only clear feedbackAbort if it still matches our controller,
+            // so a newer request's controller is not accidentally cleared.
+            if (this.feedbackAbort === myFeedbackAbort) {
+                this.feedbackAbort = null;
+            }
+        }
+    }
+
+    /**
+     * Send a follow-up chat message in the current feedback conversation.
+     * Manuscripts and reference files are injected fresh as system messages on
+     * every API call — they are never stored in feedbackCurrentMessages, so they
+     * always survive compaction and never double-count in token estimates.
+     *
+     * Compaction strategy (rolling context head):
+     *  - When the token budget (conversation + files + new message) meets or
+     *    exceeds the compaction threshold as a percentage of the context window,
+     *    the older portion of the conversation is summarized by the AI.
+     *  - The generated summary replaces the older turns as a system "context head".
+     *  - The new user message is always preserved below the context head.
+     *  - On the next compaction, the previous context head is included in what
+     *    gets summarized (rolling forward), producing a new consolidated head.
+     */
+    async sendFeedbackChatMessage(message: string): Promise<void> {
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: No AI provider configured.');
+            return;
+        }
+
+        this.feedbackAbort?.abort();
+        this.feedbackAbort = new AbortController();
+
+        // Capture the controller for this specific request so we can guard its cleanup.
+        const myFeedbackAbort = this.feedbackAbort;
+
+        this.lintPanel?.chatStartLoading();
+
+        // Manuscripts and reference files are always injected fresh as system
+        // messages. They are NOT stored in feedbackCurrentMessages, so they
+        // survive compaction and never pollute the conversation history.
+        const manuscriptPaths = this.lintPanel?.feedbackPanelContextFiles() ?? [];
+        const chatContextFilePaths = this.lintPanel?.feedbackChatContextFiles() ?? [];
+
+        const manuscriptMessages: ChatMessage[] = [];
+        for (const filePath of manuscriptPaths) {
+            try {
+                const file = this.app.vault.getAbstractFileByPath(filePath);
+                if (file instanceof TFile) {
+                    const content = await this.app.vault.cachedRead(file);
+                    manuscriptMessages.push({
+                        role: 'system',
+                        content: `Manuscript (${filePath}):\n${content}`
+                    });
+                }
+            } catch {
+                // Best-effort
+            }
+        }
+        const referenceMessages: ChatMessage[] = [];
+        for (const filePath of chatContextFilePaths) {
+            try {
+                const file = this.app.vault.getAbstractFileByPath(filePath);
+                if (file instanceof TFile) {
+                    const content = await this.app.vault.cachedRead(file);
+                    const excerpt = content.slice(0, this.settings.contextMaxCharsPerFile);
+                    referenceMessages.push({
+                        role: 'system',
+                        content: `Reference file (${filePath}):\n${excerpt}`
+                    });
+                }
+            } catch {
+                // Best-effort
+            }
+        }
+
+        const injectedContext: ChatMessage[] = [...manuscriptMessages, ...referenceMessages];
+
+        const injectedTokens = estimateTokens(injectedContext);
+        const maxTokens = chat.provider.config.maxContextTokens;
+        const compactPct = Math.max(50, Math.min(95, this.settings.contextCompactAtPercent)) / 100;
+
+        // Compute total tokens INCLUDING the new message to decide whether to
+        // compact. The new message is part of the context the AI must process.
+        const hypotheticalConversation = [...this.feedbackCurrentMessages, { role: 'user' as const, content: message }];
+        const conversationTokens = estimateTokens(hypotheticalConversation);
+        const totalTokens = conversationTokens + injectedTokens;
+
+        // Push conversation-only tokens (without new message) to the panel.
+        // The panel adds manuscript and reference file tokens on top.
+        this.lintPanel?.feedbackSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
+
+        // --- AI-powered compaction ---
+        // Compact if the total (conversation + files + new message) meets or
+        // exceeds the threshold percentage of the context window.
+        if (totalTokens / maxTokens >= compactPct) {
+            const systemPrompt = this.feedbackCurrentMessages[0]!;
+            const contextHeads: ChatMessage[] = [];
+            let firstChatIdx = 1;
+            while (
+                firstChatIdx < this.feedbackCurrentMessages.length &&
+                this.feedbackCurrentMessages[firstChatIdx]?.role === 'system'
+            ) {
+                contextHeads.push(this.feedbackCurrentMessages[firstChatIdx]!);
+                firstChatIdx++;
+            }
+            const chatTurns = this.feedbackCurrentMessages.slice(firstChatIdx);
+
+            // Need at least 2 chat turns to compact meaningfully.
+            if (chatTurns.length >= 2) {
+                // Keep the last 2 turns so the AI retains immediate context.
+                // Everything older gets summarized. The new user message will
+                // be appended after compaction, ensuring it stays below the
+                // context head.
+                const keepCount = Math.min(2, chatTurns.length);
+                const recentTurns = chatTurns.slice(-keepCount);
+                const toSummarize = [
+                    ...chatTurns.slice(0, -keepCount),
+                    // Include existing contextHeads as user messages so they are
+                    // rolled into the new summary instead of accumulating unchanged.
+                    ...contextHeads.map((head) => ({ role: 'user' as const, content: head.content }))
+                ];
+
+                try {
+                    const sentenceCount = Math.max(1, Math.min(20, this.settings.compactSummarySentences));
+                    const summary = await summarizeConversation(chat.provider, toSummarize, sentenceCount, {
+                        signal: this.feedbackAbort.signal
+                    });
+
+                    if (summary) {
+                        // contextHeads are now consolidated into the new summary.
+                        this.feedbackCurrentMessages = [
+                            systemPrompt,
+                            { role: 'system', content: summary },
+                            ...recentTurns
+                        ];
+
+                        // Show the summary as a context head bubble in the chat
+                        // UI. The full message history remains visible — only the
+                        // API payload is compacted.
+                        this.lintPanel?.feedbackAppendChatSystemMessageInPlace(summary);
+
+                        // Update the indicator with the compacted token count.
+                        this.lintPanel?.feedbackSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
+                    }
+                } catch (err: unknown) {
+                    // If summarization fails, fall through — the conversation continues
+                    // without compaction. The AI may still handle it or error out.
+                    if (err instanceof Error && err.name === 'AbortError') return;
+                    console.warn('Quill: Compaction summarization failed, continuing without compaction.', err);
+                }
+            }
+        }
+
+        // Append the user message after compaction so it's always below any
+        // new context head.
+        this.feedbackCurrentMessages.push({ role: 'user', content: message });
+
+        // Build the full API payload: system prompt + injected context + conversation.
+        const baseMessages: ChatMessage[] = [
+            this.feedbackCurrentMessages[0]!, // system prompt
+            ...injectedContext,
+            ...this.feedbackCurrentMessages.slice(1) // context heads + chat turns (including new message)
+        ];
+
+        try {
+            const config = AI_MODE_CONFIGS.analysis;
+            const stream = chat.provider.chatCompletion({
+                messages: baseMessages,
+                model: chat.modelId,
+                temperature: config.defaultTemperature,
+                maxTokens: config.defaultMaxOutputTokens,
+                signal: this.feedbackAbort.signal
+            });
+
+            let fullResponse = '';
+            for await (const chunk of stream) {
+                if (chunk.done) {
+                    this.feedbackCurrentMessages.push({ role: 'assistant', content: fullResponse });
+                    // Push conversation-only tokens. The panel adds file tokens on top.
+                    this.lintPanel?.feedbackSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
+                    await this.lintPanel?.chatFinished();
+                } else {
+                    fullResponse += chunk.text;
+                    this.lintPanel?.chatAppendChunk(chunk.text);
+                }
+            }
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') return;
+            const msg = err instanceof Error ? err.message : String(err);
+            await this.lintPanel?.chatError(msg);
+            new Notice('Quill: Chat response failed.');
+        } finally {
+            // Only clear feedbackAbort if it still matches our controller,
+            // so a newer request's controller is not accidentally cleared.
+            if (this.feedbackAbort === myFeedbackAbort) {
+                this.feedbackAbort = null;
             }
         }
     }

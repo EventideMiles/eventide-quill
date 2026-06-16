@@ -8,7 +8,7 @@ import {
     ModelConfig,
     ModelInfo,
     ProviderConfig,
-    ProviderError,
+    ProviderError
 } from './provider';
 import { openAiEventsToChunks, openAiSseDataToChunk, OpenAiSseData, parseSseEvents, parseSseStream } from './streaming';
 import { HttpError, isStreamingSupported, streamResponse } from './transport';
@@ -67,15 +67,13 @@ export class OpenAiCompatibleProvider implements AiProvider {
             return { id: modelId, role, model: modelId };
         }
 
-        const fallback = this.config.models.find(
-            (m) => m.role === role || m.role === 'both',
-        );
+        const fallback = this.config.models.find((m) => m.role === role || m.role === 'both');
         if (!fallback) {
             throw new ProviderError(
                 `No ${role} model configured for provider "${this.name}". ` +
-                'Add a model with the appropriate role in settings.',
+                    'Add a model with the appropriate role in settings.',
                 0,
-                '',
+                ''
             );
         }
 
@@ -88,7 +86,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
      */
     private buildHeaders(): Record<string, string> {
         const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json'
         };
 
         if (this.config.apiKey) {
@@ -125,11 +123,11 @@ export class OpenAiCompatibleProvider implements AiProvider {
             model: modelConfig.model,
             messages: options.messages.map((m) => ({
                 role: m.role,
-                content: m.content,
+                content: m.content
             })),
             max_tokens: options.maxTokens ?? this.config.maxOutputTokens,
             temperature: options.temperature ?? 0.7,
-            stream: true,
+            stream: true
         });
 
         if (isStreamingSupported()) {
@@ -139,7 +137,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
                     method: 'POST',
                     headers,
                     body,
-                    signal: options.signal,
+                    signal: options.signal
                 });
                 reader = result.reader;
             } catch (err: unknown) {
@@ -147,7 +145,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
                     throw new ProviderError(
                         `Chat completion failed (HTTP ${err.status}): ${err.body.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
                         err.status,
-                        err.body,
+                        err.body
                     );
                 }
                 throw err;
@@ -177,14 +175,14 @@ export class OpenAiCompatibleProvider implements AiProvider {
             method: 'POST',
             headers,
             body,
-            throw: false,
+            throw: false
         });
 
         if (response.status !== 200) {
             throw new ProviderError(
                 `Chat completion failed (HTTP ${response.status}): ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
                 response.status,
-                response.text,
+                response.text
             );
         }
 
@@ -206,7 +204,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
 
         const body = JSON.stringify({
             model: modelConfig.model,
-            input: options.input,
+            input: options.input
         });
 
         const response: RequestUrlResponse = await requestUrl({
@@ -214,14 +212,14 @@ export class OpenAiCompatibleProvider implements AiProvider {
             method: 'POST',
             headers,
             body,
-            throw: false,
+            throw: false
         });
 
         if (response.status !== 200) {
             throw new ProviderError(
                 `Embedding request failed (HTTP ${response.status}): ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
                 response.status,
-                response.text,
+                response.text
             );
         }
 
@@ -233,10 +231,9 @@ export class OpenAiCompatibleProvider implements AiProvider {
 
         if (!data.data || !Array.isArray(data.data)) {
             throw new ProviderError(
-                'Embedding response did not contain a data array. ' +
-                'The endpoint may not support embeddings.',
+                'Embedding response did not contain a data array. ' + 'The endpoint may not support embeddings.',
                 0,
-                response.text,
+                response.text
             );
         }
 
@@ -248,13 +245,13 @@ export class OpenAiCompatibleProvider implements AiProvider {
 
         const result: EmbedResult = {
             embeddings,
-            model: data.model ?? modelConfig.model,
+            model: data.model ?? modelConfig.model
         };
 
         if (data.usage) {
             result.usage = {
                 promptTokens: data.usage.prompt_tokens ?? data.usage.promptTokens ?? 0,
-                totalTokens: data.usage.total_tokens ?? data.usage.totalTokens ?? 0,
+                totalTokens: data.usage.total_tokens ?? data.usage.totalTokens ?? 0
             };
         }
 
@@ -275,7 +272,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
                 url,
                 method: 'GET',
                 headers,
-                throw: false,
+                throw: false
             });
 
             if (response.status !== 200) {
@@ -288,12 +285,10 @@ export class OpenAiCompatibleProvider implements AiProvider {
                 return [];
             }
 
-            return data.data.map(
-                (item: OpenAiModelItem) => ({
-                    id: item.id,
-                    ownedBy: item.owned_by,
-                }),
-            );
+            return data.data.map((item: OpenAiModelItem) => ({
+                id: item.id,
+                ownedBy: item.owned_by
+            }));
         } catch {
             return [];
         }
@@ -304,16 +299,14 @@ export class OpenAiCompatibleProvider implements AiProvider {
         const url = this.buildUrl('/chat/completions');
         const headers = this.buildHeaders();
 
-        const chatModel = this.config.models.find(
-            (m) => m.role === 'chat' || m.role === 'both',
-        );
+        const chatModel = this.config.models.find((m) => m.role === 'chat' || m.role === 'both');
         const modelName = chatModel?.model ?? 'test';
 
         const body = JSON.stringify({
             model: modelName,
             messages: [{ role: 'user', content: 'ping' }],
             max_tokens: 1,
-            stream: false,
+            stream: false
         });
 
         try {
@@ -322,7 +315,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
                 method: 'POST',
                 headers,
                 body,
-                throw: false,
+                throw: false
             });
 
             if (response.status === 200) {
@@ -331,13 +324,13 @@ export class OpenAiCompatibleProvider implements AiProvider {
 
             return {
                 ok: false,
-                error: `HTTP ${response.status}: ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
+                error: `HTTP ${response.status}: ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`
             };
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             return {
                 ok: false,
-                error: `Connection failed: ${message}. Make sure your endpoint URL is the full base path (e.g., http://localhost:1234/v1).`,
+                error: `Connection failed: ${message}. Make sure your endpoint URL is the full base path (e.g., http://localhost:1234/v1).`
             };
         }
     }
@@ -350,7 +343,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
 
         const body = JSON.stringify({
             model: modelConfig.model,
-            input: 'test',
+            input: 'test'
         });
 
         try {
@@ -359,7 +352,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
                 method: 'POST',
                 headers,
                 body,
-                throw: false,
+                throw: false
             });
 
             if (response.status === 200) {
@@ -368,7 +361,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
 
             return {
                 ok: false,
-                error: `HTTP ${response.status}: ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
+                error: `HTTP ${response.status}: ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`
             };
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);

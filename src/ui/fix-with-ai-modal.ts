@@ -40,7 +40,7 @@ export class FixWithAiModal extends Modal {
         result: LintResult,
         editorText: string,
         onAccept: AiFixAcceptHandler,
-        initialCustom?: string,
+        initialCustom?: string
     ) {
         super(app);
         this.plugin = plugin;
@@ -80,11 +80,7 @@ export class FixWithAiModal extends Modal {
     private render(): void {
         const { contentEl } = this;
         contentEl.empty();
-        contentEl.removeClass(
-            'quill-fix-ai-loading',
-            'quill-fix-ai-diff',
-            'quill-fix-ai-custom',
-        );
+        contentEl.removeClass('quill-fix-ai-loading', 'quill-fix-ai-diff', 'quill-fix-ai-custom');
 
         switch (this.viewState) {
             case 'loading':
@@ -104,7 +100,7 @@ export class FixWithAiModal extends Modal {
         const { contentEl } = this;
         contentEl.addClass('quill-fix-ai-loading');
         contentEl.createEl('p', {
-            text: 'Asking the AI for a suggestion...',
+            text: 'Asking the AI for a suggestion...'
         });
     }
 
@@ -118,25 +114,22 @@ export class FixWithAiModal extends Modal {
         if (info) {
             contentEl.createEl('p', {
                 cls: 'quill-fix-ai-rule-desc',
-                text: info.description,
+                text: info.description
             });
         }
 
-        const flaggedText = this.lineText.slice(
-            this.result.column,
-            this.result.column + this.result.length,
-        );
+        const flaggedText = this.lineText.slice(this.result.column, this.result.column + this.result.length);
 
         // Show what will be removed
         const removeLabel = contentEl.createEl('p', { cls: 'quill-fix-ai-label' });
         removeLabel.setText('Remove');
 
         const removeBlock = contentEl.createEl('div', {
-            cls: 'quill-fix-ai-block quill-fix-ai-removed',
+            cls: 'quill-fix-ai-block quill-fix-ai-removed'
         });
         removeBlock.createEl('span', {
             cls: 'quill-fix-ai-highlight-removed',
-            text: flaggedText,
+            text: flaggedText
         });
 
         // Show what will be inserted (or "(deleted)" if empty)
@@ -144,18 +137,18 @@ export class FixWithAiModal extends Modal {
         insertLabel.setText('Replace with');
 
         const insertBlock = contentEl.createEl('div', {
-            cls: 'quill-fix-ai-block quill-fix-ai-inserted',
+            cls: 'quill-fix-ai-block quill-fix-ai-inserted'
         });
 
         if (this.suggestion) {
             insertBlock.createEl('span', {
                 cls: 'quill-fix-ai-highlight-added',
-                text: this.suggestion,
+                text: this.suggestion
             });
         } else {
             insertBlock.createEl('span', {
                 cls: 'quill-fix-ai-highlight-added',
-                text: '(Removed)',
+                text: '(Removed)'
             });
         }
 
@@ -165,12 +158,13 @@ export class FixWithAiModal extends Modal {
             contextLabel.setText('In context');
 
             const contextBlock = contentEl.createEl('div', {
-                cls: 'quill-fix-ai-block quill-fix-ai-context',
+                cls: 'quill-fix-ai-block quill-fix-ai-context'
             });
 
-            const revised = this.lineText.slice(0, this.result.column)
-                + this.suggestion
-                + this.lineText.slice(this.result.column + this.result.length);
+            const revised =
+                this.lineText.slice(0, this.result.column) +
+                this.suggestion +
+                this.lineText.slice(this.result.column + this.result.length);
 
             contextBlock.createEl('span', { text: revised });
         }
@@ -180,7 +174,7 @@ export class FixWithAiModal extends Modal {
 
         const customBtn = buttonRow.createEl('button', {
             cls: 'quill-fix-ai-custom-btn',
-            text: 'Custom instruction',
+            text: 'Custom instruction'
         });
         customBtn.addEventListener('click', () => {
             this.viewState = 'custom-input';
@@ -189,7 +183,7 @@ export class FixWithAiModal extends Modal {
 
         const acceptBtn = buttonRow.createEl('button', {
             cls: 'quill-fix-ai-accept-btn mod-cta',
-            text: 'Accept',
+            text: 'Accept'
         });
         acceptBtn.addEventListener('click', () => {
             if (this.suggestion !== null) {
@@ -200,7 +194,7 @@ export class FixWithAiModal extends Modal {
 
         const rejectBtn = buttonRow.createEl('button', {
             cls: 'quill-fix-ai-reject-btn',
-            text: 'Reject',
+            text: 'Reject'
         });
         rejectBtn.addEventListener('click', () => {
             this.close();
@@ -216,21 +210,21 @@ export class FixWithAiModal extends Modal {
         if (info) {
             contentEl.createEl('p', {
                 cls: 'quill-fix-ai-rule-desc',
-                text: info.description,
+                text: info.description
             });
         }
 
         contentEl.createEl('p', {
             cls: 'quill-fix-ai-label',
-            text: 'Custom instruction',
+            text: 'Custom instruction'
         });
 
         const textarea = contentEl.createEl('textarea', {
             cls: 'quill-fix-ai-textarea',
             attr: {
                 rows: '3',
-                placeholder: 'E.g.: Replace with a stronger word for this context',
-            },
+                placeholder: 'E.g.: Replace with a stronger word for this context'
+            }
         });
         textarea.value = this.customInstruction;
 
@@ -238,7 +232,7 @@ export class FixWithAiModal extends Modal {
 
         const backBtn = buttonRow.createEl('button', {
             cls: 'quill-fix-ai-back-btn',
-            text: 'Back to default',
+            text: 'Back to default'
         });
         backBtn.addEventListener('click', () => {
             this.viewState = 'default-result';
@@ -248,7 +242,7 @@ export class FixWithAiModal extends Modal {
 
         const suggestBtn = buttonRow.createEl('button', {
             cls: 'quill-fix-ai-suggest-btn mod-cta',
-            text: 'Get AI suggestion',
+            text: 'Get AI suggestion'
         });
         suggestBtn.addEventListener('click', () => {
             this.customInstruction = textarea.value.trim();
@@ -290,9 +284,9 @@ export class FixWithAiModal extends Modal {
                     model: defaultChat.modelId,
                     temperature: this.plugin.settings.linterTemperature,
                     maxTokens: this.plugin.settings.linterMaxOutputTokens,
-                    signal: this.currentAbort.signal,
+                    signal: this.currentAbort.signal
                 },
-                customInstruction,
+                customInstruction
             );
 
             if (result === null) {

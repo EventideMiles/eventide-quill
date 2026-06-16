@@ -14,21 +14,10 @@ export interface TransformAction {
 }
 
 /** The type of transformation to apply to the selected text. */
-export type TransformType =
-    | 'improve'
-    | 'make-longer'
-    | 'make-shorter'
-    | 'change-tone'
-    | 'custom';
+export type TransformType = 'improve' | 'make-longer' | 'make-shorter' | 'change-tone' | 'custom';
 
 /** Tone options available under the "change tone" submenu. */
-export const TONE_OPTIONS = [
-    'darker',
-    'lighter',
-    'more urgent',
-    'more lyrical',
-    'more detached',
-] as const;
+export const TONE_OPTIONS = ['darker', 'lighter', 'more urgent', 'more lyrical', 'more detached'] as const;
 
 export type ToneOption = (typeof TONE_OPTIONS)[number];
 
@@ -38,11 +27,8 @@ export const TRANSFORM_ACTIONS: TransformAction[] = [
     { id: 'make-longer', label: 'Make longer', icon: 'expand-vertically' },
     { id: 'make-shorter', label: 'Make shorter', icon: 'compress' },
     { id: 'change-tone', label: 'Change tone', icon: 'sun', needsTone: true },
-    { id: 'custom', label: 'Custom instruction', icon: 'message-square' },
+    { id: 'custom', label: 'Custom instruction', icon: 'message-square' }
 ];
-
-
-
 
 /**
  * Build the user message for a given transformation type.
@@ -63,16 +49,17 @@ export function getUserPrompt(
     selectedText: string,
     fullDocumentText: string,
     maxContextChars: number,
-    toneOrInstruction?: string,
+    toneOrInstruction?: string
 ): string {
     const instruction = getInstruction(type, toneOrInstruction);
 
     const OMISSION_MARKER = '\n\n... (middle omitted) ...\n\n';
-    const truncated = fullDocumentText.length > maxContextChars
-        ? fullDocumentText.slice(0, Math.floor((maxContextChars - OMISSION_MARKER.length) / 2))
-            + OMISSION_MARKER
-            + fullDocumentText.slice(-Math.floor((maxContextChars - OMISSION_MARKER.length) / 2))
-        : fullDocumentText;
+    const truncated =
+        fullDocumentText.length > maxContextChars
+            ? fullDocumentText.slice(0, Math.floor((maxContextChars - OMISSION_MARKER.length) / 2)) +
+              OMISSION_MARKER +
+              fullDocumentText.slice(-Math.floor((maxContextChars - OMISSION_MARKER.length) / 2))
+            : fullDocumentText;
 
     return [
         instruction,
@@ -85,7 +72,7 @@ export function getUserPrompt(
         selectedText,
         '',
         '--- Output ---',
-        'Rewrite only the passage above. Output nothing else — no document text, no explanations, no labels.',
+        'Rewrite only the passage above. Output nothing else — no document text, no explanations, no labels.'
     ].join('\n');
 }
 
@@ -124,14 +111,12 @@ export async function applyTransformation(
     selectedText: string,
     fullDocumentText: string,
     tone?: string,
-    filePath?: string,
+    filePath?: string
 ): Promise<void> {
     const defaultChat = plugin.getDefaultChatProvider();
     const provider = defaultChat.provider;
     if (!provider) {
-        new Notice(
-            'Quill: No AI provider configured. Set one up in settings → AI providers.',
-        );
+        new Notice('Quill: No AI provider configured. Set one up in settings → AI providers.');
         return;
     }
 
@@ -157,14 +142,15 @@ export async function applyTransformation(
         } else if (filePath) {
             assembly = await plugin.assembleDocumentContext(fullDocumentText, filePath);
         } else {
-            assembly = plugin.currentAssembly ?? await plugin.assembleDocumentContext(fullDocumentText, filePath);
+            assembly = plugin.currentAssembly ?? (await plugin.assembleDocumentContext(fullDocumentText, filePath));
         }
 
         const vaultContext = plugin.settings.transformVaultContext
             ? await gatherVaultContext(plugin.app.vault, fullDocumentText, assembly)
             : '';
 
-        const { narrativeVoicePreset, transformTemperature, transformMaxOutputTokens, transformAppendNewline } = plugin.settings;
+        const { narrativeVoicePreset, transformTemperature, transformMaxOutputTokens, transformAppendNewline } =
+            plugin.settings;
         const systemPrompt = getSystemPrompt('narrative', { vaultContext, narrativePreset: narrativeVoicePreset });
 
         // Budget the context window holistically.
@@ -192,7 +178,7 @@ export async function applyTransformation(
 
         const messages: ChatMessage[] = [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
+            { role: 'user', content: userPrompt }
         ];
 
         // Stream into the editor via CodeMirror 6 for real-time character display
@@ -213,7 +199,7 @@ export async function applyTransformation(
                 model: defaultChat.modelId,
                 temperature: transformTemperature,
                 maxTokens: transformMaxOutputTokens,
-                signal: undefined,
+                signal: undefined
             });
 
             for await (const chunk of stream) {
@@ -221,8 +207,12 @@ export async function applyTransformation(
 
                 const insertAt = anchor + insertedLength;
                 cm.dispatch({
-                    changes: { from: insertAt, to: insertedLength === 0 ? cmSelection.to : insertAt, insert: chunk.text },
-                    selection: { anchor: insertAt + chunk.text.length },
+                    changes: {
+                        from: insertAt,
+                        to: insertedLength === 0 ? cmSelection.to : insertAt,
+                        insert: chunk.text
+                    },
+                    selection: { anchor: insertAt + chunk.text.length }
                 });
                 insertedLength += chunk.text.length;
             }
@@ -249,8 +239,9 @@ export async function applyTransformation(
         if (transformAppendNewline) {
             const docLen = cm.state.doc.length;
             const startsAtLine = anchor === 0 || cm.state.sliceDoc(anchor - 1, anchor) === '\n';
-            const endsAtLine = anchor + insertedLength >= docLen
-                || cm.state.sliceDoc(anchor + insertedLength, anchor + insertedLength + 1) === '\n';
+            const endsAtLine =
+                anchor + insertedLength >= docLen ||
+                cm.state.sliceDoc(anchor + insertedLength, anchor + insertedLength + 1) === '\n';
 
             // Trim any trailing whitespace the model may have emitted.
             const rawInserted = cm.state.sliceDoc(anchor, anchor + insertedLength);
@@ -262,7 +253,7 @@ export async function applyTransformation(
                 const newEnd = anchor + trimmed.length;
                 cm.dispatch({
                     changes: { from: newEnd, to: anchor + insertedLength, insert: '' },
-                    selection: { anchor: newEnd },
+                    selection: { anchor: newEnd }
                 });
                 insertedLength = trimmed.length;
             }
@@ -271,13 +262,11 @@ export async function applyTransformation(
             // above (but not at document start).
             if (startsAtLine && anchor > 0) {
                 const charBefore = cm.state.sliceDoc(anchor - 1, anchor);
-                const twoBefore = anchor >= 2
-                    ? cm.state.sliceDoc(anchor - 2, anchor)
-                    : '';
+                const twoBefore = anchor >= 2 ? cm.state.sliceDoc(anchor - 2, anchor) : '';
                 if (charBefore === '\n' && twoBefore !== '\n\n') {
                     cm.dispatch({
                         changes: { from: anchor, to: anchor, insert: '\n' },
-                        selection: { anchor: anchor + 1 },
+                        selection: { anchor: anchor + 1 }
                     });
                     offset = 1;
                 }
@@ -290,7 +279,7 @@ export async function applyTransformation(
                 if (after !== '\n\n') {
                     cm.dispatch({
                         changes: { from: endPos, to: endPos, insert: '\n' },
-                        selection: { anchor: endPos + 1 },
+                        selection: { anchor: endPos + 1 }
                     });
                 }
             }

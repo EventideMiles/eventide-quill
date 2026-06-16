@@ -16,6 +16,16 @@ export class HttpError extends Error {
 }
 
 /**
+ * Error thrown when the response body is missing or unavailable for streaming.
+ */
+export class StreamingUnavailableError extends Error {
+    constructor() {
+        super('Response body is missing or unavailable; streaming is not possible.');
+        this.name = 'StreamingUnavailableError';
+    }
+}
+
+/**
  * Result of a successful streaming response.
  */
 export interface StreamResult {
@@ -54,14 +64,14 @@ export async function streamResponse(
         headers: Record<string, string>;
         body: string;
         signal?: AbortSignal;
-    },
+    }
 ): Promise<StreamResult> {
     // eslint-disable-next-line no-restricted-globals
     const response = await fetch(url, {
         method: options.method,
         headers: options.headers,
         body: options.body,
-        signal: options.signal,
+        signal: options.signal
     });
 
     if (!response.ok) {
@@ -70,9 +80,7 @@ export async function streamResponse(
     }
 
     if (!response.body) {
-        throw new Error(
-            'Response body is missing or unavailable; streaming is not possible.',
-        );
+        throw new StreamingUnavailableError();
     }
     return { reader: response.body.getReader() };
 }
@@ -86,19 +94,19 @@ export async function bufferResponse(
         method: 'GET' | 'POST';
         headers: Record<string, string>;
         body: string;
-    },
+    }
 ): Promise<BufferResult> {
     const response = await requestUrl({
         url,
         method: options.method,
         headers: options.headers,
         body: options.body,
-        throw: false,
+        throw: false
     });
 
     return {
         status: response.status,
         text: response.text,
-        json: response.json,
+        json: response.json
     };
 }

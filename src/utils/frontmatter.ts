@@ -14,7 +14,7 @@ export interface QuillContextData {
 export function loadQuillContextData(app: App, file: TFile): QuillContextData {
     const cache = app.metadataCache.getFileCache(file);
     if (!cache?.frontmatter) return {};
-    const raw: Record<string, unknown> = cache.frontmatter['quill'] as Record<string, unknown> | undefined ?? {};
+    const raw: Record<string, unknown> = (cache.frontmatter['quill'] as Record<string, unknown> | undefined) ?? {};
     if (typeof raw !== 'object' || Array.isArray(raw)) return {};
     return {
         pinnedEntities: asStringArray(raw['pinnedEntities']),
@@ -22,14 +22,14 @@ export function loadQuillContextData(app: App, file: TFile): QuillContextData {
         addedEntities: asStringArray(raw['addedEntities']),
         addedFiles: asStringArray(raw['addedFiles']),
         pinnedFiles: asStringArray(raw['pinnedFiles']),
-        removedFiles: asStringArray(raw['removedFiles']),
+        removedFiles: asStringArray(raw['removedFiles'])
     };
 }
 
 /** Write quill context data to a file's frontmatter using Obsidian's processFrontMatter API.
  *  Removes the quill key entirely if all fields are empty. */
 export async function writeQuillContextData(app: App, file: TFile, data: QuillContextData): Promise<void> {
-    const hasContent = Object.keys(data).some(k => {
+    const hasContent = Object.keys(data).some((k) => {
         const val = data[k as keyof QuillContextData];
         return Array.isArray(val) && val.length > 0;
     });
@@ -75,7 +75,7 @@ export function buildQuillContextData(opts: {
     if (pinnedEntities.length > 0) result.pinnedEntities = pinnedEntities;
     if (removedEntities.length > 0) result.removedEntities = removedEntities;
     if (addedEntities.length > 0) result.addedEntities = addedEntities;
-    if (opts.manualContextItems.length > 0) result.addedFiles = opts.manualContextItems.map(i => i.filePath);
+    if (opts.manualContextItems.length > 0) result.addedFiles = opts.manualContextItems.map((i) => i.filePath);
     if (opts.pinnedContextPaths.size > 0) result.pinnedFiles = [...opts.pinnedContextPaths];
     if (opts.removedContextPaths.size > 0) result.removedFiles = [...opts.removedContextPaths];
     return result;
@@ -95,7 +95,7 @@ export function entityFromId(id: string): ExtractedEntity {
         aliases: [],
         pinned: false,
         removed: false,
-        manual: false,
+        manual: false
     };
 }
 
