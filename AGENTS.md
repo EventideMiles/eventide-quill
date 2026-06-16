@@ -69,7 +69,8 @@ src/
 
 | Rule | Enforced by | Notes |
 |------|-------------|-------|
-| Spaces (4), UTF-8, LF, trailing newline, single quotes | `.editorconfig` | Auto-applied by editors |
+| Spaces (4), UTF-8, LF, trailing newline | `.editorconfig` | Auto-applied by editors |
+| Quote style (single) | **Not enforced** | Convention only; no ESLint/Prettier rule |
 | `strict`, `noImplicitReturns`, `noUncheckedIndexedAccess`, `forceConsistentCasingInFileNames` | `tsconfig.json` | TypeScript compiler |
 | Obsidian-specific lint rules | `eslint.config.mts` + `eslint-plugin-obsidianmd` | |
 | Naming conventions (case, prefixes) | **Code review only** | No ESLint rules for naming yet |
