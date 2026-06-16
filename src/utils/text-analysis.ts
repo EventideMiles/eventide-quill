@@ -20,7 +20,7 @@ export function posAtOffset(text: string, offset: number): Position {
     const lastLine = lines[lines.length - 1];
     return {
         line: lines.length,
-        column: lastLine ? lastLine.length : 0,
+        column: lastLine ? lastLine.length : 0
     };
 }
 
@@ -94,7 +94,7 @@ export function splitSentences(text: string, abbreviationsPattern: RegExp): Sent
                 end,
                 text: trimmed,
                 line: pos.line,
-                column: pos.column,
+                column: pos.column
             });
         }
 
@@ -109,7 +109,7 @@ export function splitSentences(text: string, abbreviationsPattern: RegExp): Sent
             end: text.length,
             text: remaining,
             line: pos.line,
-            column: pos.column,
+            column: pos.column
         });
     }
 

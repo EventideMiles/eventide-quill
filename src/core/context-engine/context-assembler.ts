@@ -6,7 +6,7 @@ const DEFAULT_OPTIONS: ContextAssemblyOptions = {
     compactAtPercent: 80,
     includeVaultContext: true,
     maxVaultFiles: 20,
-    maxCharsPerFile: 2000,
+    maxCharsPerFile: 2000
 };
 
 /** Estimate token count from character count (roughly 4 chars per token). */
@@ -20,7 +20,7 @@ export async function assembleContext(
     documentText: string,
     entities: ExtractedEntity[],
     voice: VoiceMarker,
-    options: Partial<ContextAssemblyOptions> = {},
+    options: Partial<ContextAssemblyOptions> = {}
 ): Promise<ContextAssembly> {
     const opts: ContextAssemblyOptions = { ...DEFAULT_OPTIONS, ...options };
 
@@ -81,7 +81,7 @@ export async function assembleContext(
         totalTokens,
         tokenBudget: opts.tokenBudget,
         budgetExceeded,
-        compacted,
+        compacted
     };
 }
 
@@ -119,9 +119,9 @@ async function gatherVaultContextItems(
     vault: Vault,
     documentText: string,
     entities: ExtractedEntity[],
-    options: ContextAssemblyOptions,
+    options: ContextAssemblyOptions
 ): Promise<ContextItem[]> {
-    const names = entities.filter(e => !e.removed).map(e => e.name);
+    const names = entities.filter((e) => !e.removed).map((e) => e.name);
     if (names.length === 0) return [];
 
     const allFiles = vault.getMarkdownFiles();
@@ -152,13 +152,13 @@ async function gatherVaultContextItems(
         try {
             const content = await vault.cachedRead(file);
             const head = content.slice(0, options.maxCharsPerFile);
-            const foundNames = names.filter(n => head.toLowerCase().includes(n.toLowerCase()));
+            const foundNames = names.filter((n) => head.toLowerCase().includes(n.toLowerCase()));
 
             if (foundNames.length < 2 && score < 2) continue;
 
             const lines = head.split('\n').slice(0, 30);
-            const matchingLines = lines.filter(line =>
-                foundNames.some(n => line.toLowerCase().includes(n.toLowerCase()))
+            const matchingLines = lines.filter((line) =>
+                foundNames.some((n) => line.toLowerCase().includes(n.toLowerCase()))
             );
 
             const excerpt = matchingLines.slice(0, 5).join('\n');
@@ -170,7 +170,7 @@ async function gatherVaultContextItems(
                 tokenEstimate: estimateTokens(excerpt),
                 pinned: false,
                 relevanceScore: foundNames.length * 2 + (score > 0 ? 1 : 0) + matchingLines.length / 5,
-                manual: false,
+                manual: false
             });
         } catch {
             // Skip files that fail to read.
@@ -185,7 +185,7 @@ export function compactContext(
     items: ContextItem[],
     currentTokens: number,
     budget: number,
-    compactAtPercent: number,
+    compactAtPercent: number
 ): { items: ContextItem[]; tokens: number; compacted: boolean } {
     const threshold = (compactAtPercent / 100) * budget;
     if (currentTokens <= threshold) {
@@ -195,8 +195,8 @@ export function compactContext(
     const target = Math.floor(0.7 * budget);
 
     // Sort non-pinned items by relevance ascending (lowest first).
-    const pinned = items.filter(it => it.pinned);
-    const nonPinned = items.filter(it => !it.pinned).sort((a, b) => a.relevanceScore - b.relevanceScore);
+    const pinned = items.filter((it) => it.pinned);
+    const nonPinned = items.filter((it) => !it.pinned).sort((a, b) => a.relevanceScore - b.relevanceScore);
 
     let tokens = pinned.reduce((sum, it) => sum + it.tokenEstimate, 0);
     const kept: ContextItem[] = [...pinned];
@@ -215,7 +215,7 @@ export function compactContext(
 export async function gatherVaultContext(
     vault: Vault,
     documentText: string,
-    cachedAssembly?: ContextAssembly | null,
+    cachedAssembly?: ContextAssembly | null
 ): Promise<string> {
     let assembly: ContextAssembly;
 
@@ -232,7 +232,7 @@ export async function gatherVaultContext(
         assembly = await assembleContext(vault, documentText, entities, voice);
     }
 
-    const names = assembly.entities.filter(e => !e.removed).map(e => e.name);
+    const names = assembly.entities.filter((e) => !e.removed).map((e) => e.name);
 
     if (names.length === 0) return '';
 

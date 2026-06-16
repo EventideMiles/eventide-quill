@@ -14,7 +14,7 @@ import {
     checkPassiveVoice,
     checkQualifiers,
     checkRepeatedWords,
-    checkTellingVsShowing,
+    checkTellingVsShowing
 } from './rules';
 
 export type { LintResult } from './types';

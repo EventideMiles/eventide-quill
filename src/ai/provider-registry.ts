@@ -25,10 +25,7 @@ export function createProvider(config: ProviderConfig): AiProvider {
  * Look up a provider by ID from the given config list and instantiate it.
  * Returns null if no provider config with that ID exists.
  */
-export function getProvider(
-    providers: ProviderConfig[],
-    providerId: string,
-): AiProvider | null {
+export function getProvider(providers: ProviderConfig[], providerId: string): AiProvider | null {
     const config = providers.find((p) => p.id === providerId);
     if (!config) return null;
     return createProvider(config);
@@ -39,11 +36,7 @@ export function getProvider(
  * format `"providerId/modelId"`. Returns null if either the provider or the
  * model is not found.
  */
-export function getModel(
-    providers: ProviderConfig[],
-    providerId: string,
-    modelId: string,
-): ModelConfig | null {
+export function getModel(providers: ProviderConfig[], providerId: string, modelId: string): ModelConfig | null {
     const provider = providers.find((p) => p.id === providerId);
     if (!provider) return null;
     return provider.models.find((m) => m.id === modelId) ?? null;

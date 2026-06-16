@@ -155,7 +155,7 @@ export class QuillSidebarView extends ItemView {
                 this.activeLinterSubTab = 'results';
                 this.render();
             },
-            customInstruction,
+            customInstruction
         ).open();
     }
 
@@ -166,9 +166,7 @@ export class QuillSidebarView extends ItemView {
         flaggedEnd: number;
     } | null {
         const view = this.getEditorView();
-        const editorText = view
-            ? view.editor.getValue()
-            : this.cachedEditorText;
+        const editorText = view ? view.editor.getValue() : this.cachedEditorText;
 
         if (!editorText) return null;
 
@@ -197,7 +195,7 @@ export class QuillSidebarView extends ItemView {
             lines.push({
                 text: allLines[i] ?? '',
                 index: i + 1,
-                isFlagged: i === lineIndex,
+                isFlagged: i === lineIndex
             });
         }
 
@@ -250,13 +248,13 @@ export class QuillSidebarView extends ItemView {
         const tabs: { id: TopTab; label: string }[] = [
             { id: 'linter', label: 'Linter' },
             { id: 'context', label: 'Context' },
-            { id: 'feedback', label: 'Feedback' },
+            { id: 'feedback', label: 'Feedback' }
         ];
 
         for (const tab of tabs) {
             const btn = this.tabBar.createEl('button', {
                 cls: `quill-sidebar-tab${this.activeTopTab === tab.id ? ' quill-sidebar-tab-active' : ''}`,
-                text: tab.label,
+                text: tab.label
             });
             this.renderEvents!.registerDomEvent(btn, 'click', () => this.switchTopTab(tab.id));
         }
@@ -268,13 +266,13 @@ export class QuillSidebarView extends ItemView {
 
         const tabs: { id: LinterSubTab; label: string }[] = [
             { id: 'results', label: 'Results' },
-            { id: 'details', label: 'Details' },
+            { id: 'details', label: 'Details' }
         ];
 
         for (const tab of tabs) {
             const btn = subTabBar.createEl('button', {
                 cls: `quill-sidebar-subtab${this.activeLinterSubTab === tab.id ? ' quill-sidebar-subtab-active' : ''}`,
-                text: tab.label,
+                text: tab.label
             });
             this.renderEvents!.registerDomEvent(btn, 'click', () => this.switchLinterSubTab(tab.id));
         }
@@ -284,16 +282,12 @@ export class QuillSidebarView extends ItemView {
     private renderFeedbackTab() {
         if (!this.feedbackPanel) {
             this.feedbackPanel = new FeedbackPanel(this.app);
-            this.feedbackPanel.setGenerateHandler(
-                (personaId: string, customInstruction?: string) => {
-                    void this.plugin.requestFeedback(personaId, customInstruction);
-                },
-            );
-            this.feedbackPanel.setChatMessageHandler(
-                (message: string) => {
-                    void this.plugin.sendFeedbackChatMessage(message);
-                },
-            );
+            this.feedbackPanel.setGenerateHandler((personaId: string, customInstruction?: string) => {
+                void this.plugin.requestFeedback(personaId, customInstruction);
+            });
+            this.feedbackPanel.setChatMessageHandler((message: string) => {
+                void this.plugin.sendFeedbackChatMessage(message);
+            });
         }
         const chat = this.plugin.getDefaultChatProvider();
         if (chat.provider) {
@@ -407,14 +401,14 @@ export class QuillSidebarView extends ItemView {
         if (this.results.length === 0) {
             resultsContainer.createEl('p', {
                 text: 'No issues found.',
-                cls: 'quill-lint-empty',
+                cls: 'quill-lint-empty'
             });
             return;
         }
 
         const header = resultsContainer.createEl('div', { cls: 'quill-lint-header' });
         header.createEl('span', {
-            text: `${this.results.length} issue${this.results.length !== 1 ? 's' : ''} found`,
+            text: `${this.results.length} issue${this.results.length !== 1 ? 's' : ''} found`
         });
 
         const list = resultsContainer.createEl('ul', { cls: 'quill-lint-list' });
@@ -422,7 +416,7 @@ export class QuillSidebarView extends ItemView {
         for (const result of this.results) {
             const info = RULE_INFO[result.rule];
             const item = list.createEl('li', {
-                cls: `quill-lint-item quill-lint-${result.severity}`,
+                cls: `quill-lint-item quill-lint-${result.severity}`
             });
             this.renderEvents!.registerDomEvent(item, 'click', () => this.showResultDetail(result));
 
@@ -448,7 +442,7 @@ export class QuillSidebarView extends ItemView {
         if (!result) {
             detailsContainer.createEl('p', {
                 text: 'Click a lint result to see details about its rule.',
-                cls: 'quill-details-empty',
+                cls: 'quill-details-empty'
             });
             return;
         }
@@ -460,7 +454,7 @@ export class QuillSidebarView extends ItemView {
 
         const backBtn = header.createEl('button', {
             cls: 'quill-details-back',
-            text: 'Back',
+            text: 'Back'
         });
         this.renderEvents!.registerDomEvent(backBtn, 'click', () => this.switchLinterSubTab('results'));
 
@@ -484,17 +478,19 @@ export class QuillSidebarView extends ItemView {
                 lineNum.setText(String(lineInfo.index) + ' ');
 
                 if (lineInfo.isFlagged) {
-                    lineEl.createEl('span', { cls: 'quill-details-context-before' })
+                    lineEl
+                        .createEl('span', { cls: 'quill-details-context-before' })
                         .setText(lineInfo.text.slice(0, passage.flaggedStart));
 
-                    lineEl.createEl('span', { cls: 'quill-details-context-highlight' })
+                    lineEl
+                        .createEl('span', { cls: 'quill-details-context-highlight' })
                         .setText(lineInfo.text.slice(passage.flaggedStart, passage.flaggedEnd));
 
-                    lineEl.createEl('span', { cls: 'quill-details-context-after' })
+                    lineEl
+                        .createEl('span', { cls: 'quill-details-context-after' })
                         .setText(lineInfo.text.slice(passage.flaggedEnd));
                 } else {
-                    lineEl.createEl('span', { cls: 'quill-details-context-text' })
-                        .setText(lineInfo.text);
+                    lineEl.createEl('span', { cls: 'quill-details-context-text' }).setText(lineInfo.text);
                 }
             }
         }
@@ -515,7 +511,7 @@ export class QuillSidebarView extends ItemView {
             if (fix) {
                 const fixBtn = detailsContainer.createEl('button', {
                     cls: 'quill-details-fix-btn',
-                    text: fix.description,
+                    text: fix.description
                 });
                 this.renderEvents!.registerDomEvent(fixBtn, 'click', () => {
                     this.applyFix(result);
@@ -524,13 +520,10 @@ export class QuillSidebarView extends ItemView {
             }
         }
 
-        if (
-            this.plugin.settings.enableLinterAiFixes &&
-            this.plugin.getDefaultChatProvider().provider
-        ) {
+        if (this.plugin.settings.enableLinterAiFixes && this.plugin.getDefaultChatProvider().provider) {
             const aiFixBtn = detailsContainer.createEl('button', {
                 cls: 'quill-details-fix-btn quill-details-ai-fix-btn',
-                text: 'Fix with AI',
+                text: 'Fix with AI'
             });
             this.renderEvents!.registerDomEvent(aiFixBtn, 'click', () => {
                 this.openFixWithAiModal(result);
@@ -538,7 +531,7 @@ export class QuillSidebarView extends ItemView {
 
             const aiCustomBtn = detailsContainer.createEl('button', {
                 cls: 'quill-details-fix-btn quill-details-ai-custom-btn',
-                text: 'Fix with AI (custom)',
+                text: 'Fix with AI (custom)'
             });
             this.renderEvents!.registerDomEvent(aiCustomBtn, 'click', () => {
                 this.openFixWithAiModal(result, '');
@@ -547,7 +540,7 @@ export class QuillSidebarView extends ItemView {
 
         const dismissBtn = detailsContainer.createEl('button', {
             cls: 'quill-details-dismiss-btn',
-            text: 'Dismiss',
+            text: 'Dismiss'
         });
         this.renderEvents!.registerDomEvent(dismissBtn, 'click', () => {
             this.plugin.dismissResult(result);

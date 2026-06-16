@@ -8,12 +8,8 @@ import { type NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS } from '../types';
  * This is the existing style-constraints prompt used for selection transformations,
  * collaborative drafting, and guided plot branching.
  */
-function getNarrativeSystemPrompt(
-    vaultContext: string,
-    narrativePreset: NarrativeVoicePreset,
-): string {
-    const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === narrativePreset)
-        ?? NARRATIVE_VOICE_PRESETS[0];
+function getNarrativeSystemPrompt(vaultContext: string, narrativePreset: NarrativeVoicePreset): string {
+    const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === narrativePreset) ?? NARRATIVE_VOICE_PRESETS[0];
     if (!def) {
         throw new Error('NARRATIVE_VOICE_PRESETS must not be empty');
     }
@@ -40,7 +36,7 @@ function getNarrativeSystemPrompt(
         `${9 + def.rules.length}. No bold text in the narrative.`,
         `${9 + def.rules.length + 1}. Italics allowed sparingly for internal thoughts or emphasis.`,
         `${9 + def.rules.length + 2}. No bullet lists in the narrative.`,
-        `${9 + def.rules.length + 3}. Output only the rewritten passage. No introductory text, no apologies, no meta-commentary.`,
+        `${9 + def.rules.length + 3}. Output only the rewritten passage. No introductory text, no apologies, no meta-commentary.`
     ];
 
     if (vaultContext) {
@@ -48,7 +44,7 @@ function getNarrativeSystemPrompt(
             '',
             '---',
             'Reference material from your vault (character notes, worldbuilding, outlines):',
-            vaultContext,
+            vaultContext
         );
     }
 
@@ -83,30 +79,25 @@ function getAnalysisSystemPrompt(persona?: FeedbackPersona, vaultContext?: strin
         '- Offer different perspectives on how a scene reads.',
         '',
         'You should NOT:',
-        '- Rewrite the author\'s prose or generate new story content.',
+        "- Rewrite the author's prose or generate new story content.",
         '- Make stylistic changes without explaining why.',
         '- Be vague about what is working or not working.',
-        '- Offer false praise or sugar-coat genuine issues.',
+        '- Offer false praise or sugar-coat genuine issues.'
     ];
 
     if (persona) {
-        base.push(
-            '',
-            '---',
-            `Your focus for this feedback session: ${persona.name}`,
-            persona.instructions,
-        );
+        base.push('', '---', `Your focus for this feedback session: ${persona.name}`, persona.instructions);
     }
 
     if (vaultContext) {
         base.push(
             '',
             '---',
-            'Below is reference material from the writer\'s vault. This may include manuscript chapters, character notes, timelines, worldbuilding documents, outlines, or other planning material.',
+            "Below is reference material from the writer's vault. This may include manuscript chapters, character notes, timelines, worldbuilding documents, outlines, or other planning material.",
             'Use this material to inform your analysis:',
             vaultContext,
             '',
-            'Pay attention to what type of material each reference is. Character notes describe personalities and backstory. Timelines track events. Worldbuilding documents detail settings and rules. Treat each type appropriately.',
+            'Pay attention to what type of material each reference is. Character notes describe personalities and backstory. Timelines track events. Worldbuilding documents detail settings and rules. Treat each type appropriately.'
         );
     }
 
@@ -121,7 +112,7 @@ function getAnalysisSystemPrompt(persona?: FeedbackPersona, vaultContext?: strin
 function getLinterSystemPrompt(): string {
     return [
         'You are an editor fixing specific prose issues. You will be shown a passage and a flagged span within it.',
-        'Suggest the minimal change that fixes the issue while preserving the author\'s voice.',
+        "Suggest the minimal change that fixes the issue while preserving the author's voice.",
         '',
         'Guidelines:',
         '- Prefer deleting a word over rewriting a phrase.',
@@ -134,7 +125,7 @@ function getLinterSystemPrompt(): string {
         'Output ONLY the replacement text for the flagged span.',
         'If the fix is to delete the flagged text, output: DELETE',
         'If no fix is needed, output: NO_FIX_NEEDED',
-        'Do not include quotes, labels, explanations, or markdown.',
+        'Do not include quotes, labels, explanations, or markdown.'
     ].join('\n');
 }
 
@@ -151,14 +142,11 @@ export function getSystemPrompt(
         vaultContext?: string;
         narrativePreset?: NarrativeVoicePreset;
         persona?: FeedbackPersona;
-    },
+    }
 ): string {
     switch (mode) {
         case 'narrative':
-            return getNarrativeSystemPrompt(
-                options?.vaultContext ?? '',
-                options?.narrativePreset ?? 'third-limited',
-            );
+            return getNarrativeSystemPrompt(options?.vaultContext ?? '', options?.narrativePreset ?? 'third-limited');
         case 'analysis':
             return getAnalysisSystemPrompt(options?.persona, options?.vaultContext);
         case 'linter':
@@ -173,7 +161,7 @@ export function getSystemPrompt(
 export function getLinterUserPrompt(
     result: LintResult,
     contextLines: { before: string; line: string; after: string },
-    customInstruction?: string,
+    customInstruction?: string
 ): string {
     const info = RULE_INFO[result.rule];
     const ruleName = info?.name ?? result.rule;
@@ -182,12 +170,12 @@ export function getLinterUserPrompt(
     const flaggedText = contextLines.line.slice(result.column, result.column + result.length);
     const markedLine =
         contextLines.line.slice(0, result.column) +
-        '<<<' + flaggedText + '>>>' +
+        '<<<' +
+        flaggedText +
+        '>>>' +
         contextLines.line.slice(result.column + result.length);
 
-    const parts: string[] = [
-        `Rule: ${ruleName} — ${ruleDesc}`,
-    ];
+    const parts: string[] = [`Rule: ${ruleName} — ${ruleDesc}`];
 
     if (contextLines.before) {
         parts.push('', 'Context before:', contextLines.before);
@@ -202,7 +190,7 @@ export function getLinterUserPrompt(
     parts.push(
         '',
         `Replace the text inside <<<>>> with your fix.`,
-        `Output only the replacement text for "${flaggedText}".`,
+        `Output only the replacement text for "${flaggedText}".`
     );
 
     if (customInstruction) {

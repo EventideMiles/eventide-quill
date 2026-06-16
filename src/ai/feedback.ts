@@ -26,8 +26,8 @@ export const FEEDBACK_PERSONAS: FeedbackPersona[] = [
             'Discuss how the scene or passage fits into the larger manuscript arc.',
             'Identify where tension rises, plateaus, or drops. Suggest structural adjustments.',
             'Evaluate character arcs and whether actions are earned by the narrative buildup.',
-            'Ground every observation in specific passages. Quote the text.',
-        ].join('\n'),
+            'Ground every observation in specific passages. Quote the text.'
+        ].join('\n')
     },
     {
         id: 'line-editor',
@@ -38,8 +38,8 @@ export const FEEDBACK_PERSONAS: FeedbackPersona[] = [
             'Identify passages where the prose feels clunky, overwritten, or unclear.',
             'Suggest specific alternatives for weak verbs, redundant phrases, or tangled syntax.',
             'Comment on sentence variety — flag blocks of uniformly short or long sentences.',
-            'Ground every observation in specific passages. Quote the text.',
-        ].join('\n'),
+            'Ground every observation in specific passages. Quote the text.'
+        ].join('\n')
     },
     {
         id: 'beta-reader',
@@ -50,8 +50,8 @@ export const FEEDBACK_PERSONAS: FeedbackPersona[] = [
             'Describe your moment-by-moment reading experience: what engages you, what confuses you, where you feel distanced.',
             'Note where you want to know more and where you feel the text lingers too long.',
             'Be honest about emotional reactions — what lands, what falls flat.',
-            'Point out any passages that pull you out of the story.',
-        ].join('\n'),
+            'Point out any passages that pull you out of the story.'
+        ].join('\n')
     },
     {
         id: 'coach',
@@ -62,9 +62,9 @@ export const FEEDBACK_PERSONAS: FeedbackPersona[] = [
             'Then identify 2-3 areas that would benefit most from revision.',
             'For each area, provide an actionable suggestion the writer can implement.',
             'Prioritize. Not everything needs to be fixed at once.',
-            'Be supportive but honest. The goal is to help the writer improve, not to praise or tear down.',
-        ].join('\n'),
-    },
+            'Be supportive but honest. The goal is to help the writer improve, not to praise or tear down.'
+        ].join('\n')
+    }
 ];
 
 /** Look up a feedback persona by ID. */
@@ -92,15 +92,9 @@ export interface FeedbackOptions {
  *  Manuscript content is injected separately as system messages on every API
  *  call so it is never stored in the conversation history. */
 function buildUserMessage(customInstruction?: string): string {
-    const parts = [
-        'Please provide detailed feedback on the manuscript text provided above.',
-    ];
+    const parts = ['Please provide detailed feedback on the manuscript text provided above.'];
     if (customInstruction) {
-        parts.push(
-            '',
-            'Additional instructions from the writer:',
-            customInstruction,
-        );
+        parts.push('', 'Additional instructions from the writer:', customInstruction);
     }
     return parts.join('\n');
 }
@@ -111,23 +105,20 @@ function buildUserMessage(customInstruction?: string): string {
  * caller on every API call so it survives compaction and never pollutes the
  * conversation history.
  */
-export function buildFeedbackMessages(
-    persona?: FeedbackPersona,
-    options?: FeedbackOptions,
-): ChatMessage[] {
+export function buildFeedbackMessages(persona?: FeedbackPersona, options?: FeedbackOptions): ChatMessage[] {
     return [
         {
             role: 'system',
             content: getSystemPrompt('analysis', {
                 vaultContext: options?.vaultContext,
                 narrativePreset: options?.narrativePreset,
-                persona,
-            }),
+                persona
+            })
         },
         {
             role: 'user',
-            content: buildUserMessage(options?.customInstruction),
-        },
+            content: buildUserMessage(options?.customInstruction)
+        }
     ];
 }
 
@@ -140,7 +131,7 @@ export function buildFeedbackMessages(
 export async function* getFeedback(
     provider: AiProvider,
     persona?: FeedbackPersona,
-    options?: FeedbackOptions,
+    options?: FeedbackOptions
 ): AsyncGenerator<ChatChunk> {
     const config = AI_MODE_CONFIGS.analysis;
     const messages = options?.existingMessages ?? buildFeedbackMessages(persona, options);
@@ -150,7 +141,7 @@ export async function* getFeedback(
         model: options?.model,
         temperature: config.defaultTemperature,
         maxTokens: config.defaultMaxOutputTokens,
-        signal: options?.signal,
+        signal: options?.signal
     });
 
     for await (const chunk of stream) {
@@ -167,19 +158,16 @@ export async function* continueChat(
     provider: AiProvider,
     messages: ChatMessage[],
     userMessage: string,
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal }
 ): AsyncGenerator<ChatChunk> {
     const config = AI_MODE_CONFIGS.analysis;
-    const updatedMessages: ChatMessage[] = [
-        ...messages,
-        { role: 'user', content: userMessage },
-    ];
+    const updatedMessages: ChatMessage[] = [...messages, { role: 'user', content: userMessage }];
 
     const stream = provider.chatCompletion({
         messages: updatedMessages,
         temperature: config.defaultTemperature,
         maxTokens: config.defaultMaxOutputTokens,
-        signal: options?.signal,
+        signal: options?.signal
     });
 
     for await (const chunk of stream) {
@@ -199,14 +187,14 @@ export async function summarizeConversation(
     provider: AiProvider,
     messages: ChatMessage[],
     sentenceCount: number = 3,
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal }
 ): Promise<string> {
     const summarizePrompt: ChatMessage[] = [
         {
             role: 'system',
-            content: `You are a conversation summarizer for a writer's AI assistant. Read the conversation between a writer and their assistant and produce a concise ${sentenceCount}-sentence summary capturing key topics, observations, feedback given, and decisions made. Write it as a first-person recap from the assistant's perspective ("We discussed\u2026", "I noted that\u2026"). Use past tense. Omit pleasantries. Be specific about craft observations — mention passages, techniques, or issues by name.`,
+            content: `You are a conversation summarizer for a writer's AI assistant. Read the conversation between a writer and their assistant and produce a concise ${sentenceCount}-sentence summary capturing key topics, observations, feedback given, and decisions made. Write it as a first-person recap from the assistant's perspective ("We discussed\u2026", "I noted that\u2026"). Use past tense. Omit pleasantries. Be specific about craft observations — mention passages, techniques, or issues by name.`
         },
-        ...messages,
+        ...messages
     ];
 
     let result = '';
@@ -214,7 +202,7 @@ export async function summarizeConversation(
         messages: summarizePrompt,
         temperature: 0.3,
         maxTokens: 512,
-        signal: options?.signal,
+        signal: options?.signal
     });
 
     for await (const chunk of stream) {

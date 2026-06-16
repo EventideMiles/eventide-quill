@@ -3,36 +3,145 @@ import { splitSentences } from '../../utils/text-analysis';
 
 /** Expanded stoplist: pronouns, articles, common non-name words, months, days, etc. */
 const NAME_STOPLIST = new Set([
-    'I', 'The', 'A', 'An', 'It', 'He', 'She', 'They', 'We', 'You',
-    'His', 'Her', 'Their', 'Them', 'Its', 'My', 'Your', 'Our',
-    'This', 'That', 'These', 'Those',
-    'There', 'Here', 'Then', 'Now', 'When', 'What', 'Where', 'Who', 'Why', 'How',
-    'And', 'But', 'Or', 'Nor', 'For', 'Yet', 'So',
-    'To', 'From', 'In', 'On', 'At', 'By', 'With', 'Of', 'As',
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
-    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
-    'Spring', 'Summer', 'Autumn', 'Winter',
-    'Chapter', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven',
-    'Eight', 'Nine', 'Ten', 'Once', 'Up', 'Down', 'Left', 'Right',
-    'Yes', 'No', 'Maybe', 'Oh', 'Well', 'So', 'Because',
+    'I',
+    'The',
+    'A',
+    'An',
+    'It',
+    'He',
+    'She',
+    'They',
+    'We',
+    'You',
+    'His',
+    'Her',
+    'Their',
+    'Them',
+    'Its',
+    'My',
+    'Your',
+    'Our',
+    'This',
+    'That',
+    'These',
+    'Those',
+    'There',
+    'Here',
+    'Then',
+    'Now',
+    'When',
+    'What',
+    'Where',
+    'Who',
+    'Why',
+    'How',
+    'And',
+    'But',
+    'Or',
+    'Nor',
+    'For',
+    'Yet',
+    'So',
+    'To',
+    'From',
+    'In',
+    'On',
+    'At',
+    'By',
+    'With',
+    'Of',
+    'As',
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+    'Spring',
+    'Summer',
+    'Autumn',
+    'Winter',
+    'Chapter',
+    'One',
+    'Two',
+    'Three',
+    'Four',
+    'Five',
+    'Six',
+    'Seven',
+    'Eight',
+    'Nine',
+    'Ten',
+    'Once',
+    'Up',
+    'Down',
+    'Left',
+    'Right',
+    'Yes',
+    'No',
+    'Maybe',
+    'Oh',
+    'Well',
+    'So',
+    'Because'
 ]);
 
 /** Titles that should be stripped when extracting names. */
 const TITLES = new Set([
-    'Mr', 'Mrs', 'Ms', 'Dr', 'Uncle', 'Aunt', 'Cousin', 'Grandmother', 'Grandfather',
-    'Sir', 'Madam', 'Lord', 'Lady', 'Captain', 'Doctor', 'Professor', 'Detective',
-    'Agent', 'General', 'Colonel', 'Major', 'Private', 'Sergeant', 'Father', 'Mother',
-    'Brother', 'Sister', 'Son', 'Daughter', 'King', 'Queen', 'Prince', 'Princess',
-    'Duke', 'Duchess',
+    'Mr',
+    'Mrs',
+    'Ms',
+    'Dr',
+    'Uncle',
+    'Aunt',
+    'Cousin',
+    'Grandmother',
+    'Grandfather',
+    'Sir',
+    'Madam',
+    'Lord',
+    'Lady',
+    'Captain',
+    'Doctor',
+    'Professor',
+    'Detective',
+    'Agent',
+    'General',
+    'Colonel',
+    'Major',
+    'Private',
+    'Sergeant',
+    'Father',
+    'Mother',
+    'Brother',
+    'Sister',
+    'Son',
+    'Daughter',
+    'King',
+    'Queen',
+    'Prince',
+    'Princess',
+    'Duke',
+    'Duchess'
 ]);
 
 /** Minimum occurrences required for a mid-sentence capitalized word to qualify as a character. */
 const MIN_MID_SENTENCE_OCCURRENCES = 2;
 
-const ABBREVIATIONS_PATTERN = new RegExp(
-    '\\b(Mr|Mrs|Ms|Dr|Sr|Jr|St|Rev|Prof|Gen|Capt|Maj)\\.$', 'i'
-);
+const ABBREVIATIONS_PATTERN = new RegExp('\\b(Mr|Mrs|Ms|Dr|Sr|Jr|St|Rev|Prof|Gen|Capt|Maj)\\.$', 'i');
 
 /** Normalize a name into an ID-safe token: lowercase, spaces → hyphens. */
 function normalizeName(name: string): string {
@@ -45,7 +154,7 @@ function makeEntity(
     name: string,
     occurrences: number,
     lines: Set<number>,
-    aliases?: string[],
+    aliases?: string[]
 ): ExtractedEntity {
     return {
         id: `${type}:${normalizeName(name)}`,
@@ -56,7 +165,7 @@ function makeEntity(
         aliases: aliases ?? [],
         pinned: false,
         removed: false,
-        manual: false,
+        manual: false
     };
 }
 
@@ -66,10 +175,12 @@ function extractFromDialogue(text: string): Map<string, { count: number; lines: 
     const lineMap = buildLineOffsetTable(text);
 
     // Pattern 1: "quote", Name said
-    const p1 = /"[^"]*"\s*,?\s*([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s+(?:said|asked|replied|whispered|shouted|yelled|cried|murmured|muttered|whined|bellowed|screamed|hissed|snapped|snarled|growled|scoffed|snorted|laughed|chuckled|sobbed|sighed|breathed|gasped|panted|mused|added|corrected)\b/gi;
+    const p1 =
+        /"[^"]*"\s*,?\s*([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s+(?:said|asked|replied|whispered|shouted|yelled|cried|murmured|muttered|whined|bellowed|screamed|hissed|snapped|snarled|growled|scoffed|snorted|laughed|chuckled|sobbed|sighed|breathed|gasped|panted|mused|added|corrected)\b/gi;
 
     // Pattern 2: Name said, "quote"
-    const p2 = /\b([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s+(?:said|asked|replied|whispered|shouted|yelled|cried|murmured|muttered|whined|bellowed|screamed|hissed|snapped|snarled|growled|scoffed|snorted|laughed|chuckled|sobbed|sighed|breathed|gasped|panted|mused|added|corrected)\s*,?\s*"[^"]*"/gi;
+    const p2 =
+        /\b([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s+(?:said|asked|replied|whispered|shouted|yelled|cried|murmured|muttered|whined|bellowed|screamed|hissed|snapped|snarled|growled|scoffed|snorted|laughed|chuckled|sobbed|sighed|breathed|gasped|panted|mused|added|corrected)\s*,?\s*"[^"]*"/gi;
 
     for (const pattern of [p1, p2]) {
         let m: RegExpExecArray | null;
@@ -153,7 +264,7 @@ function extractFromMidSentence(text: string): Map<string, { count: number; line
 /** Merge multi-word names with single-name aliases. */
 function mergeMultiWordAndAliases(
     text: string,
-    candidates: Map<string, { count: number; lines: Set<number> }>,
+    candidates: Map<string, { count: number; lines: Set<number> }>
 ): Map<string, { count: number; lines: Set<number>; aliases: string[] }> {
     const lineMap = buildLineOffsetTable(text);
 
@@ -202,7 +313,7 @@ function mergeMultiWordAndAliases(
             result.set(fullName, {
                 count: mergedCount,
                 lines: mergedLines,
-                aliases: [firstName],
+                aliases: [firstName]
             });
 
             // Remove the first-name-only entry.
@@ -246,7 +357,8 @@ function buildLineOffsetTable(text: string): number[] {
 
 /** Get a 1-based line number from an offset using the table. */
 function getLineFromOffset(table: number[], offset: number): number | null {
-    let lo = 0, hi = table.length - 1;
+    let lo = 0,
+        hi = table.length - 1;
     while (lo <= hi) {
         const mid = (lo + hi) >> 1;
         const lineStart = table[mid];
@@ -314,7 +426,8 @@ export function extractLocations(text: string, characterNames: Set<string>): Ext
     const candidates = new Map<string, { count: number; lines: Set<number> }>();
 
     // Pass 1: preposition + "the" + capitalized word(s)
-    const prepRe = /\b(?:to|into|across|through|toward|from|at|in|near|by|beyond|along|around|past|behind|before|above|below|beneath|under|over|inside|outside|onto|within|upon)\s+the\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\b/gi;
+    const prepRe =
+        /\b(?:to|into|across|through|toward|from|at|in|near|by|beyond|along|around|past|behind|before|above|below|beneath|under|over|inside|outside|onto|within|upon)\s+the\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\b/gi;
     let m: RegExpExecArray | null;
 
     while ((m = prepRe.exec(text)) !== null) {
@@ -349,7 +462,7 @@ function addCandidate(
     map: Map<string, { count: number; lines: Set<number> }>,
     lineMap: number[],
     name: string,
-    offset: number,
+    offset: number
 ) {
     const line = getLineFromOffset(lineMap, offset);
     const e = map.get(name) ?? { count: 0, lines: new Set<number>() };
@@ -362,7 +475,7 @@ function addCandidate(
 export function extractPlotThreads(
     text: string,
     characterNames: Set<string>,
-    locationNames: Set<string>,
+    locationNames: Set<string>
 ): ExtractedEntity[] {
     if (!text.trim()) return [];
 

@@ -45,14 +45,14 @@ export function renderContextTab(
     container: HTMLElement,
     assembly: ContextAssembly | null,
     plugin: EventideQuillPlugin,
-    component: Component,
+    component: Component
 ): void {
     container.empty();
 
     if (!assembly) {
         container.createEl('p', {
             text: 'Open a manuscript to extract context.',
-            cls: 'quill-context-empty',
+            cls: 'quill-context-empty'
         });
         return;
     }
@@ -63,49 +63,31 @@ export function renderContextTab(
     const voiceBox = voiceSection.createEl('div', { cls: 'quill-context-voice' });
     const voice = assembly.voice;
     voiceBox.createEl('div', {
-        text: `${capitalize(voice.pov)}, ${voice.tense} tense`,
+        text: `${capitalize(voice.pov)}, ${voice.tense} tense`
     });
     voiceBox.createEl('div', {
-        text: `Avg sentence: ${voice.avgSentenceLength} words`,
+        text: `Avg sentence: ${voice.avgSentenceLength} words`
     });
     voiceBox.createEl('div', {
-        text: `Dialogue: ${Math.round(voice.dialogueRatio * 100)}%`,
+        text: `Dialogue: ${Math.round(voice.dialogueRatio * 100)}%`
     });
 
     // Characters section
-    const characters = assembly.entities.filter(e => e.type === 'character' && !e.removed);
+    const characters = assembly.entities.filter((e) => e.type === 'character' && !e.removed);
     if (characters.length > 0) {
-        renderEntitySection(
-            container,
-            'Characters',
-            characters,
-            plugin,
-            component,
-        );
+        renderEntitySection(container, 'Characters', characters, plugin, component);
     }
 
     // Locations section
-    const locations = assembly.entities.filter(e => e.type === 'location' && !e.removed);
+    const locations = assembly.entities.filter((e) => e.type === 'location' && !e.removed);
     if (locations.length > 0) {
-        renderEntitySection(
-            container,
-            'Locations',
-            locations,
-            plugin,
-            component,
-        );
+        renderEntitySection(container, 'Locations', locations, plugin, component);
     }
 
     // Plot threads section
-    const threads = assembly.entities.filter(e => e.type === 'plot-thread' && !e.removed);
+    const threads = assembly.entities.filter((e) => e.type === 'plot-thread' && !e.removed);
     if (threads.length > 0) {
-        renderEntitySection(
-            container,
-            'Plot threads',
-            threads,
-            plugin,
-            component,
-        );
+        renderEntitySection(container, 'Plot threads', threads, plugin, component);
     }
 
     // Vault context section
@@ -157,12 +139,12 @@ function renderEntitySection(
     heading: string,
     entities: ExtractedEntity[],
     plugin: EventideQuillPlugin,
-    component: Component,
+    component: Component
 ): void {
     const section = container.createEl('div', { cls: 'quill-context-section' });
     section.createEl('div', {
         cls: 'quill-context-section-heading',
-        text: `${heading} (${entities.length})`,
+        text: `${heading} (${entities.length})`
     });
 
     for (const entity of entities) {
@@ -170,7 +152,7 @@ function renderEntitySection(
 
         const pinBtn = card.createEl('button', {
             cls: `quill-context-pin-btn${entity.pinned ? ' quill-context-pinned' : ''}`,
-            text: entity.pinned ? 'Pinned' : 'Pin',
+            text: entity.pinned ? 'Pinned' : 'Pin'
         });
         component.registerDomEvent(pinBtn, 'click', (e) => {
             e.stopPropagation();
@@ -183,14 +165,15 @@ function renderEntitySection(
         if (entity.aliases.length > 0) {
             card.createEl('div', {
                 cls: 'quill-context-entity-aliases',
-                text: `Aliases: ${entity.aliases.join(', ')}`,
+                text: `Aliases: ${entity.aliases.join(', ')}`
             });
         }
 
         if (entity.lines.length > 0) {
-            const linesText = entity.lines.length <= 5
-                ? entity.lines.map(String).join(', ')
-                : `${entity.lines.slice(0, 5).map(String).join(', ')}, ...`;
+            const linesText =
+                entity.lines.length <= 5
+                    ? entity.lines.map(String).join(', ')
+                    : `${entity.lines.slice(0, 5).map(String).join(', ')}, ...`;
             card.createEl('div', { cls: 'quill-context-entity-lines', text: `Ln ${linesText}` });
         }
 
@@ -211,24 +194,24 @@ function renderVaultContextSection(
     container: HTMLElement,
     items: ContextItem[],
     plugin: EventideQuillPlugin,
-    component: Component,
+    component: Component
 ): void {
     const section = container.createEl('div', { cls: 'quill-context-section' });
     section.createEl('div', {
         cls: 'quill-context-section-heading',
-        text: `Vault context (${items.length} items)`,
+        text: `Vault context (${items.length} items)`
     });
 
     for (const item of items) {
         const card = section.createEl('div', {
-            cls: `quill-context-item${item.pinned ? ' quill-context-item-pinned' : ''}${item.manual ? ' quill-context-item-manual' : ''}`,
+            cls: `quill-context-item${item.pinned ? ' quill-context-item-pinned' : ''}${item.manual ? ' quill-context-item-manual' : ''}`
         });
 
         const header = card.createEl('div', { cls: 'quill-context-item-header' });
 
         const pinBtn = header.createEl('button', {
             cls: `quill-context-pin-btn${item.pinned ? ' quill-context-pinned' : ''}`,
-            text: item.pinned ? 'Pinned' : 'Pin',
+            text: item.pinned ? 'Pinned' : 'Pin'
         });
         component.registerDomEvent(pinBtn, 'click', (e) => {
             e.stopPropagation();
@@ -249,7 +232,7 @@ function renderVaultContextSection(
         if (item.matchedEntities.length > 0) {
             details.createEl('span', {
                 cls: 'quill-context-item-matched',
-                text: `Matched: ${item.matchedEntities.join(', ')}`,
+                text: `Matched: ${item.matchedEntities.join(', ')}`
             });
         }
     }
@@ -263,7 +246,7 @@ function renderTokenBudget(container: HTMLElement, assembly: ContextAssembly): v
     const pct = Math.round((used / budget) * 100);
 
     section.createEl('div', {
-        text: `Token budget: ${used.toLocaleString()} / ${budget.toLocaleString()} (${pct}%)`,
+        text: `Token budget: ${used.toLocaleString()} / ${budget.toLocaleString()} (${pct}%)`
     });
 
     const bar = section.createEl('div', { cls: 'quill-context-budget-bar' });

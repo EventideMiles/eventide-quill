@@ -54,7 +54,7 @@ class FilenameModal extends Modal {
         const input = content.createEl('input', {
             type: 'text',
             cls: 'quill-save-input',
-            value: this.defaultName,
+            value: this.defaultName
         });
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
@@ -140,7 +140,7 @@ export class FeedbackPanel {
         this.maxAllowedTokens = tokens;
     }
 
-/**
+    /**
      * Override the conversation token estimate shown in the context indicator.
      * Called from the plugin layer with conversation tokens only (system prompt
      * + context heads + chat turns). The panel adds manuscript and reference
@@ -354,7 +354,7 @@ export class FeedbackPanel {
         if (!chatSection) return;
         const el = chatSection.createDiv({
             cls: 'quill-feedback-chat-context-head',
-            text: content,
+            text: content
         });
         const streaming = chatSection.querySelector('.quill-feedback-chat-streaming');
         if (streaming) {
@@ -421,7 +421,11 @@ export class FeedbackPanel {
                 const pill = ctxBar.createDiv({ cls: 'quill-feedback-chat-ctx-pill' });
                 const name = truncateFileName(filePath.split('/').pop() ?? filePath);
                 pill.createEl('span', { text: name });
-                const removeBtn = pill.createEl('button', { cls: 'quill-feedback-chat-ctx-remove', text: '\u00d7', title: filePath });
+                const removeBtn = pill.createEl('button', {
+                    cls: 'quill-feedback-chat-ctx-remove',
+                    text: '\u00d7',
+                    title: filePath
+                });
                 removeBtn.addEventListener('click', () => this.removeChatContextFile(filePath));
             }
             if (inputRow) {
@@ -495,9 +499,7 @@ export class FeedbackPanel {
             }
         }
         const relevantHistory = this.chatHistory.slice(fromIndex);
-        const historyTokens = relevantHistory.reduce(
-            (sum, m) => sum + Math.ceil(m.content.length / 4), 0,
-        );
+        const historyTokens = relevantHistory.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0);
         const totalTokens =
             this.totalContextTokens() +
             this.getChatContextTokens() +
@@ -585,8 +587,8 @@ export class FeedbackPanel {
         return total;
     }
 
-/** Estimated tokens consumed by the system prompt overhead (shown in the
-      *  Create tab so users know that space is already reserved). */
+    /** Estimated tokens consumed by the system prompt overhead (shown in the
+     *  Create tab so users know that space is already reserved). */
     private static readonly SYSTEM_PROMPT_OVERHEAD = 2600;
 
     /** Estimate tokens for the Create tab budget bar.
@@ -626,12 +628,12 @@ export class FeedbackPanel {
         const bar = this.containerEl.createDiv({ cls: 'quill-sidebar-subtab-bar' });
         const tabs: { id: FeedbackSubtab; label: string }[] = [
             { id: 'create', label: 'Create feedback' },
-            { id: 'results', label: 'Results' },
+            { id: 'results', label: 'Results' }
         ];
         for (const tab of tabs) {
             const btn = bar.createEl('button', {
                 cls: `quill-sidebar-subtab${this.subtab === tab.id ? ' quill-sidebar-subtab-active' : ''}`,
-                text: tab.label,
+                text: tab.label
             });
             btn.addEventListener('click', () => {
                 this.subtab = tab.id;
@@ -661,17 +663,17 @@ export class FeedbackPanel {
             const budget = section.createDiv({ cls: 'quill-feedback-budget' });
             budget.createEl('span', {
                 cls: 'quill-feedback-budget-text',
-                text: `${this.totalEstimatedTokens()} / ${this.maxAllowedTokens} tokens (system + source + context)`,
+                text: `${this.totalEstimatedTokens()} / ${this.maxAllowedTokens} tokens (system + source + context)`
             });
             const bar = budget.createDiv({ cls: 'quill-feedback-budget-bar' });
             const fill = bar.createDiv({
-                cls: `quill-feedback-budget-fill${over ? ' quill-feedback-budget-over' : ''}`,
+                cls: `quill-feedback-budget-fill${over ? ' quill-feedback-budget-over' : ''}`
             });
             fill.style.width = `${Math.min(pct, 100)}%`;
             if (over) {
                 budget.createEl('span', {
                     cls: 'quill-feedback-budget-warn',
-                    text: `Exceeds provider context limit by ~${this.totalEstimatedTokens() - this.maxAllowedTokens} tokens.`,
+                    text: `Exceeds provider context limit by ~${this.totalEstimatedTokens() - this.maxAllowedTokens} tokens.`
                 });
             }
         }
@@ -681,7 +683,7 @@ export class FeedbackPanel {
         if (this.contextFilePaths.length === 0) {
             list.createEl('p', {
                 text: 'Add one or more manuscripts to analyze. Feedback is generated from the content of these files.',
-                cls: 'quill-feedback-hint',
+                cls: 'quill-feedback-hint'
             });
         } else {
             for (const filePath of this.contextFilePaths) {
@@ -697,13 +699,17 @@ export class FeedbackPanel {
 
         const addBtn = section.createEl('button', {
             cls: 'quill-feedback-file-add',
-            text: '+ add file',
+            text: '+ add file'
         });
         addBtn.addEventListener('click', () => {
             const exclude = [...this.contextFilePaths, ...this.chatContextFiles];
-            new FileSuggestModal(this.app, (file) => {
-                void this.addContextFile(file.path);
-            }, exclude).open();
+            new FileSuggestModal(
+                this.app,
+                (file) => {
+                    void this.addContextFile(file.path);
+                },
+                exclude
+            ).open();
         });
     }
 
@@ -715,7 +721,7 @@ export class FeedbackPanel {
 
         for (const persona of FEEDBACK_PERSONAS) {
             const btn = personas.createEl('button', {
-                cls: 'quill-feedback-persona-btn',
+                cls: 'quill-feedback-persona-btn'
             });
             const name = btn.createEl('span', { cls: 'quill-feedback-persona-name', text: persona.name });
             name.title = persona.description;
@@ -731,7 +737,7 @@ export class FeedbackPanel {
 
         const customArea = container.createEl('textarea', {
             cls: 'quill-feedback-custom-input',
-            placeholder: 'Describe what kind of feedback you want...',
+            placeholder: 'Describe what kind of feedback you want...'
         });
         customArea.value = this.customInstruction;
         customArea.addEventListener('input', () => {
@@ -740,7 +746,7 @@ export class FeedbackPanel {
 
         const generateBtn = container.createEl('button', {
             cls: 'quill-feedback-generate-btn',
-            text: 'Generate feedback',
+            text: 'Generate feedback'
         });
         generateBtn.addEventListener('click', () => {
             if (!this.customInstruction.trim()) {
@@ -771,7 +777,7 @@ export class FeedbackPanel {
         if (this.resultsState === 'idle') {
             scroll.createEl('p', {
                 text: 'No feedback results yet. Use the create feedback tab to generate a report.',
-                cls: 'quill-feedback-hint',
+                cls: 'quill-feedback-hint'
             });
             return;
         }
@@ -795,12 +801,12 @@ export class FeedbackPanel {
                 normalizeParagraphBreaks(this.reportText),
                 report,
                 '',
-                this.renderEvents,
+                this.renderEvents
             );
             const controls = scroll.createDiv({ cls: 'quill-feedback-controls' });
             const newBtn = controls.createEl('button', {
                 cls: 'quill-feedback-nav-btn',
-                text: 'New feedback',
+                text: 'New feedback'
             });
             newBtn.addEventListener('click', () => this.resetResults());
 
@@ -811,14 +817,20 @@ export class FeedbackPanel {
                     if (msg.role === 'system') {
                         chatSection.createDiv({
                             cls: 'quill-feedback-chat-context-head',
-                            text: msg.content,
+                            text: msg.content
                         });
                     } else {
                         const bubble = chatSection.createDiv({
-                            cls: `quill-feedback-chat-bubble quill-feedback-chat-${msg.role}`,
+                            cls: `quill-feedback-chat-bubble quill-feedback-chat-${msg.role}`
                         });
                         if (msg.role === 'assistant') {
-                            await MarkdownRenderer.render(this.app, normalizeParagraphBreaks(msg.content), bubble, '', this.renderEvents);
+                            await MarkdownRenderer.render(
+                                this.app,
+                                normalizeParagraphBreaks(msg.content),
+                                bubble,
+                                '',
+                                this.renderEvents
+                            );
                         } else {
                             bubble.setText(msg.content);
                         }
@@ -828,7 +840,7 @@ export class FeedbackPanel {
             if (this.chatLoading) {
                 chatSection.createDiv({
                     cls: 'quill-feedback-chat-bubble quill-feedback-chat-assistant quill-feedback-chat-streaming',
-                    text: '\u2026',
+                    text: '\u2026'
                 });
             }
         } else if (this.resultsState === 'error') {
@@ -837,7 +849,7 @@ export class FeedbackPanel {
             const controls = scroll.createDiv({ cls: 'quill-feedback-controls' });
             const retryBtn = controls.createEl('button', {
                 cls: 'quill-feedback-nav-btn',
-                text: 'Back to create',
+                text: 'Back to create'
             });
             retryBtn.addEventListener('click', () => this.resetResults());
         }
@@ -853,7 +865,11 @@ export class FeedbackPanel {
                     const pill = ctxBar.createDiv({ cls: 'quill-feedback-chat-ctx-pill' });
                     const name = truncateFileName(filePath.split('/').pop() ?? filePath);
                     pill.createEl('span', { text: name });
-                    const removeBtn = pill.createEl('button', { cls: 'quill-feedback-chat-ctx-remove', text: '\u00d7', title: filePath });
+                    const removeBtn = pill.createEl('button', {
+                        cls: 'quill-feedback-chat-ctx-remove',
+                        text: '\u00d7',
+                        title: filePath
+                    });
                     removeBtn.addEventListener('click', () => this.removeChatContextFile(filePath));
                 }
             }
@@ -863,27 +879,31 @@ export class FeedbackPanel {
             const addCtxBtn = inputRow.createEl('button', {
                 cls: 'quill-feedback-chat-ctx-add',
                 text: '\u00b1', // ± symbol as add-file icon
-                title: 'Add file to context',
+                title: 'Add file to context'
             });
             addCtxBtn.addEventListener('click', () => {
                 const exclude = [...this.chatContextFiles, ...this.contextFilePaths];
-                new FileSuggestModal(this.app, (file) => {
-                    void this.addChatContextFile(file.path);
-                }, exclude).open();
+                new FileSuggestModal(
+                    this.app,
+                    (file) => {
+                        void this.addChatContextFile(file.path);
+                    },
+                    exclude
+                ).open();
             });
             const saveBtn = inputRow.createEl('button', {
                 cls: 'quill-feedback-chat-save',
                 text: '\ud83d\udcbe', // 💾 floppy disk
-                title: 'Save conversation to file',
+                title: 'Save conversation to file'
             });
             saveBtn.addEventListener('click', () => this.saveConversation());
             const input = inputRow.createEl('textarea', {
                 cls: 'quill-feedback-chat-input',
-                placeholder: 'Ask a follow-up about the feedback\u2026',
+                placeholder: 'Ask a follow-up about the feedback\u2026'
             });
             const sendBtn = inputRow.createEl('button', {
                 cls: 'quill-feedback-chat-send',
-                text: 'Send',
+                text: 'Send'
             });
             const doSend = () => {
                 if (this.chatLoading) return;
@@ -900,11 +920,11 @@ export class FeedbackPanel {
                 if (chatSection) {
                     chatSection.createDiv({
                         cls: 'quill-feedback-chat-bubble quill-feedback-chat-user',
-                        text: text,
+                        text: text
                     });
                     chatSection.createDiv({
                         cls: 'quill-feedback-chat-bubble quill-feedback-chat-assistant quill-feedback-chat-streaming',
-                        text: '\u2026',
+                        text: '\u2026'
                     });
                 }
                 this.scrollToBottom();
@@ -932,16 +952,22 @@ export class FeedbackPanel {
                     label += `${chatCount} reference`;
                 }
                 if (!label) label = 'No files in context';
-                ctxIndicator.setText(`${label} \u00b7 ${totalTokens} / ${maxTokens} tokens${over ? ' (over budget)' : ''}`);
+                ctxIndicator.setText(
+                    `${label} \u00b7 ${totalTokens} / ${maxTokens} tokens${over ? ' (over budget)' : ''}`
+                );
             };
             setIndicatorText();
 
             // Scroll listener: if user scrolls up during streaming, stop auto-follow
             const scrollC = this.getScrollContainer();
             if (scrollC) {
-                scrollC.addEventListener('scroll', () => {
-                    this.userScrolledUp = !this.isScrollAtBottom();
-                }, { passive: true });
+                scrollC.addEventListener(
+                    'scroll',
+                    () => {
+                        this.userScrolledUp = !this.isScrollAtBottom();
+                    },
+                    { passive: true }
+                );
             }
         }
     }

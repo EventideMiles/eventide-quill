@@ -8,7 +8,7 @@ export type {
     ExtractedEntity,
     EntityType,
     VoiceMarker,
-    ContextItem,
+    ContextItem
 } from './context-engine/types';
 export { extractCharacters, extractLocations, extractPlotThreads } from './context-engine/entity-extractor';
 export { analyzeVoice } from './context-engine/voice-analyzer';
