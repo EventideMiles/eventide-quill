@@ -16,6 +16,16 @@ export class HttpError extends Error {
 }
 
 /**
+ * Error thrown when the response body is missing or unavailable for streaming.
+ */
+export class StreamingUnavailableError extends Error {
+    constructor() {
+        super('Response body is missing or unavailable; streaming is not possible.');
+        this.name = 'StreamingUnavailableError';
+    }
+}
+
+/**
  * Result of a successful streaming response.
  */
 export interface StreamResult {
@@ -70,7 +80,7 @@ export async function streamResponse(
     }
 
     if (!response.body) {
-        throw new Error('Response body is missing or unavailable; streaming is not possible.');
+        throw new StreamingUnavailableError();
     }
     return { reader: response.body.getReader() };
 }

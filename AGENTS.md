@@ -44,7 +44,6 @@ src/
 ### Naming
 
 - **kebab-case.ts** for module files (e.g., `feedback-panel.ts`).
-- **PascalCase.ts** for class files (e.g., `FeedbackPanel.ts`).
 - **PascalCase** for interfaces, types, and type aliases (no `I` prefix).
 - **camelCase** for functions, variables, parameters, and private fields.
 - **UPPER_SNAKE_CASE** for module-level exported constants (e.g., `DEFAULT_SETTINGS`, `FEEDBACK_PERSONAS`).
@@ -56,7 +55,7 @@ src/
 
 ### Code style
 
-- **Tabs, not spaces.** Indent size: 4 (enforced in `.editorconfig`).
+- **Spaces, not tabs.** Indent size: 4 (enforced in `.editorconfig`).
 - Keep imports sorted: external → internal, `type` imports last.
 - **JSDoc on every function.** All functions and methods must have a `/** ... */` docstring.
 
@@ -70,7 +69,7 @@ src/
 
 | Rule | Enforced by | Notes |
 |------|-------------|-------|
-| Tabs, 4-space indent, UTF-8, LF, trailing newline, single quotes | `.editorconfig` | Auto-applied by editors |
+| Spaces (4), UTF-8, LF, trailing newline, single quotes | `.editorconfig` | Auto-applied by editors |
 | `strict`, `noImplicitReturns`, `noUncheckedIndexedAccess`, `forceConsistentCasingInFileNames` | `tsconfig.json` | TypeScript compiler |
 | Obsidian-specific lint rules | `eslint.config.mts` + `eslint-plugin-obsidianmd` | |
 | Naming conventions (case, prefixes) | **Code review only** | No ESLint rules for naming yet |
