@@ -1636,27 +1636,29 @@ export class CoWriterSession {
             { role: 'user', content: userMessage }
         ];
 
-        // Set up streaming — applyOption
+        // Set up streaming — applyOption (preview-diff)
         this.abortController = new AbortController();
         this.thoughtBuffer = '';
-        this.insertionStart = cursorOffset;
-        this.insertionLength = 0;
-        this.originalText = fullText;
-        this.draftState = 'generating';
-        this.onStateChange?.('generating');
-        this.lockEditor();
+        this.directChanges.clear();
+        const applyEdit = this.directChanges.add({
+            from: cursorOffset,
+            to: cursorOffset,
+            newText: '',
+            label: option.label
+        });
+        this.onOptionsLoading?.(true);
+        this.onChatUpdate?.();
 
         const cm = (editor as unknown as { cm: EditorView }).cm;
         if (!cm) {
             new Notice('Quill: Could not access editor for streaming.');
-            this.unlockEditor();
-            this.draftState = 'idle';
-            this.onStateChange?.('idle');
+            this.onOptionsLoading?.(false);
             return;
         }
+        pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
 
         const notice = Platform.isMobile
-            ? new Notice('Quill: Continuing (mobile — this may take a moment)...', 0)
+            ? new Notice('Quill: Continuing (mobile \u2014 this may take a moment)...', 0)
             : new Notice('Quill: Continuing...', 0);
 
         try {
@@ -1670,93 +1672,42 @@ export class CoWriterSession {
 
             for await (const chunk of stream) {
                 if (chunk.done) break;
-
                 if (chunk.thought) {
                     this.thoughtBuffer += chunk.thought;
                     this.onThought?.(this.thoughtBuffer);
                 }
-
                 if (!chunk.text) continue;
-
-                const cleanText = sanitizeProse(chunk.text);
-                const insertAt = this.insertionStart + this.insertionLength;
-                cm.dispatch({
-                    changes: {
-                        from: insertAt,
-                        to: insertAt,
-                        insert: cleanText
-                    },
-                    selection: { anchor: insertAt + cleanText.length }
-                });
-                this.insertionLength += cleanText.length;
+                applyEdit.newText += sanitizeProse(chunk.text);
+                pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
             }
 
-            console.warn('[Quill Co-writer] Draft continuation context', {
-                manuscriptExcerptChars: textBeforeCursor.slice(-8000).length,
-                vaultContextChars: vaultContext.length,
-                vaultContextFiles: plugin.currentAssembly?.contextItems.length ?? 0,
-                additionalFiles: this.contextFilePaths,
-                voiceProfile: this.voiceProfile
-                    ? {
-                          sentenceLengthDistribution: this.voiceProfile.sentenceLengthDistribution,
-                          dialogueRatio: this.voiceProfile.dialogueRatio,
-                          vocabularyRegister: this.voiceProfile.vocabularyRegister
-                      }
-                    : null,
-                narrativeVoicePreset: plugin.settings.narrativeVoicePreset,
-                insertionLength: this.insertionLength
-            });
+            if (plugin.settings.coWriterAppendNewline) {
+                applyEdit.newText = `${applyEdit.newText.replace(/\s+$/, '')}\n`;
+            }
+
+            if (applyEdit.newText.replace(/\s+$/, '').length === 0) {
+                new Notice('Quill: Received empty response from the AI provider.');
+                this.directChanges.clear();
+                clearDiffEdits(cm);
+            } else {
+                pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
+            }
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') {
-                notice.hide();
-                if (this.insertionLength > 0) {
-                    // Keep partial content as draft — user must accept or reject
-                    this.draftState = 'draft';
-                    this.onStateChange?.('draft');
-                } else {
-                    this.unlockEditor();
-                    this.draftState = 'idle';
-                    this.onStateChange?.('idle');
-                    this.insertionStart = -1;
-                    this.insertionLength = 0;
+                if (applyEdit.newText.replace(/\s+$/, '').length === 0) {
+                    this.directChanges.clear();
+                    clearDiffEdits(cm);
                 }
-                return;
+            } else {
+                new Notice(`Quill: Continuation failed \u2014 ${err instanceof Error ? err.message : String(err)}`);
+                this.directChanges.clear();
+                clearDiffEdits(cm);
             }
-            new Notice(`Quill: Continuation failed — ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
             notice.hide();
-            this.unlockEditor();
-            this.draftState = 'idle';
-            this.onStateChange?.('idle');
-            return;
+            this.onOptionsLoading?.(false);
+            this.onChatUpdate?.();
         }
-
-        notice.hide();
-
-        if (this.insertionLength === 0) {
-            new Notice('Quill: Received empty response from the AI provider.');
-            this.unlockEditor();
-            this.draftState = 'idle';
-            this.onStateChange?.('idle');
-            return;
-        }
-
-        // Append trailing newline if enabled
-        if (plugin.settings.coWriterAppendNewline) {
-            const endPos = this.insertionStart + this.insertionLength;
-            const after = cm.state.sliceDoc(endPos, Math.min(endPos + 2, cm.state.doc.length));
-            if (after !== '\n\n') {
-                cm.dispatch({
-                    changes: { from: endPos, to: endPos, insert: '\n' },
-                    selection: { anchor: endPos + 1 }
-                });
-                this.insertionLength += 1;
-            }
-        }
-
-        this.draftState = 'draft';
-        this.onStateChange?.('draft');
-        this.onDraftComplete?.();
-        this.onChatUpdate?.();
     }
 
     /**

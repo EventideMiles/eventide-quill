@@ -628,17 +628,18 @@ export class CoWriterPanel extends AbstractChatPanel {
             return;
         }
 
+        const applying = this.optionsLoading;
         const applyBtn = card.createEl('button', {
             cls: 'quill-cowriter-option-apply mod-cta',
-            text: this.draftState !== 'idle' ? 'Generating\u2026' : 'Apply'
+            text: applying ? 'Generating\u2026' : 'Apply'
         });
-        if (this.draftState !== 'idle') {
+        if (applying) {
             applyBtn.addClass('quill-cowriter-option-applying');
         }
         const idx = index;
         this.renderEvents.registerDomEvent(applyBtn, 'click', () => {
-            if (this.draftState !== 'idle') return;
-            this.draftState = 'generating';
+            if (this.optionsLoading) return;
+            this.optionsLoading = true;
             this.scheduleRender();
             this.onApplyOption?.(idx);
         });
