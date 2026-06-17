@@ -577,6 +577,11 @@ export class QuillSidebarView extends ItemView {
         this.coWriterPanel?.setPlotMap(path);
     }
 
+    /** Set whether an inline directive is active at the cursor (Direct-mode badge). */
+    coWriterSetDirectiveActive(active: boolean): void {
+        this.coWriterPanel?.setDirectiveActive(active);
+    }
+
     /** Get the chat context file paths from the Feedback panel. */
     feedbackChatContextFiles(): string[] {
         return this.feedbackPanel?.getChatContextFiles() ?? [];

@@ -52,6 +52,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private coachActive = false;
     /** Path of the plot map note linked to the active manuscript, or null when none is linked. */
     private plotMap: string | null = null;
+    /** Whether an inline directive is active at the cursor (drives the Direct-mode badge). */
+    private directiveActive = false;
 
     private onSendMessage: ((direction: string) => void) | null = null;
     private onDiscussMessage: ((message: string) => void) | null = null;
@@ -625,6 +627,11 @@ export class CoWriterPanel extends AbstractChatPanel {
         // Plot map link row
         this.renderPlotMapRow(bottom);
 
+        // Directive-active badge (Direct mode only)
+        if (this.inputMode === 'direct' && this.directiveActive) {
+            bottom.createEl('div', { cls: 'quill-cowriter-directive-badge', text: 'Directive active' });
+        }
+
         // Context file pills
         const contextFiles = this.getContextFiles();
         if (contextFiles.length > 0) {
@@ -882,6 +889,15 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (e.key === 'Escape' && (this.optionsLoading || this.draftState === 'generating')) {
             e.preventDefault();
             this.onCancelGeneration?.();
+        }
+    }
+
+    /** Set whether an inline directive is active at the cursor (drives the Direct-mode badge).
+     *  Pushed from the plugin's editor extension on cursor/doc changes. */
+    setDirectiveActive(active: boolean): void {
+        if (this.directiveActive !== active) {
+            this.directiveActive = active;
+            this.scheduleRender();
         }
     }
 

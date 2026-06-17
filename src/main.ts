@@ -30,6 +30,7 @@ import { CoWriterSession, type CoachPhase, loadAdditionalContext } from './ai/co
 import { compactConversation } from './ai/compaction';
 import { estimateTokens } from './utils/tokens';
 import { readVaultFileText } from './utils/vault-files';
+import { parseDirectives } from './utils/directives';
 import { readVaultFiles } from './utils/vault-files';
 
 /** Generate a content-based fingerprint for a lint result. Uses the flagged
@@ -140,6 +141,20 @@ export default class EventideQuillPlugin extends Plugin {
                     return !!chat.provider;
                 }
             )
+        );
+
+        // Track whether an inline directive is active at the cursor so the
+        // co-writer panel can show its "Directive active" badge. Reactive
+        // (fires on cursor/doc changes) and lifecycle-safe (auto-removed on unload).
+        this.registerEditorExtension(
+            EditorView.updateListener.of((update) => {
+                if (!this.settings.enableInlineDirectives) return;
+                if (!update.selectionSet && !update.docChanged) return;
+                const pos = update.state.selection.main.head;
+                const textBeforeCursor = update.state.sliceDoc(Math.max(0, pos - 4000), pos);
+                const active = parseDirectives(textBeforeCursor).length > 0;
+                this.lintPanel?.coWriterSetDirectiveActive(active);
+            })
         );
 
         this.registerView(QUILL_VIEW_TYPE, (leaf: WorkspaceLeaf) => {
@@ -432,6 +447,18 @@ export default class EventideQuillPlugin extends Plugin {
             name: 'Quill: Open co-writer',
             callback: () => {
                 void this.openCoWriterPanel();
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-insert-directive',
+            name: 'Quill: Insert inline directive',
+            editorCallback: (editor) => {
+                const cursor = editor.getCursor();
+                const base = editor.posToOffset(cursor);
+                editor.replaceRange('<!-- quill:  -->', cursor);
+                // Place the cursor between 'quill: ' and ' -->' so the writer can type the instruction.
+                editor.setCursor(editor.offsetToPos(base + '<!-- quill: '.length));
             }
         });
 

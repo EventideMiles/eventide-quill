@@ -1743,8 +1743,7 @@ button.quill-cowriter-revert-btn {
 }
 
 /* Plot map link row */
-.quill-cowriter-plotmap-row {
-    display: flex;
+.quill-cowriter-plotmap-row {    display: flex;
     align-items: center;
     gap: 6px;
     padding: 4px 0;
@@ -1805,6 +1804,17 @@ button.quill-cowriter-plotmap-link {
 button.quill-cowriter-plotmap-link:hover {
     color: var(--text-normal);
     border-color: var(--interactive-accent);
+}
+
+/* Inline-directive badge (Direct mode) */
+.quill-cowriter-directive-badge {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-on-accent);
+    background: var(--interactive-accent);
+    border-radius: 3px;
+    padding: 2px 8px;
+    align-self: flex-start;
+    margin: 2px 0;
 }
 
 /* Buttons row (mode, add ctx, refresh, send) */
