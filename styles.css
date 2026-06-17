@@ -1862,9 +1862,10 @@ button.quill-change-bulk-btn {
 
 .quill-change-card-removed {
     font-size: var(--font-ui-small);
-    color: var(--text-error, var(--color-red));
+    color: var(--text-muted);
     text-decoration: line-through;
-    background: var(--background-modifier-error, rgba(255, 0, 0, 0.08));
+    text-decoration-color: rgba(255, 0, 0, 0.45);
+    background: var(--background-modifier-error, rgba(255, 0, 0, 0.1));
     border-radius: 3px;
     padding: 4px 6px;
     margin-bottom: 4px;
@@ -1898,9 +1899,10 @@ button.quill-change-card-btn {
 
 /* Inline diff decorations (CodeMirror) */
 .quill-diff-removed {
-    color: var(--text-error, var(--color-red));
+    color: var(--text-muted);
     text-decoration: line-through;
-    background: var(--background-modifier-error, rgba(255, 0, 0, 0.08));
+    text-decoration-color: rgba(255, 0, 0, 0.45);
+    background: var(--background-modifier-error, rgba(255, 0, 0, 0.1));
 }
 
 .quill-diff-added {
