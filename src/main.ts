@@ -31,7 +31,14 @@ import { compactConversation } from './ai/compaction';
 import { estimateTokens } from './utils/tokens';
 import { readVaultFileText } from './utils/vault-files';
 import { parseDirectives } from './utils/directives';
-import { getChangeDiffExtension } from './ui/change-diff-extension';
+import {
+    getChangeDiffExtension,
+    pushDiffEdits,
+    clearDiffEdits,
+    setDiffEdits,
+    toDiffSnapshots
+} from './ui/change-diff-extension';
+import { ChangeSet } from './core/change-set';
 import { readVaultFiles } from './utils/vault-files';
 
 /** Generate a content-based fingerprint for a lint result. Uses the flagged
@@ -121,6 +128,8 @@ export default class EventideQuillPlugin extends Plugin {
     private manualContextItems: ContextItem[] = [];
     /** Co-writer session for the collaborative drafting feature. */
     coWriterSession: CoWriterSession = new CoWriterSession();
+    /** Proposed transform edit awaiting inline review (one at a time). */
+    transformChangeSet: ChangeSet = new ChangeSet();
 
     /** Plugin entry point: register commands, views, extensions, and event handlers. */
     async onload() {
@@ -165,9 +174,11 @@ export default class EventideQuillPlugin extends Plugin {
             getChangeDiffExtension({
                 onApprove: (owner: string, id: number) => {
                     if (owner === 'fulfill') this.approveCoWriterFulfill(id);
+                    else if (owner === 'transform') this.approveTransformChange(id);
                 },
                 onReject: (owner: string, id: number) => {
                     if (owner === 'fulfill') this.rejectCoWriterFulfill(id);
+                    else if (owner === 'transform') this.rejectTransformChange(id);
                 }
             })
         );
@@ -1219,6 +1230,45 @@ export default class EventideQuillPlugin extends Plugin {
     /** Reject every pending Fulfill section. */
     rejectAllCoWriterFulfill(): void {
         this.coWriterSession.rejectAllFulfill();
+    }
+
+    /** Resolve the CodeMirror view of the active markdown editor, if any. */
+    private getActiveCm(): EditorView | undefined {
+        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!view) return undefined;
+        return (view.editor as unknown as { cm: EditorView }).cm;
+    }
+
+    /**
+     * Propose a transform rewrite as a reviewable change. Pushes an inline diff
+     * (selection in red, rewrite in green) to the editor for Approve/Reject.
+     */
+    proposeTransform(cm: EditorView, edit: { from: number; to: number; newText: string; label: string }): void {
+        this.transformChangeSet.clear();
+        this.transformChangeSet.add(edit);
+        pushDiffEdits(cm, toDiffSnapshots(this.transformChangeSet, 'transform'));
+    }
+
+    /** Approve the pending transform edit: commit the rewrite and clear the diff. */
+    approveTransformChange(id: number): void {
+        const change = this.transformChangeSet.approve(id);
+        if (!change) return;
+        const cm = this.getActiveCm();
+        if (cm) {
+            cm.dispatch({
+                changes: change,
+                effects: setDiffEdits.of([]),
+                selection: { anchor: change.from + change.insert.length }
+            });
+        }
+    }
+
+    /** Reject the pending transform edit: leave the original passage and clear the diff. */
+    rejectTransformChange(id: number): void {
+        void id;
+        this.transformChangeSet.rejectAll();
+        const cm = this.getActiveCm();
+        if (cm) clearDiffEdits(cm);
     }
 
     /** Cancel the current feedback generation request. */

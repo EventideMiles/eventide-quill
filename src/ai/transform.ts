@@ -149,8 +149,7 @@ export async function applyTransformation(
             ? await gatherVaultContext(plugin.app.vault, fullDocumentText, assembly)
             : '';
 
-        const { narrativeVoicePreset, transformTemperature, transformMaxOutputTokens, transformAppendNewline } =
-            plugin.settings;
+        const { narrativeVoicePreset, transformTemperature, transformMaxOutputTokens } = plugin.settings;
         const systemPrompt = getSystemPrompt('narrative', { vaultContext, narrativePreset: narrativeVoicePreset });
 
         // Budget the context window holistically.
@@ -181,18 +180,20 @@ export async function applyTransformation(
             { role: 'user', content: userPrompt }
         ];
 
-        // Stream into the editor via CodeMirror 6 for real-time character display
+        // Stream the rewrite into a buffer. The document is not modified during
+        // generation; the result is proposed as a reviewable change (replace the
+        // selection) and shown via the shared inline diff before committing.
         const cm = (editor as unknown as { cm: EditorView }).cm;
         if (!cm) {
             new Notice('Quill: Could not access editor for streaming.');
             return;
         }
 
-        const cmSelection = cm.state.selection.main;
-        const anchor = cmSelection.from;
-        let insertedLength = 0;
-        let lastError: Error | null = null;
+        const sel = cm.state.selection.main;
+        const from = sel.from;
+        const to = sel.to;
 
+        let rewrite = '';
         try {
             const stream = provider.chatCompletion({
                 messages,
@@ -201,91 +202,52 @@ export async function applyTransformation(
                 maxTokens: transformMaxOutputTokens,
                 signal: undefined
             });
-
             for await (const chunk of stream) {
                 if (!chunk.text) continue;
-
-                const insertAt = anchor + insertedLength;
-                cm.dispatch({
-                    changes: {
-                        from: insertAt,
-                        to: insertedLength === 0 ? cmSelection.to : insertAt,
-                        insert: chunk.text
-                    },
-                    selection: { anchor: insertAt + chunk.text.length }
-                });
-                insertedLength += chunk.text.length;
+                rewrite += chunk.text;
             }
         } catch (err: unknown) {
-            if (err instanceof Error) {
-                if (err.name === 'AbortError') return;
-                lastError = err;
-            }
-        }
-
-        if (lastError) {
-            new Notice(`Quill: Transformation failed — ${lastError.message}`);
+            if (err instanceof Error && err.name === 'AbortError') return;
+            const msg = err instanceof Error ? err.message : String(err);
+            new Notice(`Quill: Transformation failed — ${msg}`);
             return;
         }
 
-        if (insertedLength === 0) {
+        rewrite = rewrite.replace(/\s+$/, '');
+        if (rewrite.length === 0) {
             new Notice('Quill: Received empty response from the AI provider.');
             return;
         }
 
-        // Trim trailing whitespace, then optionally normalize blank lines around
-        // the transformed text based on whether the selection started and/or ended
-        // at a line boundary (e.g. full-line or full-paragraph selections).
-        if (transformAppendNewline) {
-            const docLen = cm.state.doc.length;
-            const startsAtLine = anchor === 0 || cm.state.sliceDoc(anchor - 1, anchor) === '\n';
-            const endsAtLine =
-                anchor + insertedLength >= docLen ||
-                cm.state.sliceDoc(anchor + insertedLength, anchor + insertedLength + 1) === '\n';
-
-            // Trim any trailing whitespace the model may have emitted.
-            const rawInserted = cm.state.sliceDoc(anchor, anchor + insertedLength);
-            const trimmed = rawInserted.replace(/\s+$/, '');
-            const trimDiff = rawInserted.length - trimmed.length;
-            let offset = 0;
-
-            if (trimDiff > 0) {
-                const newEnd = anchor + trimmed.length;
-                cm.dispatch({
-                    changes: { from: newEnd, to: anchor + insertedLength, insert: '' },
-                    selection: { anchor: newEnd }
-                });
-                insertedLength = trimmed.length;
-            }
-
-            // If the selection started at a line boundary, ensure a blank line
-            // above (but not at document start).
-            if (startsAtLine && anchor > 0) {
-                const charBefore = cm.state.sliceDoc(anchor - 1, anchor);
-                const twoBefore = anchor >= 2 ? cm.state.sliceDoc(anchor - 2, anchor) : '';
-                if (charBefore === '\n' && twoBefore !== '\n\n') {
-                    cm.dispatch({
-                        changes: { from: anchor, to: anchor, insert: '\n' },
-                        selection: { anchor: anchor + 1 }
-                    });
-                    offset = 1;
-                }
-            }
-
-            // If the selection ended at a line boundary, ensure a blank line below.
-            if (endsAtLine) {
-                const endPos = anchor + insertedLength + offset;
-                const after = cm.state.sliceDoc(endPos, Math.min(endPos + 2, cm.state.doc.length));
-                if (after !== '\n\n') {
-                    cm.dispatch({
-                        changes: { from: endPos, to: endPos, insert: '\n' },
-                        selection: { anchor: endPos + 1 }
-                    });
-                }
-            }
-        }
+        // Propose the rewrite as a reviewable change. The inline diff shows the
+        // selection in red and the rewrite in green; Approve commits, Reject
+        // leaves the original passage untouched.
+        plugin.proposeTransform(cm, {
+            from,
+            to,
+            newText: rewrite,
+            label: transformLabel(type, tone)
+        });
     } finally {
         notice.hide();
         plugin.transformInProgress = false;
+    }
+}
+
+/** Human label for the change card / diff, derived from the transform type and tone. */
+function transformLabel(type: TransformType, tone?: string): string {
+    switch (type) {
+        case 'improve':
+            return 'Improve writing';
+        case 'make-longer':
+            return 'Make longer';
+        case 'make-shorter':
+            return 'Make shorter';
+        case 'change-tone':
+            return `Change tone: ${tone ?? 'different'}`;
+        case 'custom':
+            return tone ? `Custom: ${tone}` : 'Custom rewrite';
+        default:
+            return 'Rewrite';
     }
 }
