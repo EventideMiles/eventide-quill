@@ -75,41 +75,23 @@ export function toDiffSnapshots(changeSet: ChangeSet, owner: string): DiffEditSn
     }));
 }
 
-/** A bounded red box showing the removed text (struck through). Replaces the
- *  original range so it reads as its own block, distinctly separated from the
- *  green added box below it (no full-line wash, no bleed under the green box). */
-class RemovedBoxWidget extends WidgetType {
-    constructor(private readonly removedText: string) {
-        super();
-    }
-
-    eq(other: RemovedBoxWidget): boolean {
-        return this.removedText === other.removedText;
-    }
-
-    toDOM(): HTMLElement {
-        const wrap = window.activeDocument.createElement('div');
-        wrap.className = 'quill-diff-removed-box';
-        wrap.textContent = this.removedText;
-        return wrap;
-    }
-
-    ignoreEvent(): boolean {
-        return true;
-    }
-}
-
-/** A green widget showing the replacement text with inline Approve/Reject buttons. */
-class ChangeWidget extends WidgetType {
+/** A single widget rendering a proposed edit's diff: the removed text in a red
+ *  box (struck through) when present, and the replacement in a green box with
+ *  inline Approve/Reject. Both boxes live in one widget so they always render
+ *  stacked and distinctly separated — avoiding the CM conflict where a point
+ *  widget at the end of a replaced range gets swallowed. */
+class ChangePreviewWidget extends WidgetType {
     constructor(
+        private readonly removedText: string,
         private readonly edit: DiffEditSnapshot,
         private readonly handlers: ChangeDiffHandlers
     ) {
         super();
     }
 
-    eq(other: ChangeWidget): boolean {
+    eq(other: ChangePreviewWidget): boolean {
         return (
+            this.removedText === other.removedText &&
             this.edit.id === other.edit.id &&
             this.edit.newText === other.edit.newText &&
             this.edit.state === other.edit.state
@@ -118,12 +100,24 @@ class ChangeWidget extends WidgetType {
 
     toDOM(): HTMLElement {
         const wrap = window.activeDocument.createElement('div');
-        wrap.className = 'quill-diff-added';
+        wrap.className = 'quill-diff-group';
+
+        // Removed (red) — only when there is old text being replaced.
+        if (this.removedText.length > 0) {
+            const removed = window.activeDocument.createElement('div');
+            removed.className = 'quill-diff-removed-box';
+            removed.textContent = this.removedText;
+            wrap.appendChild(removed);
+        }
+
+        // Added (green) — the replacement text + controls.
+        const added = window.activeDocument.createElement('div');
+        added.className = 'quill-diff-added';
 
         const prose = window.activeDocument.createElement('div');
         prose.className = 'quill-diff-added-prose';
         prose.textContent = this.edit.newText;
-        wrap.appendChild(prose);
+        added.appendChild(prose);
 
         const controls = window.activeDocument.createElement('div');
         controls.className = 'quill-diff-controls';
@@ -143,7 +137,9 @@ class ChangeWidget extends WidgetType {
         });
         controls.appendChild(approve);
         controls.appendChild(reject);
-        wrap.appendChild(controls);
+        added.appendChild(controls);
+
+        wrap.appendChild(added);
         return wrap;
     }
 
@@ -181,21 +177,15 @@ class ChangeDiffPlugin {
         const ranges: Range<Decoration>[] = [];
         for (const edit of edits) {
             if (edit.state !== 'pending') continue;
-            if (edit.from < edit.to) {
-                // Removed text as a bounded red block widget (replaces the range,
-                // so it is its own box — distinctly separated from the green box).
-                const removedText = doc.sliceString(edit.from, edit.to);
-                ranges.push(
-                    Decoration.replace({ widget: new RemovedBoxWidget(removedText), block: false }).range(
-                        edit.from,
-                        edit.to
-                    )
-                );
-            }
-            if (edit.newText.length > 0) {
-                ranges.push(
-                    Decoration.widget({ widget: new ChangeWidget(edit, this.handlers), side: 1 }).range(edit.to)
-                );
+            const hasRemoval = edit.from < edit.to;
+            const removedText = hasRemoval ? doc.sliceString(edit.from, edit.to) : '';
+            const widget = new ChangePreviewWidget(removedText, edit, this.handlers);
+            if (hasRemoval) {
+                // Replace the removed range with the red+green preview widget.
+                ranges.push(Decoration.replace({ widget }).range(edit.from, edit.to));
+            } else {
+                // Pure insertion: no range to replace, drop the widget at the point.
+                ranges.push(Decoration.widget({ widget, side: 1 }).range(edit.from));
             }
         }
         return ranges.length > 0 ? Decoration.set(ranges, true) : Decoration.none;

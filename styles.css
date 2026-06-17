@@ -1898,29 +1898,34 @@ button.quill-change-card-btn {
 }
 
 /* Inline diff decorations (CodeMirror) */
-/* Removed text as a bounded red block box (mirrors the green added box),
-   distinctly separated from it. The range is replaced by this widget so the
-   red never bleeds under the green. Text struck through faintly. */
+/* The single widget holding the red (removed) and green (added) boxes stacked. */
+.quill-diff-group {
+    display: block;
+    margin: 4px 0;
+}
+
+/* Removed text: a soft red glow (very low opacity) with a red left accent and a
+   faint strikethrough. Kept subtle so it reads as a tint, not a blast of red. */
 .quill-diff-removed-box {
     display: block;
-    background: var(--background-modifier-error, rgba(255, 0, 0, 0.1));
+    background: rgba(255, 0, 0, 0.05);
     border-left: 3px solid var(--color-red);
     border-radius: 3px;
     padding: 6px 8px;
-    margin: 4px 0;
+    margin: 0 0 6px 0;
     color: var(--text-muted);
     text-decoration: line-through;
-    text-decoration-color: rgba(255, 0, 0, 0.5);
+    text-decoration-color: rgba(255, 0, 0, 0.45);
     white-space: pre-wrap;
 }
 
 .quill-diff-added {
     display: block;
-    background: rgba(0, 128, 0, 0.08);
+    background: rgba(0, 128, 0, 0.07);
     border-left: 3px solid var(--color-green);
     border-radius: 3px;
     padding: 6px 8px;
-    margin: 4px 0;
+    margin: 0;
 }
 
 .quill-diff-added-prose {
