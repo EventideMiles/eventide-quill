@@ -4,6 +4,7 @@ import type EventideQuillPlugin from '../main';
 import { gatherVaultContext } from '../core/context-engine';
 import { ChatMessage } from './provider';
 import { getSystemPrompt } from './prompts';
+import { clearDiffEdits, pushDiffEdits, toDiffSnapshots } from '../ui/change-diff-extension';
 
 /** Describes a single transformation action available in the editor context menu. */
 export interface TransformAction {
@@ -180,9 +181,9 @@ export async function applyTransformation(
             { role: 'user', content: userPrompt }
         ];
 
-        // Stream the rewrite into a buffer. The document is not modified during
-        // generation; the result is proposed as a reviewable change (replace the
-        // selection) and shown via the shared inline diff before committing.
+        // Stream the rewrite live into a proposed change. The document is not
+        // modified during generation; the selection shows in red and the rewrite
+        // streams into the green box so the writer sees progress immediately.
         const cm = (editor as unknown as { cm: EditorView }).cm;
         if (!cm) {
             new Notice('Quill: Could not access editor for streaming.');
@@ -193,7 +194,16 @@ export async function applyTransformation(
         const from = sel.from;
         const to = sel.to;
 
-        let rewrite = '';
+        plugin.transformChangeSet.clear();
+        const tEdit = plugin.transformChangeSet.add({
+            from,
+            to,
+            newText: '',
+            label: transformLabel(type, tone)
+        });
+        tEdit.state = 'generating';
+        pushDiffEdits(cm, toDiffSnapshots(plugin.transformChangeSet, 'transform'));
+
         try {
             const stream = provider.chatCompletion({
                 messages,
@@ -204,30 +214,27 @@ export async function applyTransformation(
             });
             for await (const chunk of stream) {
                 if (!chunk.text) continue;
-                rewrite += chunk.text;
+                tEdit.newText += chunk.text;
+                pushDiffEdits(cm, toDiffSnapshots(plugin.transformChangeSet, 'transform'));
             }
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') return;
             const msg = err instanceof Error ? err.message : String(err);
-            new Notice(`Quill: Transformation failed — ${msg}`);
+            new Notice(`Quill: Transformation failed \u2014 ${msg}`);
+            plugin.transformChangeSet.clear();
+            clearDiffEdits(cm);
             return;
         }
 
-        rewrite = rewrite.replace(/\s+$/, '');
-        if (rewrite.length === 0) {
+        tEdit.newText = tEdit.newText.replace(/\s+$/, '');
+        if (tEdit.newText.length === 0) {
             new Notice('Quill: Received empty response from the AI provider.');
+            plugin.transformChangeSet.clear();
+            clearDiffEdits(cm);
             return;
         }
-
-        // Propose the rewrite as a reviewable change. The inline diff shows the
-        // selection in red and the rewrite in green; Approve commits, Reject
-        // leaves the original passage untouched.
-        plugin.proposeTransform(cm, {
-            from,
-            to,
-            newText: rewrite,
-            label: transformLabel(type, tone)
-        });
+        tEdit.state = 'pending';
+        pushDiffEdits(cm, toDiffSnapshots(plugin.transformChangeSet, 'transform'));
     } finally {
         notice.hide();
         plugin.transformInProgress = false;
