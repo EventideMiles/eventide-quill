@@ -41,7 +41,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     private chatHistory: CoWriterChatMessage[] = [];
     private currentOptions: CoWriterOption[] = [];
     private optionsLoading = false;
-    private inputMode: InputMode = 'direct';
+    private inputMode: InputMode = 'coach';
     /** Preserved textarea value across re-renders so user-typed content survives generation. */
     private inputValue = '';
     /** Whether the last message is streaming (in-progress assistant response). */
@@ -496,23 +496,39 @@ export class CoWriterPanel extends AbstractChatPanel {
 
         const prompt = container.createEl('div', { cls: 'quill-cowriter-init' });
         prompt.createEl('div', { cls: 'quill-cowriter-init-icon', text: '\u270e' });
-        prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Co-writer' });
-        prompt.createEl('div', {
-            cls: 'quill-cowriter-init-desc',
-            text: 'Let the AI read your scene and suggest 3 possible directions to continue.'
-        });
-        const initBtn = prompt.createEl('button', {
-            cls: 'quill-cowriter-init-btn mod-cta',
-            text: 'Initialize from scene'
-        });
-        this.renderEvents.registerDomEvent(initBtn, 'click', () => {
-            if (this.optionsLoading || this.draftState === 'generating') return;
-            this.optionsLoading = true;
-            // Immediate disable — no rAF delay
-            initBtn.disabled = true;
-            this.scheduleRender();
-            this.onGenerateOptions?.('');
-        });
+
+        if (this.inputMode === 'coach') {
+            prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Coach' });
+            prompt.createEl('div', {
+                cls: 'quill-cowriter-init-desc',
+                text: 'Describe what you want this scene to do. The coach asks clarifying questions and helps you shape a direction before any prose is written.'
+            });
+            const startBtn = prompt.createEl('button', {
+                cls: 'quill-cowriter-init-btn mod-cta',
+                text: 'Start coaching'
+            });
+            this.renderEvents.registerDomEvent(startBtn, 'click', () => {
+                this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-input')?.focus();
+            });
+        } else {
+            prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Co-writer' });
+            prompt.createEl('div', {
+                cls: 'quill-cowriter-init-desc',
+                text: 'Let the AI read your scene and suggest 3 possible directions to continue.'
+            });
+            const initBtn = prompt.createEl('button', {
+                cls: 'quill-cowriter-init-btn mod-cta',
+                text: 'Initialize from scene'
+            });
+            this.renderEvents.registerDomEvent(initBtn, 'click', () => {
+                if (this.optionsLoading || this.draftState === 'generating') return;
+                this.optionsLoading = true;
+                // Immediate disable — no rAF delay
+                initBtn.disabled = true;
+                this.scheduleRender();
+                this.onGenerateOptions?.('');
+            });
+        }
     }
 
     /** Render a single option card with label, description, and Apply button. */
