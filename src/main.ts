@@ -17,17 +17,13 @@ import { ContextCache } from './core/context-engine';
 import { extractAllEntities, analyzeVoice, assembleContext } from './core/context-engine';
 import type { ContextAssembly, ContextItem, ExtractedEntity, EntityType } from './core/context-engine/types';
 import { loadQuillContextData, writeQuillContextData, buildQuillContextData, entityFromId } from './utils/frontmatter';
-import { buildFeedbackMessages, getPersonaById, getFeedback, summarizeConversation } from './ai/feedback';
+import { buildFeedbackMessages, getPersonaById, getFeedback } from './ai/feedback';
 import type { ChatMessage } from './ai/provider';
 import { AI_MODE_CONFIGS } from './ai/modes';
-import { CoWriterSession } from './ai/co-writer';
-
-/** Estimate token count from message content using the chars/4 heuristic. */
-function estimateTokens(msgs: ChatMessage[]): number {
-    let total = 0;
-    for (const m of msgs) total += Math.ceil(m.content.length / 4);
-    return total;
-}
+import { CoWriterSession, type GuidancePhase, loadAdditionalContext } from './ai/co-writer';
+import { compactConversation } from './ai/compaction';
+import { estimateTokens } from './utils/tokens';
+import { readVaultFiles } from './utils/vault-files';
 
 /** Generate a content-based fingerprint for a lint result. Uses the flagged
  *  text plus the line it appears on to distinguish multiple instances of the
@@ -971,10 +967,33 @@ export default class EventideQuillPlugin extends Plugin {
                 this.lintPanel.coWriterSetChatHistory(session.chatHistory);
                 this.lintPanel.coWriterSetCurrentOptions(session.currentOptions);
                 this.lintPanel.coWriterSetOptionsLoading(session.optionsLoading);
+                this.lintPanel.coWriterSetGuidancePhase(session.guidanceSession?.phase ?? 'discern');
+                this.lintPanel.coWriterSetGuidanceActive(session.guidanceActive);
             }
         };
         session.onOptionsLoading = (loading: boolean) => {
             this.lintPanel?.coWriterSetOptionsLoading(loading);
+        };
+        session.onTokenEstimate = (conversationTokens: number, maxTokens: number) => {
+            this.lintPanel?.coWriterSetContextTokenEstimate(conversationTokens);
+            this.lintPanel?.coWriterSetMaxAllowedTokens(maxTokens);
+        };
+        session.onDiscussChunk = (text: string) => {
+            this.lintPanel?.coWriterDiscussAppendChunk(text);
+        };
+        session.onDiscussFinished = () => {
+            void this.lintPanel?.coWriterDiscussFinished();
+        };
+        session.onDiscussError = (message: string) => {
+            void this.lintPanel?.coWriterDiscussError(message);
+        };
+        session.onDraftAccepted = () => {
+            // Auto-regenerate fresh options after accepting a draft
+            void this.sendCoWriterOptions('');
+        };
+        session.onGuidanceDirectionReady = () => {
+            // Auto-generate continuation options when plan/direction is reached
+            void this.coWriterSession.guidanceToOptions(this, '');
         };
     }
 
@@ -1018,9 +1037,99 @@ export default class EventideQuillPlugin extends Plugin {
         await this.coWriterSession.sendDiscussion(this, message);
     }
 
+    /**
+     * Send a guidance message to the co-writer.
+     * The AI analyzes the passage and guides the writer through a structured process.
+     */
+    async sendCoWriterGuidance(message: string, phase: string): Promise<void> {
+        this.coWriterSession.manuscriptPath = this.app.workspace.getActiveFile()?.path ?? null;
+        await this.openCoWriterPanel();
+        this.wireCoWriterPanel();
+        await this.coWriterSession.sendGuidance(this, message, phase as GuidancePhase);
+    }
+
+    /**
+     * Transition from guidance mode to option generation.
+     */
+    async coWriterGuidanceToOptions(): Promise<void> {
+        await this.coWriterSession.guidanceToOptions(this, '');
+    }
+
+    /**
+     * End the current guidance session.
+     */
+    endCoWriterGuidance(): void {
+        this.coWriterSession.endGuidanceSession();
+        this.lintPanel?.coWriterSetGuidanceActive(false);
+        this.lintPanel?.coWriterSetGuidancePhase('discern');
+    }
+
+    /**
+     * Write a prose continuation based on the current guidance session state.
+     */
+    async coWriterGuidanceWrite(): Promise<void> {
+        await this.coWriterSession.guidanceWrite(this);
+    }
+
     /** Cancel the current feedback generation request. */
     cancelFeedbackGeneration(): void {
         this.feedbackAbort?.abort();
+    }
+
+    /**
+     * Compact the co-writer conversation history and refresh options.
+     */
+    async compactCoWriter(): Promise<void> {
+        await this.coWriterSession.compactNow(this);
+        await this.sendCoWriterOptions('');
+    }
+
+    /**
+     * Reset the co-writer chat while keeping manuscript and vault context.
+     *
+     * @param clearContext When true, also clears additional chat context files.
+     */
+    resetCoWriterChat(clearContext: boolean): void {
+        this.coWriterSession.resetChat(clearContext);
+        this.lintPanel?.coWriterSetGuidanceActive(false);
+        this.lintPanel?.coWriterSetGuidancePhase('discern');
+        this.lintPanel?.coWriterSetContextTokenEstimate(0);
+        if (clearContext) {
+            this.lintPanel?.coWriterSetAdditionalContextTokens(0);
+        }
+        this.lintPanel?.coWriterRefresh();
+    }
+
+    /**
+     * Reset the feedback chat and return to the Create feedback subtab.
+     */
+    resetFeedbackChat(): void {
+        this.feedbackAbort?.abort();
+        this.feedbackCurrentMessages = [];
+        this.lintPanel?.resetFeedbackResults();
+    }
+
+    /**
+     * Compact the feedback chat conversation history.
+     */
+    async compactFeedback(): Promise<void> {
+        if (this.feedbackCurrentMessages.length <= 1) return;
+
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) return;
+
+        const sentenceCount = Math.max(1, Math.min(20, this.settings.compactSummarySentences));
+
+        try {
+            const result = await compactConversation(chat.provider, this.feedbackCurrentMessages, sentenceCount);
+            if (result) {
+                this.feedbackCurrentMessages = result.messages;
+                this.lintPanel?.feedbackAppendChatSystemMessageInPlace(result.summary);
+            }
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') return;
+            console.warn('Quill: Feedback manual compaction failed.', err);
+        }
     }
 
     /** Accept the current co-writer draft. */
@@ -1034,15 +1143,30 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /** Add a context file to the co-writer session. */
-    addCoWriterContextFile(filePath: string): void {
+    async addCoWriterContextFile(filePath: string): Promise<void> {
         this.coWriterSession.addContextFile(filePath);
+        await this.updateCoWriterAdditionalTokens();
         this.lintPanel?.coWriterRefresh();
     }
 
     /** Remove a context file from the co-writer session. */
-    removeCoWriterContextFile(filePath: string): void {
+    async removeCoWriterContextFile(filePath: string): Promise<void> {
         this.coWriterSession.removeContextFile(filePath);
+        await this.updateCoWriterAdditionalTokens();
         this.lintPanel?.coWriterRefresh();
+    }
+
+    /**
+     * Compute token estimates for additional context files and push to the panel.
+     */
+    private async updateCoWriterAdditionalTokens(): Promise<void> {
+        const files = this.coWriterSession.getContextFiles();
+        if (files.length === 0) {
+            this.lintPanel?.coWriterSetAdditionalContextTokens(0);
+            return;
+        }
+        const messages = await loadAdditionalContext(this, files);
+        this.lintPanel?.coWriterSetAdditionalContextTokens(estimateTokens(messages));
     }
 
     /** Open the sidebar and switch to the Co-writer tab. */
@@ -1119,21 +1243,7 @@ export default class EventideQuillPlugin extends Plugin {
         // Read manuscript files and inject them as system messages.
         // They are NOT stored in feedbackCurrentMessages — injected fresh on
         // every API call so they always survive compaction.
-        const manuscriptMessages: ChatMessage[] = [];
-        for (const filePath of feedbackContextPaths) {
-            try {
-                const file = this.app.vault.getAbstractFileByPath(filePath);
-                if (file instanceof TFile) {
-                    const content = await this.app.vault.cachedRead(file);
-                    manuscriptMessages.push({
-                        role: 'system',
-                        content: `Manuscript (${filePath}):\n${content}`
-                    });
-                }
-            } catch {
-                // Best-effort
-            }
-        }
+        const manuscriptMessages = await readVaultFiles(this.app.vault, feedbackContextPaths, 'Manuscript');
 
         if (manuscriptMessages.length === 0) {
             new Notice('Quill: Could not read any content from the selected manuscripts.');
@@ -1233,37 +1343,13 @@ export default class EventideQuillPlugin extends Plugin {
         const manuscriptPaths = this.lintPanel?.feedbackPanelContextFiles() ?? [];
         const chatContextFilePaths = this.lintPanel?.feedbackChatContextFiles() ?? [];
 
-        const manuscriptMessages: ChatMessage[] = [];
-        for (const filePath of manuscriptPaths) {
-            try {
-                const file = this.app.vault.getAbstractFileByPath(filePath);
-                if (file instanceof TFile) {
-                    const content = await this.app.vault.cachedRead(file);
-                    manuscriptMessages.push({
-                        role: 'system',
-                        content: `Manuscript (${filePath}):\n${content}`
-                    });
-                }
-            } catch {
-                // Best-effort
-            }
-        }
-        const referenceMessages: ChatMessage[] = [];
-        for (const filePath of chatContextFilePaths) {
-            try {
-                const file = this.app.vault.getAbstractFileByPath(filePath);
-                if (file instanceof TFile) {
-                    const content = await this.app.vault.cachedRead(file);
-                    const excerpt = content.slice(0, this.settings.contextMaxCharsPerFile);
-                    referenceMessages.push({
-                        role: 'system',
-                        content: `Reference file (${filePath}):\n${excerpt}`
-                    });
-                }
-            } catch {
-                // Best-effort
-            }
-        }
+        const manuscriptMessages = await readVaultFiles(this.app.vault, manuscriptPaths, 'Manuscript');
+        const referenceMessages = await readVaultFiles(
+            this.app.vault,
+            chatContextFilePaths,
+            'Reference file',
+            this.settings.contextMaxCharsPerFile
+        );
 
         const injectedContext: ChatMessage[] = [...manuscriptMessages, ...referenceMessages];
 
@@ -1285,61 +1371,19 @@ export default class EventideQuillPlugin extends Plugin {
         // Compact if the total (conversation + files + new message) meets or
         // exceeds the threshold percentage of the context window.
         if (totalTokens / maxTokens >= compactPct) {
-            const systemPrompt = this.feedbackCurrentMessages[0]!;
-            const contextHeads: ChatMessage[] = [];
-            let firstChatIdx = 1;
-            while (
-                firstChatIdx < this.feedbackCurrentMessages.length &&
-                this.feedbackCurrentMessages[firstChatIdx]?.role === 'system'
-            ) {
-                contextHeads.push(this.feedbackCurrentMessages[firstChatIdx]!);
-                firstChatIdx++;
-            }
-            const chatTurns = this.feedbackCurrentMessages.slice(firstChatIdx);
-
-            // Need at least 2 chat turns to compact meaningfully.
-            if (chatTurns.length >= 2) {
-                // Keep the last 2 turns so the AI retains immediate context.
-                // Everything older gets summarized. The new user message will
-                // be appended after compaction, ensuring it stays below the
-                // context head.
-                const keepCount = Math.min(2, chatTurns.length);
-                const recentTurns = chatTurns.slice(-keepCount);
-                const toSummarize = [
-                    ...chatTurns.slice(0, -keepCount),
-                    // Include existing contextHeads as user messages so they are
-                    // rolled into the new summary instead of accumulating unchanged.
-                    ...contextHeads.map((head) => ({ role: 'user' as const, content: head.content }))
-                ];
-
-                try {
-                    const sentenceCount = Math.max(1, Math.min(20, this.settings.compactSummarySentences));
-                    const summary = await summarizeConversation(chat.provider, toSummarize, sentenceCount, {
-                        signal: this.feedbackAbort.signal
-                    });
-
-                    if (summary) {
-                        // contextHeads are now consolidated into the new summary.
-                        this.feedbackCurrentMessages = [
-                            systemPrompt,
-                            { role: 'system', content: summary },
-                            ...recentTurns
-                        ];
-
-                        // Show the summary as a context head bubble in the chat
-                        // UI. The full message history remains visible — only the
-                        // API payload is compacted.
-                        this.lintPanel?.feedbackAppendChatSystemMessageInPlace(summary);
-
-                        // Update the indicator with the compacted token count.
-                        this.lintPanel?.feedbackSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
-                    }
-                } catch (err: unknown) {
-                    // If summarization fails, fall through — the conversation continues
-                    // without compaction. The AI may still handle it or error out.
-                    if (err instanceof Error && err.name === 'AbortError') return;
-                    console.warn('Quill: Compaction summarization failed, continuing without compaction.', err);
+            const sentenceCount = Math.max(1, Math.min(20, this.settings.compactSummarySentences));
+            try {
+                const result = await compactConversation(chat.provider, this.feedbackCurrentMessages, sentenceCount, {
+                    signal: this.feedbackAbort.signal
+                });
+                if (result) {
+                    this.feedbackCurrentMessages = result.messages;
+                    this.lintPanel?.feedbackAppendChatSystemMessageInPlace(result.summary);
+                    this.lintPanel?.feedbackSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
                 }
+            } catch (err: unknown) {
+                if (err instanceof Error && err.name === 'AbortError') return;
+                console.warn('Quill: Compaction summarization failed, continuing without compaction.', err);
             }
         }
 

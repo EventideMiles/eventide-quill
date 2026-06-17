@@ -334,6 +334,179 @@ export function getCoWriterGenerationPrompt(
 }
 
 /**
+ * Build a prompt for the guidance mode.
+ * The AI analyzes the passage, asks clarifying questions, and produces
+ * a structured plan with executable direction.
+ */
+export function getCoWriterGuidancePrompt(proseBeforeCursor: string, userIntent?: string): string {
+    const parts: string[] = [
+        'The writer is working on a passage of fiction and needs help figuring out what to do next.',
+        'They may be stuck, uncertain about direction, or want to explore possibilities before committing.',
+        '',
+        'Your job is to guide them through a structured process:',
+        '',
+        'Phase 1 — Intent discernment:',
+        'Analyze the passage and propose what the writer might be trying to achieve.',
+        'Identify the current narrative position, character motivations, and unresolved tension.',
+        'Be specific about what you see working and what feels uncertain.',
+        '',
+        'Phase 2 — Clarifying questions:',
+        'Ask 2-3 targeted clarifying questions. These are REQUIRED — do not skip to analysis or discussion without questions.',
+        'Focus on craft-level questions: What does the scene need? What tension needs resolution?',
+        'What character choice would feel most authentic?',
+        '',
+        'Phase 3 — Plan (after writer responds):',
+        "Based on the writer's answers, create a brief structured plan for the next beat.",
+        'Include: what should happen, why it fits, and how it advances the scene.',
+        '',
+        'Phase 4 — Executable direction:',
+        'Provide a concrete, actionable direction the writer can use immediately.',
+        "This should be specific enough to act on but open enough to preserve the writer's voice.",
+        '',
+        "Start with Phase 1 now. Do not generate all phases at once — wait for the writer's response after each phase.",
+        '',
+        'Do NOT write prose for the writer. Do NOT generate continuation text.',
+        'Stay in guidance mode — you are helping them think, not writing for them.',
+        '',
+        ...(userIntent ? [`The writer's stated intent: ${userIntent}`] : []),
+        '',
+        '--- Passage up to cursor ---',
+        proseBeforeCursor
+    ];
+
+    return parts.join('\n');
+}
+
+/**
+ * Build a follow-up prompt for subsequent guidance phases.
+ * Used after the writer responds to clarifying questions.
+ */
+export function getCoWriterGuidanceFollowUp(
+    proseBeforeCursor: string,
+    writerResponse: string,
+    currentPhase: number,
+    clarifyRound = 0
+): string {
+    const phaseInstructions: string[] = [];
+
+    if (currentPhase === 2) {
+        if (clarifyRound === 1) {
+            phaseInstructions.push(
+                'You are in the clarifying phase.',
+                'You can EITHER:',
+                '1. Ask 1-2 more targeted clarifying questions if you still need information.',
+                '2. Provide a structured plan if you have enough information to proceed.',
+                '',
+                "To ask more questions, respond with questions and wait for the writer's answer.",
+                'To advance, provide a plan with: what should happen next, why it fits, and how it advances the scene.',
+                'Try to conclude after this round if possible.'
+            );
+        } else {
+            phaseInstructions.push(
+                'You are in your final clarifying round.',
+                'Please provide a structured plan for the next beat.',
+                'Include: what should happen, why it fits, and how it advances the scene.'
+            );
+        }
+    } else if (currentPhase === 3) {
+        phaseInstructions.push(
+            'Provide a concrete, actionable direction the writer can use immediately.',
+            "Be specific about what should happen next but preserve the writer's autonomy.",
+            '',
+            'End by asking if the writer wants to proceed with this direction or explore alternatives.'
+        );
+    }
+
+    const parts: string[] = [
+        'The writer has responded to your previous guidance.',
+        'Use their response to advance the guidance process.',
+        ...phaseInstructions,
+        '',
+        "--- Writer's response ---",
+        writerResponse,
+        '',
+        '--- Passage up to cursor ---',
+        proseBeforeCursor
+    ];
+
+    return parts.join('\n');
+}
+
+/**
+ * Build a prompt for revising an existing plan based on writer feedback.
+ * Used when the user provides feedback on a plan or direction.
+ */
+export function getCoWriterGuidanceRevision(
+    proseBeforeCursor: string,
+    writerFeedback: string,
+    currentPlan: string,
+    currentDirection: string
+): string {
+    return [
+        'The writer has reviewed your guidance plan and provided feedback.',
+        'Revise the plan based on their feedback. Be responsive and specific.',
+        '',
+        'Respond with:',
+        '1. Your revised understanding of what the writer needs.',
+        '2. An updated structured plan (what should happen, why, and how it advances the scene).',
+        '3. A concrete, actionable direction the writer can use immediately.',
+        '',
+        'After your response, the writer can accept this plan and generate continuation options from it.',
+        '',
+        '--- Current plan ---',
+        currentPlan,
+        ...(currentDirection ? ['', '--- Current direction ---', currentDirection] : []),
+        '',
+        "--- Writer's feedback ---",
+        writerFeedback,
+        '',
+        '--- Passage up to cursor ---',
+        proseBeforeCursor
+    ].join('\n');
+}
+
+/**
+ * Build a prompt for when the writer wants to proceed with a guidance suggestion.
+ * Produces continuation options based on the guidance plan.
+ */
+export function getCoWriterGuidanceToOptions(
+    proseBeforeCursor: string,
+    guidanceSummary: string,
+    direction: string
+): string {
+    return [
+        'The writer has received guidance and wants to explore continuation options based on that guidance.',
+        'Suggest 3 distinct possible directions the scene could go next.',
+        '',
+        'The guidance provided:',
+        guidanceSummary,
+        '',
+        'For each option, provide:',
+        '- A short label (2-4 words)',
+        '- A 1-2 sentence description of what happens and why it fits the guidance',
+        '',
+        'The options should be:',
+        '- Faithful to the guidance provided',
+        '- Distinct from each other in mood, pacing, or focus',
+        '- Plausible next beats in the scene',
+        '- True to the characters and situation so far',
+        ...(direction ? [`The writer's additional direction: ${direction}`] : []),
+        '',
+        'Output your response as a JSON array of exactly 3 objects:',
+        '[',
+        '  { "label": "short label", "description": "1-2 sentence description" },',
+        '  { "label": "short label", "description": "1-2 sentence description" },',
+        '  { "label": "short label", "description": "1-2 sentence description" }',
+        ']',
+        '',
+        'Output ONLY the JSON array. No introductory text, no explanations.',
+        '',
+        '--- Passage up to cursor ---',
+        proseBeforeCursor
+    ].join('\n');
+}
+
+/**
  * Build a user prompt for the linter AI mode.
  * Includes the rule info, surrounding context, flagged span, and optional custom instruction.
  */

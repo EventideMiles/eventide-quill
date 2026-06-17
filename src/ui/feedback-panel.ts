@@ -1,40 +1,14 @@
-import { App, Component, MarkdownRenderer, Modal, Notice, TFile, SuggestModal } from 'obsidian';
+import { App, MarkdownRenderer, Modal, Notice, TFile } from 'obsidian';
 import { FEEDBACK_PERSONAS } from '../ai/feedback';
+import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
+import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
+import { VaultFileSuggestModal } from './vault-file-suggest-modal';
 
 /** Sub-tabs within the Feedback tab. */
 type FeedbackSubtab = 'create' | 'results';
 
 /** State of the results sub-tab. */
 type ResultsState = 'idle' | 'loading' | 'complete' | 'error';
-
-/** Suggest modal for picking vault files as feedback context. */
-class FileSuggestModal extends SuggestModal<TFile> {
-    private onChoose: (file: TFile) => void;
-    private exclude: Set<string>;
-
-    constructor(app: App, onChoose: (file: TFile) => void, excludePaths: string[] = []) {
-        super(app);
-        this.onChoose = onChoose;
-        this.exclude = new Set(excludePaths);
-        this.setPlaceholder('Select a manuscript to include as context...');
-    }
-
-    getSuggestions(query: string): TFile[] {
-        const files = this.app.vault.getMarkdownFiles();
-        const filtered = files.filter((f) => !this.exclude.has(f.path));
-        if (!query) return filtered;
-        const q = query.toLowerCase();
-        return filtered.filter((f) => f.path.toLowerCase().includes(q));
-    }
-
-    renderSuggestion(file: TFile, el: HTMLElement): void {
-        el.createEl('div', { text: file.path });
-    }
-
-    onChooseSuggestion(file: TFile): void {
-        this.onChoose(file);
-    }
-}
 
 /** Simple modal that prompts for a filename and calls back with the path. */
 class FilenameModal extends Modal {
@@ -76,12 +50,6 @@ class FilenameModal extends Modal {
     }
 }
 
-/** Collapse 3+ consecutive newlines to 2 so markdown rendering
- *  doesn't produce excessive vertical gaps between paragraphs. */
-function normalizeParagraphBreaks(text: string): string {
-    return text.replace(/\n{3,}/g, '\n\n');
-}
-
 /** Truncate the middle of a filename if it exceeds maxWidth characters. */
 function truncateFileName(name: string, maxWidth: number = 24): string {
     if (name.length <= maxWidth) return name;
@@ -92,18 +60,14 @@ function truncateFileName(name: string, maxWidth: number = 24): string {
 /**
  * Renders the Feedback tab in the Quill sidebar with two sub-tabs:
  * "Create feedback" and "Results".
+ * Extends AbstractChatPanel for shared chat infrastructure.
  */
-export class FeedbackPanel {
-    private app: App;
-    private containerEl: HTMLElement | null = null;
-    private renderEvents: Component = new Component();
-
+export class FeedbackPanel extends AbstractChatPanel {
     private subtab: FeedbackSubtab = 'create';
     private resultsState: ResultsState = 'idle';
 
     private contextFilePaths: string[] = [];
     private contextFileTokens: Map<string, number> = new Map();
-    private maxAllowedTokens = 0;
 
     /**
      * Conversation token estimate from the plugin layer. Contains only
@@ -120,30 +84,22 @@ export class FeedbackPanel {
     /** Callback invoked when feedback should be generated. */
     private onGenerate: ((personaId: string, customInstruction?: string) => void) | null = null;
 
-    constructor(app: App) {
-        this.app = app;
-    }
+    /** Follow-up chat messages after the initial report. */
+    private chatHistory: { role: 'user' | 'assistant' | 'system'; content: string }[] = [];
 
-    /** Set or update the container element and re-render. */
-    setContainer(containerEl: HTMLElement): void {
-        this.containerEl = containerEl;
-        this.render();
-        containerEl.addEventListener('keydown', (e: KeyboardEvent) => {
-            if (e.key === 'Escape' && this.chatLoading) {
-                e.preventDefault();
-                this.onCancelGeneration?.();
-            }
-        });
+    private onChatMessage: ((message: string) => void) | null = null;
+
+    /** Files added as persistent context for the entire chat conversation. */
+    private chatContextFiles: string[] = [];
+    private chatContextFileTokens: Map<string, number> = new Map();
+
+    constructor(app: App) {
+        super(app);
     }
 
     /** Register the callback for when feedback should be generated. */
     setGenerateHandler(handler: (personaId: string, customInstruction?: string) => void): void {
         this.onGenerate = handler;
-    }
-
-    /** Set the maximum allowed context tokens (from provider config). */
-    setMaxAllowedTokens(tokens: number): void {
-        this.maxAllowedTokens = tokens;
     }
 
     /**
@@ -236,17 +192,6 @@ export class FeedbackPanel {
         return [...this.contextFilePaths];
     }
 
-    /** Follow-up chat messages after the initial report. */
-    private chatHistory: { role: 'user' | 'assistant' | 'system'; content: string }[] = [];
-    private chatLoading = false;
-    private userScrolledUp = false;
-    private onChatMessage: ((message: string) => void) | null = null;
-    private onCancelGeneration: (() => void) | null = null;
-
-    /** Files added as persistent context for the entire chat conversation. */
-    private chatContextFiles: string[] = [];
-    private chatContextFileTokens: Map<string, number> = new Map();
-
     // --- Streaming lifecycle (called from plugin) ---
 
     startLoading(personaId: string): void {
@@ -317,33 +262,11 @@ export class FeedbackPanel {
         if (this.containerEl) this.render();
     }
 
-    // --- Scroll helpers ---
-
-    private getScrollContainer(): HTMLElement | null {
-        return this.containerEl?.querySelector('.quill-sidebar-content-plain') ?? null;
-    }
-
-    private isScrollAtBottom(): boolean {
-        const c = this.getScrollContainer();
-        if (!c) return true;
-        return c.scrollHeight - c.scrollTop - c.clientHeight < 60;
-    }
-
-    private scrollToBottom(): void {
-        const c = this.getScrollContainer();
-        if (c) c.scrollTop = c.scrollHeight;
-    }
-
     // --- Chat lifecycle (follow-up conversation after the initial report) ---
 
     /** Register the callback for when a chat message is sent. */
     setChatMessageHandler(handler: (message: string) => void): void {
         this.onChatMessage = handler;
-    }
-
-    /** Register the callback for canceling an in-flight generation. */
-    setCancelGenerationHandler(handler: () => void): void {
-        this.onCancelGeneration = handler;
     }
 
     /** Get the list of follow-up chat messages (including system context heads). */
@@ -450,20 +373,10 @@ export class FeedbackPanel {
 
         // Update indicator text (counts from last context head forward)
         const { totalTokens, maxTokens } = this.computeContextTokens();
-        const over = totalTokens > maxTokens;
-        let label = '';
-        const manuscriptCount = this.contextFilePaths.length;
-        const chatCount = this.chatContextFiles.length;
-        if (manuscriptCount > 0) label += `${manuscriptCount} manuscript`;
-        if (chatCount > 0) {
-            if (label) label += ' + ';
-            label += `${chatCount} reference`;
-        }
-        if (!label) label = 'No files in context';
-
+        const label = buildFileLabel(this.contextFilePaths.length, this.chatContextFiles.length);
         const indicator = bottomArea.querySelector('.quill-feedback-chat-ctx-indicator');
         if (indicator) {
-            indicator.setText(`${label} \u00b7 ${totalTokens} / ${maxTokens} tokens${over ? ' (over budget)' : ''}`);
+            indicator.setText(formatTokenIndicatorText(label, totalTokens, maxTokens));
         }
     }
 
@@ -478,19 +391,8 @@ export class FeedbackPanel {
         const indicator = bottomArea.querySelector('.quill-feedback-chat-ctx-indicator');
         if (!indicator) return;
         const { totalTokens, maxTokens } = this.computeContextTokens();
-        const over = totalTokens > maxTokens;
-
-        const manuscriptCount = this.contextFilePaths.length;
-        const chatCount = this.chatContextFiles.length;
-        let label = '';
-        if (manuscriptCount > 0) label += `${manuscriptCount} manuscript`;
-        if (chatCount > 0) {
-            if (label) label += ' + ';
-            label += `${chatCount} reference`;
-        }
-        if (!label) label = 'No files in context';
-
-        indicator.setText(`${label} \u00b7 ${totalTokens} / ${maxTokens} tokens${over ? ' (over budget)' : ''}`);
+        const label = buildFileLabel(this.contextFilePaths.length, this.chatContextFiles.length);
+        indicator.setText(formatTokenIndicatorText(label, totalTokens, maxTokens));
     }
 
     /**
@@ -525,8 +427,7 @@ export class FeedbackPanel {
 
     /** Start loading state for a chat follow-up. State is already set by doSend. */
     chatStartLoading(): void {
-        this.chatLoading = true;
-        this.userScrolledUp = false;
+        super.chatStartLoading();
     }
 
     /** Append a chunk of text to the streaming chat response. */
@@ -551,47 +452,29 @@ export class FeedbackPanel {
     /** Re-render the results tab and wait for async rendering (markdown, etc.) to complete. */
     private async rerenderResultsTab(): Promise<void> {
         if (!this.containerEl) return;
-        this.renderEvents?.unload();
-        this.renderEvents = new Component();
-        this.containerEl.empty();
+        this.unloadAndClearContainer();
         this.renderSubtabBar();
         await this.renderResultsTab();
     }
 
     /** Mark the current chat response as complete. Re-renders to show markdown. */
     async chatFinished(): Promise<void> {
-        const wasAtBottom = this.isScrollAtBottom();
-        const savedScrollTop = this.getScrollContainer()?.scrollTop ?? 0;
-        this.chatLoading = false;
-        await this.rerenderResultsTab();
-        if (wasAtBottom) {
-            this.scrollToBottom();
-        } else {
-            const c = this.getScrollContainer();
-            if (c) {
-                c.scrollTop = Math.min(savedScrollTop, c.scrollHeight - c.clientHeight);
-            }
-        }
+        await this.withScrollRestore(async () => {
+            this.chatLoading = false;
+            await this.rerenderResultsTab();
+        });
     }
 
     /** Show an error in the chat response. */
     async chatError(message: string): Promise<void> {
-        const wasAtBottom = this.isScrollAtBottom();
-        const savedScrollTop = this.getScrollContainer()?.scrollTop ?? 0;
-        this.chatLoading = false;
-        const last = this.chatHistory[this.chatHistory.length - 1];
-        if (last && last.role === 'assistant') {
-            last.content = `Error: ${message}`;
-        }
-        await this.rerenderResultsTab();
-        if (wasAtBottom) {
-            this.scrollToBottom();
-        } else {
-            const c = this.getScrollContainer();
-            if (c) {
-                c.scrollTop = Math.min(savedScrollTop, c.scrollHeight - c.clientHeight);
+        await this.withScrollRestore(async () => {
+            this.chatLoading = false;
+            const last = this.chatHistory[this.chatHistory.length - 1];
+            if (last && last.role === 'assistant') {
+                last.content = `Error: ${message}`;
             }
-        }
+            await this.rerenderResultsTab();
+        });
     }
 
     // --- Token budget computation ---
@@ -625,11 +508,9 @@ export class FeedbackPanel {
 
     // --- Main render ---
 
-    private render(): void {
+    render(): void {
         if (!this.containerEl) return;
-        this.renderEvents?.unload();
-        this.renderEvents = new Component();
-        this.containerEl.empty();
+        this.unloadAndClearContainer();
         this.renderSubtabBar();
         if (this.subtab === 'create') {
             this.renderCreateTab();
@@ -707,7 +588,7 @@ export class FeedbackPanel {
                 const name = filePath.split('/').pop() ?? filePath;
                 item.createEl('span', { cls: 'quill-feedback-file-name', text: name });
                 item.createEl('span', { cls: 'quill-feedback-file-tokens', text: `~${tokens} tokens` });
-                const remove = item.createEl('button', { cls: 'quill-feedback-file-remove', text: '×' });
+                const remove = item.createEl('button', { cls: 'quill-feedback-file-remove', text: '\u00d7' });
                 remove.addEventListener('click', () => this.removeContextFile(filePath));
             }
         }
@@ -718,12 +599,13 @@ export class FeedbackPanel {
         });
         addBtn.addEventListener('click', () => {
             const exclude = [...this.contextFilePaths, ...this.chatContextFiles];
-            new FileSuggestModal(
+            new VaultFileSuggestModal(
                 this.app,
                 (file) => {
                     void this.addContextFile(file.path);
                 },
-                exclude
+                exclude,
+                'Select a manuscript to include as context...'
             ).open();
         });
     }
@@ -898,7 +780,7 @@ export class FeedbackPanel {
             });
             addCtxBtn.addEventListener('click', () => {
                 const exclude = [...this.chatContextFiles, ...this.contextFilePaths];
-                new FileSuggestModal(
+                new VaultFileSuggestModal(
                     this.app,
                     (file) => {
                         void this.addChatContextFile(file.path);
@@ -912,6 +794,18 @@ export class FeedbackPanel {
                 title: 'Save conversation to file'
             });
             saveBtn.addEventListener('click', () => this.saveConversation());
+            const compactBtn = btnRow.createEl('button', {
+                cls: 'quill-feedback-chat-compact',
+                text: '\u00bb\u00bb', // »» compact icon
+                title: 'Compact conversation'
+            });
+            compactBtn.addEventListener('click', () => this.onCompact?.());
+            const newChatBtn = btnRow.createEl('button', {
+                cls: 'quill-feedback-chat-new-chat',
+                text: '\u2713', // ✓ checkmark / new icon
+                title: 'New chat'
+            });
+            newChatBtn.addEventListener('click', () => this.onNewChat?.(false));
             btnRow.createEl('div', { cls: 'quill-feedback-chat-btn-spacer' });
             const actionBtn = btnRow.createEl('button', {
                 cls: `quill-cowriter-send-btn mod-cta${this.chatLoading ? ' quill-cowriter-stop-btn' : ''}`,
@@ -975,32 +869,15 @@ export class FeedbackPanel {
             const ctxIndicator = bottomArea.createDiv({ cls: 'quill-feedback-chat-ctx-indicator' });
             const setIndicatorText = () => {
                 const { totalTokens, maxTokens } = this.computeContextTokens();
-                const over = totalTokens > maxTokens;
-                const manuscriptCount = this.contextFilePaths.length;
-                const chatCount = this.chatContextFiles.length;
-                let label = '';
-                if (manuscriptCount > 0) label += `${manuscriptCount} manuscript`;
-                if (chatCount > 0) {
-                    if (label) label += ' + ';
-                    label += `${chatCount} reference`;
-                }
-                if (!label) label = 'No files in context';
-                ctxIndicator.setText(
-                    `${label} \u00b7 ${totalTokens} / ${maxTokens} tokens${over ? ' (over budget)' : ''}`
-                );
+                const label = buildFileLabel(this.contextFilePaths.length, this.chatContextFiles.length);
+                ctxIndicator.setText(formatTokenIndicatorText(label, totalTokens, maxTokens));
             };
             setIndicatorText();
 
             // Scroll listener: if user scrolls up during streaming, stop auto-follow
             const scrollC = this.getScrollContainer();
             if (scrollC) {
-                scrollC.addEventListener(
-                    'scroll',
-                    () => {
-                        this.userScrolledUp = !this.isScrollAtBottom();
-                    },
-                    { passive: true }
-                );
+                this.registerScrollListener(scrollC);
             }
         }
     }

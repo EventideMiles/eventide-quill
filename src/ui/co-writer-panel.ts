@@ -1,37 +1,12 @@
-import { App, Component, SuggestModal, TFile } from 'obsidian';
+import { App, MarkdownRenderer, TFile } from 'obsidian';
 import type EventideQuillPlugin from '../main';
-import type { DraftState, CoWriterChatMessage, CoWriterOption } from '../ai/co-writer';
+import type { DraftState, CoWriterChatMessage, CoWriterOption, GuidancePhase } from '../ai/co-writer';
+import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
+import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
+import { ConfirmModal } from './confirm-modal';
+import { VaultFileSuggestModal } from './vault-file-suggest-modal';
 
-type InputMode = 'direct' | 'discuss';
-
-/** Suggest modal for picking vault files as additional co-writer context. */
-class CoWriterFileSuggestModal extends SuggestModal<TFile> {
-    private onChoose: (file: TFile) => void;
-    private exclude: Set<string>;
-
-    constructor(app: App, onChoose: (file: TFile) => void, excludePaths: string[] = []) {
-        super(app);
-        this.onChoose = onChoose;
-        this.exclude = new Set(excludePaths);
-        this.setPlaceholder('Select a file to include as context...');
-    }
-
-    getSuggestions(query: string): TFile[] {
-        const files = this.app.vault.getMarkdownFiles();
-        const filtered = files.filter((f) => !this.exclude.has(f.path));
-        if (!query) return filtered;
-        const q = query.toLowerCase();
-        return filtered.filter((f) => f.path.toLowerCase().includes(q));
-    }
-
-    renderSuggestion(file: TFile, el: HTMLElement): void {
-        el.createEl('div', { text: file.path });
-    }
-
-    onChooseSuggestion(file: TFile): void {
-        this.onChoose(file);
-    }
-}
+type InputMode = 'direct' | 'discuss' | 'guidance';
 
 /** Extract a display name from a vault path. */
 function fileNameFromPath(path: string): string {
@@ -54,11 +29,10 @@ function fileNameFromPath(path: string): string {
  *         ├── draft status (accept/revert when applicable)
  *         ├── context pills
  *         └── input row (mode toggle + textarea + send)
+ *
+ * Extends AbstractChatPanel for shared chat infrastructure.
  */
-export class CoWriterPanel {
-    private app: App;
-    private containerEl: HTMLElement | null = null;
-    private renderEvents: Component = new Component();
+export class CoWriterPanel extends AbstractChatPanel {
     private plugin: EventideQuillPlugin;
 
     private draftState: DraftState = 'idle';
@@ -70,6 +44,12 @@ export class CoWriterPanel {
     private inputMode: InputMode = 'direct';
     /** Preserved textarea value across re-renders so user-typed content survives generation. */
     private inputValue = '';
+    /** Whether the last message is streaming (in-progress assistant response). */
+    private discussStreaming = false;
+    /** Current guidance phase, if guidance mode is active. */
+    private guidancePhase: GuidancePhase = 'discern';
+    /** Whether guidance mode is currently active. */
+    private guidanceActive = false;
 
     private onSendMessage: ((direction: string) => void) | null = null;
     private onDiscussMessage: ((message: string) => void) | null = null;
@@ -80,17 +60,33 @@ export class CoWriterPanel {
     private onAddContextFile: ((filePath: string) => void) | null = null;
     private onRemoveContextFile: ((filePath: string) => void) | null = null;
     private onRefreshSuggestions: (() => void) | null = null;
-    private onCancelGeneration: (() => void) | null = null;
+    private onGuidanceMessage: ((message: string, phase: GuidancePhase) => void) | null = null;
+    private onGuidanceToOptions: (() => void) | null = null;
+    private onEndGuidance: (() => void) | null = null;
+    private onAcceptPlan: (() => void) | null = null;
+    private onGuidanceWrite: (() => void) | null = null;
+
+    /**
+     * Conversation token estimate pushed from the plugin layer.
+     * Contains only system prompt + context heads + chat turns.
+     * Vault context item tokens are added separately in computeTotalTokens().
+     */
+    private contextEstimate = 0;
+
+    /**
+     * Token estimate for additional context files (added via the ± button).
+     * Pushed from the plugin layer when files are added or removed.
+     */
+    private additionalContextTokens = 0;
 
     constructor(app: App, plugin: EventideQuillPlugin) {
-        this.app = app;
+        super(app);
         this.plugin = plugin;
     }
 
     setContainer(containerEl: HTMLElement): void {
         this.containerEl = containerEl;
         this.render();
-        // Register global keydown listener on the container for Escape key.
         containerEl.addEventListener('keydown', (e: KeyboardEvent) => {
             this.handleKeydown(e);
         });
@@ -132,8 +128,56 @@ export class CoWriterPanel {
         this.onRefreshSuggestions = handler;
     }
 
-    setCancelGenerationHandler(handler: () => void): void {
-        this.onCancelGeneration = handler;
+    setGuidanceMessageHandler(handler: (message: string, phase: GuidancePhase) => void): void {
+        this.onGuidanceMessage = handler;
+    }
+
+    setGuidanceToOptionsHandler(handler: () => void): void {
+        this.onGuidanceToOptions = handler;
+    }
+
+    setEndGuidanceHandler(handler: () => void): void {
+        this.onEndGuidance = handler;
+    }
+
+    setAcceptPlanHandler(handler: () => void): void {
+        this.onAcceptPlan = handler;
+    }
+
+    setGuidanceWriteHandler(handler: () => void): void {
+        this.onGuidanceWrite = handler;
+    }
+
+    /** Set the current guidance phase. */
+    setGuidancePhase(phase: GuidancePhase): void {
+        this.guidancePhase = phase;
+        this.render();
+    }
+
+    /** Set whether guidance mode is active. */
+    setGuidanceActive(active: boolean): void {
+        this.guidanceActive = active;
+        this.render();
+    }
+
+    /**
+     * Set the conversation token estimate for the token indicator.
+     * Called from the plugin layer with conversation-only tokens
+     * (system prompt + context heads + chat turns). Vault context item
+     * tokens are added on top by computeTotalTokens().
+     */
+    setContextTokenEstimate(tokens: number): void {
+        this.contextEstimate = tokens;
+        this.updateTokenIndicator();
+    }
+
+    /**
+     * Set the additional context file token estimate for the token indicator.
+     * Called from the plugin layer when files are added or removed.
+     */
+    setAdditionalContextTokens(tokens: number): void {
+        this.additionalContextTokens = tokens;
+        this.updateTokenIndicator();
     }
 
     setDraftState(state: DraftState): void {
@@ -168,6 +212,52 @@ export class CoWriterPanel {
         this.scheduleRender();
     }
 
+    /** Mark the discuss response as starting to stream. */
+    discussStartStreaming(): void {
+        this.discussStreaming = true;
+        this.userScrolledUp = false; // Resume auto-follow on new stream
+        // Add a placeholder assistant message
+        const last = this.chatHistory[this.chatHistory.length - 1];
+        if (!last || last.role !== 'assistant') {
+            this.chatHistory.push({ role: 'assistant', content: '' });
+        }
+        this.scheduleRender();
+    }
+
+    /** Append a text chunk to the streaming discuss response. */
+    discussAppendChunk(text: string): void {
+        let last = this.chatHistory[this.chatHistory.length - 1];
+        if (last && last.role === 'assistant') {
+            last.content += text;
+        } else {
+            this.chatHistory.push({ role: 'assistant', content: text });
+            last = this.chatHistory[this.chatHistory.length - 1];
+        }
+        if (!this.containerEl) return;
+        const el = this.containerEl.querySelector('.quill-cowriter-chat-streaming');
+        if (el) el.setText(last?.content ?? '');
+        // Auto-scroll only if the user hasn't scrolled up
+        if (!this.userScrolledUp) {
+            this.scrollToBottom();
+        }
+    }
+
+    /** Mark the discuss response as complete; re-render with markdown. */
+    async discussFinished(): Promise<void> {
+        this.discussStreaming = false;
+        this.scheduleRender();
+    }
+
+    /** Show an error in the last discuss response. */
+    async discussError(message: string): Promise<void> {
+        this.discussStreaming = false;
+        const last = this.chatHistory[this.chatHistory.length - 1];
+        if (last && last.role === 'assistant') {
+            last.content = `Error: ${message}`;
+        }
+        this.scheduleRender();
+    }
+
     private getContextFiles(): string[] {
         return this.plugin.coWriterSession?.getContextFiles() ?? [];
     }
@@ -178,7 +268,7 @@ export class CoWriterPanel {
     }
 
     /** Full rebuild of the panel DOM. */
-    private render(): void {
+    render(): void {
         if (!this.containerEl) return;
 
         // Save scroll positions and textarea focus before destroying DOM
@@ -186,10 +276,7 @@ export class CoWriterPanel {
         const textareaHadFocus =
             this.containerEl.querySelector('.quill-cowriter-input') === window.activeDocument.activeElement;
 
-        this.renderEvents.unload();
-        this.renderEvents = new Component();
-
-        this.containerEl.empty();
+        this.unloadAndClearContainer();
 
         // Thought section during generation (options or draft streaming)
         if ((this.draftState === 'generating' || this.optionsLoading) && this.plugin.settings.enableCoWriterThought) {
@@ -251,57 +338,87 @@ export class CoWriterPanel {
 
         if (this.chatHistory.length === 0 && !this.optionsLoading) {
             this.renderInitializePrompt(scroll);
-            return;
-        }
-
-        for (const msg of this.chatHistory) {
-            if (msg.role === 'user') {
-                const bubble = scroll.createEl('div', { cls: 'quill-cowriter-chat-bubble quill-cowriter-chat-user' });
-                bubble.setText(msg.content);
-            } else if (msg.role === 'assistant') {
-                const bubble = scroll.createEl('div', {
-                    cls: 'quill-cowriter-chat-bubble quill-cowriter-chat-assistant'
-                });
-
-                // Per-message thought/reasoning — start expanded
-                if (msg.thought && this.plugin.settings.enableCoWriterThought) {
-                    const thoughtToggle = bubble.createEl('div', { cls: 'quill-cowriter-message-thought-toggle' });
-                    thoughtToggle.createEl('span', { cls: 'quill-cowriter-thought-icon', text: '\u25bc' });
-                    thoughtToggle.createEl('span', { text: 'AI reasoning' });
-                    const thoughtContent = bubble.createEl('div', {
-                        cls: 'quill-cowriter-message-thought-content',
-                        text: msg.thought
+        } else {
+            for (const msg of this.chatHistory) {
+                if (msg.role === 'user') {
+                    const bubble = scroll.createEl('div', {
+                        cls: 'quill-cowriter-chat-bubble quill-cowriter-chat-user'
                     });
-                    this.renderEvents.registerDomEvent(thoughtToggle, 'click', () => {
-                        const collapsed = thoughtContent.hasClass('quill-cowriter-thought-collapsed');
-                        if (collapsed) {
-                            thoughtContent.removeClass('quill-cowriter-thought-collapsed');
-                            thoughtToggle.querySelector('.quill-cowriter-thought-icon')!.textContent = '\u25bc';
-                        } else {
-                            thoughtContent.addClass('quill-cowriter-thought-collapsed');
-                            thoughtToggle.querySelector('.quill-cowriter-thought-icon')!.textContent = '\u25b6';
-                        }
+                    bubble.setText(msg.content);
+                } else if (msg.role === 'assistant') {
+                    const bubble = scroll.createEl('div', {
+                        cls: 'quill-cowriter-chat-bubble quill-cowriter-chat-assistant'
                     });
-                }
 
-                if (msg.options && msg.options.length > 0) {
-                    bubble.createEl('div', { cls: 'quill-cowriter-options-intro', text: msg.content });
-                    const optionsContainer = bubble.createEl('div', { cls: 'quill-cowriter-options' });
-                    for (let i = 0; i < msg.options.length; i++) {
-                        this.renderOptionCard(optionsContainer, msg.options[i]!, i);
+                    // Per-message thought/reasoning — start expanded
+                    if (msg.thought && this.plugin.settings.enableCoWriterThought) {
+                        const thoughtToggle = bubble.createEl('div', { cls: 'quill-cowriter-message-thought-toggle' });
+                        thoughtToggle.createEl('span', { cls: 'quill-cowriter-thought-icon', text: '\u25bc' });
+                        thoughtToggle.createEl('span', { text: 'AI reasoning' });
+                        const thoughtContent = bubble.createEl('div', {
+                            cls: 'quill-cowriter-message-thought-content',
+                            text: msg.thought
+                        });
+                        this.renderEvents.registerDomEvent(thoughtToggle, 'click', () => {
+                            const collapsed = thoughtContent.hasClass('quill-cowriter-thought-collapsed');
+                            if (collapsed) {
+                                thoughtContent.removeClass('quill-cowriter-thought-collapsed');
+                                thoughtToggle.querySelector('.quill-cowriter-thought-icon')!.textContent = '\u25bc';
+                            } else {
+                                thoughtContent.addClass('quill-cowriter-thought-collapsed');
+                                thoughtToggle.querySelector('.quill-cowriter-thought-icon')!.textContent = '\u25b6';
+                            }
+                        });
                     }
-                } else {
-                    bubble.createEl('div', { cls: 'quill-cowriter-response-text', text: msg.content });
+
+                    if (msg.options && msg.options.length > 0) {
+                        bubble.createEl('div', { cls: 'quill-cowriter-options-intro', text: msg.content });
+                        const optionsContainer = bubble.createEl('div', { cls: 'quill-cowriter-options' });
+                        for (let i = 0; i < msg.options.length; i++) {
+                            this.renderOptionCard(optionsContainer, msg.options[i]!, i);
+                        }
+                    } else {
+                        // Render completed discuss responses as markdown
+                        const isStreaming =
+                            msg === this.chatHistory[this.chatHistory.length - 1] && this.discussStreaming;
+                        const responseEl = bubble.createEl('div', { cls: 'quill-cowriter-response-text' });
+                        if (isStreaming) {
+                            responseEl.addClass('quill-cowriter-chat-streaming');
+                            responseEl.setText(msg.content || '\u2026');
+                        } else {
+                            void MarkdownRenderer.render(
+                                this.app,
+                                normalizeParagraphBreaks(msg.content),
+                                responseEl,
+                                '',
+                                this.renderEvents
+                            );
+                        }
+                    }
+
+                    // Accept button for plan revision
+                    if (msg.showAccept) {
+                        const acceptBtn = bubble.createEl('button', {
+                            cls: 'quill-cowriter-plan-accept mod-cta',
+                            text: 'Accept plan and generate options'
+                        });
+                        this.renderEvents.registerDomEvent(acceptBtn, 'click', () => {
+                            this.onAcceptPlan?.();
+                        });
+                    }
                 }
+            }
+
+            if (this.optionsLoading) {
+                const bubble = scroll.createEl('div', {
+                    cls: 'quill-cowriter-chat-bubble quill-cowriter-chat-assistant quill-cowriter-chat-streaming'
+                });
+                bubble.setText('Thinking...');
             }
         }
 
-        if (this.optionsLoading) {
-            const bubble = scroll.createEl('div', {
-                cls: 'quill-cowriter-chat-bubble quill-cowriter-chat-assistant quill-cowriter-chat-streaming'
-            });
-            bubble.setText('Thinking...');
-        }
+        // Scroll listener: if user scrolls up during streaming, stop auto-follow
+        this.registerScrollListener(scroll);
 
         // Auto-scroll to bottom
         scroll.scrollTop = scroll.scrollHeight;
@@ -398,6 +515,57 @@ export class CoWriterPanel {
             });
         }
 
+        // Guidance mode UI
+        if (this.inputMode === 'guidance') {
+            const guidanceBar = bottom.createEl('div', { cls: 'quill-cowriter-guidance-bar' });
+
+            // Phase indicator
+            const phaseLabel = guidanceBar.createEl('span', { cls: 'quill-cowriter-guidance-phase' });
+            const phaseNames: Record<GuidancePhase, string> = {
+                discern: 'Phase 1: Analyzing intent...',
+                clarify: 'Phase 2: Clarifying questions...',
+                plan: 'Phase 3: Building plan...',
+                direction: 'Phase 4: Executable direction'
+            };
+            phaseLabel.setText(
+                this.guidanceActive ? phaseNames[this.guidancePhase] : 'Guide mode \u2014 AI will analyze your passage'
+            );
+
+            // End guidance button
+            if (this.guidanceActive) {
+                guidanceBar.createEl('span', { text: ' ' });
+                const endBtn = guidanceBar.createEl('button', {
+                    cls: 'quill-cowriter-guidance-end-btn',
+                    text: 'End guidance'
+                });
+                this.renderEvents.registerDomEvent(endBtn, 'click', () => {
+                    this.onEndGuidance?.();
+                });
+
+                // Write guidance button (available at any phase)
+                guidanceBar.createEl('span', { text: ' ' });
+                const writeBtn = guidanceBar.createEl('button', {
+                    cls: 'quill-cowriter-guidance-options-btn',
+                    text: 'Write guidance'
+                });
+                this.renderEvents.registerDomEvent(writeBtn, 'click', () => {
+                    this.onGuidanceWrite?.();
+                });
+
+                // Generate options button (if guidance is complete)
+                if (this.guidancePhase === 'direction') {
+                    guidanceBar.createEl('span', { text: ' ' });
+                    const optionsBtn = guidanceBar.createEl('button', {
+                        cls: 'quill-cowriter-guidance-options-btn',
+                        text: 'Generate options'
+                    });
+                    this.renderEvents.registerDomEvent(optionsBtn, 'click', () => {
+                        this.onGuidanceToOptions?.();
+                    });
+                }
+            }
+        }
+
         // Context file pills
         const contextFiles = this.getContextFiles();
         if (contextFiles.length > 0) {
@@ -417,6 +585,17 @@ export class CoWriterPanel {
 
         // Input row
         this.renderInputRow(bottom);
+
+        // Token indicator — below the input, reflects what the AI sees
+        if (this.maxAllowedTokens > 0) {
+            const totalTokens = this.computeTotalTokens();
+            const vaultContextCount = this.getVaultContextFiles().length;
+            const label = buildFileLabel(contextFiles.length, vaultContextCount);
+            bottom.createEl('div', {
+                cls: 'quill-cowriter-token-indicator',
+                text: formatTokenIndicatorText(label, totalTokens, this.maxAllowedTokens)
+            });
+        }
     }
 
     /** Render the input row with mode toggle, textarea, and send button. */
@@ -427,18 +606,31 @@ export class CoWriterPanel {
         const btnRow = container.createEl('div', { cls: 'quill-cowriter-btn-row' });
 
         const modeBtn = btnRow.createEl('button', {
-            cls: `quill-cowriter-mode-btn${this.inputMode === 'discuss' ? ' quill-cowriter-mode-discuss' : ''}`,
-            text: this.inputMode === 'direct' ? '\u2192 Direct' : '\u2194 Discuss',
+            cls: `quill-cowriter-mode-btn${this.inputMode === 'guidance' ? ' quill-cowriter-mode-guidance' : this.inputMode === 'discuss' ? ' quill-cowriter-mode-discuss' : ''}`,
+            text:
+                this.inputMode === 'direct'
+                    ? '\u2192 Direct'
+                    : this.inputMode === 'discuss'
+                      ? '\u2194 Discuss'
+                      : '\u2728 Guide',
             title:
                 this.inputMode === 'direct'
                     ? 'Direct: AI suggests 3 continuation options'
-                    : 'Discuss: AI responds with thoughts and analysis'
+                    : this.inputMode === 'discuss'
+                      ? 'Discuss: AI responds with thoughts and analysis'
+                      : 'Guide: AI helps you figure out what to do next'
         });
         if (generating) modeBtn.disabled = true;
         this.renderEvents.registerDomEvent(modeBtn, 'click', () => {
             if (generating) return;
-            this.inputMode = this.inputMode === 'direct' ? 'discuss' : 'direct';
-            this.scheduleRender();
+            const modes: InputMode[] = ['direct', 'discuss', 'guidance'];
+            const currentIndex = modes.indexOf(this.inputMode);
+            const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % modes.length : 0;
+            const nextMode = modes[nextIndex];
+            if (nextMode) {
+                this.inputMode = nextMode;
+                this.scheduleRender();
+            }
         });
 
         const addCtxBtn = btnRow.createEl('button', {
@@ -450,7 +642,7 @@ export class CoWriterPanel {
         this.renderEvents.registerDomEvent(addCtxBtn, 'click', () => {
             if (generating) return;
             const activeFile = this.app.workspace.getActiveFile();
-            new CoWriterFileSuggestModal(
+            new VaultFileSuggestModal(
                 this.app,
                 (file: TFile) => {
                     this.onAddContextFile?.(file.path);
@@ -475,6 +667,42 @@ export class CoWriterPanel {
             this.onGenerateOptions?.('');
         });
 
+        // Compact button
+        const compactBtn = btnRow.createEl('button', {
+            cls: 'quill-cowriter-compact-btn',
+            text: '\u00bb\u00bb',
+            title: 'Compact conversation'
+        });
+        if (generating) compactBtn.disabled = true;
+        this.renderEvents.registerDomEvent(compactBtn, 'click', () => {
+            this.onCompact?.();
+        });
+
+        // New chat button
+        const newChatBtn = btnRow.createEl('button', {
+            cls: 'quill-cowriter-new-chat-btn',
+            text: '\u2713',
+            title: 'New chat'
+        });
+        if (generating) newChatBtn.disabled = true;
+        this.renderEvents.registerDomEvent(newChatBtn, 'click', () => {
+            new ConfirmModal(
+                this.app,
+                'New chat',
+                'Start a new chat? The conversation will be cleared. Manuscript and vault context files will be kept.',
+                () => {
+                    this.onNewChat?.(false);
+                },
+                'Keep context',
+                {
+                    text: 'Clear context too',
+                    handler: () => {
+                        this.onNewChat?.(true);
+                    }
+                }
+            ).open();
+        });
+
         // Spacer to push send/stop to the right
         btnRow.createEl('div', { cls: 'quill-cowriter-btn-spacer' });
 
@@ -490,7 +718,9 @@ export class CoWriterPanel {
             placeholder:
                 this.inputMode === 'direct'
                     ? 'Describe what should happen next\u2026'
-                    : 'Discuss the scene, ask questions, brainstorm\u2026'
+                    : this.inputMode === 'guidance'
+                      ? "Describe your intent or answer the AI's questions\u2026"
+                      : 'Discuss the scene, ask questions, brainstorm\u2026'
         });
         input.value = this.inputValue;
 
@@ -503,6 +733,7 @@ export class CoWriterPanel {
             if (this.optionsLoading || this.draftState === 'generating') return;
             const text = input.value.trim();
             if (!text) return;
+            this.userScrolledUp = false; // Resume auto-follow on new message
             this.inputValue = '';
             input.value = '';
             if (this.inputMode === 'direct') {
@@ -516,6 +747,8 @@ export class CoWriterPanel {
             this.scheduleRender();
             if (this.inputMode === 'direct') {
                 this.onSendMessage?.(text);
+            } else if (this.inputMode === 'guidance') {
+                this.onGuidanceMessage?.(text, this.guidancePhase);
             } else {
                 this.onDiscussMessage?.(text);
             }
@@ -550,14 +783,32 @@ export class CoWriterPanel {
         }
     }
 
-    /** Debounce full re-renders. */
-    private renderScheduled = false;
-    private scheduleRender(): void {
-        if (this.renderScheduled) return;
-        this.renderScheduled = true;
-        window.requestAnimationFrame(() => {
-            this.renderScheduled = false;
-            this.render();
-        });
+    /** Recompute the context indicator text in-place (without full re-render). */
+    private updateTokenIndicator(): void {
+        if (!this.containerEl) return;
+        const indicator = this.containerEl.querySelector('.quill-cowriter-token-indicator');
+        if (!indicator) return;
+        if (this.maxAllowedTokens <= 0) return;
+        const contextFiles = this.getContextFiles();
+        const vaultContextCount = this.getVaultContextFiles().length;
+        const label = buildFileLabel(contextFiles.length, vaultContextCount);
+        const totalTokens = this.computeTotalTokens();
+        indicator.setText(formatTokenIndicatorText(label, totalTokens, this.maxAllowedTokens));
+    }
+
+    /**
+     * Compute the total token estimate for the context indicator.
+     * Combines conversation tokens, additional context file tokens, and
+     * vault context item tokens so the full context window usage is shown.
+     */
+    private computeTotalTokens(): number {
+        let total = this.contextEstimate + this.additionalContextTokens;
+        const assembly = this.plugin.currentAssembly;
+        if (assembly) {
+            for (const item of assembly.contextItems) {
+                total += item.tokenEstimate;
+            }
+        }
+        return total;
     }
 }

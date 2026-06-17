@@ -461,3 +461,30 @@ export function ollamaNdjsonLineToChunk(raw: Record<string, unknown>): ChatChunk
 
     return chunk;
 }
+
+/**
+ * Process a stream of ChatChunks by extracting thought content from each chunk's text.
+ * Yields the processed chunks with thought fields populated.
+ * Respects abort signals by returning early if aborted.
+ * @param chunks - The chunks to process (can be async iterable or array).
+ * @param options - Abort signal for early termination.
+ * @yields Processed ChatChunk objects with thought content extracted.
+ */
+export async function* processChunksWithThoughts(
+    chunks: AsyncIterable<ChatChunk> | ChatChunk[],
+    options?: { signal?: AbortSignal }
+): AsyncGenerator<ChatChunk> {
+    let pendingThought = '';
+    for await (const chunk of chunks) {
+        if (options?.signal?.aborted) return;
+        if (chunk.text) {
+            const extracted = extractThoughtContent(chunk.text, pendingThought);
+            chunk.text = extracted.text;
+            if (extracted.thought) {
+                chunk.thought = extracted.thought;
+            }
+            pendingThought = extracted.pendingThought;
+        }
+        yield chunk;
+    }
+}

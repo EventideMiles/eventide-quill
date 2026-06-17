@@ -1,20 +1,31 @@
 import { requestUrl, type RequestUrlResponse } from 'obsidian';
 import {
     AiProvider,
+    buildUrl,
     ChatChunk,
     ChatOptions,
     EmbedOptions,
     EmbedResult,
-    ModelConfig,
     ModelInfo,
     ProviderConfig,
-    ProviderError
+    ProviderError,
+    resolveModel
 } from './provider';
-import { extractThoughtContent, ollamaNdjsonLineToChunk, ollamaNdjsonToChunks, parseNdjsonStream } from './streaming';
-import { HttpError, isStreamingSupported, streamResponse } from './transport';
-
-/** Maximum characters to include in error messages from response bodies. */
-const ERROR_BODY_TRUNCATE_LENGTH = 500;
+import {
+    extractThoughtContent,
+    ollamaNdjsonLineToChunk,
+    ollamaNdjsonToChunks,
+    parseNdjsonStream,
+    processChunksWithThoughts
+} from './streaming';
+import {
+    isStreamingSupported,
+    streamResponseWithCatch,
+    throwOnNonOk,
+    catchErrorResponse,
+    httpErrorResponse,
+    safeGet
+} from './transport';
 
 /** Shape of a single model in the Ollama /api/tags response. */
 interface OllamaTagModel {
@@ -60,51 +71,15 @@ export class OllamaProvider implements AiProvider {
     }
 
     /**
-     * Resolve a model identifier from the provider's config.models list.
-     * If modelId is provided, looks up that specific model. Otherwise uses the
-     * first model with a role matching the given role.
-     */
-    private resolveModel(role: ModelConfig['role'], modelId?: string): ModelConfig {
-        if (modelId) {
-            const found = this.config.models.find((m) => m.id === modelId);
-            if (found) return found;
-            // Treat unknown model IDs as raw model strings
-            return { id: modelId, role, model: modelId };
-        }
-
-        const fallback = this.config.models.find((m) => m.role === role || m.role === 'both');
-        if (!fallback) {
-            throw new ProviderError(
-                `No ${role} model configured for provider "${this.name}". ` +
-                    'Add a model with the appropriate role in settings.',
-                0,
-                ''
-            );
-        }
-
-        return fallback;
-    }
-
-    /**
-     * Build the full URL by appending a path segment to the configured endpoint.
-     * Uses a simple string join with no path normalization.
-     */
-    private buildUrl(path: string): string {
-        const base = this.config.endpoint.replace(/\/+$/, '');
-        const cleanPath = path.startsWith('/') ? path : `/${path}`;
-        return `${base}${cleanPath}`;
-    }
-
-    /**
      * {@inheritDoc AiProvider.chatCompletion}
      *
      * On desktop this streams the NDJSON response incrementally via native fetch.
      * On mobile it falls back to a buffered requestUrl call.
      */
     async *chatCompletion(options: ChatOptions): AsyncGenerator<ChatChunk> {
-        const modelConfig = this.resolveModel('chat', options.model);
+        const modelConfig = resolveModel(this.config.models, 'chat', options.model, this.name);
 
-        const url = this.buildUrl('/api/chat');
+        const url = buildUrl(this.config.endpoint, '/api/chat');
         const body = JSON.stringify({
             model: modelConfig.model,
             messages: options.messages.map((m) => ({
@@ -121,25 +96,12 @@ export class OllamaProvider implements AiProvider {
         const headers = { 'Content-Type': 'application/json' };
 
         if (isStreamingSupported()) {
-            let reader: ReadableStreamDefaultReader<Uint8Array>;
-            try {
-                const result = await streamResponse(url, {
-                    method: 'POST',
-                    headers,
-                    body,
-                    signal: options.signal
-                });
-                reader = result.reader;
-            } catch (err: unknown) {
-                if (err instanceof HttpError) {
-                    throw new ProviderError(
-                        `Chat completion failed (HTTP ${err.status}): ${err.body.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
-                        err.status,
-                        err.body
-                    );
-                }
-                throw err;
-            }
+            const reader = await streamResponseWithCatch(url, {
+                method: 'POST',
+                headers,
+                body,
+                signal: options.signal
+            });
 
             let lastChunkDone = false;
             let pendingThought = '';
@@ -173,13 +135,7 @@ export class OllamaProvider implements AiProvider {
             throw: false
         });
 
-        if (response.status !== 200) {
-            throw new ProviderError(
-                `Chat completion failed (HTTP ${response.status}): ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
-                response.status,
-                response.text
-            );
-        }
+        throwOnNonOk(response, 'Chat completion');
 
         const lines: Record<string, unknown>[] = [];
         for (const line of response.text.split('\n')) {
@@ -195,25 +151,14 @@ export class OllamaProvider implements AiProvider {
         }
 
         const chunks = ollamaNdjsonToChunks(lines);
-
-        let pendingThought = '';
-        for (const chunk of chunks) {
-            if (options.signal?.aborted) return;
-            if (chunk.text) {
-                const extracted = extractThoughtContent(chunk.text, pendingThought);
-                chunk.text = extracted.text;
-                if (extracted.thought) {
-                    chunk.thought = extracted.thought;
-                }
-                pendingThought = extracted.pendingThought;
-            }
+        for await (const chunk of processChunksWithThoughts(chunks, { signal: options.signal })) {
             yield chunk;
         }
     }
 
     /** {@inheritDoc AiProvider.embed} */
     async embed(options: EmbedOptions): Promise<EmbedResult> {
-        const modelConfig = this.resolveModel('embed', options.model);
+        const modelConfig = resolveModel(this.config.models, 'embed', options.model, this.name);
 
         if (Array.isArray(options.input)) {
             throw new ProviderError(
@@ -225,7 +170,7 @@ export class OllamaProvider implements AiProvider {
             );
         }
 
-        const url = this.buildUrl('/api/embeddings');
+        const url = buildUrl(this.config.endpoint, '/api/embeddings');
         const body = JSON.stringify({
             model: modelConfig.model,
             prompt: options.input
@@ -239,13 +184,7 @@ export class OllamaProvider implements AiProvider {
             throw: false
         });
 
-        if (response.status !== 200) {
-            throw new ProviderError(
-                `Embedding request failed (HTTP ${response.status}): ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
-                response.status,
-                response.text
-            );
-        }
+        throwOnNonOk(response, 'Embedding request');
 
         const data = response.json as OllamaEmbedResponse;
 
@@ -282,37 +221,28 @@ export class OllamaProvider implements AiProvider {
 
     /** {@inheritDoc AiProvider.listModels} */
     async listModels(): Promise<ModelInfo[]> {
-        const url = this.buildUrl('/api/tags');
+        const url = buildUrl(this.config.endpoint, '/api/tags');
+        const response = await safeGet(url);
 
-        try {
-            const response: RequestUrlResponse = await requestUrl({
-                url,
-                method: 'GET',
-                throw: false
-            });
-
-            if (response.status !== 200) {
-                return [];
-            }
-
-            const data = response.json as OllamaTagsResponse;
-
-            if (!data.models || !Array.isArray(data.models)) {
-                return [];
-            }
-
-            return data.models.map((item: OllamaTagModel) => ({
-                id: item.name,
-                ownedBy: item.details?.family ?? 'ollama'
-            }));
-        } catch {
+        if (!response || response.status !== 200) {
             return [];
         }
+
+        const data = response.json as OllamaTagsResponse;
+
+        if (!data.models || !Array.isArray(data.models)) {
+            return [];
+        }
+
+        return data.models.map((item: OllamaTagModel) => ({
+            id: item.name,
+            ownedBy: item.details?.family ?? 'ollama'
+        }));
     }
 
     /** {@inheritDoc AiProvider.testConnection} */
     async testConnection(): Promise<{ ok: boolean; error?: string }> {
-        const url = this.buildUrl('/api/tags');
+        const url = buildUrl(this.config.endpoint, '/api/tags');
 
         try {
             const response: RequestUrlResponse = await requestUrl({
@@ -325,23 +255,19 @@ export class OllamaProvider implements AiProvider {
                 return { ok: true };
             }
 
-            return {
-                ok: false,
-                error: `HTTP ${response.status}: ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`
-            };
+            return httpErrorResponse(response);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            return {
-                ok: false,
-                error: `Connection failed: ${message}. Make sure Ollama is running and your endpoint URL is correct (e.g., http://localhost:11434).`
-            };
+            return catchErrorResponse(
+                err,
+                'Connection failed. Make sure Ollama is running and your endpoint URL is correct (e.g., http://localhost:11434)'
+            );
         }
     }
 
     /** {@inheritDoc AiProvider.testEmbeddings} */
     async testEmbeddings(): Promise<{ ok: boolean; error?: string }> {
-        const modelConfig = this.resolveModel('embed');
-        const url = this.buildUrl('/api/embeddings');
+        const modelConfig = resolveModel(this.config.models, 'embed', undefined, this.name);
+        const url = buildUrl(this.config.endpoint, '/api/embeddings');
 
         const body = JSON.stringify({
             model: modelConfig.model,
@@ -361,13 +287,9 @@ export class OllamaProvider implements AiProvider {
                 return { ok: true };
             }
 
-            return {
-                ok: false,
-                error: `HTTP ${response.status}: ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`
-            };
+            return httpErrorResponse(response);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            return { ok: false, error: `Embeddings test failed: ${message}` };
+            return catchErrorResponse(err, 'Embeddings test failed');
         }
     }
 }

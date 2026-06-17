@@ -1,14 +1,15 @@
 import { requestUrl, type RequestUrlResponse } from 'obsidian';
 import {
     AiProvider,
+    buildUrl,
     ChatChunk,
     ChatOptions,
     EmbedOptions,
     EmbedResult,
-    ModelConfig,
     ModelInfo,
     ProviderConfig,
-    ProviderError
+    ProviderError,
+    resolveModel
 } from './provider';
 import {
     extractThoughtContent,
@@ -16,12 +17,17 @@ import {
     openAiSseDataToChunk,
     OpenAiSseData,
     parseSseEvents,
-    parseSseStream
+    parseSseStream,
+    processChunksWithThoughts
 } from './streaming';
-import { HttpError, isStreamingSupported, streamResponse } from './transport';
-
-/** Maximum characters to include in error messages from response bodies. */
-const ERROR_BODY_TRUNCATE_LENGTH = 500;
+import {
+    isStreamingSupported,
+    streamResponseWithCatch,
+    throwOnNonOk,
+    catchErrorResponse,
+    httpErrorResponse,
+    safeGet
+} from './transport';
 
 /** Shape of a single item in the OpenAI models endpoint response. */
 interface OpenAiModelItem {
@@ -62,32 +68,6 @@ export class OpenAiCompatibleProvider implements AiProvider {
     }
 
     /**
-     * Resolve a model identifier from the provider's config.models list.
-     * If modelId is provided, looks up that specific model. Otherwise uses the
-     * first model with a role matching the given role.
-     */
-    private resolveModel(role: ModelConfig['role'], modelId?: string): ModelConfig {
-        if (modelId) {
-            const found = this.config.models.find((m) => m.id === modelId);
-            if (found) return found;
-            // If the modelId isn't found in our config, treat it as a raw model string
-            return { id: modelId, role, model: modelId };
-        }
-
-        const fallback = this.config.models.find((m) => m.role === role || m.role === 'both');
-        if (!fallback) {
-            throw new ProviderError(
-                `No ${role} model configured for provider "${this.name}". ` +
-                    'Add a model with the appropriate role in settings.',
-                0,
-                ''
-            );
-        }
-
-        return fallback;
-    }
-
-    /**
      * Build the common headers for API requests.
      * Omits the Authorization header if no API key is configured.
      */
@@ -104,26 +84,15 @@ export class OpenAiCompatibleProvider implements AiProvider {
     }
 
     /**
-     * Build the full URL by appending a path segment to the configured endpoint.
-     * Uses a simple string join — no path normalization, no trailing-slash stripping.
-     * This preserves the user's endpoint URL exactly as they entered it.
-     */
-    private buildUrl(path: string): string {
-        const base = this.config.endpoint.replace(/\/+$/, '');
-        const cleanPath = path.startsWith('/') ? path : `/${path}`;
-        return `${base}${cleanPath}`;
-    }
-
-    /**
      * {@inheritDoc AiProvider.chatCompletion}
      *
      * On desktop this streams the SSE response incrementally via native fetch.
      * On mobile it falls back to a buffered requestUrl call.
      */
     async *chatCompletion(options: ChatOptions): AsyncGenerator<ChatChunk> {
-        const modelConfig = this.resolveModel('chat', options.model);
+        const modelConfig = resolveModel(this.config.models, 'chat', options.model, this.name);
 
-        const url = this.buildUrl('/chat/completions');
+        const url = buildUrl(this.config.endpoint, '/chat/completions');
         const headers = this.buildHeaders();
 
         const body = JSON.stringify({
@@ -138,25 +107,12 @@ export class OpenAiCompatibleProvider implements AiProvider {
         });
 
         if (isStreamingSupported()) {
-            let reader: ReadableStreamDefaultReader<Uint8Array>;
-            try {
-                const result = await streamResponse(url, {
-                    method: 'POST',
-                    headers,
-                    body,
-                    signal: options.signal
-                });
-                reader = result.reader;
-            } catch (err: unknown) {
-                if (err instanceof HttpError) {
-                    throw new ProviderError(
-                        `Chat completion failed (HTTP ${err.status}): ${err.body.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
-                        err.status,
-                        err.body
-                    );
-                }
-                throw err;
-            }
+            const reader = await streamResponseWithCatch(url, {
+                method: 'POST',
+                headers,
+                body,
+                signal: options.signal
+            });
 
             let pendingThought = '';
             for await (const event of parseSseStream(reader, options.signal)) {
@@ -199,37 +155,20 @@ export class OpenAiCompatibleProvider implements AiProvider {
             throw: false
         });
 
-        if (response.status !== 200) {
-            throw new ProviderError(
-                `Chat completion failed (HTTP ${response.status}): ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
-                response.status,
-                response.text
-            );
-        }
+        throwOnNonOk(response, 'Chat completion');
 
         const events = parseSseEvents(response.text);
         const chunks = openAiEventsToChunks(events);
-
-        let pendingThought = '';
-        for (const chunk of chunks) {
-            if (options.signal?.aborted) return;
-            if (chunk.text) {
-                const extracted = extractThoughtContent(chunk.text, pendingThought);
-                chunk.text = extracted.text;
-                if (extracted.thought && !chunk.thought) {
-                    chunk.thought = extracted.thought;
-                }
-                pendingThought = extracted.pendingThought;
-            }
+        for await (const chunk of processChunksWithThoughts(chunks, { signal: options.signal })) {
             yield chunk;
         }
     }
 
     /** {@inheritDoc AiProvider.embed} */
     async embed(options: EmbedOptions): Promise<EmbedResult> {
-        const modelConfig = this.resolveModel('embed', options.model);
+        const modelConfig = resolveModel(this.config.models, 'embed', options.model, this.name);
 
-        const url = this.buildUrl('/embeddings');
+        const url = buildUrl(this.config.endpoint, '/embeddings');
         const headers = this.buildHeaders();
 
         const body = JSON.stringify({
@@ -245,13 +184,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
             throw: false
         });
 
-        if (response.status !== 200) {
-            throw new ProviderError(
-                `Embedding request failed (HTTP ${response.status}): ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`,
-                response.status,
-                response.text
-            );
-        }
+        throwOnNonOk(response, 'Embedding request');
 
         const data = response.json as {
             data?: EmbeddingDataItem[];
@@ -290,43 +223,34 @@ export class OpenAiCompatibleProvider implements AiProvider {
 
     /** {@inheritDoc AiProvider.listModels} */
     async listModels(): Promise<ModelInfo[]> {
-        const url = this.buildUrl('/models');
+        const url = buildUrl(this.config.endpoint, '/models');
         const headers: Record<string, string> = {};
 
         if (this.config.apiKey) {
             headers['Authorization'] = `Bearer ${this.config.apiKey}`;
         }
 
-        try {
-            const response: RequestUrlResponse = await requestUrl({
-                url,
-                method: 'GET',
-                headers,
-                throw: false
-            });
+        const response = await safeGet(url, headers);
 
-            if (response.status !== 200) {
-                return [];
-            }
-
-            const data = response.json as { data?: OpenAiModelItem[] };
-
-            if (!data.data || !Array.isArray(data.data)) {
-                return [];
-            }
-
-            return data.data.map((item: OpenAiModelItem) => ({
-                id: item.id,
-                ownedBy: item.owned_by
-            }));
-        } catch {
+        if (!response || response.status !== 200) {
             return [];
         }
+
+        const data = response.json as { data?: OpenAiModelItem[] };
+
+        if (!data.data || !Array.isArray(data.data)) {
+            return [];
+        }
+
+        return data.data.map((item: OpenAiModelItem) => ({
+            id: item.id,
+            ownedBy: item.owned_by
+        }));
     }
 
     /** {@inheritDoc AiProvider.testConnection} */
     async testConnection(): Promise<{ ok: boolean; error?: string }> {
-        const url = this.buildUrl('/chat/completions');
+        const url = buildUrl(this.config.endpoint, '/chat/completions');
         const headers = this.buildHeaders();
 
         const chatModel = this.config.models.find((m) => m.role === 'chat' || m.role === 'both');
@@ -352,23 +276,19 @@ export class OpenAiCompatibleProvider implements AiProvider {
                 return { ok: true };
             }
 
-            return {
-                ok: false,
-                error: `HTTP ${response.status}: ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`
-            };
+            return httpErrorResponse(response);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            return {
-                ok: false,
-                error: `Connection failed: ${message}. Make sure your endpoint URL is the full base path (e.g., http://localhost:1234/v1).`
-            };
+            return catchErrorResponse(
+                err,
+                'Connection failed. Make sure your endpoint URL is the full base path (e.g., http://localhost:1234/v1)'
+            );
         }
     }
 
     /** {@inheritDoc AiProvider.testEmbeddings} */
     async testEmbeddings(): Promise<{ ok: boolean; error?: string }> {
-        const modelConfig = this.resolveModel('embed');
-        const url = this.buildUrl('/embeddings');
+        const modelConfig = resolveModel(this.config.models, 'embed', undefined, this.name);
+        const url = buildUrl(this.config.endpoint, '/embeddings');
         const headers = this.buildHeaders();
 
         const body = JSON.stringify({
@@ -389,13 +309,9 @@ export class OpenAiCompatibleProvider implements AiProvider {
                 return { ok: true };
             }
 
-            return {
-                ok: false,
-                error: `HTTP ${response.status}: ${response.text.slice(0, ERROR_BODY_TRUNCATE_LENGTH)}`
-            };
+            return httpErrorResponse(response);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            return { ok: false, error: `Embeddings test failed: ${message}` };
+            return catchErrorResponse(err, 'Embeddings test failed');
         }
     }
 }

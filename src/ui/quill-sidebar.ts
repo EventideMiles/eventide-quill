@@ -7,7 +7,7 @@ import { FixWithAiModal } from './fix-with-ai-modal';
 import { renderContextTab } from './context-panel';
 import { FeedbackPanel } from './feedback-panel';
 import { CoWriterPanel } from './co-writer-panel';
-import type { CoWriterChatMessage, CoWriterOption, DraftState } from '../ai/co-writer';
+import type { CoWriterChatMessage, CoWriterOption, DraftState, GuidancePhase } from '../ai/co-writer';
 import type EventideQuillPlugin from '../main';
 import type { ContextAssembly } from '../core/context-engine/types';
 
@@ -307,6 +307,12 @@ export class QuillSidebarView extends ItemView {
             this.feedbackPanel.setCancelGenerationHandler(() => {
                 this.plugin.cancelFeedbackGeneration();
             });
+            this.feedbackPanel.setCompactHandler(() => {
+                void this.plugin.compactFeedback();
+            });
+            this.feedbackPanel.setNewChatHandler(() => {
+                this.plugin.resetFeedbackChat();
+            });
         }
         const chat = this.plugin.getDefaultChatProvider();
         if (chat.provider) {
@@ -357,10 +363,10 @@ export class QuillSidebarView extends ItemView {
                 }
             });
             this.coWriterPanel.setAddContextFileHandler((filePath: string) => {
-                this.plugin.addCoWriterContextFile(filePath);
+                void this.plugin.addCoWriterContextFile(filePath);
             });
             this.coWriterPanel.setRemoveContextFileHandler((filePath: string) => {
-                this.plugin.removeCoWriterContextFile(filePath);
+                void this.plugin.removeCoWriterContextFile(filePath);
             });
             this.coWriterPanel.setGenerateOptionsHandler((direction: string) => {
                 void this.plugin.sendCoWriterOptions(direction);
@@ -370,6 +376,27 @@ export class QuillSidebarView extends ItemView {
             });
             this.coWriterPanel.setCancelGenerationHandler(() => {
                 this.plugin.coWriterSession.cancelGeneration();
+            });
+            this.coWriterPanel.setCompactHandler(() => {
+                void this.plugin.compactCoWriter();
+            });
+            this.coWriterPanel.setNewChatHandler((clearContext: boolean) => {
+                this.plugin.resetCoWriterChat(clearContext);
+            });
+            this.coWriterPanel.setGuidanceMessageHandler((message: string, phase: string) => {
+                void this.plugin.sendCoWriterGuidance(message, phase);
+            });
+            this.coWriterPanel.setGuidanceToOptionsHandler(() => {
+                void this.plugin.coWriterGuidanceToOptions();
+            });
+            this.coWriterPanel.setEndGuidanceHandler(() => {
+                this.plugin.endCoWriterGuidance();
+            });
+            this.coWriterPanel.setAcceptPlanHandler(() => {
+                void this.plugin.coWriterGuidanceToOptions();
+            });
+            this.coWriterPanel.setGuidanceWriteHandler(() => {
+                void this.plugin.coWriterGuidanceWrite();
             });
         }
 
@@ -381,6 +408,14 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setChatHistory(session.chatHistory);
             this.coWriterPanel.setCurrentOptions(session.currentOptions);
             this.coWriterPanel.setOptionsLoading(session.optionsLoading);
+            this.coWriterPanel.setGuidancePhase(session.guidanceSession?.phase ?? 'discern');
+            this.coWriterPanel.setGuidanceActive(session.guidanceActive);
+        }
+
+        // Set provider context limit (same pattern as feedback panel init)
+        const chat = this.plugin.getDefaultChatProvider();
+        if (chat.provider) {
+            this.coWriterPanel.setMaxAllowedTokens(chat.provider.config.maxContextTokens);
         }
 
         this.coWriterPanel.setContainer(this.content);
@@ -438,6 +473,11 @@ export class QuillSidebarView extends ItemView {
         this.feedbackPanel?.replaceChatHistory(history);
     }
 
+    /** Reset feedback results and return to the Create feedback subtab. */
+    resetFeedbackResults(): void {
+        this.feedbackPanel?.resetResults();
+    }
+
     /** Push thought content to the Co-writer panel. */
     coWriterSetThoughtContent(thought: string): void {
         this.coWriterPanel?.setThoughtContent(thought);
@@ -468,6 +508,52 @@ export class QuillSidebarView extends ItemView {
         if (this.activeTopTab === 'cowriter') {
             this.render();
         }
+    }
+
+    /** Set the maximum allowed context tokens for the Co-writer token indicator. */
+    coWriterSetMaxAllowedTokens(tokens: number): void {
+        this.coWriterPanel?.setMaxAllowedTokens(tokens);
+    }
+
+    /** Set the conversation token estimate for the Co-writer token indicator.
+     * The panel adds vault context item tokens on top to compute the total. */
+    coWriterSetContextTokenEstimate(tokens: number): void {
+        this.coWriterPanel?.setContextTokenEstimate(tokens);
+    }
+
+    /** Set the additional context file token estimate for the Co-writer token indicator. */
+    coWriterSetAdditionalContextTokens(tokens: number): void {
+        this.coWriterPanel?.setAdditionalContextTokens(tokens);
+    }
+
+    /** Start streaming a discuss response. */
+    coWriterDiscussStartStreaming(): void {
+        this.coWriterPanel?.discussStartStreaming();
+    }
+
+    /** Append a chunk of text to the streaming discuss response. */
+    coWriterDiscussAppendChunk(text: string): void {
+        this.coWriterPanel?.discussAppendChunk(text);
+    }
+
+    /** Mark the discuss response as complete; re-render with markdown. */
+    async coWriterDiscussFinished(): Promise<void> {
+        await this.coWriterPanel?.discussFinished();
+    }
+
+    /** Show an error in the discuss response. */
+    async coWriterDiscussError(message: string): Promise<void> {
+        await this.coWriterPanel?.discussError(message);
+    }
+
+    /** Set the guidance phase in the co-writer panel. */
+    coWriterSetGuidancePhase(phase: string): void {
+        this.coWriterPanel?.setGuidancePhase(phase as GuidancePhase);
+    }
+
+    /** Set whether guidance mode is active. */
+    coWriterSetGuidanceActive(active: boolean): void {
+        this.coWriterPanel?.setGuidanceActive(active);
     }
 
     /** Get the chat context file paths from the Feedback panel. */

@@ -104,6 +104,55 @@ export class ProviderError extends Error {
     }
 }
 
+/**
+ * Resolve a model identifier from a provider's models list.
+ * If modelId is provided, looks up that specific model. Otherwise returns the
+ * first model with a role matching the given role (or 'both').
+ * @param models - The provider's models array.
+ * @param role   - The required model role.
+ * @param modelId - Optional specific model ID to look up.
+ * @param name   - Provider display name (used in error messages).
+ * @returns The resolved ModelConfig.
+ * @throws ProviderError if no matching model is found.
+ */
+export function resolveModel(
+    models: ModelConfig[],
+    role: ModelConfig['role'],
+    modelId: string | undefined,
+    name: string
+): ModelConfig {
+    if (modelId) {
+        const found = models.find((m) => m.id === modelId);
+        if (found) return found;
+        return { id: modelId, role, model: modelId };
+    }
+
+    const fallback = models.find((m) => m.role === role || m.role === 'both');
+    if (!fallback) {
+        throw new ProviderError(
+            `No ${role} model configured for provider "${name}". ` +
+                'Add a model with the appropriate role in settings.',
+            0,
+            ''
+        );
+    }
+
+    return fallback;
+}
+
+/**
+ * Build a full URL by appending a path segment to the configured endpoint.
+ * Strips trailing slashes from the base and ensures the path starts with '/'.
+ * @param endpoint - The provider's base endpoint URL.
+ * @param path     - The API path segment (with or without leading '/').
+ * @returns The full URL.
+ */
+export function buildUrl(endpoint: string, path: string): string {
+    const base = endpoint.replace(/\/+$/, '');
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    return `${base}${cleanPath}`;
+}
+
 /** Pluggable AI provider interface. Every concrete provider implements this contract. */
 export interface AiProvider {
     /** Matches ProviderConfig.id. */

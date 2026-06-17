@@ -1733,6 +1733,13 @@ button.quill-cowriter-revert-btn {
     line-height: 1;
 }
 
+.quill-cowriter-token-indicator {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    padding: 4px 0 2px 0;
+    text-align: center;
+}
+
 .quill-cowriter-ctx-remove:hover {
     color: var(--text-normal);
 }
@@ -1923,4 +1930,146 @@ button.quill-cowriter-init-btn {
 
 button.quill-cowriter-init-btn:hover {
     opacity: 0.85;
+}
+
+/* Guidance mode UI */
+.quill-cowriter-guidance-bar {
+    display: flex;
+    align-items: center;
+    padding: 6px 8px;
+    font-size: var(--font-smallest);
+    color: var(--text-muted);
+    border-top: 1px solid var(--background-modifier-border);
+    margin-top: 4px;
+}
+
+.quill-cowriter-guidance-phase {
+    font-style: italic;
+    color: var(--text-accent);
+    font-weight: 500;
+}
+
+button.quill-cowriter-guidance-end-btn {
+    background: var(--background-modifier-form-field);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: var(--font-smallest);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.1s;
+}
+
+button.quill-cowriter-guidance-end-btn:hover {
+    background: var(--background-modifier-border);
+    color: var(--text-normal);
+}
+
+button.quill-cowriter-guidance-options-btn {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border: none;
+    border-radius: 4px;
+    padding: 2px 10px;
+    font-size: var(--font-smallest);
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.1s;
+}
+
+button.quill-cowriter-guidance-options-btn:hover {
+    opacity: 0.85;
+}
+
+button.quill-cowriter-plan-accept {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border: none;
+    border-radius: 4px;
+    padding: 4px 12px;
+    margin-top: 10px;
+    font-size: var(--font-small);
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.1s;
+}
+
+button.quill-cowriter-plan-accept:hover {
+    opacity: 0.85;
+}
+
+/* Compact button for co-writer panel */
+button.quill-cowriter-compact-btn {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: var(--font-ui-smaller);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    transition: background 0.1s, color 0.1s;
+    height: 36px;
+    line-height: 1.4;
+    box-sizing: border-box;
+    flex-shrink: 0;
+}
+
+button.quill-cowriter-compact-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+/* Compact button for feedback panel */
+.quill-feedback-chat-compact {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: var(--font-ui-smaller);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    transition: background 0.1s, color 0.1s;
+    height: 36px;
+    line-height: 1.4;
+    box-sizing: border-box;
+    flex-shrink: 0;
+}
+
+.quill-feedback-chat-compact:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+/* New chat buttons (shared between feedback and co-writer panels) */
+button.quill-cowriter-new-chat-btn,
+.quill-feedback-chat-new-chat {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: var(--font-ui-smaller);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    transition: background 0.1s, color 0.1s;
+    height: 36px;
+    line-height: 1.4;
+    box-sizing: border-box;
+    flex-shrink: 0;
+}
+
+button.quill-cowriter-new-chat-btn:hover,
+.quill-feedback-chat-new-chat:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+/* Confirm modal button row */
+.quill-confirm-btn-row {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
 }
