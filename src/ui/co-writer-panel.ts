@@ -620,7 +620,7 @@ export class CoWriterPanel extends AbstractChatPanel {
                 this.scheduleRender();
                 // Defer to the next frame so the browser paints the button change
                 // before the async sweep work blocks the main thread.
-                window.requestAnimationFrame(() => this.onRunFulfill?.(''));
+                window.setTimeout(() => this.onRunFulfill?.(''));
             });
         } else {
             prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Direct' });
@@ -1013,7 +1013,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             if (this.inputMode === 'direct') {
                 this.onSendMessage?.(text);
             } else if (this.inputMode === 'fulfill') {
-                window.requestAnimationFrame(() => this.onRunFulfill?.(text));
+                window.setTimeout(() => this.onRunFulfill?.(text));
             } else if (this.inputMode === 'coach') {
                 this.onCoachMessage?.(text, this.coachPhase);
             } else {
