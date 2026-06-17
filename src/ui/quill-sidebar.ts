@@ -353,16 +353,6 @@ export class QuillSidebarView extends ItemView {
                     new Notice('Quill: Open a manuscript to use the co-writer.');
                 }
             });
-            this.coWriterPanel.setAcceptHandler(() => {
-                this.plugin.acceptCoWriterDraft();
-            });
-            this.coWriterPanel.setRevertHandler(() => {
-                const manuscriptPath = this.plugin.coWriterSession.manuscriptPath;
-                const view = findEditorView(this.app, manuscriptPath);
-                if (view) {
-                    this.plugin.revertCoWriterDraft(view.editor);
-                }
-            });
             this.coWriterPanel.setAddContextFileHandler((filePath: string) => {
                 void this.plugin.addCoWriterContextFile(filePath);
             });

@@ -31,7 +31,6 @@ export interface EventideQuillSettings {
     aiDefaultChatProvider: string;
     aiDefaultEmbedProvider: string;
     transformTemperature: number;
-    transformAppendNewline: boolean;
     transformVaultContext: boolean;
     transformMaxOutputTokens: number;
     narrativeVoicePreset: NarrativeVoicePreset;
@@ -96,7 +95,6 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     aiDefaultChatProvider: 'local-default/local-chat',
     aiDefaultEmbedProvider: 'local-default/local-embed',
     transformTemperature: 1.0,
-    transformAppendNewline: true,
     transformVaultContext: true,
     transformMaxOutputTokens: 4096,
     narrativeVoicePreset: 'third-limited',
@@ -1022,18 +1020,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     })
             );
 
-        new Setting(containerEl)
-            .setName('Append trailing blank line')
-            .setDesc(
-                'Add a blank line after the transformed text so you can continue writing without pressing enter twice.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.transformAppendNewline).onChange(async (value) => {
-                    this.plugin.settings.transformAppendNewline = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
         new Setting(containerEl).setName('Co-writer').setHeading();
 
         new Setting(containerEl)
@@ -1325,7 +1311,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addButton((button) =>
                 button.setButtonText('Restore defaults').onClick(async () => {
                     this.plugin.settings.transformTemperature = DEFAULT_SETTINGS.transformTemperature;
-                    this.plugin.settings.transformAppendNewline = DEFAULT_SETTINGS.transformAppendNewline;
                     this.plugin.settings.transformVaultContext = DEFAULT_SETTINGS.transformVaultContext;
                     this.plugin.settings.transformMaxOutputTokens = DEFAULT_SETTINGS.transformMaxOutputTokens;
                     this.plugin.settings.narrativeVoicePreset = DEFAULT_SETTINGS.narrativeVoicePreset;

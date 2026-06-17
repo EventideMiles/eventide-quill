@@ -31,13 +31,7 @@ import { compactConversation } from './ai/compaction';
 import { estimateTokens } from './utils/tokens';
 import { readVaultFileText } from './utils/vault-files';
 import { parseDirectives } from './utils/directives';
-import {
-    getChangeDiffExtension,
-    pushDiffEdits,
-    clearDiffEdits,
-    setDiffEdits,
-    toDiffSnapshots
-} from './ui/change-diff-extension';
+import { getChangeDiffExtension, clearDiffEdits, setDiffEdits } from './ui/change-diff-extension';
 import { ChangeSet } from './core/change-set';
 import { readVaultFiles } from './utils/vault-files';
 
@@ -1126,9 +1120,6 @@ export default class EventideQuillPlugin extends Plugin {
         session.onThought = (thought: string) => {
             this.lintPanel?.coWriterSetThoughtContent(thought);
         };
-        session.onStateChange = (state) => {
-            this.lintPanel?.coWriterSetDraftState(state);
-        };
         session.onChatUpdate = () => {
             if (this.lintPanel) {
                 this.lintPanel.coWriterSetChatHistory(session.chatHistory);
@@ -1297,16 +1288,6 @@ export default class EventideQuillPlugin extends Plugin {
         return (view.editor as unknown as { cm: EditorView }).cm;
     }
 
-    /**
-     * Propose a transform rewrite as a reviewable change. Pushes an inline diff
-     * (selection in red, rewrite in green) to the editor for Approve/Reject.
-     */
-    proposeTransform(cm: EditorView, edit: { from: number; to: number; newText: string; label: string }): void {
-        this.transformChangeSet.clear();
-        this.transformChangeSet.add(edit);
-        pushDiffEdits(cm, toDiffSnapshots(this.transformChangeSet, 'transform'));
-    }
-
     /** Approve the pending transform edit: commit the rewrite and clear the diff. */
     approveTransformChange(id: number): void {
         const change = this.transformChangeSet.approve(id);
@@ -1388,16 +1369,6 @@ export default class EventideQuillPlugin extends Plugin {
             if (err instanceof Error && err.name === 'AbortError') return;
             console.warn('Quill: Feedback manual compaction failed.', err);
         }
-    }
-
-    /** Accept the current co-writer draft. */
-    acceptCoWriterDraft(): void {
-        this.coWriterSession.acceptDraft();
-    }
-
-    /** Revert the current co-writer draft, removing the inserted text. */
-    revertCoWriterDraft(editor: Editor): void {
-        this.coWriterSession.revertDraft(editor);
     }
 
     /** Add a context file to the co-writer session. */

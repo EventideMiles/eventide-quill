@@ -321,8 +321,6 @@ export class CoWriterSession {
     // --- Callbacks ---
 
     onThought: ((thought: string) => void) | null = null;
-    onStateChange: ((state: DraftState) => void) | null = null;
-    onDraftComplete: (() => void) | null = null;
     onChatUpdate: (() => void) | null = null;
     onOptionsLoading: ((loading: boolean) => void) | null = null;
     /** Called after a draft is accepted, to trigger fresh options. */
@@ -428,11 +426,6 @@ export class CoWriterSession {
             return;
         }
         const editor = markdownView.editor;
-
-        // If a draft exists, revert it before starting fresh
-        if (this.draftState === 'draft') {
-            this.revertDraft(editor);
-        }
 
         // Populate context engine so the context tab shows data before the API call
         if (!plugin.currentAssembly) {
@@ -1145,10 +1138,6 @@ export class CoWriterSession {
         }
         const editor = markdownView.editor;
 
-        if (this.draftState === 'draft') {
-            this.revertDraft(editor);
-        }
-
         if (!plugin.currentAssembly) {
             await plugin.assembleDocumentContext(editor.getValue(), filePath);
         }
@@ -1751,10 +1740,6 @@ export class CoWriterSession {
         }
         const editor = markdownView.editor;
 
-        if (this.draftState === 'draft') {
-            this.revertDraft(editor);
-        }
-
         if (!plugin.currentAssembly) {
             await plugin.assembleDocumentContext(editor.getValue(), filePath);
         }
@@ -1952,19 +1937,6 @@ export class CoWriterSession {
         }
     }
 
-    /** Accept the current draft and reset state to idle. */
-    acceptDraft(): void {
-        if (this.draftState !== 'draft') return;
-        this.unlockEditor();
-        this.draftState = 'idle';
-        this.insertionStart = -1;
-        this.insertionLength = 0;
-        this.originalText = '';
-        this.thoughtBuffer = '';
-        this.onStateChange?.('idle');
-        this.onDraftAccepted?.();
-    }
-
     /**
      * Write a prose continuation based on the current coach session state.
      * Skips further Q&A and goes straight to generation, injecting the coaching
@@ -1981,31 +1953,6 @@ export class CoWriterSession {
             : 'Continue the passage naturally from the cursor position.';
 
         await this.generateDirect(plugin, direction, coachSteering);
-    }
-
-    /** Revert the current draft by removing the inserted text from the editor. */
-    revertDraft(editor: Editor): void {
-        if (this.draftState !== 'draft' || this.insertionStart < 0 || this.insertionLength <= 0) return;
-        this.unlockEditor();
-
-        const cm = (editor as unknown as { cm: EditorView }).cm;
-        if (!cm) return;
-
-        cm.dispatch({
-            changes: {
-                from: this.insertionStart,
-                to: this.insertionStart + this.insertionLength,
-                insert: ''
-            },
-            selection: { anchor: this.insertionStart }
-        });
-
-        this.draftState = 'idle';
-        this.insertionStart = -1;
-        this.insertionLength = 0;
-        this.originalText = '';
-        this.thoughtBuffer = '';
-        this.onStateChange?.('idle');
     }
 
     /**
@@ -2105,7 +2052,6 @@ export class CoWriterSession {
         this.chatHistory = [];
         this.currentOptions = [];
         this.optionsLoading = false;
-        this.onStateChange?.('idle');
         this.onChatUpdate?.();
         this.onOptionsLoading?.(false);
     }
@@ -2134,7 +2080,6 @@ export class CoWriterSession {
         this.chatHistory = [];
         this.currentOptions = [];
         this.optionsLoading = false;
-        this.onStateChange?.('idle');
         this.onChatUpdate?.();
         this.onOptionsLoading?.(false);
     }

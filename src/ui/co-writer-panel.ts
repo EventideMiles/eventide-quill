@@ -75,8 +75,6 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onDiscussMessage: ((message: string) => void) | null = null;
     private onGenerateOptions: ((direction: string) => void) | null = null;
     private onApplyOption: ((index: number) => void) | null = null;
-    private onAccept: (() => void) | null = null;
-    private onRevert: (() => void) | null = null;
     private onAddContextFile: ((filePath: string) => void) | null = null;
     private onRemoveContextFile: ((filePath: string) => void) | null = null;
     private onRefreshSuggestions: (() => void) | null = null;
@@ -147,16 +145,6 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Set the handler invoked when the user applies (inserts) a continuation option. */
     setApplyOptionHandler(handler: (index: number) => void): void {
         this.onApplyOption = handler;
-    }
-
-    /** Set the handler invoked when the user accepts a streamed draft. */
-    setAcceptHandler(handler: () => void): void {
-        this.onAccept = handler;
-    }
-
-    /** Set the handler invoked when the user reverts an accepted draft. */
-    setRevertHandler(handler: () => void): void {
-        this.onRevert = handler;
     }
 
     /** Set the handler invoked when the user adds a context file to the session. */
@@ -687,27 +675,6 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (!activeFile && this.chatHistory.length === 0) return;
 
         const bottom = this.containerEl!.createEl('div', { cls: 'quill-cowriter-bottom' });
-
-        // Draft status (accept/revert) — only when applicable
-        if (this.draftState === 'draft') {
-            const status = bottom.createEl('div', { cls: 'quill-cowriter-status-bar' });
-            status.createEl('span', { text: 'Draft ready \u2014 ' });
-            const acceptBtn = status.createEl('button', {
-                cls: 'quill-cowriter-status-btn quill-cowriter-accept-btn',
-                text: 'Accept'
-            });
-            this.renderEvents.registerDomEvent(acceptBtn, 'click', () => {
-                this.onAccept?.();
-            });
-            status.createEl('span', { text: ' ' });
-            const revertBtn = status.createEl('button', {
-                cls: 'quill-cowriter-status-btn quill-cowriter-revert-btn',
-                text: 'Revert'
-            });
-            this.renderEvents.registerDomEvent(revertBtn, 'click', () => {
-                this.onRevert?.();
-            });
-        }
 
         // Coach mode UI
         if (this.inputMode === 'coach') {
