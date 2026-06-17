@@ -1209,6 +1209,9 @@ export default class EventideQuillPlugin extends Plugin {
     async runCoWriterFulfill(globalInstruction?: string): Promise<void> {
         const path = this.app.workspace.getActiveFile()?.path;
         if (path) this.coWriterSession.manuscriptPath = path;
+        // Set fulfillActive BEFORE openCoWriterPanel so that the panel re-sync
+        // inside switchToCoWriterTab doesn't reset the button to its idle state.
+        this.coWriterSession.fulfillActive = true;
         await this.openCoWriterPanel();
         this.wireCoWriterPanel();
         await this.coWriterSession.fulfillDirectives(this, globalInstruction);
