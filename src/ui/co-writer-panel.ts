@@ -12,7 +12,7 @@ type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill';
 
 /** The co-writer modes, in cycle/picker order, with icon, label, and a one-line descriptor. */
 const COWRITER_MODES: { mode: InputMode; icon: string; label: string; desc: string }[] = [
-    { mode: 'direct', icon: '\u2192', label: 'Direct', desc: 'AI suggests 3 continuation options' },
+    { mode: 'direct', icon: '\u2192', label: 'Direct', desc: 'Type a direction and the AI continues from the cursor' },
     { mode: 'discuss', icon: '\u2194', label: 'Discuss', desc: 'AI responds with thoughts and analysis' },
     { mode: 'coach', icon: '\u2728', label: 'Coach', desc: 'AI helps you figure out what to do next' },
     { mode: 'fulfill', icon: '\u2726', label: 'Fulfill', desc: 'Sweep every inline directive and review as a diff' }
@@ -604,17 +604,17 @@ export class CoWriterPanel extends AbstractChatPanel {
                 this.onRunFulfill?.('');
             });
         } else {
-            prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Co-writer' });
+            prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Direct' });
             prompt.createEl('div', {
                 cls: 'quill-cowriter-init-desc',
-                text: 'Let the AI read your scene and suggest 3 possible directions to continue.'
+                text: 'Describe what should happen next, then send.'
             });
             const initBtn = prompt.createEl('button', {
                 cls: 'quill-cowriter-init-btn mod-cta',
-                text: 'Initialize from scene'
+                text: 'Generate options'
             });
             this.renderEvents.registerDomEvent(initBtn, 'click', () => {
-                if (this.optionsLoading || this.draftState === 'generating') return;
+                if (this.optionsLoading) return;
                 this.optionsLoading = true;
                 // Immediate disable — no rAF delay
                 initBtn.disabled = true;
