@@ -68,7 +68,9 @@ export function renderChangeCard(
             ? 'Approved \u2014 change applied'
             : edit.state === 'rejected'
               ? 'Rejected \u2014 no change'
-              : '';
+              : edit.state === 'generating'
+                ? 'Generating\u2026'
+                : '';
     if (statusText) {
         card.createEl('div', { cls: 'quill-change-card-status', text: statusText });
     }

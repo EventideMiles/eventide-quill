@@ -1940,6 +1940,14 @@ button.quill-change-card-btn {
     gap: 6px;
 }
 
+/* Muted "Generating…" hint shown in place of controls while a change streams. */
+.quill-diff-generating {
+    margin-top: 6px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    font-style: italic;
+}
+
 button.quill-diff-btn {
     font-size: var(--font-ui-smaller);
 }

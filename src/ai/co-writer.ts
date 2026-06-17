@@ -1646,6 +1646,9 @@ export class CoWriterSession {
             newText: '',
             label: option.label
         });
+        // 'generating' hides Approve/Reject while streaming; flipped to 'pending'
+        // once the result is final.
+        applyEdit.state = 'generating';
         this.onOptionsLoading?.(true);
         this.onChatUpdate?.();
 
@@ -1690,6 +1693,7 @@ export class CoWriterSession {
                 this.directChanges.clear();
                 clearDiffEdits(cm);
             } else {
+                applyEdit.state = 'pending';
                 pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
             }
         } catch (err: unknown) {
@@ -1697,6 +1701,9 @@ export class CoWriterSession {
                 if (applyEdit.newText.replace(/\s+$/, '').length === 0) {
                     this.directChanges.clear();
                     clearDiffEdits(cm);
+                } else {
+                    applyEdit.state = 'pending';
+                    pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
                 }
             } else {
                 new Notice(`Quill: Continuation failed \u2014 ${err instanceof Error ? err.message : String(err)}`);
@@ -1848,6 +1855,9 @@ export class CoWriterSession {
             newText: '',
             label: direction ? `Continue: ${direction.slice(0, 80)}` : 'Continuation'
         });
+        // 'generating' hides Approve/Reject until the stream concludes or is
+        // cancelled; flipped to 'pending' below once there is a final result.
+        directEdit.state = 'generating';
 
         if (!direction) {
             const endPos = editor.offsetToPos(fullText.length);
@@ -1914,14 +1924,18 @@ export class CoWriterSession {
                 this.directChanges.clear();
                 clearDiffEdits(cm);
             } else {
+                directEdit.state = 'pending';
                 pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
             }
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') {
-                // Keep partial prose as a pending change for review; clear only if empty.
+                // Keep partial prose as a reviewable change; clear only if empty.
                 if (directEdit.newText.replace(/\s+$/, '').length === 0) {
                     this.directChanges.clear();
                     clearDiffEdits(cm);
+                } else {
+                    directEdit.state = 'pending';
+                    pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
                 }
             } else {
                 new Notice(`Quill: Continuation failed \u2014 ${err instanceof Error ? err.message : String(err)}`);

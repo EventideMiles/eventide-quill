@@ -20,7 +20,7 @@
  * display stays correct regardless.)
  */
 
-export type ProposedEditState = 'pending' | 'approved' | 'rejected';
+export type ProposedEditState = 'generating' | 'pending' | 'approved' | 'rejected';
 
 /** A single proposed edit: replace document range `[from, to)` with `newText`. */
 export interface ProposedEdit {

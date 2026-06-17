@@ -119,25 +119,35 @@ class ChangePreviewWidget extends WidgetType {
         prose.textContent = this.edit.newText;
         added.appendChild(prose);
 
-        const controls = window.activeDocument.createElement('div');
-        controls.className = 'quill-diff-controls';
-        const approve = window.activeDocument.createElement('button');
-        approve.className = 'mod-cta quill-diff-btn';
-        approve.textContent = 'Approve';
-        approve.addEventListener('click', (e: MouseEvent) => {
-            e.stopPropagation();
-            this.handlers.onApprove?.(this.edit.owner, this.edit.id);
-        });
-        const reject = window.activeDocument.createElement('button');
-        reject.className = 'quill-diff-btn';
-        reject.textContent = 'Reject';
-        reject.addEventListener('click', (e: MouseEvent) => {
-            e.stopPropagation();
-            this.handlers.onReject?.(this.edit.owner, this.edit.id);
-        });
-        controls.appendChild(approve);
-        controls.appendChild(reject);
-        added.appendChild(controls);
+        // Controls only once generation has concluded (or been cancelled with
+        // partial content kept for review). While 'generating', show a muted
+        // "Generating\u2026" hint instead so nobody can approve mid-stream.
+        if (this.edit.state === 'pending') {
+            const controls = window.activeDocument.createElement('div');
+            controls.className = 'quill-diff-controls';
+            const approve = window.activeDocument.createElement('button');
+            approve.className = 'mod-cta quill-diff-btn';
+            approve.textContent = 'Approve';
+            approve.addEventListener('click', (e: MouseEvent) => {
+                e.stopPropagation();
+                this.handlers.onApprove?.(this.edit.owner, this.edit.id);
+            });
+            const reject = window.activeDocument.createElement('button');
+            reject.className = 'quill-diff-btn';
+            reject.textContent = 'Reject';
+            reject.addEventListener('click', (e: MouseEvent) => {
+                e.stopPropagation();
+                this.handlers.onReject?.(this.edit.owner, this.edit.id);
+            });
+            controls.appendChild(approve);
+            controls.appendChild(reject);
+            added.appendChild(controls);
+        } else if (this.edit.state === 'generating') {
+            const hint = window.activeDocument.createElement('div');
+            hint.className = 'quill-diff-generating';
+            hint.textContent = 'Generating\u2026';
+            added.appendChild(hint);
+        }
 
         wrap.appendChild(added);
         return wrap;
@@ -176,7 +186,9 @@ class ChangeDiffPlugin {
         const doc = view.state.doc;
         const ranges: Range<Decoration>[] = [];
         for (const edit of edits) {
-            if (edit.state !== 'pending') continue;
+            // Render the box while streaming ('generating') and for review ('pending');
+            // 'approved'/'rejected' are committed/discarded and get no decoration.
+            if (edit.state !== 'pending' && edit.state !== 'generating') continue;
             const hasRemoval = edit.from < edit.to;
             const removedText = hasRemoval ? doc.sliceString(edit.from, edit.to) : '';
             const widget = new ChangePreviewWidget(removedText, edit, this.handlers);
