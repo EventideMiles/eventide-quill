@@ -7,7 +7,8 @@ import { FixWithAiModal } from './fix-with-ai-modal';
 import { renderContextTab } from './context-panel';
 import { FeedbackPanel } from './feedback-panel';
 import { CoWriterPanel } from './co-writer-panel';
-import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase, FulfillSection } from '../ai/co-writer';
+import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase } from '../ai/co-writer';
+import type { ProposedEdit } from '../core/change-set';
 import type EventideQuillPlugin from '../main';
 import type { ContextAssembly } from '../core/context-engine/types';
 
@@ -431,7 +432,7 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setOptionsLoading(session.optionsLoading);
             this.coWriterPanel.setCoachPhase(session.coachSession?.phase ?? 'discern');
             this.coWriterPanel.setCoachActive(session.coachActive);
-            this.coWriterPanel.setFulfillState(session.fulfillSections, session.fulfillActive);
+            this.coWriterPanel.setFulfillState(session.fulfillChanges.edits, session.fulfillActive);
         }
 
         // Sync plot map link from the active manuscript's frontmatter
@@ -599,7 +600,7 @@ export class QuillSidebarView extends ItemView {
     }
 
     /** Push Fulfill-mode sections and active flag to the co-writer panel. */
-    coWriterSetFulfillState(sections: FulfillSection[], active: boolean): void {
+    coWriterSetFulfillState(sections: ProposedEdit[], active: boolean): void {
         this.coWriterPanel?.setFulfillState(sections, active);
     }
 

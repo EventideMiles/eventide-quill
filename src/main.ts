@@ -31,6 +31,7 @@ import { compactConversation } from './ai/compaction';
 import { estimateTokens } from './utils/tokens';
 import { readVaultFileText } from './utils/vault-files';
 import { parseDirectives } from './utils/directives';
+import { getChangeDiffExtension } from './ui/change-diff-extension';
 import { readVaultFiles } from './utils/vault-files';
 
 /** Generate a content-based fingerprint for a lint result. Uses the flagged
@@ -154,6 +155,20 @@ export default class EventideQuillPlugin extends Plugin {
                 const textBeforeCursor = update.state.sliceDoc(Math.max(0, pos - 4000), pos);
                 const active = parseDirectives(textBeforeCursor).length > 0;
                 this.lintPanel?.coWriterSetDirectiveActive(active);
+            })
+        );
+
+        // Inline change-diff (red removals / green additions) for proposed edits
+        // from Fulfill, Transform, and (later) Co-writer direct. Registered once,
+        // globally; it only renders when a snapshot is pushed to a given editor.
+        this.registerEditorExtension(
+            getChangeDiffExtension({
+                onApprove: (owner: string, id: number) => {
+                    if (owner === 'fulfill') this.approveCoWriterFulfill(id);
+                },
+                onReject: (owner: string, id: number) => {
+                    if (owner === 'fulfill') this.rejectCoWriterFulfill(id);
+                }
             })
         );
 
@@ -1092,7 +1107,7 @@ export default class EventideQuillPlugin extends Plugin {
             void this.coWriterSession.coachToOptions(this, '');
         };
         session.onFulfillUpdate = () => {
-            this.lintPanel?.coWriterSetFulfillState(session.fulfillSections, session.fulfillActive);
+            this.lintPanel?.coWriterSetFulfillState(session.fulfillChanges.edits, session.fulfillActive);
         };
     }
 

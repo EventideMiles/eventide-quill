@@ -18,7 +18,9 @@ import type { ChangeSet, ProposedEdit } from '../core/change-set';
  * their positions, e.g., after a commit it pushes an already-remapped set).
  */
 
-/** A snapshot of an edit used for rendering. Mirrors {@link ProposedEdit}. */
+/** A snapshot of an edit used for rendering. Mirrors {@link ProposedEdit}, plus an
+ *  `owner` tag so the inline Approve/Reject buttons route to the right surface
+ *  (the extension is registered once globally but shared by Fulfill, Transform, etc.). */
 export interface DiffEditSnapshot {
     id: number;
     from: number;
@@ -26,12 +28,14 @@ export interface DiffEditSnapshot {
     newText: string;
     label: string;
     state: ProposedEdit['state'];
+    /** Which surface owns this edit (e.g. 'fulfill', 'transform'). Routes approve/reject. */
+    owner: string;
 }
 
 /** Handlers invoked from the inline Approve/Reject buttons. */
 export interface ChangeDiffHandlers {
-    onApprove?: (id: number) => void;
-    onReject?: (id: number) => void;
+    onApprove?: (owner: string, id: number) => void;
+    onReject?: (owner: string, id: number) => void;
 }
 
 /** Push a new set of edit snapshots to the editor (empty array clears the diff). */
@@ -58,15 +62,16 @@ export const diffEditsField = StateField.define<DiffEditSnapshot[]>({
     }
 });
 
-/** Build render snapshots from a ChangeSet's edits. */
-export function toDiffSnapshots(changeSet: ChangeSet): DiffEditSnapshot[] {
+/** Build render snapshots from a ChangeSet's edits, tagged with the owning surface. */
+export function toDiffSnapshots(changeSet: ChangeSet, owner: string): DiffEditSnapshot[] {
     return changeSet.edits.map((e) => ({
         id: e.id,
         from: e.from,
         to: e.to,
         newText: e.newText,
         label: e.label,
-        state: e.state
+        state: e.state,
+        owner
     }));
 }
 
@@ -103,14 +108,14 @@ class ChangeWidget extends WidgetType {
         approve.textContent = 'Approve';
         approve.addEventListener('click', (e: MouseEvent) => {
             e.stopPropagation();
-            this.handlers.onApprove?.(this.edit.id);
+            this.handlers.onApprove?.(this.edit.owner, this.edit.id);
         });
         const reject = window.activeDocument.createElement('button');
         reject.className = 'quill-diff-btn';
         reject.textContent = 'Reject';
         reject.addEventListener('click', (e: MouseEvent) => {
             e.stopPropagation();
-            this.handlers.onReject?.(this.edit.id);
+            this.handlers.onReject?.(this.edit.owner, this.edit.id);
         });
         controls.appendChild(approve);
         controls.appendChild(reject);

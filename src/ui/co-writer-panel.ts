@@ -1,10 +1,12 @@
 import { App, MarkdownRenderer, TFile } from 'obsidian';
 import type EventideQuillPlugin from '../main';
-import type { DraftState, CoWriterChatMessage, CoWriterOption, CoachPhase, FulfillSection } from '../ai/co-writer';
+import type { DraftState, CoWriterChatMessage, CoWriterOption, CoachPhase } from '../ai/co-writer';
+import type { ProposedEdit } from '../core/change-set';
 import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { ConfirmModal } from './confirm-modal';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
+import { renderChangeBulkBar, renderChangeCard } from './change-card';
 
 type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill';
 
@@ -54,8 +56,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private plotMap: string | null = null;
     /** Whether an inline directive is active at the cursor (drives the Direct-mode badge). */
     private directiveActive = false;
-    /** Fulfill-mode sections (mirrored from the session), rendered as review cards. */
-    private fulfillSections: FulfillSection[] = [];
+    /** Fulfill-mode proposed edits (mirrored from the session), rendered as review cards. */
+    private fulfillSections: ProposedEdit[] = [];
     /** Whether a Fulfill sweep is currently generating. */
     private fulfillActive = false;
 
@@ -229,7 +231,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     }
 
     /** Replace the Fulfill section list and/or active flag and re-render. */
-    setFulfillState(sections: FulfillSection[], active: boolean): void {
+    setFulfillState(sections: ProposedEdit[], active: boolean): void {
         this.fulfillSections = sections;
         this.fulfillActive = active;
         this.scheduleRender();
@@ -525,82 +527,23 @@ export class CoWriterPanel extends AbstractChatPanel {
         scroll.scrollTop = scroll.scrollHeight;
     }
 
-    /** Render Fulfill-mode review cards (one per directive) plus bulk actions. */
+    /** Render Fulfill-mode review cards (one per directive) plus bulk actions,
+     *  using the shared change-card component. For Fulfill the removed side is the
+     *  directive comment (shown inline as the red diff, not repeated in the card). */
     private renderFulfillSections(container: HTMLElement): void {
-        const pending = this.fulfillSections.filter((s) => s.state === 'pending').length;
-        if (pending > 0) {
-            const bulk = container.createEl('div', { cls: 'quill-fulfill-bulk' });
-            const approveAllBtn = bulk.createEl('button', {
-                cls: 'quill-fulfill-bulk-btn mod-cta',
-                text: `Approve all (${pending})`
-            });
-            this.renderEvents.registerDomEvent(approveAllBtn, 'click', () => {
-                this.onApproveAllFulfill?.();
-            });
-            bulk.createEl('span', { text: ' ' });
-            const rejectAllBtn = bulk.createEl('button', {
-                cls: 'quill-fulfill-bulk-btn',
-                text: 'Reject all'
-            });
-            this.renderEvents.registerDomEvent(rejectAllBtn, 'click', () => {
-                this.onRejectAllFulfill?.();
-            });
-        }
-
-        for (const section of this.fulfillSections) {
-            this.renderFulfillCard(container, section);
-        }
-    }
-
-    /** Render a single Fulfill review card. */
-    private renderFulfillCard(container: HTMLElement, section: FulfillSection): void {
-        const card = container.createEl('div', {
-            cls: `quill-fulfill-card quill-fulfill-card-${section.state}`
-        });
-        card.createEl('div', { cls: 'quill-fulfill-card-directive', text: `\u201c${section.text}\u201d` });
-
-        if (section.state === 'generating') {
-            card.createEl('div', { cls: 'quill-fulfill-card-status', text: 'Generating\u2026' });
-            return;
-        }
-
-        if (section.prose) {
-            const proseEl = card.createEl('div', { cls: 'quill-fulfill-card-prose' });
-            void MarkdownRenderer.render(
-                this.app,
-                normalizeParagraphBreaks(section.prose),
-                proseEl,
-                '',
-                this.renderEvents
-            );
-        }
-
-        const statusText =
-            section.state === 'approved'
-                ? 'Approved \u2014 comment consumed'
-                : section.state === 'rejected'
-                  ? 'Rejected \u2014 directive kept'
-                  : '';
-        if (statusText) {
-            card.createEl('div', { cls: 'quill-fulfill-card-status', text: statusText });
-        }
-
-        if (section.state === 'pending') {
-            const btns = card.createEl('div', { cls: 'quill-fulfill-card-btns' });
-            const approveBtn = btns.createEl('button', {
-                cls: 'quill-fulfill-card-btn mod-cta',
-                text: 'Approve'
-            });
-            this.renderEvents.registerDomEvent(approveBtn, 'click', () => {
-                this.onApproveFulfillSection?.(section.id);
-            });
-            btns.createEl('span', { text: ' ' });
-            const rejectBtn = btns.createEl('button', {
-                cls: 'quill-fulfill-card-btn',
-                text: 'Reject'
-            });
-            this.renderEvents.registerDomEvent(rejectBtn, 'click', () => {
-                this.onRejectFulfillSection?.(section.id);
+        renderChangeBulkBar(
+            container,
+            this.fulfillSections.filter((s) => s.state === 'pending').length,
+            this.renderEvents,
+            {
+                onApproveAll: () => this.onApproveAllFulfill?.(),
+                onRejectAll: () => this.onRejectAllFulfill?.()
+            }
+        );
+        for (const edit of this.fulfillSections) {
+            renderChangeCard(container, edit, null, this.app, this.renderEvents, {
+                onApprove: (id: number) => this.onApproveFulfillSection?.(id),
+                onReject: (id: number) => this.onRejectFulfillSection?.(id)
             });
         }
     }

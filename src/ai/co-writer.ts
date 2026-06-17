@@ -19,6 +19,8 @@ import { compactConversation } from './compaction';
 import { estimateTokens } from '../utils/tokens';
 import { readVaultFiles, readVaultFileText } from '../utils/vault-files';
 import { parseDirectives, parseAllDirectives } from '../utils/directives';
+import { ChangeSet } from '../core/change-set';
+import { clearDiffEdits, pushDiffEdits, setDiffEdits, toDiffSnapshots } from '../ui/change-diff-extension';
 
 /** Replace em dashes (—) with a comma+space for prose that shouldn't use them. */
 function sanitizeProse(text: string): string {
@@ -254,23 +256,6 @@ export interface CoWriterOption {
     description: string;
 }
 
-/** Lifecycle state of a Fulfill-mode section (one per directive in the document). */
-export type FulfillSectionState = 'generating' | 'pending' | 'approved' | 'rejected';
-
-/** One directive being fulfilled by Fulfill mode, with its generated prose and review state. */
-export interface FulfillSection {
-    id: number;
-    /** Document offset of the `<!--` opening. */
-    commentStart: number;
-    /** Document offset just past `-->`. */
-    commentEnd: number;
-    /** Parsed directive instruction. */
-    text: string;
-    /** Generated fulfillment prose (empty while generating). */
-    prose: string;
-    state: FulfillSectionState;
-}
-
 /** A chat message displayed in the co-writer panel. */
 export interface CoWriterChatMessage {
     role: 'user' | 'assistant';
@@ -360,11 +345,11 @@ export class CoWriterSession {
     /** Whether option cards have been auto-generated for the current coach session. */
     private coachOptionsGenerated = false;
 
-    /** Fulfill-mode sections (one per directive in the document), in document order. */
-    fulfillSections: FulfillSection[] = [];
+    /** Fulfill-mode proposed edits (one per directive), in document order. */
+    fulfillChanges: ChangeSet = new ChangeSet();
     /** Whether a Fulfill sweep is currently in progress. */
     fulfillActive = false;
-    /** Called whenever Fulfill sections change (generation progress, approval, rejection). */
+    /** Called whenever Fulfill edits change (generation progress, approval, rejection). */
     onFulfillUpdate: (() => void) | null = null;
 
     /**
@@ -1280,8 +1265,9 @@ export class CoWriterSession {
 
     /**
      * Fulfill mode: scan the active document for every `<!-- quill: -->` directive
-     * and generate a fulfillment for each, in document order. Generated prose is
-     * stored on the section for review (not inserted yet). Approvals commit later.
+     * and generate a fulfillment for each, in document order. Each completed
+     * fulfillment is added to {@link fulfillChanges} as a proposed edit (replace
+     * the comment with prose) and rendered for review via the shared change-diff.
      *
      * @param globalInstruction  Optional overall direction prepended to every directive's prompt.
      */
@@ -1312,6 +1298,12 @@ export class CoWriterSession {
         this.cancelGeneration();
         this.app = plugin.app;
 
+        const cm = (editor as unknown as { cm: EditorView }).cm;
+        if (!cm) {
+            new Notice('Quill: Could not access editor for fulfill.');
+            return;
+        }
+
         const fullText = editor.getValue();
         const ranges = parseAllDirectives(fullText);
         if (ranges.length === 0) {
@@ -1330,15 +1322,9 @@ export class CoWriterSession {
 
         const plotMapText = await loadPlotMapText(plugin);
 
-        this.fulfillSections = ranges.map((r, i) => ({
-            id: i,
-            commentStart: r.start,
-            commentEnd: r.end,
-            text: r.text,
-            prose: '',
-            state: 'generating' as const
-        }));
+        this.fulfillChanges.clear();
         this.fulfillActive = true;
+        clearDiffEdits(cm);
         this.onFulfillUpdate?.();
 
         const notice = new Notice(
@@ -1347,10 +1333,10 @@ export class CoWriterSession {
         );
 
         try {
-            for (const section of this.fulfillSections) {
+            for (const range of ranges) {
                 this.abortController = new AbortController();
-                const before = fullText.slice(Math.max(0, section.commentStart - 2000), section.commentStart);
-                const after = fullText.slice(section.commentEnd, section.commentEnd + 1000);
+                const before = fullText.slice(Math.max(0, range.start - 2000), range.start);
+                const after = fullText.slice(range.end, range.end + 1000);
                 const systemPrompt = getCoWriterGenerationPrompt(
                     this.voiceProfile ?? {
                         sentenceLengthDistribution: 'unknown',
@@ -1360,14 +1346,14 @@ export class CoWriterSession {
                     },
                     plugin.settings.narrativeVoicePreset,
                     undefined,
-                    [{ source: 'inline', text: section.text }],
+                    [{ source: 'inline', text: range.text }],
                     plotMapText
                 );
                 const userMessage = [
                     'Fulfill the inline directive at this point in the scene. Write the prose that realizes it, in the established voice and perspective. Output only the prose — no labels, no explanations.',
                     ...(globalInstruction ? ['', `Overall direction for this sweep: ${globalInstruction}`] : []),
                     '',
-                    `Directive: "${section.text}"`,
+                    `Directive: "${range.text}"`,
                     '',
                     '--- Prose before the directive ---',
                     before || '(start of document)',
@@ -1394,16 +1380,18 @@ export class CoWriterSession {
                     }
                 } catch (err: unknown) {
                     if (err instanceof Error && err.name === 'AbortError') {
-                        section.state = 'rejected';
-                        this.onFulfillUpdate?.();
                         return;
                     }
-                    section.state = 'rejected';
-                    this.onFulfillUpdate?.();
+                    // Skip this directive on error; already-completed edits remain reviewable.
                     continue;
                 }
-                section.prose = sanitizeProse(prose).trim();
-                section.state = 'pending';
+                this.fulfillChanges.add({
+                    from: range.start,
+                    to: range.end,
+                    newText: sanitizeProse(prose).trim(),
+                    label: range.text
+                });
+                pushDiffEdits(cm, toDiffSnapshots(this.fulfillChanges, 'fulfill'));
                 this.onFulfillUpdate?.();
             }
         } finally {
@@ -1413,60 +1401,67 @@ export class CoWriterSession {
         }
     }
 
+    /** Resolve the CodeMirror view for the active manuscript, or null. */
+    private getFulfillCm(): EditorView | null {
+        if (!this.app || !this.manuscriptPath) return null;
+        const markdownView = findEditorView(this.app, this.manuscriptPath);
+        return markdownView ? (markdownView.editor as unknown as { cm: EditorView }).cm : null;
+    }
+
     /**
-     * Approve one Fulfill section: replace its directive comment with the
-     * generated prose (the comment is "consumed"). Later sections' offsets are
-     * remapped so their ranges stay valid.
+     * Approve one Fulfill edit: replace its directive comment with the generated
+     * prose (the comment is consumed). The shared change-diff is updated in the
+     * same transaction so there is no flicker. Later edits' offsets are remapped
+     * by the ChangeSet.
      */
     approveFulfillSection(plugin: EventideQuillPlugin, id: number): void {
-        const section = this.fulfillSections.find((s) => s.id === id);
-        if (!section || section.state !== 'pending' || !section.prose) return;
-        const markdownView = findEditorView(plugin.app, this.manuscriptPath);
-        const cm = markdownView ? (markdownView.editor as unknown as { cm: EditorView }).cm : null;
-        if (!cm) return;
-        const origEnd = section.commentEnd;
-        cm.dispatch({
-            changes: { from: section.commentStart, to: section.commentEnd, insert: section.prose },
-            selection: { anchor: section.commentStart + section.prose.length }
-        });
-        const delta = section.prose.length - (section.commentEnd - section.commentStart);
-        section.state = 'approved';
-        for (const s of this.fulfillSections) {
-            if (s.id !== id && s.commentStart >= origEnd) {
-                s.commentStart += delta;
-                s.commentEnd += delta;
-            }
+        void plugin;
+        const change = this.fulfillChanges.approve(id);
+        if (!change) return;
+        const cm = this.getFulfillCm();
+        if (cm) {
+            cm.dispatch({
+                changes: change,
+                effects: setDiffEdits.of(toDiffSnapshots(this.fulfillChanges, 'fulfill')),
+                selection: { anchor: change.from + change.insert.length }
+            });
         }
         this.onFulfillUpdate?.();
     }
 
-    /** Reject one Fulfill section: leave the directive comment in place, un-consumed. */
+    /** Reject one Fulfill edit: leave the directive comment in place, un-consumed. */
     rejectFulfillSection(id: number): void {
-        const section = this.fulfillSections.find((s) => s.id === id);
-        if (!section || section.state !== 'pending') return;
-        section.state = 'rejected';
+        this.fulfillChanges.reject(id);
+        const cm = this.getFulfillCm();
+        if (cm) pushDiffEdits(cm, toDiffSnapshots(this.fulfillChanges, 'fulfill'));
         this.onFulfillUpdate?.();
     }
 
-    /** Approve every pending section, in document order (offsets remap as each commits). */
+    /** Approve every pending edit. Changes dispatch sequentially (offsets remap as each commits). */
     approveAllFulfill(plugin: EventideQuillPlugin): void {
-        for (const section of [...this.fulfillSections]) {
-            if (section.state === 'pending') this.approveFulfillSection(plugin, section.id);
+        void plugin;
+        const cm = this.getFulfillCm();
+        for (const change of this.fulfillChanges.approveAll()) {
+            cm?.dispatch({ changes: change });
         }
+        if (cm) pushDiffEdits(cm, toDiffSnapshots(this.fulfillChanges, 'fulfill'));
+        this.onFulfillUpdate?.();
     }
 
-    /** Reject every pending section without touching the document. */
+    /** Reject every pending edit without touching the document. */
     rejectAllFulfill(): void {
-        for (const section of this.fulfillSections) {
-            if (section.state === 'pending') section.state = 'rejected';
-        }
+        this.fulfillChanges.rejectAll();
+        const cm = this.getFulfillCm();
+        if (cm) pushDiffEdits(cm, toDiffSnapshots(this.fulfillChanges, 'fulfill'));
         this.onFulfillUpdate?.();
     }
 
     /** Clear all Fulfill state (e.g., on new chat / reset). */
     clearFulfill(): void {
-        this.fulfillSections = [];
+        this.fulfillChanges.clear();
         this.fulfillActive = false;
+        const cm = this.getFulfillCm();
+        if (cm) clearDiffEdits(cm);
         this.onFulfillUpdate?.();
     }
 
