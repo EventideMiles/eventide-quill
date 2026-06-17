@@ -73,7 +73,7 @@ export function getUserPrompt(
         selectedText,
         '',
         '--- Output ---',
-        'Rewrite only the passage above. Output nothing else — no document text, no explanations, no labels.'
+        'Rewrite only the passage above. Your output must be approximately the same length as the passage — do not expand, add new content, or generate surrounding sentences unless the instruction explicitly says to (e.g., "make longer"). Output nothing else — no document text, no explanations, no labels.'
     ].join('\n');
 }
 
@@ -81,7 +81,7 @@ export function getUserPrompt(
 function getInstruction(type: TransformType, toneOrInstruction?: string): string {
     switch (type) {
         case 'improve':
-            return 'Polish the following passage for clarity and flow without changing its intent, voice, or narrative perspective. Keep all character names, setting details, and plot points intact.';
+            return 'Polish the following passage for clarity and flow without changing its intent, voice, or narrative perspective. Keep all character names, setting details, and plot points intact. If only a word or short phrase is selected, improve just that — do not expand the scope or write surrounding sentences.';
         case 'make-longer':
             return 'Make this passage LONGER — at least double its original length. Add sensory detail, internal reflection, setting description, or dialogue. Do NOT condense or shorten anything. Preserve every existing word and expand from there. Stay true to the voice, characters, setting, and narrative perspective.';
         case 'make-shorter':
@@ -131,6 +131,7 @@ export async function applyTransformation(
         : 'Quill: Transforming...';
     const notice = new Notice(processingMsg, 0);
     plugin.transformInProgress = true;
+    plugin.transformAbortController = new AbortController();
 
     try {
         // Ensure context is assembled for the correct document.
@@ -210,7 +211,7 @@ export async function applyTransformation(
                 model: defaultChat.modelId,
                 temperature: transformTemperature,
                 maxTokens: transformMaxOutputTokens,
-                signal: undefined
+                signal: plugin.transformAbortController?.signal
             });
             for await (const chunk of stream) {
                 if (!chunk.text) continue;
@@ -238,6 +239,7 @@ export async function applyTransformation(
     } finally {
         notice.hide();
         plugin.transformInProgress = false;
+        plugin.transformAbortController = null;
     }
 }
 

@@ -584,6 +584,11 @@ export class QuillSidebarView extends ItemView {
         this.coWriterPanel?.setCoachPhase(phase as CoachPhase);
     }
 
+    /** Set the co-writer panel's active mode (e.g. from the right-click submenu). */
+    coWriterSetMode(mode: string): void {
+        this.coWriterPanel?.setMode(mode as never);
+    }
+
     /** Set whether coach mode is active. */
     coWriterSetCoachActive(active: boolean): void {
         this.coWriterPanel?.setCoachActive(active);

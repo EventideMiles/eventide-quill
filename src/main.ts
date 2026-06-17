@@ -105,6 +105,14 @@ export default class EventideQuillPlugin extends Plugin {
     private providerMap = new Map<string, AiProvider>();
     /** True while a selection transformation is being processed. Used to gate the context menu. */
     transformInProgress = false;
+    /** Abort controller for an in-flight transform, so Escape can cancel it. */
+    transformAbortController: AbortController | null = null;
+
+    /** Cancel an in-flight transform (called on Escape). */
+    cancelTransform(): void {
+        this.transformAbortController?.abort();
+        this.transformAbortController = null;
+    }
     /** Dismissed lint fingerprints for the current session. Cleared when the linter is deactivated. */
     private dismissedFingerprints = new Set<string>();
     /** Context cache for extracted entities and voice markers. */
@@ -181,6 +189,18 @@ export default class EventideQuillPlugin extends Plugin {
                     if (owner === 'fulfill') this.rejectCoWriterFulfill(id);
                     else if (owner === 'transform') this.rejectTransformChange(id);
                     else if (owner === 'direct') this.rejectDirectChange(id);
+                }
+            })
+        );
+
+        // Escape cancels an in-flight transform.
+        this.registerEditorExtension(
+            EditorView.domEventHandlers({
+                keydown: (event: KeyboardEvent) => {
+                    if (event.key === 'Escape' && this.transformInProgress) {
+                        this.cancelTransform();
+                    }
+                    return false;
                 }
             })
         );
@@ -326,14 +346,37 @@ export default class EventideQuillPlugin extends Plugin {
                         });
                 });
 
-                // Co-writer: open panel
+                // Co-writer submenu: jump straight to a mode
                 menu.addSeparator();
                 menu.addItem((item) => {
-                    item.setTitle('Quill: Co-writer')
-                        .setIcon('arrow-right')
-                        .onClick(() => {
-                            void this.openCoWriterPanel();
+                    item.setTitle('Quill: Co-writer').setIcon('feather');
+                    // setSubmenu exists at runtime but isn't in the obsidian type defs.
+                    const sub = (item as unknown as { setSubmenu(): Menu }).setSubmenu();
+                    sub.addItem((s) => {
+                        s.setTitle('Direct').onClick(async () => {
+                            await this.openCoWriterPanel();
+                            this.lintPanel?.coWriterSetMode('direct');
                         });
+                    });
+                    sub.addItem((s) => {
+                        s.setTitle('Discuss').onClick(async () => {
+                            await this.openCoWriterPanel();
+                            this.lintPanel?.coWriterSetMode('discuss');
+                        });
+                    });
+                    sub.addItem((s) => {
+                        s.setTitle('Coach').onClick(async () => {
+                            await this.openCoWriterPanel();
+                            this.lintPanel?.coWriterSetMode('coach');
+                        });
+                    });
+                    sub.addItem((s) => {
+                        s.setTitle('Fulfill \u2014 run sweep').onClick(async () => {
+                            await this.openCoWriterPanel();
+                            this.lintPanel?.coWriterSetMode('fulfill');
+                            await this.runCoWriterFulfill('');
+                        });
+                    });
                 });
 
                 // Linter fix items

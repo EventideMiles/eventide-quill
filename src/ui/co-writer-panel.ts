@@ -247,6 +247,13 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.scheduleRender();
     }
 
+    /** Set the active input mode (e.g. from the right-click submenu). */
+    setMode(mode: InputMode): void {
+        this.inputMode = mode;
+        this.modePickerOpen = false;
+        this.render();
+    }
+
     /** Set the current coach phase. */
     setCoachPhase(phase: CoachPhase): void {
         this.coachPhase = phase;
