@@ -1898,6 +1898,15 @@ button.quill-change-card-btn {
 }
 
 /* Inline diff decorations (CodeMirror) */
+/* Mark for multi-line removed text (ViewPlugin can't replace across line
+   breaks, so multi-line removals use a mark + separate green widget). */
+.quill-diff-removed-mark {
+    background: rgba(255, 0, 0, 0.08);
+    text-decoration: line-through;
+    text-decoration-color: rgba(255, 0, 0, 0.45);
+    border-radius: 2px;
+}
+
 /* The single widget holding the red (removed) and green (added) boxes stacked. */
 .quill-diff-group {
     display: block;

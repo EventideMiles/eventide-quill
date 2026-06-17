@@ -190,13 +190,24 @@ class ChangeDiffPlugin {
             // 'approved'/'rejected' are committed/discarded and get no decoration.
             if (edit.state !== 'pending' && edit.state !== 'generating') continue;
             const hasRemoval = edit.from < edit.to;
-            const removedText = hasRemoval ? doc.sliceString(edit.from, edit.to) : '';
-            const widget = new ChangePreviewWidget(removedText, edit, this.handlers);
             if (hasRemoval) {
-                // Replace the removed range with the red+green preview widget.
-                ranges.push(Decoration.replace({ widget }).range(edit.from, edit.to));
+                const spansMultipleLines = doc.lineAt(edit.from).number !== doc.lineAt(edit.to).number;
+                if (spansMultipleLines) {
+                    // Multi-line: a ViewPlugin cannot create a replace that crosses
+                    // line breaks. Mark the removed text (red bg + strikethrough)
+                    // and drop the green widget below — both are ViewPlugin-safe.
+                    ranges.push(Decoration.mark({ class: 'quill-diff-removed-mark' }).range(edit.from, edit.to));
+                    const widget = new ChangePreviewWidget('', edit, this.handlers);
+                    ranges.push(Decoration.widget({ widget, side: 1 }).range(edit.to));
+                } else {
+                    // Single-line: replace widget (red box + green box stacked).
+                    const removedText = doc.sliceString(edit.from, edit.to);
+                    const widget = new ChangePreviewWidget(removedText, edit, this.handlers);
+                    ranges.push(Decoration.replace({ widget }).range(edit.from, edit.to));
+                }
             } else {
                 // Pure insertion: no range to replace, drop the widget at the point.
+                const widget = new ChangePreviewWidget('', edit, this.handlers);
                 ranges.push(Decoration.widget({ widget, side: 1 }).range(edit.from));
             }
         }
