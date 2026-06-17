@@ -615,6 +615,8 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.renderEvents.registerDomEvent(runBtn, 'click', () => {
                 if (this.fulfillActive) return;
                 this.fulfillActive = true;
+                runBtn.textContent = 'Running sweep\u2026';
+                runBtn.disabled = true;
                 this.scheduleRender();
                 this.onRunFulfill?.('');
             });
@@ -857,7 +859,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     }
 
     private renderInputRow(container: HTMLElement): void {
-        const generating = this.optionsLoading || this.draftState === 'generating';
+        const generating = this.optionsLoading || this.draftState === 'generating' || this.fulfillActive;
 
         // Mode picker — shown above the button row when open.
         if (this.modePickerOpen) {
@@ -955,7 +957,13 @@ export class CoWriterPanel extends AbstractChatPanel {
 
         const actionBtn = btnRow.createEl('button', {
             cls: `quill-cowriter-send-btn mod-cta${generating ? ' quill-cowriter-stop-btn' : ''}`,
-            text: generating ? 'Stop' : this.inputMode === 'fulfill' ? 'Run' : 'Send'
+            text: generating
+                ? this.inputMode === 'fulfill'
+                    ? 'Running\u2026'
+                    : 'Stop'
+                : this.inputMode === 'fulfill'
+                  ? 'Run'
+                  : 'Send'
         });
 
         // Textarea row — below the buttons, ~10 lines tall
@@ -968,9 +976,12 @@ export class CoWriterPanel extends AbstractChatPanel {
                     : this.inputMode === 'coach'
                       ? "Describe your intent or answer the AI's questions\u2026"
                       : this.inputMode === 'fulfill'
-                        ? 'Optional overall direction for the sweep\u2026'
+                        ? 'Not used in Fulfill mode \u2014 use Run sweep'
                         : 'Discuss the scene, ask questions, brainstorm\u2026'
         });
+        if (this.inputMode === 'fulfill') {
+            input.disabled = true;
+        }
         input.value = this.inputValue;
 
         // Track value changes for persistence across re-renders
