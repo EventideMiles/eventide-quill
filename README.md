@@ -6,7 +6,7 @@ MIT license. Built from scratch. Mobile-ready. Local-model first.
 
 ## What it is
 
-Eventide Quill is an Obsidian plugin that reads like a thoughtful editor, not a text generator. It helps novelists write better prose through deterministic linting, AI-powered feedback, and collaborative drafting — all without leaving your editor.
+Eventide Quill is an Obsidian plugin that reads like a thoughtful editor, not a text generator. It helps novelists write better prose through deterministic linting, AI-powered feedback, and co-writer collaboration — all without leaving your editor.
 
 It runs locally by default (Ollama) and never sends your manuscript anywhere you didn't explicitly configure.
 

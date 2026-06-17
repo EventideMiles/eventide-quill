@@ -2,6 +2,7 @@ import { App, Component, FuzzyMatch, FuzzySuggestModal, TFile } from 'obsidian';
 import type { ContextAssembly, ContextItem, ExtractedEntity } from '../core/context-engine/types';
 import type EventideQuillPlugin from '../main';
 import { findEditorView } from '../utils/find-editor';
+import { getBudgetColor } from './token-indicator';
 
 /** Search modal for finding a vault file to add as a context item. */
 class AddFileModal extends FuzzySuggestModal<TFile> {
@@ -50,10 +51,30 @@ export function renderContextTab(
     container.empty();
 
     if (!assembly) {
-        container.createEl('p', {
-            text: 'Open a manuscript to extract context.',
-            cls: 'quill-context-empty'
-        });
+        const activeFile = plugin.app.workspace.getActiveFile();
+        if (activeFile) {
+            container.createEl('p', {
+                text: `Context not yet assembled for ${activeFile.basename}.`,
+                cls: 'quill-context-empty'
+            });
+            const rescanBtn = container.createEl('button', {
+                cls: 'quill-context-action-btn',
+                text: 'Scan context'
+            });
+            component.registerDomEvent(rescanBtn, 'click', () => {
+                const editorView = findEditorView(plugin.app, activeFile.path);
+                if (editorView) {
+                    const editorContent = editorView.editor.getValue();
+                    plugin.scanContext(editorContent, activeFile.path);
+                    void plugin.assembleDocumentContext(editorContent, activeFile.path);
+                }
+            });
+        } else {
+            container.createEl('p', {
+                text: 'Open a manuscript to extract context.',
+                cls: 'quill-context-empty'
+            });
+        }
         return;
     }
 
@@ -253,14 +274,6 @@ function renderTokenBudget(container: HTMLElement, assembly: ContextAssembly): v
     const fill = bar.createEl('div', { cls: 'quill-context-budget-fill' });
     fill.style.width = `${Math.min(pct, 100)}%`;
     fill.style.backgroundColor = getBudgetColor(pct);
-}
-
-/** Return a CSS color token based on the current budget usage percentage. */
-function getBudgetColor(pct: number): string {
-    if (pct < 60) return 'var(--color-green)';
-    if (pct < 80) return 'var(--color-yellow)';
-    if (pct < 100) return 'var(--color-orange)';
-    return 'var(--color-red)';
 }
 
 /** Scroll the active editor to a specific line, if applicable. */
