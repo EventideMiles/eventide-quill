@@ -16,13 +16,20 @@ import { FixWithAiModal } from './ui/fix-with-ai-modal';
 import { ContextCache } from './core/context-engine';
 import { extractAllEntities, analyzeVoice, assembleContext } from './core/context-engine';
 import type { ContextAssembly, ContextItem, ExtractedEntity, EntityType } from './core/context-engine/types';
-import { loadQuillContextData, writeQuillContextData, buildQuillContextData, entityFromId } from './utils/frontmatter';
+import {
+    loadQuillContextData,
+    writeQuillContextData,
+    buildQuillContextData,
+    setPlotMap,
+    entityFromId
+} from './utils/frontmatter';
 import { buildFeedbackMessages, getPersonaById, getFeedback } from './ai/feedback';
 import type { ChatMessage } from './ai/provider';
 import { AI_MODE_CONFIGS } from './ai/modes';
 import { CoWriterSession, type CoachPhase, loadAdditionalContext } from './ai/co-writer';
 import { compactConversation } from './ai/compaction';
 import { estimateTokens } from './utils/tokens';
+import { readVaultFileText } from './utils/vault-files';
 import { readVaultFiles } from './utils/vault-files';
 
 /** Generate a content-based fingerprint for a lint result. Uses the flagged
@@ -95,6 +102,10 @@ export default class EventideQuillPlugin extends Plugin {
     private contextCache = new ContextCache();
     /** Current context assembly for the active document. */
     currentAssembly: ContextAssembly | null = null;
+    /** Path of the plot map note linked to the active document, or null when none is linked. */
+    currentPlotMap: string | null = null;
+    /** Path of the document currentPlotMap was loaded from (staleness guard). */
+    private plotMapFile: string | null = null;
     /** User modifications to entities (pins, removals, manual adds) keyed by entity ID. */
     private entityMods = new Map<
         string,
@@ -179,6 +190,8 @@ export default class EventideQuillPlugin extends Plugin {
                         this.pinnedContextPaths.clear();
                         this.removedContextPaths.clear();
                         this.manualContextItems = [];
+                        this.currentPlotMap = null;
+                        this.plotMapFile = null;
                         this.lintPanel?.setContextAssembly(null);
                     }
                 }
@@ -790,6 +803,9 @@ export default class EventideQuillPlugin extends Plugin {
                 });
             }
         }
+
+        this.currentPlotMap = fm.plotMap ?? null;
+        this.plotMapFile = file.path;
     }
 
     /** Sync current in-memory mods to the document's frontmatter.
@@ -807,6 +823,46 @@ export default class EventideQuillPlugin extends Plugin {
         writeQuillContextData(this.app, file, data).catch((err) => {
             console.warn('Quill: failed to sync context data', err);
         });
+    }
+
+    /** Refresh currentPlotMap from the active file's frontmatter if it is stale.
+     *  Cheap (metadata cache read). Safe to call repeatedly. */
+    refreshPlotMap(): void {
+        const active = this.app.workspace.getActiveFile();
+        if (!active) {
+            this.currentPlotMap = null;
+            this.plotMapFile = null;
+            return;
+        }
+        if (active.path === this.plotMapFile) return;
+        const fm = loadQuillContextData(this.app, active);
+        this.currentPlotMap = fm.plotMap ?? null;
+        this.plotMapFile = active.path;
+    }
+
+    /** Link a plot map note to the active manuscript. Persists to frontmatter. */
+    async setPlotMapLink(path: string): Promise<void> {
+        const active = this.app.workspace.getActiveFile();
+        if (!active) {
+            new Notice('Quill: Open a manuscript to link a plot map.');
+            return;
+        }
+        this.currentPlotMap = path;
+        this.plotMapFile = active.path;
+        await setPlotMap(this.app, active, path);
+        this.lintPanel?.coWriterSetPlotMap(path);
+        await this.updateCoWriterPlotMapTokens();
+    }
+
+    /** Unlink the plot map from the active manuscript. Persists to frontmatter. */
+    async clearPlotMapLink(): Promise<void> {
+        const active = this.app.workspace.getActiveFile();
+        if (!active) return;
+        this.currentPlotMap = null;
+        this.plotMapFile = active.path;
+        await setPlotMap(this.app, active, null);
+        this.lintPanel?.coWriterSetPlotMap(null);
+        await this.updateCoWriterPlotMapTokens();
     }
 
     /** Toggle the pinned state of an entity. Persists across re-assemblies and to frontmatter. */
@@ -1171,6 +1227,20 @@ export default class EventideQuillPlugin extends Plugin {
         }
         const messages = await loadAdditionalContext(this, files);
         this.lintPanel?.coWriterSetAdditionalContextTokens(estimateTokens(messages));
+    }
+
+    /**
+     * Compute the linked plot map's token estimate and push it to the co-writer
+     * panel. Reads the plot map note text (capped) and estimates its token cost.
+     */
+    async updateCoWriterPlotMapTokens(): Promise<void> {
+        const path = this.currentPlotMap;
+        if (!path) {
+            this.lintPanel?.coWriterSetPlotMapTokens(0);
+            return;
+        }
+        const text = await readVaultFileText(this.app.vault, path, this.settings.contextMaxCharsPerFile);
+        this.lintPanel?.coWriterSetPlotMapTokens(text ? estimateTokens(text) : 0);
     }
 
     /** Open the sidebar and switch to the Co-writer tab. */

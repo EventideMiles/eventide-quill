@@ -1742,6 +1742,71 @@ button.quill-cowriter-revert-btn {
     color: var(--text-normal);
 }
 
+/* Plot map link row */
+.quill-cowriter-plotmap-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+}
+
+.quill-cowriter-plotmap-label {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.quill-cowriter-plotmap-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--font-ui-smaller);
+    background: var(--background-modifier-hover);
+    border-radius: 3px;
+    padding: 2px 6px;
+    max-width: 220px;
+}
+
+.quill-cowriter-plotmap-name {
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.quill-cowriter-plotmap-name:hover {
+    color: var(--interactive-accent);
+}
+
+.quill-cowriter-plotmap-remove {
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    padding: 0 2px;
+    line-height: 1;
+}
+
+.quill-cowriter-plotmap-remove:hover {
+    color: var(--text-normal);
+}
+
+button.quill-cowriter-plotmap-link {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    border: 1px dashed var(--background-modifier-border-hover);
+    background: transparent;
+    border-radius: 3px;
+    padding: 2px 8px;
+    cursor: pointer;
+}
+
+button.quill-cowriter-plotmap-link:hover {
+    color: var(--text-normal);
+    border-color: var(--interactive-accent);
+}
+
 /* Buttons row (mode, add ctx, refresh, send) */
 .quill-cowriter-btn-row {
     display: flex;

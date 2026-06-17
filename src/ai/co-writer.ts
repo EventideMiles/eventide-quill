@@ -16,7 +16,7 @@ import {
 } from './prompts';
 import { compactConversation } from './compaction';
 import { estimateTokens } from '../utils/tokens';
-import { readVaultFiles } from '../utils/vault-files';
+import { readVaultFiles, readVaultFileText } from '../utils/vault-files';
 
 /** Replace em dashes (—) with a comma+space for prose that shouldn't use them. */
 function sanitizeProse(text: string): string {
@@ -180,6 +180,28 @@ export async function loadAdditionalContext(
     contextFilePaths: string[]
 ): Promise<ChatMessage[]> {
     return readVaultFiles(plugin.app.vault, contextFilePaths, 'Reference file', plugin.settings.contextMaxCharsPerFile);
+}
+
+/**
+ * Load the active manuscript's linked plot map text, if any.
+ * Returns empty string when no plot map is linked or it cannot be read.
+ * Capped by the `contextMaxCharsPerFile` setting.
+ */
+async function loadPlotMapText(plugin: EventideQuillPlugin): Promise<string> {
+    const plotMapPath = plugin.currentPlotMap;
+    if (!plotMapPath) return '';
+    const text = await readVaultFileText(plugin.app.vault, plotMapPath, plugin.settings.contextMaxCharsPerFile);
+    if (!text) {
+        console.warn('Quill: Linked plot map note could not be read:', plotMapPath);
+    }
+    return text;
+}
+
+/** Build a plot map system message, or null when there is no plot map text. */
+async function buildPlotMapMessage(plugin: EventideQuillPlugin): Promise<ChatMessage | null> {
+    const text = await loadPlotMapText(plugin);
+    if (!text) return null;
+    return { role: 'system', content: `Plot map (reference):\n${text}` };
 }
 
 /** Current state of a co-writer drafting session. */
@@ -418,11 +440,15 @@ export class CoWriterSession {
                 : '';
 
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
+        const optionsPlotMap = await buildPlotMapMessage(plugin);
 
         const prompt = getCoWriterOptionPrompt(proseForOptions || '(empty document)', direction);
         const messages: ChatMessage[] = [];
         if (vaultContext) {
             messages.push({ role: 'system', content: `Vault context for reference:\n${vaultContext}` });
+        }
+        if (optionsPlotMap) {
+            messages.push(optionsPlotMap);
         }
         messages.push(...additionalContextMessages, ...this.discussContextMessages(), {
             role: 'user',
@@ -611,6 +637,10 @@ export class CoWriterSession {
         }
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
         injectedContext.push(...additionalContextMessages);
+        const discussPlotMap = await buildPlotMapMessage(plugin);
+        if (discussPlotMap) {
+            injectedContext.push(discussPlotMap);
+        }
 
         const prompt = getCoWriterDiscussPrompt(proseForContext || '(empty document)', message);
 
@@ -822,6 +852,10 @@ export class CoWriterSession {
         }
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
         injectedContext.push(...additionalContextMessages);
+        const coachPlotMap = await buildPlotMapMessage(plugin);
+        if (coachPlotMap) {
+            injectedContext.push(coachPlotMap);
+        }
 
         // Initialize coach session on first call
         if (!this.coachSession || (this.coachSession.phase === 'discern' && message)) {
@@ -1105,10 +1139,14 @@ export class CoWriterSession {
                 ? buildVaultContext(plugin.currentAssembly.contextItems)
                 : '';
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
+        const coachOptionsPlotMap = await buildPlotMapMessage(plugin);
 
         const messages: ChatMessage[] = [];
         if (vaultContext) {
             messages.push({ role: 'system', content: `Vault context for reference:\n${vaultContext}` });
+        }
+        if (coachOptionsPlotMap) {
+            messages.push(coachOptionsPlotMap);
         }
         messages.push(...additionalContextMessages, { role: 'user', content: prompt });
 
@@ -1286,6 +1324,7 @@ export class CoWriterSession {
 
         // Build additional context from user-added files
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
+        const plotMapText = await loadPlotMapText(plugin);
 
         const systemPrompt = getCoWriterGenerationPrompt(
             this.voiceProfile ?? {
@@ -1296,7 +1335,8 @@ export class CoWriterSession {
             },
             plugin.settings.narrativeVoicePreset,
             vaultContext,
-            false
+            false,
+            plotMapText
         );
 
         const userMessage = [
@@ -1515,6 +1555,7 @@ export class CoWriterSession {
                 : '';
 
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
+        const plotMapText = await loadPlotMapText(plugin);
 
         const systemPrompt = getCoWriterGenerationPrompt(
             this.voiceProfile ?? {
@@ -1525,7 +1566,8 @@ export class CoWriterSession {
             },
             plugin.settings.narrativeVoicePreset,
             vaultContext,
-            false
+            false,
+            plotMapText
         );
 
         const proseForContext = textBeforeCursor.slice(-12000);

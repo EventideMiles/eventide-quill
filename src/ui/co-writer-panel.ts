@@ -50,6 +50,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private coachPhase: CoachPhase = 'discern';
     /** Whether coach mode is currently active. */
     private coachActive = false;
+    /** Path of the plot map note linked to the active manuscript, or null when none is linked. */
+    private plotMap: string | null = null;
 
     private onSendMessage: ((direction: string) => void) | null = null;
     private onDiscussMessage: ((message: string) => void) | null = null;
@@ -65,6 +67,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onEndCoach: (() => void) | null = null;
     private onAcceptPlan: (() => void) | null = null;
     private onCoachWrite: (() => void) | null = null;
+    private onLinkPlotMap: ((filePath: string) => void) | null = null;
+    private onClearPlotMap: (() => void) | null = null;
 
     /**
      * Conversation token estimate pushed from the plugin layer.
@@ -78,6 +82,12 @@ export class CoWriterPanel extends AbstractChatPanel {
      * Pushed from the plugin layer when files are added or removed.
      */
     private additionalContextTokens = 0;
+
+    /**
+     * Token estimate for the linked plot map note.
+     * Pushed from the plugin layer when the plot map link changes.
+     */
+    private plotMapTokens = 0;
 
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app);
@@ -166,6 +176,22 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.onCoachWrite = handler;
     }
 
+    /** Set the handler invoked when the user links a plot map note to the manuscript. */
+    setLinkPlotMapHandler(handler: (filePath: string) => void): void {
+        this.onLinkPlotMap = handler;
+    }
+
+    /** Set the handler invoked when the user unlinks the plot map. */
+    setClearPlotMapHandler(handler: () => void): void {
+        this.onClearPlotMap = handler;
+    }
+
+    /** Set the current plot map link path (null = none linked). */
+    setPlotMap(path: string | null): void {
+        this.plotMap = path && path.length > 0 ? path : null;
+        this.scheduleRender();
+    }
+
     /** Set the current coach phase. */
     setCoachPhase(phase: CoachPhase): void {
         this.coachPhase = phase;
@@ -195,6 +221,13 @@ export class CoWriterPanel extends AbstractChatPanel {
      */
     setAdditionalContextTokens(tokens: number): void {
         this.additionalContextTokens = tokens;
+        this.updateTokenIndicator();
+    }
+
+    /** Set the plot map token estimate for the token indicator.
+     *  Called from the plugin layer when the plot map link changes. */
+    setPlotMapTokens(tokens: number): void {
+        this.plotMapTokens = tokens;
         this.updateTokenIndicator();
     }
 
@@ -589,6 +622,9 @@ export class CoWriterPanel extends AbstractChatPanel {
             }
         }
 
+        // Plot map link row
+        this.renderPlotMapRow(bottom);
+
         // Context file pills
         const contextFiles = this.getContextFiles();
         if (contextFiles.length > 0) {
@@ -613,10 +649,53 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (this.maxAllowedTokens > 0) {
             const totalTokens = this.computeTotalTokens();
             const vaultContextCount = this.getVaultContextFiles().length;
-            const label = buildFileLabel(contextFiles.length, vaultContextCount);
+            const label = this.buildContextLabel(contextFiles.length, vaultContextCount);
             bottom.createEl('div', {
                 cls: 'quill-cowriter-token-indicator',
                 text: formatTokenIndicatorText(label, totalTokens, this.maxAllowedTokens)
+            });
+        }
+    }
+
+    /** Render the plot map link row: either a link button or a filename pill with unlink. */
+    private renderPlotMapRow(container: HTMLElement): void {
+        const row = container.createEl('div', { cls: 'quill-cowriter-plotmap-row' });
+        row.createEl('span', { cls: 'quill-cowriter-plotmap-label', text: 'Plot map' });
+
+        if (this.plotMap) {
+            const plotMapPath = this.plotMap;
+            const pill = row.createEl('span', { cls: 'quill-cowriter-plotmap-pill' });
+            const nameSpan = pill.createEl('span', {
+                cls: 'quill-cowriter-plotmap-name',
+                text: fileNameFromPath(plotMapPath),
+                title: plotMapPath
+            });
+            this.renderEvents.registerDomEvent(nameSpan, 'click', () => {
+                void this.app.workspace.openLinkText(plotMapPath, '');
+            });
+            const removeBtn = pill.createEl('button', {
+                cls: 'quill-cowriter-plotmap-remove',
+                text: '\u00d7',
+                title: 'Unlink plot map'
+            });
+            this.renderEvents.registerDomEvent(removeBtn, 'click', () => {
+                this.onClearPlotMap?.();
+            });
+        } else {
+            const linkBtn = row.createEl('button', {
+                cls: 'quill-cowriter-plotmap-link',
+                text: '+ link',
+                title: 'Link a plot map note for this manuscript'
+            });
+            this.renderEvents.registerDomEvent(linkBtn, 'click', () => {
+                const activeFile = this.app.workspace.getActiveFile();
+                new VaultFileSuggestModal(
+                    this.app,
+                    (file: TFile) => {
+                        this.onLinkPlotMap?.(file.path);
+                    },
+                    [activeFile?.path ?? '']
+                ).open();
             });
         }
     }
@@ -814,18 +893,19 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (this.maxAllowedTokens <= 0) return;
         const contextFiles = this.getContextFiles();
         const vaultContextCount = this.getVaultContextFiles().length;
-        const label = buildFileLabel(contextFiles.length, vaultContextCount);
+        const label = this.buildContextLabel(contextFiles.length, vaultContextCount);
         const totalTokens = this.computeTotalTokens();
         indicator.setText(formatTokenIndicatorText(label, totalTokens, this.maxAllowedTokens));
     }
 
     /**
      * Compute the total token estimate for the context indicator.
-     * Combines conversation tokens, additional context file tokens, and
-     * vault context item tokens so the full context window usage is shown.
+     * Combines conversation tokens, additional context file tokens, plot map
+     * tokens, and vault context item tokens so the full context window usage
+     * is shown.
      */
     private computeTotalTokens(): number {
-        let total = this.contextEstimate + this.additionalContextTokens;
+        let total = this.contextEstimate + this.additionalContextTokens + this.plotMapTokens;
         const assembly = this.plugin.currentAssembly;
         if (assembly) {
             for (const item of assembly.contextItems) {
@@ -833,5 +913,14 @@ export class CoWriterPanel extends AbstractChatPanel {
             }
         }
         return total;
+    }
+
+    /** Build the context label for the token indicator, noting a linked plot map. */
+    private buildContextLabel(contextFilesCount: number, vaultContextCount: number): string {
+        let label = buildFileLabel(contextFilesCount, vaultContextCount);
+        if (this.plotMap) {
+            label = label === 'No files in context' ? 'plot map' : `${label} + plot map`;
+        }
+        return label;
     }
 }

@@ -398,6 +398,12 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setCoachWriteHandler(() => {
                 void this.plugin.coWriterCoachWrite();
             });
+            this.coWriterPanel.setLinkPlotMapHandler((filePath: string) => {
+                void this.plugin.setPlotMapLink(filePath);
+            });
+            this.coWriterPanel.setClearPlotMapHandler(() => {
+                void this.plugin.clearPlotMapLink();
+            });
         }
 
         // Sync current state from the session
@@ -411,6 +417,11 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setCoachPhase(session.coachSession?.phase ?? 'discern');
             this.coWriterPanel.setCoachActive(session.coachActive);
         }
+
+        // Sync plot map link from the active manuscript's frontmatter
+        this.plugin.refreshPlotMap();
+        this.coWriterPanel.setPlotMap(this.plugin.currentPlotMap);
+        void this.plugin.updateCoWriterPlotMapTokens();
 
         // Set provider context limit (same pattern as feedback panel init)
         const chat = this.plugin.getDefaultChatProvider();
@@ -526,6 +537,11 @@ export class QuillSidebarView extends ItemView {
         this.coWriterPanel?.setAdditionalContextTokens(tokens);
     }
 
+    /** Set the plot map token estimate for the Co-writer token indicator. */
+    coWriterSetPlotMapTokens(tokens: number): void {
+        this.coWriterPanel?.setPlotMapTokens(tokens);
+    }
+
     /** Start streaming a discuss response. */
     coWriterDiscussStartStreaming(): void {
         this.coWriterPanel?.discussStartStreaming();
@@ -554,6 +570,11 @@ export class QuillSidebarView extends ItemView {
     /** Set whether coach mode is active. */
     coWriterSetCoachActive(active: boolean): void {
         this.coWriterPanel?.setCoachActive(active);
+    }
+
+    /** Set the plot map link path shown in the co-writer panel. */
+    coWriterSetPlotMap(path: string | null): void {
+        this.coWriterPanel?.setPlotMap(path);
     }
 
     /** Get the chat context file paths from the Feedback panel. */

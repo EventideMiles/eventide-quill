@@ -8,6 +8,8 @@ export interface QuillContextData {
     addedFiles?: string[];
     pinnedFiles?: string[];
     removedFiles?: string[];
+    /** Path of the manuscript's primary plot map note. Single slot; empty/missing = none. */
+    plotMap?: string;
 }
 
 /** Read quill context data from a file's frontmatter via the metadata cache. */
@@ -16,38 +18,74 @@ export function loadQuillContextData(app: App, file: TFile): QuillContextData {
     if (!cache?.frontmatter) return {};
     const raw: Record<string, unknown> = (cache.frontmatter['quill'] as Record<string, unknown> | undefined) ?? {};
     if (typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const plotMapRaw = raw['plotMap'];
     return {
         pinnedEntities: asStringArray(raw['pinnedEntities']),
         removedEntities: asStringArray(raw['removedEntities']),
         addedEntities: asStringArray(raw['addedEntities']),
         addedFiles: asStringArray(raw['addedFiles']),
         pinnedFiles: asStringArray(raw['pinnedFiles']),
-        removedFiles: asStringArray(raw['removedFiles'])
+        removedFiles: asStringArray(raw['removedFiles']),
+        plotMap: typeof plotMapRaw === 'string' && plotMapRaw.length > 0 ? plotMapRaw : undefined
     };
 }
 
 /** Write quill context data to a file's frontmatter using Obsidian's processFrontMatter API.
- *  Removes the quill key entirely if all fields are empty. */
+ *  Non-destructive: updates only the context-engine keys this function owns and
+ *  preserves any other quill keys (e.g. plotMap). Removes the quill key entirely
+ *  only when no quill keys remain. */
 export async function writeQuillContextData(app: App, file: TFile, data: QuillContextData): Promise<void> {
-    const hasContent = Object.keys(data).some((k) => {
-        const val = data[k as keyof QuillContextData];
-        return Array.isArray(val) && val.length > 0;
-    });
-
     await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-        if (hasContent) {
-            const quill: Record<string, string[]> = {};
-            if (data.pinnedEntities && data.pinnedEntities.length > 0) quill.pinnedEntities = data.pinnedEntities;
-            if (data.removedEntities && data.removedEntities.length > 0) quill.removedEntities = data.removedEntities;
-            if (data.addedEntities && data.addedEntities.length > 0) quill.addedEntities = data.addedEntities;
-            if (data.addedFiles && data.addedFiles.length > 0) quill.addedFiles = data.addedFiles;
-            if (data.pinnedFiles && data.pinnedFiles.length > 0) quill.pinnedFiles = data.pinnedFiles;
-            if (data.removedFiles && data.removedFiles.length > 0) quill.removedFiles = data.removedFiles;
-            fm['quill'] = quill;
-        } else {
-            delete fm['quill'];
-        }
+        const quill = getQuillObject(fm);
+        setArrayKey(quill, 'pinnedEntities', data.pinnedEntities);
+        setArrayKey(quill, 'removedEntities', data.removedEntities);
+        setArrayKey(quill, 'addedEntities', data.addedEntities);
+        setArrayKey(quill, 'addedFiles', data.addedFiles);
+        setArrayKey(quill, 'pinnedFiles', data.pinnedFiles);
+        setArrayKey(quill, 'removedFiles', data.removedFiles);
+        commitQuillObject(fm, quill);
     });
+}
+
+/** Set or clear the plot map link in a file's frontmatter. Other quill keys are preserved.
+ *  Pass null to unlink the plot map. */
+export async function setPlotMap(app: App, file: TFile, plotMap: string | null): Promise<void> {
+    await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+        const quill = getQuillObject(fm);
+        if (plotMap) {
+            quill['plotMap'] = plotMap;
+        } else {
+            delete quill['plotMap'];
+        }
+        commitQuillObject(fm, quill);
+    });
+}
+
+/** Read the quill object from frontmatter, or return a fresh empty object. Preserves existing keys. */
+function getQuillObject(fm: Record<string, unknown>): Record<string, unknown> {
+    const existing = fm['quill'];
+    if (typeof existing === 'object' && existing !== null && !Array.isArray(existing)) {
+        return existing as Record<string, unknown>;
+    }
+    return {};
+}
+
+/** Set or clear an array-valued key on the quill object. */
+function setArrayKey(quill: Record<string, unknown>, key: string, val: string[] | undefined): void {
+    if (Array.isArray(val) && val.length > 0) {
+        quill[key] = val;
+    } else {
+        delete quill[key];
+    }
+}
+
+/** Write the quill object back, pruning it entirely when no keys remain. */
+function commitQuillObject(fm: Record<string, unknown>, quill: Record<string, unknown>): void {
+    if (Object.keys(quill).length > 0) {
+        fm['quill'] = quill;
+    } else {
+        delete fm['quill'];
+    }
 }
 
 /** Build quill context data from current in-memory tracking structures.

@@ -256,13 +256,15 @@ export function getCoWriterDiscussPrompt(proseBeforeCursor: string, message: str
 /**
  * Build the system prompt for co-writer continuation generation.
  * Injects the voice profile, narrative preset rules, style constraints,
- * optional vault context, and optional inline directives context.
+ * optional vault context, optional plot map reference, and optional inline
+ * directives context.
  */
 export function getCoWriterGenerationPrompt(
     voiceProfile: VoiceProfile,
     narrativePreset: NarrativeVoicePreset,
     vaultContext?: string,
-    hasDirectives?: boolean
+    hasDirectives?: boolean,
+    plotMapText?: string
 ): string {
     const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === narrativePreset) ?? NARRATIVE_VOICE_PRESETS[0];
     if (!def) {
@@ -316,6 +318,18 @@ export function getCoWriterGenerationPrompt(
             '',
             '--- Reference material from your vault (character notes, worldbuilding, outlines) ---',
             vaultContext
+        );
+    }
+
+    if (plotMapText) {
+        parts.push(
+            '',
+            '--- Plot map (reference) ---',
+            'The writer has linked this note as the canonical outline/reference for the manuscript.',
+            'Use it for continuity and direction. Do NOT write ahead to future beats the writer has',
+            'not reached yet — extend only the current scene.',
+            '',
+            plotMapText
         );
     }
 
