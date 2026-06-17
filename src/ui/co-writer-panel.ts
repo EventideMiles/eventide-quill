@@ -1,12 +1,12 @@
 import { App, MarkdownRenderer, TFile } from 'obsidian';
 import type EventideQuillPlugin from '../main';
-import type { DraftState, CoWriterChatMessage, CoWriterOption, GuidancePhase } from '../ai/co-writer';
+import type { DraftState, CoWriterChatMessage, CoWriterOption, CoachPhase } from '../ai/co-writer';
 import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { ConfirmModal } from './confirm-modal';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
 
-type InputMode = 'direct' | 'discuss' | 'guidance';
+type InputMode = 'direct' | 'discuss' | 'coach';
 
 /** Extract a display name from a vault path. */
 function fileNameFromPath(path: string): string {
@@ -46,10 +46,10 @@ export class CoWriterPanel extends AbstractChatPanel {
     private inputValue = '';
     /** Whether the last message is streaming (in-progress assistant response). */
     private discussStreaming = false;
-    /** Current guidance phase, if guidance mode is active. */
-    private guidancePhase: GuidancePhase = 'discern';
-    /** Whether guidance mode is currently active. */
-    private guidanceActive = false;
+    /** Current coach phase, if coach mode is active. */
+    private coachPhase: CoachPhase = 'discern';
+    /** Whether coach mode is currently active. */
+    private coachActive = false;
 
     private onSendMessage: ((direction: string) => void) | null = null;
     private onDiscussMessage: ((message: string) => void) | null = null;
@@ -60,11 +60,11 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onAddContextFile: ((filePath: string) => void) | null = null;
     private onRemoveContextFile: ((filePath: string) => void) | null = null;
     private onRefreshSuggestions: (() => void) | null = null;
-    private onGuidanceMessage: ((message: string, phase: GuidancePhase) => void) | null = null;
-    private onGuidanceToOptions: (() => void) | null = null;
-    private onEndGuidance: (() => void) | null = null;
+    private onCoachMessage: ((message: string, phase: CoachPhase) => void) | null = null;
+    private onCoachToOptions: (() => void) | null = null;
+    private onEndCoach: (() => void) | null = null;
     private onAcceptPlan: (() => void) | null = null;
-    private onGuidanceWrite: (() => void) | null = null;
+    private onCoachWrite: (() => void) | null = null;
 
     /**
      * Conversation token estimate pushed from the plugin layer.
@@ -141,40 +141,40 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.onRefreshSuggestions = handler;
     }
 
-    /** Set the handler invoked when the user submits a guidance message for the given phase. */
-    setGuidanceMessageHandler(handler: (message: string, phase: GuidancePhase) => void): void {
-        this.onGuidanceMessage = handler;
+    /** Set the handler invoked when the user submits a coach message for the given phase. */
+    setCoachMessageHandler(handler: (message: string, phase: CoachPhase) => void): void {
+        this.onCoachMessage = handler;
     }
 
-    /** Set the handler invoked to convert a guidance plan into continuation options. */
-    setGuidanceToOptionsHandler(handler: () => void): void {
-        this.onGuidanceToOptions = handler;
+    /** Set the handler invoked to convert a coach plan into continuation options. */
+    setCoachToOptionsHandler(handler: () => void): void {
+        this.onCoachToOptions = handler;
     }
 
-    /** Set the handler invoked to end the current guidance session. */
-    setEndGuidanceHandler(handler: () => void): void {
-        this.onEndGuidance = handler;
+    /** Set the handler invoked to end the current coach session. */
+    setEndCoachHandler(handler: () => void): void {
+        this.onEndCoach = handler;
     }
 
-    /** Set the handler invoked when the user accepts a guidance plan. */
+    /** Set the handler invoked when the user accepts a coach plan. */
     setAcceptPlanHandler(handler: () => void): void {
         this.onAcceptPlan = handler;
     }
 
-    /** Set the handler invoked to trigger a guidance-driven write. */
-    setGuidanceWriteHandler(handler: () => void): void {
-        this.onGuidanceWrite = handler;
+    /** Set the handler invoked to trigger a coach-driven write. */
+    setCoachWriteHandler(handler: () => void): void {
+        this.onCoachWrite = handler;
     }
 
-    /** Set the current guidance phase. */
-    setGuidancePhase(phase: GuidancePhase): void {
-        this.guidancePhase = phase;
+    /** Set the current coach phase. */
+    setCoachPhase(phase: CoachPhase): void {
+        this.coachPhase = phase;
         this.render();
     }
 
-    /** Set whether guidance mode is active. */
-    setGuidanceActive(active: boolean): void {
-        this.guidanceActive = active;
+    /** Set whether coach mode is active. */
+    setCoachActive(active: boolean): void {
+        this.coachActive = active;
         this.render();
     }
 
@@ -538,52 +538,52 @@ export class CoWriterPanel extends AbstractChatPanel {
             });
         }
 
-        // Guidance mode UI
-        if (this.inputMode === 'guidance') {
-            const guidanceBar = bottom.createEl('div', { cls: 'quill-cowriter-guidance-bar' });
+        // Coach mode UI
+        if (this.inputMode === 'coach') {
+            const coachBar = bottom.createEl('div', { cls: 'quill-cowriter-coach-bar' });
 
             // Phase indicator
-            const phaseLabel = guidanceBar.createEl('span', { cls: 'quill-cowriter-guidance-phase' });
-            const phaseNames: Record<GuidancePhase, string> = {
+            const phaseLabel = coachBar.createEl('span', { cls: 'quill-cowriter-coach-phase' });
+            const phaseNames: Record<CoachPhase, string> = {
                 discern: 'Phase 1: Analyzing intent...',
                 clarify: 'Phase 2: Clarifying questions...',
                 plan: 'Phase 3: Building plan...',
                 direction: 'Phase 4: Executable direction'
             };
             phaseLabel.setText(
-                this.guidanceActive ? phaseNames[this.guidancePhase] : 'Guide mode \u2014 AI will analyze your passage'
+                this.coachActive ? phaseNames[this.coachPhase] : 'Coach mode \u2014 AI will analyze your passage'
             );
 
-            // End guidance button
-            if (this.guidanceActive) {
-                guidanceBar.createEl('span', { text: ' ' });
-                const endBtn = guidanceBar.createEl('button', {
-                    cls: 'quill-cowriter-guidance-end-btn',
-                    text: 'End guidance'
+            // End coach button
+            if (this.coachActive) {
+                coachBar.createEl('span', { text: ' ' });
+                const endBtn = coachBar.createEl('button', {
+                    cls: 'quill-cowriter-coach-end-btn',
+                    text: 'End coaching'
                 });
                 this.renderEvents.registerDomEvent(endBtn, 'click', () => {
-                    this.onEndGuidance?.();
+                    this.onEndCoach?.();
                 });
 
-                // Write guidance button (available at any phase)
-                guidanceBar.createEl('span', { text: ' ' });
-                const writeBtn = guidanceBar.createEl('button', {
-                    cls: 'quill-cowriter-guidance-options-btn',
-                    text: 'Write guidance'
+                // Write coach button (available at any phase)
+                coachBar.createEl('span', { text: ' ' });
+                const writeBtn = coachBar.createEl('button', {
+                    cls: 'quill-cowriter-coach-options-btn',
+                    text: 'Write from coaching'
                 });
                 this.renderEvents.registerDomEvent(writeBtn, 'click', () => {
-                    this.onGuidanceWrite?.();
+                    this.onCoachWrite?.();
                 });
 
-                // Generate options button (if guidance is complete)
-                if (this.guidancePhase === 'direction') {
-                    guidanceBar.createEl('span', { text: ' ' });
-                    const optionsBtn = guidanceBar.createEl('button', {
-                        cls: 'quill-cowriter-guidance-options-btn',
+                // Generate options button (if coach is complete)
+                if (this.coachPhase === 'direction') {
+                    coachBar.createEl('span', { text: ' ' });
+                    const optionsBtn = coachBar.createEl('button', {
+                        cls: 'quill-cowriter-coach-options-btn',
                         text: 'Generate options'
                     });
                     this.renderEvents.registerDomEvent(optionsBtn, 'click', () => {
-                        this.onGuidanceToOptions?.();
+                        this.onCoachToOptions?.();
                     });
                 }
             }
@@ -629,24 +629,24 @@ export class CoWriterPanel extends AbstractChatPanel {
         const btnRow = container.createEl('div', { cls: 'quill-cowriter-btn-row' });
 
         const modeBtn = btnRow.createEl('button', {
-            cls: `quill-cowriter-mode-btn${this.inputMode === 'guidance' ? ' quill-cowriter-mode-guidance' : this.inputMode === 'discuss' ? ' quill-cowriter-mode-discuss' : ''}`,
+            cls: `quill-cowriter-mode-btn${this.inputMode === 'coach' ? ' quill-cowriter-mode-coach' : this.inputMode === 'discuss' ? ' quill-cowriter-mode-discuss' : ''}`,
             text:
                 this.inputMode === 'direct'
                     ? '\u2192 Direct'
                     : this.inputMode === 'discuss'
                       ? '\u2194 Discuss'
-                      : '\u2728 Guide',
+                      : '\u2728 Coach',
             title:
                 this.inputMode === 'direct'
                     ? 'Direct: AI suggests 3 continuation options'
                     : this.inputMode === 'discuss'
                       ? 'Discuss: AI responds with thoughts and analysis'
-                      : 'Guide: AI helps you figure out what to do next'
+                      : 'Coach: AI helps you figure out what to do next'
         });
         if (generating) modeBtn.disabled = true;
         this.renderEvents.registerDomEvent(modeBtn, 'click', () => {
             if (generating) return;
-            const modes: InputMode[] = ['direct', 'discuss', 'guidance'];
+            const modes: InputMode[] = ['direct', 'discuss', 'coach'];
             const currentIndex = modes.indexOf(this.inputMode);
             const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % modes.length : 0;
             const nextMode = modes[nextIndex];
@@ -741,7 +741,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             placeholder:
                 this.inputMode === 'direct'
                     ? 'Describe what should happen next\u2026'
-                    : this.inputMode === 'guidance'
+                    : this.inputMode === 'coach'
                       ? "Describe your intent or answer the AI's questions\u2026"
                       : 'Discuss the scene, ask questions, brainstorm\u2026'
         });
@@ -770,8 +770,8 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.scheduleRender();
             if (this.inputMode === 'direct') {
                 this.onSendMessage?.(text);
-            } else if (this.inputMode === 'guidance') {
-                this.onGuidanceMessage?.(text, this.guidancePhase);
+            } else if (this.inputMode === 'coach') {
+                this.onCoachMessage?.(text, this.coachPhase);
             } else {
                 this.onDiscussMessage?.(text);
             }

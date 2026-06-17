@@ -7,7 +7,7 @@ import { FixWithAiModal } from './fix-with-ai-modal';
 import { renderContextTab } from './context-panel';
 import { FeedbackPanel } from './feedback-panel';
 import { CoWriterPanel } from './co-writer-panel';
-import type { CoWriterChatMessage, CoWriterOption, DraftState, GuidancePhase } from '../ai/co-writer';
+import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase } from '../ai/co-writer';
 import type EventideQuillPlugin from '../main';
 import type { ContextAssembly } from '../core/context-engine/types';
 
@@ -383,20 +383,20 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setNewChatHandler((clearContext: boolean) => {
                 this.plugin.resetCoWriterChat(clearContext);
             });
-            this.coWriterPanel.setGuidanceMessageHandler((message: string, phase: string) => {
-                void this.plugin.sendCoWriterGuidance(message, phase);
+            this.coWriterPanel.setCoachMessageHandler((message: string, phase: string) => {
+                void this.plugin.sendCoWriterCoach(message, phase);
             });
-            this.coWriterPanel.setGuidanceToOptionsHandler(() => {
-                void this.plugin.coWriterGuidanceToOptions();
+            this.coWriterPanel.setCoachToOptionsHandler(() => {
+                void this.plugin.coWriterCoachToOptions();
             });
-            this.coWriterPanel.setEndGuidanceHandler(() => {
-                this.plugin.endCoWriterGuidance();
+            this.coWriterPanel.setEndCoachHandler(() => {
+                this.plugin.endCoWriterCoach();
             });
             this.coWriterPanel.setAcceptPlanHandler(() => {
-                void this.plugin.coWriterGuidanceToOptions();
+                void this.plugin.coWriterCoachToOptions();
             });
-            this.coWriterPanel.setGuidanceWriteHandler(() => {
-                void this.plugin.coWriterGuidanceWrite();
+            this.coWriterPanel.setCoachWriteHandler(() => {
+                void this.plugin.coWriterCoachWrite();
             });
         }
 
@@ -408,8 +408,8 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setChatHistory(session.chatHistory);
             this.coWriterPanel.setCurrentOptions(session.currentOptions);
             this.coWriterPanel.setOptionsLoading(session.optionsLoading);
-            this.coWriterPanel.setGuidancePhase(session.guidanceSession?.phase ?? 'discern');
-            this.coWriterPanel.setGuidanceActive(session.guidanceActive);
+            this.coWriterPanel.setCoachPhase(session.coachSession?.phase ?? 'discern');
+            this.coWriterPanel.setCoachActive(session.coachActive);
         }
 
         // Set provider context limit (same pattern as feedback panel init)
@@ -546,14 +546,14 @@ export class QuillSidebarView extends ItemView {
         await this.coWriterPanel?.discussError(message);
     }
 
-    /** Set the guidance phase in the co-writer panel. */
-    coWriterSetGuidancePhase(phase: string): void {
-        this.coWriterPanel?.setGuidancePhase(phase as GuidancePhase);
+    /** Set the coach phase in the co-writer panel. */
+    coWriterSetCoachPhase(phase: string): void {
+        this.coWriterPanel?.setCoachPhase(phase as CoachPhase);
     }
 
-    /** Set whether guidance mode is active. */
-    coWriterSetGuidanceActive(active: boolean): void {
-        this.coWriterPanel?.setGuidanceActive(active);
+    /** Set whether coach mode is active. */
+    coWriterSetCoachActive(active: boolean): void {
+        this.coWriterPanel?.setCoachActive(active);
     }
 
     /** Get the chat context file paths from the Feedback panel. */

@@ -1930,8 +1930,8 @@ button.quill-cowriter-init-btn:hover {
     opacity: 0.85;
 }
 
-/* Guidance mode UI */
-.quill-cowriter-guidance-bar {
+/* Coach mode UI */
+.quill-cowriter-coach-bar {
     display: flex;
     align-items: center;
     padding: 6px 8px;
@@ -1941,13 +1941,13 @@ button.quill-cowriter-init-btn:hover {
     margin-top: 4px;
 }
 
-.quill-cowriter-guidance-phase {
+.quill-cowriter-coach-phase {
     font-style: italic;
     color: var(--text-accent);
     font-weight: 500;
 }
 
-button.quill-cowriter-guidance-end-btn {
+button.quill-cowriter-coach-end-btn {
     background: var(--background-modifier-form-field);
     border: 1px solid var(--background-modifier-border);
     border-radius: 4px;
@@ -1958,12 +1958,12 @@ button.quill-cowriter-guidance-end-btn {
     transition: background 0.1s;
 }
 
-button.quill-cowriter-guidance-end-btn:hover {
+button.quill-cowriter-coach-end-btn:hover {
     background: var(--background-modifier-border);
     color: var(--text-normal);
 }
 
-button.quill-cowriter-guidance-options-btn {
+button.quill-cowriter-coach-options-btn {
     background: var(--interactive-accent);
     color: var(--text-on-accent);
     border: none;
@@ -1975,7 +1975,7 @@ button.quill-cowriter-guidance-options-btn {
     transition: opacity 0.1s;
 }
 
-button.quill-cowriter-guidance-options-btn:hover {
+button.quill-cowriter-coach-options-btn:hover {
     opacity: 0.85;
 }
 

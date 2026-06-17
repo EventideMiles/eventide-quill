@@ -20,7 +20,7 @@ import { loadQuillContextData, writeQuillContextData, buildQuillContextData, ent
 import { buildFeedbackMessages, getPersonaById, getFeedback } from './ai/feedback';
 import type { ChatMessage } from './ai/provider';
 import { AI_MODE_CONFIGS } from './ai/modes';
-import { CoWriterSession, type GuidancePhase, loadAdditionalContext } from './ai/co-writer';
+import { CoWriterSession, type CoachPhase, loadAdditionalContext } from './ai/co-writer';
 import { compactConversation } from './ai/compaction';
 import { estimateTokens } from './utils/tokens';
 import { readVaultFiles } from './utils/vault-files';
@@ -967,8 +967,8 @@ export default class EventideQuillPlugin extends Plugin {
                 this.lintPanel.coWriterSetChatHistory(session.chatHistory);
                 this.lintPanel.coWriterSetCurrentOptions(session.currentOptions);
                 this.lintPanel.coWriterSetOptionsLoading(session.optionsLoading);
-                this.lintPanel.coWriterSetGuidancePhase(session.guidanceSession?.phase ?? 'discern');
-                this.lintPanel.coWriterSetGuidanceActive(session.guidanceActive);
+                this.lintPanel.coWriterSetCoachPhase(session.coachSession?.phase ?? 'discern');
+                this.lintPanel.coWriterSetCoachActive(session.coachActive);
             }
         };
         session.onOptionsLoading = (loading: boolean) => {
@@ -991,9 +991,9 @@ export default class EventideQuillPlugin extends Plugin {
             // Auto-regenerate fresh options after accepting a draft
             void this.sendCoWriterOptions('');
         };
-        session.onGuidanceDirectionReady = () => {
+        session.onCoachDirectionReady = () => {
             // Auto-generate continuation options when plan/direction is reached
-            void this.coWriterSession.guidanceToOptions(this, '');
+            void this.coWriterSession.coachToOptions(this, '');
         };
     }
 
@@ -1041,38 +1041,38 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
-     * Send a guidance message to the co-writer.
+     * Send a coach message to the co-writer.
      * The AI analyzes the passage and guides the writer through a structured process.
      */
-    async sendCoWriterGuidance(message: string, phase: string): Promise<void> {
+    async sendCoWriterCoach(message: string, phase: string): Promise<void> {
         const path = this.app.workspace.getActiveFile()?.path;
         if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
         this.wireCoWriterPanel();
-        await this.coWriterSession.sendGuidance(this, message, phase as GuidancePhase);
+        await this.coWriterSession.sendCoach(this, message, phase as CoachPhase);
     }
 
     /**
-     * Transition from guidance mode to option generation.
+     * Transition from coach mode to option generation.
      */
-    async coWriterGuidanceToOptions(): Promise<void> {
-        await this.coWriterSession.guidanceToOptions(this, '');
+    async coWriterCoachToOptions(): Promise<void> {
+        await this.coWriterSession.coachToOptions(this, '');
     }
 
     /**
-     * End the current guidance session.
+     * End the current coach session.
      */
-    endCoWriterGuidance(): void {
-        this.coWriterSession.endGuidanceSession();
-        this.lintPanel?.coWriterSetGuidanceActive(false);
-        this.lintPanel?.coWriterSetGuidancePhase('discern');
+    endCoWriterCoach(): void {
+        this.coWriterSession.endCoachSession();
+        this.lintPanel?.coWriterSetCoachActive(false);
+        this.lintPanel?.coWriterSetCoachPhase('discern');
     }
 
     /**
-     * Write a prose continuation based on the current guidance session state.
+     * Write a prose continuation based on the current coach session state.
      */
-    async coWriterGuidanceWrite(): Promise<void> {
-        await this.coWriterSession.guidanceWrite(this);
+    async coWriterCoachWrite(): Promise<void> {
+        await this.coWriterSession.coachWrite(this);
     }
 
     /** Cancel the current feedback generation request. */
@@ -1095,8 +1095,8 @@ export default class EventideQuillPlugin extends Plugin {
      */
     resetCoWriterChat(clearContext: boolean): void {
         this.coWriterSession.resetChat(clearContext);
-        this.lintPanel?.coWriterSetGuidanceActive(false);
-        this.lintPanel?.coWriterSetGuidancePhase('discern');
+        this.lintPanel?.coWriterSetCoachActive(false);
+        this.lintPanel?.coWriterSetCoachPhase('discern');
         this.lintPanel?.coWriterSetContextTokenEstimate(0);
         if (clearContext) {
             this.lintPanel?.coWriterSetAdditionalContextTokens(0);

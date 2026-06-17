@@ -7,10 +7,10 @@ import { AiProvider, type ChatMessage } from './provider';
 import {
     getCoWriterDiscussPrompt,
     getCoWriterGenerationPrompt,
-    getCoWriterGuidanceFollowUp,
-    getCoWriterGuidancePrompt,
-    getCoWriterGuidanceRevision,
-    getCoWriterGuidanceToOptions,
+    getCoWriterCoachFollowUp,
+    getCoWriterCoachPrompt,
+    getCoWriterCoachRevision,
+    getCoWriterCoachToOptions,
     getCoWriterOptionPrompt,
     getCoWriterVoicePrompt
 } from './prompts';
@@ -185,16 +185,16 @@ export async function loadAdditionalContext(
 /** Current state of a co-writer drafting session. */
 export type DraftState = 'idle' | 'generating' | 'draft';
 
-/** Guidance mode phase. */
-export type GuidancePhase = 'discern' | 'clarify' | 'plan' | 'direction';
+/** Coach mode phase. */
+export type CoachPhase = 'discern' | 'clarify' | 'plan' | 'direction';
 
-/** A guidance session state. */
-export interface GuidanceSession {
-    /** Current phase of the guidance process. */
-    phase: GuidancePhase;
+/** A coach session state. */
+export interface CoachSession {
+    /** Current phase of the coaching process. */
+    phase: CoachPhase;
     /** The AI's analysis or response for the current phase. */
     response: string;
-    /** Summary of the guidance for use in option generation. */
+    /** Summary of the coaching for use in option generation. */
     summary: string;
     /** Whether this is the first turn (phase 1: discern intent). */
     isFirstTurn: boolean;
@@ -288,14 +288,14 @@ export class CoWriterSession {
     onDiscussFinished: (() => void) | null = null;
     /** Called when the discuss response encounters an error. */
     onDiscussError: ((message: string) => void) | null = null;
-    /** Called when the guidance mode reaches the direction phase, to auto-generate options. */
-    onGuidanceDirectionReady: (() => void) | null = null;
-    /** Current guidance session, if guidance mode is active. */
-    guidanceSession: GuidanceSession | null = null;
-    /** Whether guidance mode is currently active. */
-    guidanceActive = false;
-    /** Whether option cards have been auto-generated for the current guidance session. */
-    private guidanceOptionsGenerated = false;
+    /** Called when the coach mode reaches the direction phase, to auto-generate options. */
+    onCoachDirectionReady: (() => void) | null = null;
+    /** Current coach session, if coach mode is active. */
+    coachSession: CoachSession | null = null;
+    /** Whether coach mode is currently active. */
+    coachActive = false;
+    /** Whether option cards have been auto-generated for the current coach session. */
+    private coachOptionsGenerated = false;
 
     /**
      * Analyze the voice of a prose passage using the AI provider.
@@ -512,15 +512,18 @@ export class CoWriterSession {
     /**
      * Parse the AI's response into an array of CoWriterOption.
      * Expects a JSON array of { label, description } objects.
+     * @param response - The raw model response.
+     * @param expectedCount - Required array length. Defaults to 3 (Direct mode);
+     *   Coach mode passes 1 since the coaching session already established intent.
      */
-    private parseOptionsResponse(response: string): CoWriterOption[] | null {
+    private parseOptionsResponse(response: string, expectedCount = 3): CoWriterOption[] | null {
         const trimmed = response.trim();
         const jsonMatch = trimmed.match(/\[[\s\S]*\]/);
         if (!jsonMatch) return null;
 
         try {
             const parsed = JSON.parse(jsonMatch[0]) as unknown[];
-            if (!Array.isArray(parsed) || parsed.length !== 3) return null;
+            if (!Array.isArray(parsed) || parsed.length !== expectedCount) return null;
 
             return parsed.map((item) => {
                 const obj = item as Record<string, unknown>;
@@ -754,7 +757,7 @@ export class CoWriterSession {
     }
 
     /**
-     * Start a guidance session with the AI.
+     * Start a coach session with the AI.
      * The AI analyzes the passage, asks clarifying questions, and produces
      * a structured plan with executable direction.
      *
@@ -762,13 +765,9 @@ export class CoWriterSession {
      * 1. Intent discernment — AI proposes what the writer might be trying to achieve
      * 2. Clarifying questions — AI asks targeted questions to narrow down direction
      * 3. Plan — AI creates a structured plan based on clarified intent
-     * 4. Direction — AI provides concrete, actionable guidance
+     * 4. Direction — AI provides concrete, actionable direction
      */
-    async sendGuidance(
-        plugin: EventideQuillPlugin,
-        message: string,
-        currentPhase: GuidancePhase = 'discern'
-    ): Promise<void> {
+    async sendCoach(plugin: EventideQuillPlugin, message: string, currentPhase: CoachPhase = 'discern'): Promise<void> {
         const chat = plugin.getDefaultChatProvider();
         if (!chat.provider) {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
@@ -779,14 +778,14 @@ export class CoWriterSession {
         const activeFile = plugin.app.workspace.getActiveFile();
         const filePath = activeFile?.path ?? this.manuscriptPath;
         if (!filePath) {
-            new Notice('Quill: Open a manuscript to use guidance.');
+            new Notice('Quill: Open a manuscript to use coaching.');
             return;
         }
         this.manuscriptPath = filePath;
 
         const markdownView = findEditorView(plugin.app, filePath);
         if (!markdownView) {
-            new Notice('Quill: Open a manuscript editor to use guidance.');
+            new Notice('Quill: Open a manuscript editor to use coaching.');
             return;
         }
         const editor = markdownView.editor;
@@ -824,18 +823,18 @@ export class CoWriterSession {
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
         injectedContext.push(...additionalContextMessages);
 
-        // Initialize guidance session on first call
-        if (!this.guidanceSession || (this.guidanceSession.phase === 'discern' && message)) {
-            const prompt = getCoWriterGuidancePrompt(proseForContext || '(empty document)', message);
-            this.guidanceSession = {
+        // Initialize coach session on first call
+        if (!this.coachSession || (this.coachSession.phase === 'discern' && message)) {
+            const prompt = getCoWriterCoachPrompt(proseForContext || '(empty document)', message);
+            this.coachSession = {
                 phase: 'discern',
                 response: '',
                 summary: '',
                 isFirstTurn: true,
                 clarifyRound: 0
             };
-            this.guidanceActive = true;
-            this.guidanceOptionsGenerated = false;
+            this.coachActive = true;
+            this.coachOptionsGenerated = false;
 
             const systemPrompt: ChatMessage = {
                 role: 'system',
@@ -846,23 +845,23 @@ export class CoWriterSession {
             this.discussCurrentMessages = [systemPrompt, { role: 'user', content: prompt }];
         } else {
             // Subsequent turn
-            const phase = this.guidanceSession.phase;
+            const phase = this.coachSession.phase;
             if (phase === 'plan' || phase === 'direction') {
                 // Revision mode — user gave feedback on an existing plan
-                const revisionPrompt = getCoWriterGuidanceRevision(
+                const revisionPrompt = getCoWriterCoachRevision(
                     proseForContext || '(empty document)',
                     message,
-                    this.guidanceSession.response || this.guidanceSession.summary,
-                    phase === 'direction' ? this.guidanceSession.response : ''
+                    this.coachSession.response || this.coachSession.summary,
+                    phase === 'direction' ? this.coachSession.response : ''
                 );
                 this.discussCurrentMessages.push({ role: 'user', content: revisionPrompt });
             } else {
                 // Normal follow-up (discern or clarify phase)
-                const followUpPrompt = getCoWriterGuidanceFollowUp(
+                const followUpPrompt = getCoWriterCoachFollowUp(
                     proseForContext || '(empty document)',
                     message,
                     phase === 'discern' ? 1 : 2,
-                    this.guidanceSession.clarifyRound
+                    this.coachSession.clarifyRound
                 );
                 this.discussCurrentMessages.push({ role: 'user', content: followUpPrompt });
             }
@@ -895,7 +894,7 @@ export class CoWriterSession {
                     this.onOptionsLoading?.(false);
                     return;
                 }
-                console.warn('Quill: Guidance compaction summarization failed, continuing without compaction.', err);
+                console.warn('Quill: Coach compaction summarization failed, continuing without compaction.', err);
             }
         }
 
@@ -905,12 +904,12 @@ export class CoWriterSession {
             ...this.discussCurrentMessages.slice(1)
         ];
 
-        console.warn('[Quill Co-writer] Guidance context', {
+        console.warn('[Quill Co-writer] Coach context', {
             manuscriptExcerptChars: proseForContext.length,
             vaultContextChars: vaultContext.length,
             vaultContextFiles: plugin.currentAssembly?.contextItems.length ?? 0,
             additionalFiles: this.contextFilePaths,
-            phase: this.guidanceSession?.phase,
+            phase: this.coachSession?.phase,
             totalTokens,
             maxTokens
         });
@@ -943,37 +942,37 @@ export class CoWriterSession {
                 }
             }
 
-            // Update guidance session
-            if (this.guidanceSession) {
-                this.guidanceSession.response = response;
-                this.guidanceSession.isFirstTurn = false;
+            // Update coach session
+            if (this.coachSession) {
+                this.coachSession.response = response;
+                this.coachSession.isFirstTurn = false;
 
                 const askedQuestions = response.includes('?');
 
                 // Advance phase
-                if (this.guidanceSession.phase === 'discern') {
-                    this.guidanceSession.phase = 'clarify';
-                    this.guidanceSession.clarifyRound = 1;
-                } else if (this.guidanceSession.phase === 'clarify') {
-                    if (askedQuestions && this.guidanceSession.clarifyRound < 2) {
-                        this.guidanceSession.clarifyRound++;
+                if (this.coachSession.phase === 'discern') {
+                    this.coachSession.phase = 'clarify';
+                    this.coachSession.clarifyRound = 1;
+                } else if (this.coachSession.phase === 'clarify') {
+                    if (askedQuestions && this.coachSession.clarifyRound < 2) {
+                        this.coachSession.clarifyRound++;
                     } else {
-                        this.guidanceSession.phase = 'plan';
+                        this.coachSession.phase = 'plan';
                     }
-                } else if (this.guidanceSession.phase === 'plan') {
-                    this.guidanceSession.phase = 'direction';
+                } else if (this.coachSession.phase === 'plan') {
+                    this.coachSession.phase = 'direction';
                 }
 
                 // Build summary for option generation
-                this.guidanceSession.summary = this.buildGuidanceSummary();
+                this.coachSession.summary = this.buildCoachSummary();
             }
 
             // Determine if this is a revision (plan/direction follow-up after options generated)
             const isRevision =
-                this.guidanceOptionsGenerated &&
-                this.guidanceSession !== null &&
-                (this.guidanceSession.phase === 'plan' || this.guidanceSession.phase === 'direction') &&
-                !this.guidanceSession.isFirstTurn;
+                this.coachOptionsGenerated &&
+                this.coachSession !== null &&
+                (this.coachSession.phase === 'plan' || this.coachSession.phase === 'direction') &&
+                !this.coachSession.isFirstTurn;
 
             // Update chat history
             const lastIdx = this.chatHistory.length - 1;
@@ -1001,11 +1000,11 @@ export class CoWriterSession {
 
             // Auto-generate options when plan or direction phase is reached for the first time
             const reachedPlanOrDirection =
-                this.guidanceSession?.phase === 'plan' || this.guidanceSession?.phase === 'direction';
-            const willAutoGenerate = reachedPlanOrDirection && !this.guidanceOptionsGenerated;
+                this.coachSession?.phase === 'plan' || this.coachSession?.phase === 'direction';
+            const willAutoGenerate = reachedPlanOrDirection && !this.coachOptionsGenerated;
             if (willAutoGenerate) {
-                this.guidanceOptionsGenerated = true;
-                this.onGuidanceDirectionReady?.();
+                this.coachOptionsGenerated = true;
+                this.onCoachDirectionReady?.();
             }
 
             this.unlockEditor();
@@ -1023,7 +1022,7 @@ export class CoWriterSession {
             }
             const msg = err instanceof Error ? err.message : String(err);
             this.onDiscussError?.(msg);
-            new Notice(`Quill: Guidance failed — ${msg}`);
+            new Notice(`Quill: Coaching failed — ${msg}`);
             this.unlockEditor();
             this.optionsLoading = false;
             this.onOptionsLoading?.(false);
@@ -1032,20 +1031,20 @@ export class CoWriterSession {
     }
 
     /**
-     * Build a summary of the guidance session for use in option generation.
+     * Build a summary of the coaching session for use in option generation.
      */
-    private buildGuidanceSummary(): string {
-        if (!this.guidanceSession) return '';
-        return this.guidanceSession.response.trim().slice(0, 2000);
+    private buildCoachSummary(): string {
+        if (!this.coachSession) return '';
+        return this.coachSession.response.trim().slice(0, 2000);
     }
 
     /**
-     * Transition from guidance mode to option generation.
-     * Uses the guidance summary to generate continuation options.
+     * Transition from coach mode to option generation.
+     * Uses the coach summary to generate continuation options.
      */
-    async guidanceToOptions(plugin: EventideQuillPlugin, direction: string): Promise<void> {
-        if (!this.guidanceSession) {
-            new Notice('Quill: No active guidance session.');
+    async coachToOptions(plugin: EventideQuillPlugin, direction: string): Promise<void> {
+        if (!this.coachSession) {
+            new Notice('Quill: No active coaching session.');
             return;
         }
 
@@ -1061,14 +1060,14 @@ export class CoWriterSession {
         const activeFile = plugin.app.workspace.getActiveFile();
         const filePath = activeFile?.path ?? this.manuscriptPath;
         if (!filePath) {
-            new Notice('Quill: Open a manuscript to use guidance.');
+            new Notice('Quill: Open a manuscript to use coaching.');
             return;
         }
         this.manuscriptPath = filePath;
 
         const markdownView = findEditorView(plugin.app, filePath);
         if (!markdownView) {
-            new Notice('Quill: Open a manuscript editor to use guidance.');
+            new Notice('Quill: Open a manuscript editor to use coaching.');
             return;
         }
         const editor = markdownView.editor;
@@ -1093,12 +1092,12 @@ export class CoWriterSession {
         const textBeforeCursor = fullText.slice(0, cursorOffset);
         const proseForOptions = textBeforeCursor.slice(-4000);
 
-        const guidanceSummary = this.buildGuidanceSummary();
-        const prompt = getCoWriterGuidanceToOptions(proseForOptions || '(empty document)', guidanceSummary, direction);
+        const coachSummary = this.buildCoachSummary();
+        const prompt = getCoWriterCoachToOptions(proseForOptions || '(empty document)', coachSummary, direction);
 
         this.chatHistory.push({
             role: 'user',
-            content: direction || 'Generate continuation options based on the guidance provided.'
+            content: direction || 'Generate continuation options based on the coaching provided.'
         });
 
         const vaultContext =
@@ -1136,29 +1135,22 @@ export class CoWriterSession {
                 }
             }
 
-            const parsed = this.parseOptionsResponse(response);
-            if (parsed && parsed.length === 3) {
+            const parsed = this.parseOptionsResponse(response, 1);
+            if (parsed && parsed.length === 1) {
                 this.currentOptions = parsed;
             } else {
                 this.currentOptions = [
                     {
-                        label: 'Follow the plan',
-                        description: 'Execute the guidance plan as written, advancing the scene naturally.'
-                    },
-                    {
-                        label: 'Adjust the approach',
-                        description: 'Modify the guidance plan slightly to better fit the established voice and pacing.'
-                    },
-                    {
-                        label: 'Explore an alternative',
-                        description: 'Take the guidance in a different but related direction that feels more authentic.'
+                        label: 'Continue from coaching',
+                        description:
+                            'Advance the scene following the coaching plan, in the established voice and pacing.'
                     }
                 ];
             }
 
             this.chatHistory.push({
                 role: 'assistant',
-                content: 'Here are three continuation options based on the guidance:',
+                content: 'Here is a continuation option based on the coaching:',
                 options: this.currentOptions,
                 thought: thought || undefined
             });
@@ -1183,12 +1175,12 @@ export class CoWriterSession {
     }
 
     /**
-     * End the current guidance session.
+     * End the current coach session.
      */
-    endGuidanceSession(): void {
-        this.guidanceSession = null;
-        this.guidanceActive = false;
-        this.guidanceOptionsGenerated = false;
+    endCoachSession(): void {
+        this.coachSession = null;
+        this.coachActive = false;
+        this.coachOptionsGenerated = false;
         this.discussCurrentMessages = [];
     }
 
@@ -1736,23 +1728,23 @@ export class CoWriterSession {
     }
 
     /**
-     * Write a prose continuation based on the current guidance session state.
-     * Skips further Q&A and goes straight to generation, injecting the guidance
+     * Write a prose continuation based on the current coach session state.
+     * Skips further Q&A and goes straight to generation, injecting the coaching
      * context (summary, plan, discussion) into the direction.
      */
-    async guidanceWrite(plugin: EventideQuillPlugin): Promise<void> {
-        const guidanceContext = this.guidanceSession
+    async coachWrite(plugin: EventideQuillPlugin): Promise<void> {
+        const coachContext = this.coachSession
             ? [
-                  'The writer wants to continue based on your guidance.',
+                  'The writer wants to continue based on your coaching.',
                   '',
-                  `Current guidance: ${this.guidanceSession.summary || this.guidanceSession.response}`,
-                  this.guidanceSession.phase === 'direction' || this.guidanceSession.phase === 'plan'
+                  `Current coaching: ${this.coachSession.summary || this.coachSession.response}`,
+                  this.coachSession.phase === 'direction' || this.coachSession.phase === 'plan'
                       ? 'You have already developed a plan. Write the scene following that plan.'
                       : 'Based on what you know so far, write the next part of the scene.'
               ].join('\n')
             : 'Continue the passage naturally from the cursor position.';
 
-        await this.generateDirect(plugin, guidanceContext);
+        await this.generateDirect(plugin, coachContext);
     }
 
     /** Revert the current draft by removing the inserted text from the editor. */
@@ -1858,11 +1850,11 @@ export class CoWriterSession {
         this.voiceProfileFile = null;
     }
 
-    /** Reset the entire session including guidance and context. */
+    /** Reset the entire session including coach and context. */
     reset(): void {
         this.unlockEditor();
         this.cancelGeneration();
-        this.endGuidanceSession();
+        this.endCoachSession();
         this.manuscriptPath = null;
         this.originalText = '';
         this.insertionStart = -1;
@@ -1890,7 +1882,7 @@ export class CoWriterSession {
     resetChat(clearContext = false): void {
         this.unlockEditor();
         this.cancelGeneration();
-        this.endGuidanceSession();
+        this.endCoachSession();
         this.originalText = '';
         this.insertionStart = -1;
         this.insertionLength = 0;
