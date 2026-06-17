@@ -183,8 +183,8 @@ export default class EventideQuillPlugin extends Plugin {
                     }
                 }
 
-                // Co-writer: clear voice profile when the active file changes
-                if (lintFileChange) {
+                // Co-writer: clear voice profile when the manuscript changes
+                if (this.coWriterSession.manuscriptPath && activeFile?.path !== this.coWriterSession.manuscriptPath) {
                     this.coWriterSession.clearVoiceProfile();
                 }
             })
@@ -1002,7 +1002,8 @@ export default class EventideQuillPlugin extends Plugin {
      * Streams the continuation directly into the editor at the cursor position.
      */
     async sendCoWriterMessage(direction: string): Promise<void> {
-        this.coWriterSession.manuscriptPath = this.app.workspace.getActiveFile()?.path ?? null;
+        const path = this.app.workspace.getActiveFile()?.path;
+        if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
         this.wireCoWriterPanel();
         await this.coWriterSession.generateDirect(this, direction);
@@ -1012,7 +1013,8 @@ export default class EventideQuillPlugin extends Plugin {
      * Generate 3 continuation options from the cursor position (Initialize / Refresh).
      */
     async sendCoWriterOptions(direction: string): Promise<void> {
-        this.coWriterSession.manuscriptPath = this.app.workspace.getActiveFile()?.path ?? null;
+        const path = this.app.workspace.getActiveFile()?.path;
+        if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
         this.wireCoWriterPanel();
         await this.coWriterSession.generateOptions(this, direction);
@@ -1031,7 +1033,8 @@ export default class EventideQuillPlugin extends Plugin {
      * Send a discussion message to the co-writer (brainstorming mode, no options).
      */
     async sendCoWriterDiscussion(message: string): Promise<void> {
-        this.coWriterSession.manuscriptPath = this.app.workspace.getActiveFile()?.path ?? null;
+        const path = this.app.workspace.getActiveFile()?.path;
+        if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
         this.wireCoWriterPanel();
         await this.coWriterSession.sendDiscussion(this, message);
@@ -1042,7 +1045,8 @@ export default class EventideQuillPlugin extends Plugin {
      * The AI analyzes the passage and guides the writer through a structured process.
      */
     async sendCoWriterGuidance(message: string, phase: string): Promise<void> {
-        this.coWriterSession.manuscriptPath = this.app.workspace.getActiveFile()?.path ?? null;
+        const path = this.app.workspace.getActiveFile()?.path;
+        if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
         this.wireCoWriterPanel();
         await this.coWriterSession.sendGuidance(this, message, phase as GuidancePhase);
@@ -1421,7 +1425,10 @@ export default class EventideQuillPlugin extends Plugin {
                 }
             }
         } catch (err: unknown) {
-            if (err instanceof Error && err.name === 'AbortError') return;
+            if (err instanceof Error && err.name === 'AbortError') {
+                await this.lintPanel?.chatFinished();
+                return;
+            }
             const msg = err instanceof Error ? err.message : String(err);
             await this.lintPanel?.chatError(msg);
             new Notice('Quill: Chat response failed.');

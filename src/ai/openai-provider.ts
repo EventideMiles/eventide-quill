@@ -287,16 +287,16 @@ export class OpenAiCompatibleProvider implements AiProvider {
 
     /** {@inheritDoc AiProvider.testEmbeddings} */
     async testEmbeddings(): Promise<{ ok: boolean; error?: string }> {
-        const modelConfig = resolveModel(this.config.models, 'embed', undefined, this.name);
-        const url = buildUrl(this.config.endpoint, '/embeddings');
-        const headers = this.buildHeaders();
-
-        const body = JSON.stringify({
-            model: modelConfig.model,
-            input: 'test'
-        });
-
         try {
+            const modelConfig = resolveModel(this.config.models, 'embed', undefined, this.name);
+            const url = buildUrl(this.config.endpoint, '/embeddings');
+            const headers = this.buildHeaders();
+
+            const body = JSON.stringify({
+                model: modelConfig.model,
+                input: 'test'
+            });
+
             const response: RequestUrlResponse = await requestUrl({
                 url,
                 method: 'POST',

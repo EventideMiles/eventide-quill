@@ -22,7 +22,11 @@ export async function readVaultFiles(
             const file = vault.getAbstractFileByPath(filePath);
             if (file instanceof TFile) {
                 const content = await vault.cachedRead(file);
-                const excerpt = maxChars !== undefined ? content.slice(0, maxChars) : content;
+                const safeMax =
+                    typeof maxChars === 'number' && maxChars >= 0 && Number.isFinite(maxChars)
+                        ? Math.floor(maxChars)
+                        : undefined;
+                const excerpt = safeMax !== undefined ? content.slice(0, safeMax) : content;
                 messages.push({
                     role: 'system',
                     content: `${label} (${filePath}):\n${excerpt}`

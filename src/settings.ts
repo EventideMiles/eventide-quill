@@ -1328,6 +1328,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.contextMaxVaultFiles = DEFAULT_SETTINGS.contextMaxVaultFiles;
                     this.plugin.settings.contextMaxCharsPerFile = DEFAULT_SETTINGS.contextMaxCharsPerFile;
                     this.plugin.settings.contextAutoScan = DEFAULT_SETTINGS.contextAutoScan;
+                    this.plugin.settings.coWriterTemperature = DEFAULT_SETTINGS.coWriterTemperature;
+                    this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
+                    this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
+                    this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
+                    this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
+                    this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;
                     await this.plugin.saveSettings();
                     this.display();
                 })

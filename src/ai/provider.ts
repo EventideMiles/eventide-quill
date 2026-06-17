@@ -123,8 +123,13 @@ export function resolveModel(
 ): ModelConfig {
     if (modelId) {
         const found = models.find((m) => m.id === modelId);
-        if (found) return found;
-        return { id: modelId, role, model: modelId };
+        if (found && (found.role === role || found.role === 'both')) return found;
+        throw new ProviderError(
+            `No ${role} model with id "${modelId}" configured for provider "${name}". ` +
+                'Check the model role in settings.',
+            0,
+            ''
+        );
     }
 
     const fallback = models.find((m) => m.role === role || m.role === 'both');

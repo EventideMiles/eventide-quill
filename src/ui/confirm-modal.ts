@@ -53,15 +53,21 @@ export class ConfirmModal extends Modal {
         if (this.secondaryAction) {
             const secondaryBtn = btnRow.createEl('button', { text: this.secondaryAction.text });
             secondaryBtn.addEventListener('click', () => {
-                void this.secondaryAction!.handler();
-                this.close();
+                Promise.resolve(this.secondaryAction!.handler())
+                    .then(() => this.close())
+                    .catch((err: unknown) => {
+                        console.error('Quill: Secondary action failed.', err);
+                    });
             });
         }
 
         const confirmBtn = btnRow.createEl('button', { text: this.confirmText, cls: 'mod-cta' });
         confirmBtn.addEventListener('click', () => {
-            void this.onConfirm();
-            this.close();
+            Promise.resolve(this.onConfirm())
+                .then(() => this.close())
+                .catch((err: unknown) => {
+                    console.error('Quill: Confirm action failed.', err);
+                });
         });
     }
 }

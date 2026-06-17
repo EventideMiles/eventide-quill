@@ -42,6 +42,9 @@ export abstract class AbstractChatPanel {
     protected onCompact: (() => void) | null = null;
     protected onNewChat: ((clearContext: boolean) => void) | null = null;
 
+    /** Stored keydown handler so we can remove it from a previous container. */
+    protected keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+
     /** Debounce guard for scheduleRender(). */
     protected renderScheduled = false;
 
@@ -56,14 +59,18 @@ export abstract class AbstractChatPanel {
      * Also sets up a global escape-key listener for canceling generation.
      */
     setContainer(containerEl: HTMLElement): void {
+        if (this.containerEl && this.keydownHandler) {
+            this.containerEl.removeEventListener('keydown', this.keydownHandler);
+        }
         this.containerEl = containerEl;
         this.render();
-        containerEl.addEventListener('keydown', (e: KeyboardEvent) => {
+        this.keydownHandler = (e: KeyboardEvent) => {
             if (e.key === 'Escape' && this.chatLoading) {
                 e.preventDefault();
                 this.onCancelGeneration?.();
             }
-        });
+        };
+        containerEl.addEventListener('keydown', this.keydownHandler);
     }
 
     /** Each subclass defines its own render logic. */

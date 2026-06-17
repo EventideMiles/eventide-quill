@@ -64,8 +64,9 @@ export function renderContextTab(
             component.registerDomEvent(rescanBtn, 'click', () => {
                 const editorView = findEditorView(plugin.app, activeFile.path);
                 if (editorView) {
-                    plugin.scanContext(editorView.editor.getValue(), activeFile.path);
-                    void plugin.assembleDocumentContext(editorView.editor.getValue(), activeFile.path);
+                    const editorContent = editorView.editor.getValue();
+                    plugin.scanContext(editorContent, activeFile.path);
+                    void plugin.assembleDocumentContext(editorContent, activeFile.path);
                 }
             });
         } else {

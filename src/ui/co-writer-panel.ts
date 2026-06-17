@@ -85,65 +85,83 @@ export class CoWriterPanel extends AbstractChatPanel {
     }
 
     setContainer(containerEl: HTMLElement): void {
+        if (this.containerEl && this.keydownHandler) {
+            this.containerEl.removeEventListener('keydown', this.keydownHandler);
+        }
         this.containerEl = containerEl;
         this.render();
-        containerEl.addEventListener('keydown', (e: KeyboardEvent) => {
+        this.keydownHandler = (e: KeyboardEvent) => {
             this.handleKeydown(e);
-        });
+        };
+        containerEl.addEventListener('keydown', this.keydownHandler);
     }
 
+    /** Set the handler invoked when the user sends a direction in Direct mode. */
     setSendMessageHandler(handler: (direction: string) => void): void {
         this.onSendMessage = handler;
     }
 
+    /** Set the handler invoked when the user sends a discussion (brainstorming) message. */
     setDiscussMessageHandler(handler: (message: string) => void): void {
         this.onDiscussMessage = handler;
     }
 
+    /** Set the handler invoked to generate continuation options from the cursor. */
     setGenerateOptionsHandler(handler: (direction: string) => void): void {
         this.onGenerateOptions = handler;
     }
 
+    /** Set the handler invoked when the user applies (inserts) a continuation option. */
     setApplyOptionHandler(handler: (index: number) => void): void {
         this.onApplyOption = handler;
     }
 
+    /** Set the handler invoked when the user accepts a streamed draft. */
     setAcceptHandler(handler: () => void): void {
         this.onAccept = handler;
     }
 
+    /** Set the handler invoked when the user reverts an accepted draft. */
     setRevertHandler(handler: () => void): void {
         this.onRevert = handler;
     }
 
+    /** Set the handler invoked when the user adds a context file to the session. */
     setAddContextFileHandler(handler: (filePath: string) => void): void {
         this.onAddContextFile = handler;
     }
 
+    /** Set the handler invoked when the user removes a context file from the session. */
     setRemoveContextFileHandler(handler: (filePath: string) => void): void {
         this.onRemoveContextFile = handler;
     }
 
+    /** Set the handler invoked to refresh continuation suggestions. */
     setRefreshSuggestionsHandler(handler: () => void): void {
         this.onRefreshSuggestions = handler;
     }
 
+    /** Set the handler invoked when the user submits a guidance message for the given phase. */
     setGuidanceMessageHandler(handler: (message: string, phase: GuidancePhase) => void): void {
         this.onGuidanceMessage = handler;
     }
 
+    /** Set the handler invoked to convert a guidance plan into continuation options. */
     setGuidanceToOptionsHandler(handler: () => void): void {
         this.onGuidanceToOptions = handler;
     }
 
+    /** Set the handler invoked to end the current guidance session. */
     setEndGuidanceHandler(handler: () => void): void {
         this.onEndGuidance = handler;
     }
 
+    /** Set the handler invoked when the user accepts a guidance plan. */
     setAcceptPlanHandler(handler: () => void): void {
         this.onAcceptPlan = handler;
     }
 
+    /** Set the handler invoked to trigger a guidance-driven write. */
     setGuidanceWriteHandler(handler: () => void): void {
         this.onGuidanceWrite = handler;
     }
@@ -180,6 +198,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.updateTokenIndicator();
     }
 
+    /** Set the current draft streaming state (idle, generating, done). */
     setDraftState(state: DraftState): void {
         this.draftState = state;
         if (state === 'idle') {
@@ -189,6 +208,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.scheduleRender();
     }
 
+    /** Update the thought/reasoning content shown during generation. */
     setThoughtContent(thought: string): void {
         this.thoughtContent = thought;
         if (thought && this.plugin.settings.enableCoWriterThought) {
@@ -197,16 +217,19 @@ export class CoWriterPanel extends AbstractChatPanel {
         }
     }
 
+    /** Replace the full co-writer chat history and re-render. */
     setChatHistory(history: CoWriterChatMessage[]): void {
         this.chatHistory = history;
         this.scheduleRender();
     }
 
+    /** Replace the current continuation options and re-render. */
     setCurrentOptions(options: CoWriterOption[]): void {
         this.currentOptions = options;
         this.scheduleRender();
     }
 
+    /** Set whether continuation options are currently being generated. */
     setOptionsLoading(loading: boolean): void {
         this.optionsLoading = loading;
         this.scheduleRender();
@@ -274,7 +297,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         // Save scroll positions and textarea focus before destroying DOM
         const savedThoughtScroll = this.containerEl.querySelector('.quill-cowriter-thought-content')?.scrollTop ?? 0;
         const textareaHadFocus =
-            this.containerEl.querySelector('.quill-cowriter-input') === window.activeDocument.activeElement;
+            this.containerEl.querySelector('.quill-cowriter-input') === this.containerEl.ownerDocument.activeElement;
 
         this.unloadAndClearContainer();
 

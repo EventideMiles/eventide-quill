@@ -22,65 +22,91 @@ export function extractThoughtContent(
         ['<|channel>', '<channel|>']
     ];
 
-    let thought = pendingThought ?? '';
+    // Whether we are inside an unclosed thought block carried over from a
+    // previous chunk (pendingThought is truthy).
+    let inThoughtBlock = Boolean(pendingThought);
+    // Accumulated thought content from previous chunks (used only as the
+    // pending state to pass forward).
+    let pendingContent = pendingThought ?? '';
+    // Thought content extracted in THIS chunk only (returned to caller).
+    let thought = '';
     let clean = '';
     let remainder = text;
 
     while (remainder.length > 0) {
-        // Find the earliest opening tag across all tag pairs
-        let earliestOpenIdx = -1;
-        let earliestPair = 0;
-        let earliestOpenTagLen = 0;
+        if (inThoughtBlock) {
+            // Inside a thought block — look for the earliest close tag
+            let earliestCloseIdx = -1;
+            let earliestCloseTagLen = 0;
 
-        for (let p = 0; p < tagPairs.length; p++) {
-            const [openTag] = tagPairs[p]!;
-            const idx = remainder.indexOf(openTag);
-            if (idx !== -1 && (earliestOpenIdx === -1 || idx < earliestOpenIdx)) {
-                earliestOpenIdx = idx;
-                earliestPair = p;
-                earliestOpenTagLen = openTag.length;
+            for (let p = 0; p < tagPairs.length; p++) {
+                const [, closeTag] = tagPairs[p]!;
+                const idx = remainder.indexOf(closeTag);
+                if (idx !== -1 && (earliestCloseIdx === -1 || idx < earliestCloseIdx)) {
+                    earliestCloseIdx = idx;
+                    earliestCloseTagLen = closeTag.length;
+                }
             }
-        }
 
-        const [, closeTag] = tagPairs[earliestPair]!;
-
-        // No opening tag at all
-        if (earliestOpenIdx === -1) {
-            if (thought) {
-                // We're inside a thought block but haven't found the close tag yet
+            if (earliestCloseIdx !== -1) {
+                // Close tag found — content before it is new thought content
+                thought += remainder.slice(0, earliestCloseIdx);
+                pendingContent = '';
+                inThoughtBlock = false;
+                remainder = remainder.slice(earliestCloseIdx + earliestCloseTagLen);
+            } else {
+                // No close tag yet — accumulate as pending and emit incrementally
                 thought += remainder;
-            } else {
-                clean += remainder;
+                pendingContent += remainder;
+                remainder = '';
             }
-            break;
-        }
+        } else {
+            // Not in a thought block — look for the earliest opening tag
+            let earliestOpenIdx = -1;
+            let earliestPair = 0;
+            let earliestOpenTagLen = 0;
 
-        // Content before the opening tag
-        if (earliestOpenIdx > 0) {
-            if (thought) {
-                thought += remainder.slice(0, earliestOpenIdx);
-            } else {
+            for (let p = 0; p < tagPairs.length; p++) {
+                const [openTag] = tagPairs[p]!;
+                const idx = remainder.indexOf(openTag);
+                if (idx !== -1 && (earliestOpenIdx === -1 || idx < earliestOpenIdx)) {
+                    earliestOpenIdx = idx;
+                    earliestPair = p;
+                    earliestOpenTagLen = openTag.length;
+                }
+            }
+
+            // No opening tag at all
+            if (earliestOpenIdx === -1) {
+                clean += remainder;
+                break;
+            }
+
+            // Content before the opening tag is clean text
+            if (earliestOpenIdx > 0) {
                 clean += remainder.slice(0, earliestOpenIdx);
             }
-        }
 
-        // Strip the opening tag
-        const afterOpen = remainder.slice(earliestOpenIdx + earliestOpenTagLen);
-        const closeIdx = afterOpen.indexOf(closeTag);
+            // Strip the opening tag
+            const afterOpen = remainder.slice(earliestOpenIdx + earliestOpenTagLen);
+            const [, closeTag] = tagPairs[earliestPair]!;
+            const closeIdx = afterOpen.indexOf(closeTag);
 
-        if (closeIdx !== -1) {
-            // Complete thought block — extract inner content
-            const thoughtContent = afterOpen.slice(0, closeIdx);
-            thought += thoughtContent;
-            remainder = afterOpen.slice(closeIdx + closeTag.length);
-        } else {
-            // Opening tag without close — rest is thought
-            thought += afterOpen;
-            remainder = '';
+            if (closeIdx !== -1) {
+                // Complete thought block — extract inner content
+                thought += afterOpen.slice(0, closeIdx);
+                remainder = afterOpen.slice(closeIdx + closeTag.length);
+            } else {
+                // Opening tag without close — enter pending thought state
+                inThoughtBlock = true;
+                pendingContent = afterOpen;
+                thought += afterOpen;
+                remainder = '';
+            }
         }
     }
 
-    return { text: clean, thought, pendingThought: thought };
+    return { text: clean, thought, pendingThought: inThoughtBlock ? pendingContent : '' };
 }
 
 /** A single SSE event parsed from a stream. */
@@ -233,34 +259,8 @@ export function openAiEventsToChunks(events: SseEvent[]): ChatChunk[] {
 
         try {
             const parsed = JSON.parse(event.data) as OpenAiSseData;
-            if (!parsed.choices || parsed.choices.length === 0) continue;
-
-            const firstChoice = parsed.choices[0];
-            if (!firstChoice) continue;
-
-            const delta = firstChoice.delta;
-            const text = delta?.content ?? '';
-            const finishReason = firstChoice.finish_reason;
-
-            // Only the final chunk carries a non-null finish_reason ("stop" or "length")
-            const chunk: ChatChunk = {
-                text,
-                done: finishReason !== null && finishReason !== undefined
-            };
-
-            if (parsed.model) {
-                chunk.model = parsed.model;
-            }
-
-            if (parsed.usage) {
-                chunk.usage = {
-                    promptTokens: parsed.usage.prompt_tokens ?? parsed.usage.promptTokens ?? 0,
-                    completionTokens: parsed.usage.completion_tokens ?? parsed.usage.completionTokens ?? 0,
-                    totalTokens: parsed.usage.total_tokens ?? parsed.usage.totalTokens ?? 0
-                };
-            }
-
-            chunks.push(chunk);
+            const chunk = openAiSseDataToChunk(parsed);
+            if (chunk) chunks.push(chunk);
         } catch {
             // Skip malformed JSON lines
             continue;

@@ -36,6 +36,13 @@ function sanitizeProse(text: string): string {
 function parseStoppingPoint(direction: string): { instruction: string; isExplicit: boolean } | null {
     const lower = direction.toLowerCase();
 
+    // "stop at next period" or similar natural language (checked before the
+    // generic "stop at [marker]" pattern so it takes precedence)
+    const naturalStopMatch = lower.match(/stop\s+at\s+(next\s+(?:period|sentence|paragraph|beat|scene|line))/);
+    if (naturalStopMatch?.[1]) {
+        return { instruction: `Stop at the next ${naturalStopMatch[1].replace('next ', '')}.`, isExplicit: true };
+    }
+
     // "stop at [marker]" pattern
     const stopAtMatch = lower.match(/stop\s+at\s+(.+?)(?:\.\s*$|$)/);
     if (stopAtMatch?.[1]) {
@@ -52,12 +59,6 @@ function parseStoppingPoint(direction: string): { instruction: string; isExplici
     const continueUntilMatch = lower.match(/continue\s+until\s+(.+?)(?:\.\s*$|$)/);
     if (continueUntilMatch?.[1]) {
         return { instruction: `Continue writing until: ${continueUntilMatch[1].trim()}`, isExplicit: true };
-    }
-
-    // "stop at next period" or similar natural language
-    const naturalStopMatch = lower.match(/stop\s+at\s+(next\s+(?:period|sentence|paragraph|beat|scene|line))/);
-    if (naturalStopMatch?.[1]) {
-        return { instruction: `Stop at the next ${naturalStopMatch[1].replace('next ', '')}.`, isExplicit: true };
     }
 
     return null;
@@ -119,7 +120,7 @@ function truncateToStoppingPoint(content: string, instruction: string): string {
         if (index >= 0) {
             // Find the end of the sentence/paragraph containing the marker
             const afterMarker = content.slice(index);
-            const sentenceEnd = afterMarker.search(/[.!?]\s*$/);
+            const sentenceEnd = afterMarker.search(/[.!?]/);
             if (sentenceEnd >= 0) {
                 return content.slice(0, index + sentenceEnd + 1);
             }
@@ -134,7 +135,7 @@ function truncateToStoppingPoint(content: string, instruction: string): string {
         const index = lower.indexOf(condition);
         if (index >= 0) {
             const afterCondition = content.slice(index);
-            const sentenceEnd = afterCondition.search(/[.!?]\s*$/);
+            const sentenceEnd = afterCondition.search(/[.!?]/);
             if (sentenceEnd >= 0) {
                 return content.slice(0, index + sentenceEnd + 1);
             }

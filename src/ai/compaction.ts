@@ -55,6 +55,8 @@ export async function compactConversation(
         ...contextHeads.map((head) => ({ role: 'user' as const, content: head.content }))
     ];
 
+    if (toSummarize.length === 0) return null;
+
     const summary = await summarizeConversation(provider, toSummarize, sentenceCount, options);
     if (!summary) return null;
 

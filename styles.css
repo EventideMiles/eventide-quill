@@ -1505,8 +1505,6 @@ button.quill-feedback-persona-btn:hover {
     max-height: 200px;
     overflow-y: auto;
     overflow-wrap: break-word;
-    max-height: 200px;
-    overflow-y: auto;
 }
 
 /* Per-message thought toggle (inside chat bubbles) */
