@@ -280,6 +280,14 @@ export default class EventideQuillPlugin extends Plugin {
                         });
                 });
 
+                menu.addItem((item) => {
+                    item.setTitle('Quill: Insert inline directive')
+                        .setIcon('quote')
+                        .onClick(() => {
+                            this.insertInlineDirective(editor);
+                        });
+                });
+
                 // Feedback menu item
                 menu.addSeparator();
                 menu.addItem((item) => {
@@ -454,11 +462,7 @@ export default class EventideQuillPlugin extends Plugin {
             id: 'quill-insert-directive',
             name: 'Quill: Insert inline directive',
             editorCallback: (editor) => {
-                const cursor = editor.getCursor();
-                const base = editor.posToOffset(cursor);
-                editor.replaceRange('<!-- quill:  -->', cursor);
-                // Place the cursor between 'quill: ' and ' -->' so the writer can type the instruction.
-                editor.setCursor(editor.offsetToPos(base + '<!-- quill: '.length));
+                this.insertInlineDirective(editor);
             }
         });
 
@@ -471,6 +475,15 @@ export default class EventideQuillPlugin extends Plugin {
     /** Retrieve the CodeMirror EditorView from an Obsidian Editor instance. */
     private getCmView(editor: Editor): EditorView | undefined {
         return (editor as unknown as { cm: EditorView }).cm;
+    }
+
+    /** Insert an inline `<!-- quill:  -->` directive at the cursor and place the
+     *  caret between 'quill: ' and ' -->' so the writer can type the instruction. */
+    private insertInlineDirective(editor: Editor): void {
+        const cursor = editor.getCursor();
+        const base = editor.posToOffset(cursor);
+        editor.replaceRange('<!-- quill:  -->', cursor);
+        editor.setCursor(editor.offsetToPos(base + '<!-- quill: '.length));
     }
 
     /** Toggle the prose linter on or off for the active editor, dispatching state to CodeMirror. */
