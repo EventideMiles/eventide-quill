@@ -1898,11 +1898,19 @@ button.quill-change-card-btn {
 }
 
 /* Inline diff decorations (CodeMirror) */
-.quill-diff-removed {
-    color: var(--text-muted);
-    text-decoration: line-through;
-    text-decoration-color: rgba(255, 0, 0, 0.45);
+/* Red "box" over the whole line(s) a removal touches — block-level per line
+   (applied via Decoration.line) so it reads as a container, with a left accent
+   bar like the green added box. Text stays legible. */
+.quill-diff-removed-line {
     background: var(--background-modifier-error, rgba(255, 0, 0, 0.1));
+    box-shadow: inset 3px 0 0 var(--color-red);
+}
+
+/* Precise strikethrough on the exact replaced sub-range only (word-level diff). */
+.quill-diff-removed-strike {
+    color: var(--text-normal);
+    text-decoration: line-through;
+    text-decoration-color: rgba(255, 0, 0, 0.55);
 }
 
 .quill-diff-added {

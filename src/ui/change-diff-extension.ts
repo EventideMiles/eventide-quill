@@ -153,11 +153,20 @@ class ChangeDiffPlugin {
     private build(view: EditorView): DecorationSet {
         const edits = view.state.field(diffEditsField);
         if (edits.length === 0) return Decoration.none;
+        const doc = view.state.doc;
         const ranges: Range<Decoration>[] = [];
         for (const edit of edits) {
             if (edit.state !== 'pending') continue;
             if (edit.from < edit.to) {
-                ranges.push(Decoration.mark({ class: 'quill-diff-removed' }).range(edit.from, edit.to));
+                // Red "box" over the whole line(s) the edit touches (block-level,
+                // via a per-line class so it reads as a container, not a highlight).
+                const firstLine = doc.lineAt(edit.from);
+                const lastLine = doc.lineAt(edit.to);
+                for (let ln = firstLine.number; ln <= lastLine.number; ln++) {
+                    ranges.push(Decoration.line({ class: 'quill-diff-removed-line' }).range(doc.line(ln).from));
+                }
+                // Precise strikethrough on the exact replaced sub-range only.
+                ranges.push(Decoration.mark({ class: 'quill-diff-removed-strike' }).range(edit.from, edit.to));
             }
             if (edit.newText.length > 0) {
                 ranges.push(
