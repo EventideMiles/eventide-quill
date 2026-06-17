@@ -586,6 +586,21 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.renderEvents.registerDomEvent(startBtn, 'click', () => {
                 this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-input')?.focus();
             });
+            prompt.createEl('div', {
+                cls: 'quill-cowriter-init-sub',
+                text: 'Or, if you\u2019re feeling uninspired, see a few options that might work.'
+            });
+            const optionsBtn = prompt.createEl('button', {
+                cls: 'quill-cowriter-init-btn quill-cowriter-init-btn-secondary',
+                text: 'Generate options'
+            });
+            this.renderEvents.registerDomEvent(optionsBtn, 'click', () => {
+                if (this.optionsLoading) return;
+                this.optionsLoading = true;
+                optionsBtn.disabled = true;
+                this.scheduleRender();
+                this.onGenerateOptions?.('');
+            });
         } else if (this.inputMode === 'fulfill') {
             prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Fulfill' });
             prompt.createEl('div', {

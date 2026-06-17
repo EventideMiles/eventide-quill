@@ -2184,6 +2184,30 @@ button.quill-cowriter-init-btn:hover {
     opacity: 0.85;
 }
 
+/* Secondary hint + button on the init screen (e.g. Coach's "generate options" escape hatch) */
+.quill-cowriter-init-sub {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint, var(--text-muted));
+    max-width: 260px;
+    line-height: var(--line-height-normal);
+    margin-top: 4px;
+}
+
+button.quill-cowriter-init-btn.quill-cowriter-init-btn-secondary {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--background-modifier-border);
+    font-size: var(--font-ui-small);
+    padding: 6px 16px;
+    margin-top: 0;
+}
+
+button.quill-cowriter-init-btn.quill-cowriter-init-btn-secondary:hover {
+    opacity: 1;
+    color: var(--text-normal);
+    border-color: var(--background-modifier-border-hover);
+}
+
 /* Coach mode UI */
 .quill-cowriter-coach-bar {
     display: flex;
