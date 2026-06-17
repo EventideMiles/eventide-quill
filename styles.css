@@ -1984,6 +1984,58 @@ button.quill-cowriter-mode-btn:hover {
     color: var(--text-normal);
 }
 
+/* Mode picker (inline list above the button row) */
+.quill-cowriter-mode-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px;
+    margin: 4px 0;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-secondary);
+}
+
+.quill-cowriter-mode-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.quill-cowriter-mode-row:hover,
+.quill-cowriter-mode-row.is-active {
+    background: var(--background-modifier-hover);
+}
+
+.quill-cowriter-mode-row-icon {
+    flex-shrink: 0;
+    color: var(--text-muted);
+    line-height: 1.2;
+}
+
+.quill-cowriter-mode-row-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.quill-cowriter-mode-row-label {
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+}
+
+.quill-cowriter-mode-row-desc {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.quill-cowriter-mode-row.is-active .quill-cowriter-mode-row-label {
+    color: var(--text-on-accent);
+}
+
 button.quill-cowriter-mode-discuss {
     border-color: var(--color-green);
     color: var(--color-green);

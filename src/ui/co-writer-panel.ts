@@ -10,6 +10,14 @@ import { renderChangeBulkBar, renderChangeCard } from './change-card';
 
 type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill';
 
+/** The co-writer modes, in cycle/picker order, with icon, label, and a one-line descriptor. */
+const COWRITER_MODES: { mode: InputMode; icon: string; label: string; desc: string }[] = [
+    { mode: 'direct', icon: '\u2192', label: 'Direct', desc: 'AI suggests 3 continuation options' },
+    { mode: 'discuss', icon: '\u2194', label: 'Discuss', desc: 'AI responds with thoughts and analysis' },
+    { mode: 'coach', icon: '\u2728', label: 'Coach', desc: 'AI helps you figure out what to do next' },
+    { mode: 'fulfill', icon: '\u2726', label: 'Fulfill', desc: 'Sweep every inline directive and review as a diff' }
+];
+
 /** Extract a display name from a vault path. */
 function fileNameFromPath(path: string): string {
     const lastSlash = path.lastIndexOf('/');
@@ -60,6 +68,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private fulfillSections: ProposedEdit[] = [];
     /** Whether a Fulfill sweep is currently generating. */
     private fulfillActive = false;
+    /** Whether the mode picker is open (replaces the mode-cycle-on-click behavior). */
+    private modePickerOpen = false;
 
     private onSendMessage: ((direction: string) => void) | null = null;
     private onDiscussMessage: ((message: string) => void) | null = null;
@@ -808,42 +818,51 @@ export class CoWriterPanel extends AbstractChatPanel {
     }
 
     /** Render the input row with mode toggle, textarea, and send button. */
+    /** Render the mode picker: one row per mode (icon, label, descriptor). Shown
+     *  above the button row when the mode button is clicked, so the writer can
+     *  jump straight to the mode they want instead of cycling. */
+    private renderModePicker(container: HTMLElement): void {
+        const list = container.createEl('div', { cls: 'quill-cowriter-mode-picker' });
+        for (const m of COWRITER_MODES) {
+            const row = list.createEl('div', {
+                cls: `quill-cowriter-mode-row${this.inputMode === m.mode ? ' is-active' : ''}`,
+                attr: { tabindex: '0', role: 'button' }
+            });
+            row.createEl('span', { cls: 'quill-cowriter-mode-row-icon', text: m.icon });
+            const textWrap = row.createEl('div', { cls: 'quill-cowriter-mode-row-text' });
+            textWrap.createEl('div', { cls: 'quill-cowriter-mode-row-label', text: m.label });
+            textWrap.createEl('div', { cls: 'quill-cowriter-mode-row-desc', text: m.desc });
+            const choose = () => {
+                this.inputMode = m.mode;
+                this.modePickerOpen = false;
+                this.scheduleRender();
+            };
+            this.renderEvents.registerDomEvent(row, 'click', choose);
+        }
+    }
+
     private renderInputRow(container: HTMLElement): void {
         const generating = this.optionsLoading || this.draftState === 'generating';
+
+        // Mode picker — shown above the button row when open.
+        if (this.modePickerOpen) {
+            this.renderModePicker(container);
+        }
 
         // Buttons row — mode toggle, add context, refresh, send/stop
         const btnRow = container.createEl('div', { cls: 'quill-cowriter-btn-row' });
 
+        const currentMode = COWRITER_MODES.find((m) => m.mode === this.inputMode);
         const modeBtn = btnRow.createEl('button', {
             cls: `quill-cowriter-mode-btn${this.inputMode === 'coach' ? ' quill-cowriter-mode-coach' : this.inputMode === 'discuss' ? ' quill-cowriter-mode-discuss' : this.inputMode === 'fulfill' ? ' quill-cowriter-mode-fulfill' : ''}`,
-            text:
-                this.inputMode === 'direct'
-                    ? '\u2192 Direct'
-                    : this.inputMode === 'discuss'
-                      ? '\u2194 Discuss'
-                      : this.inputMode === 'coach'
-                        ? '\u2728 Coach'
-                        : '\u2728 Fulfill',
-            title:
-                this.inputMode === 'direct'
-                    ? 'Direct: AI suggests 3 continuation options'
-                    : this.inputMode === 'discuss'
-                      ? 'Discuss: AI responds with thoughts and analysis'
-                      : this.inputMode === 'coach'
-                        ? 'Coach: AI helps you figure out what to do next'
-                        : 'Fulfill: sweep every inline directive and review each as a diff'
+            text: `${currentMode?.icon ?? ''} ${currentMode?.label ?? ''} ${this.modePickerOpen ? '\u25b4' : '\u25be'}`,
+            title: 'Pick a co-writer mode'
         });
         if (generating) modeBtn.disabled = true;
         this.renderEvents.registerDomEvent(modeBtn, 'click', () => {
             if (generating) return;
-            const modes: InputMode[] = ['direct', 'discuss', 'coach', 'fulfill'];
-            const currentIndex = modes.indexOf(this.inputMode);
-            const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % modes.length : 0;
-            const nextMode = modes[nextIndex];
-            if (nextMode) {
-                this.inputMode = nextMode;
-                this.scheduleRender();
-            }
+            this.modePickerOpen = !this.modePickerOpen;
+            this.scheduleRender();
         });
 
         const addCtxBtn = btnRow.createEl('button', {
@@ -997,6 +1016,12 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Handle Escape key globally within the panel. */
     handleKeydown(e: KeyboardEvent): void {
+        if (e.key === 'Escape' && this.modePickerOpen) {
+            e.preventDefault();
+            this.modePickerOpen = false;
+            this.scheduleRender();
+            return;
+        }
         if (e.key === 'Escape' && (this.optionsLoading || this.draftState === 'generating')) {
             e.preventDefault();
             this.onCancelGeneration?.();
