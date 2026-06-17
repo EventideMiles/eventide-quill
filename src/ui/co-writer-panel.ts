@@ -618,7 +618,9 @@ export class CoWriterPanel extends AbstractChatPanel {
                 runBtn.textContent = 'Running sweep\u2026';
                 runBtn.disabled = true;
                 this.scheduleRender();
-                this.onRunFulfill?.('');
+                // Defer to the next frame so the browser paints the button change
+                // before the async sweep work blocks the main thread.
+                window.requestAnimationFrame(() => this.onRunFulfill?.(''));
             });
         } else {
             prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Direct' });
@@ -1011,7 +1013,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             if (this.inputMode === 'direct') {
                 this.onSendMessage?.(text);
             } else if (this.inputMode === 'fulfill') {
-                this.onRunFulfill?.(text);
+                window.requestAnimationFrame(() => this.onRunFulfill?.(text));
             } else if (this.inputMode === 'coach') {
                 this.onCoachMessage?.(text, this.coachPhase);
             } else {

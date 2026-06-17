@@ -2105,6 +2105,20 @@ button.quill-cowriter-ctx-add:hover {
     outline: none;
 }
 
+/* Disabled state (Fulfill mode — chat input not used). Force the placeholder
+   visible and grey everything out so it's clearly inactive. */
+.quill-cowriter-input:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    background: var(--background-secondary);
+}
+
+.quill-cowriter-input:disabled::placeholder {
+    color: var(--text-muted);
+    opacity: 1;
+    -webkit-text-fill-color: var(--text-muted);
+}
+
 button.quill-cowriter-send-btn {
     cursor: pointer;
     border: 1px solid var(--interactive-accent);
