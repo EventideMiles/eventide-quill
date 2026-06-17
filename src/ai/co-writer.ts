@@ -347,6 +347,8 @@ export class CoWriterSession {
 
     /** Fulfill-mode proposed edits (one per directive), in document order. */
     fulfillChanges: ChangeSet = new ChangeSet();
+    /** Direct-mode proposed continuation (pure insertion at the cursor), awaiting review. */
+    directChanges: ChangeSet = new ChangeSet();
     /** Whether a Fulfill sweep is currently in progress. */
     fulfillActive = false;
     /** Called whenever Fulfill edits change (generation progress, approval, rejection). */
@@ -1402,12 +1404,11 @@ export class CoWriterSession {
     }
 
     /** Resolve the CodeMirror view for the active manuscript, or null. */
-    private getFulfillCm(): EditorView | null {
+    private getManuscriptCm(): EditorView | null {
         if (!this.app || !this.manuscriptPath) return null;
         const markdownView = findEditorView(this.app, this.manuscriptPath);
         return markdownView ? (markdownView.editor as unknown as { cm: EditorView }).cm : null;
     }
-
     /**
      * Approve one Fulfill edit: replace its directive comment with the generated
      * prose (the comment is consumed). The shared change-diff is updated in the
@@ -1418,7 +1419,7 @@ export class CoWriterSession {
         void plugin;
         const change = this.fulfillChanges.approve(id);
         if (!change) return;
-        const cm = this.getFulfillCm();
+        const cm = this.getManuscriptCm();
         if (cm) {
             cm.dispatch({
                 changes: change,
@@ -1432,7 +1433,7 @@ export class CoWriterSession {
     /** Reject one Fulfill edit: leave the directive comment in place, un-consumed. */
     rejectFulfillSection(id: number): void {
         this.fulfillChanges.reject(id);
-        const cm = this.getFulfillCm();
+        const cm = this.getManuscriptCm();
         if (cm) pushDiffEdits(cm, toDiffSnapshots(this.fulfillChanges, 'fulfill'));
         this.onFulfillUpdate?.();
     }
@@ -1440,7 +1441,7 @@ export class CoWriterSession {
     /** Approve every pending edit. Changes dispatch sequentially (offsets remap as each commits). */
     approveAllFulfill(plugin: EventideQuillPlugin): void {
         void plugin;
-        const cm = this.getFulfillCm();
+        const cm = this.getManuscriptCm();
         for (const change of this.fulfillChanges.approveAll()) {
             cm?.dispatch({ changes: change });
         }
@@ -1451,7 +1452,7 @@ export class CoWriterSession {
     /** Reject every pending edit without touching the document. */
     rejectAllFulfill(): void {
         this.fulfillChanges.rejectAll();
-        const cm = this.getFulfillCm();
+        const cm = this.getManuscriptCm();
         if (cm) pushDiffEdits(cm, toDiffSnapshots(this.fulfillChanges, 'fulfill'));
         this.onFulfillUpdate?.();
     }
@@ -1460,9 +1461,45 @@ export class CoWriterSession {
     clearFulfill(): void {
         this.fulfillChanges.clear();
         this.fulfillActive = false;
-        const cm = this.getFulfillCm();
+        const cm = this.getManuscriptCm();
         if (cm) clearDiffEdits(cm);
         this.onFulfillUpdate?.();
+    }
+
+    /**
+     * Approve the Direct continuation: commit the buffered prose at the cursor
+     * and clear the diff. Fires onDraftAccepted so fresh options regenerate
+     * (preserving the old accept-a-draft behavior).
+     */
+    approveDirectChange(plugin: EventideQuillPlugin, id: number): void {
+        void plugin;
+        const change = this.directChanges.approve(id);
+        if (!change) return;
+        const cm = this.getManuscriptCm();
+        if (cm) {
+            cm.dispatch({
+                changes: change,
+                effects: setDiffEdits.of([]),
+                selection: { anchor: change.from + change.insert.length }
+            });
+        }
+        this.onDraftAccepted?.();
+    }
+
+    /** Reject the Direct continuation: discard the buffered prose (nothing was
+     *  ever written to the document) and clear the diff. */
+    rejectDirectChange(id: number): void {
+        void id;
+        this.directChanges.clear();
+        const cm = this.getManuscriptCm();
+        if (cm) clearDiffEdits(cm);
+    }
+
+    /** Clear Direct change state (e.g., on reset / new chat). */
+    clearDirect(): void {
+        this.directChanges.clear();
+        const cm = this.getManuscriptCm();
+        if (cm) clearDiffEdits(cm);
     }
 
     /**
@@ -1850,33 +1887,35 @@ export class CoWriterSession {
             { role: 'user', content: userMessage }
         ];
 
-        // Set up streaming — generateDirect
+        // Set up streaming — generateDirect (preview-diff)
         this.abortController = new AbortController();
         this.thoughtBuffer = '';
-        this.insertionStart = cursorOffset;
-        this.insertionLength = 0;
-        this.originalText = fullText;
+        this.directChanges.clear();
+        const directEdit = this.directChanges.add({
+            from: cursorOffset,
+            to: cursorOffset,
+            newText: '',
+            label: direction ? `Continue: ${direction.slice(0, 80)}` : 'Continuation'
+        });
 
         if (!direction) {
             const endPos = editor.offsetToPos(fullText.length);
             editor.setCursor(endPos);
             editor.scrollIntoView({ from: endPos, to: endPos }, true);
-            this.insertionStart = fullText.length;
+            directEdit.from = fullText.length;
+            directEdit.to = fullText.length;
         }
 
-        this.draftState = 'generating';
-        this.onStateChange?.('generating');
+        this.onOptionsLoading?.(true);
         this.onChatUpdate?.();
-        this.lockEditor();
 
         const cm = (editor as unknown as { cm: EditorView }).cm;
         if (!cm) {
             new Notice('Quill: Could not access editor for streaming.');
-            this.unlockEditor();
-            this.draftState = 'idle';
-            this.onStateChange?.('idle');
+            this.onOptionsLoading?.(false);
             return;
         }
+        pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
 
         const notice = Platform.isMobile
             ? new Notice('Quill: Continuing (mobile \u2014 this may take a moment)...', 0)
@@ -1893,116 +1932,56 @@ export class CoWriterSession {
 
             for await (const chunk of stream) {
                 if (chunk.done) break;
-
                 if (chunk.thought) {
                     this.thoughtBuffer += chunk.thought;
                     this.onThought?.(this.thoughtBuffer);
                 }
-
                 if (!chunk.text) continue;
-
-                const cleanText = sanitizeProse(chunk.text);
-                const insertAt = this.insertionStart + this.insertionLength;
-                cm.dispatch({
-                    changes: {
-                        from: insertAt,
-                        to: insertAt,
-                        insert: cleanText
-                    },
-                    selection: { anchor: insertAt + cleanText.length }
-                });
-                this.insertionLength += cleanText.length;
+                // Stream into the preview widget (the document is not modified
+                // during generation). Approve commits; Reject discards.
+                directEdit.newText += sanitizeProse(chunk.text);
+                pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
             }
 
-            // Check if the generated content respects the stopping point
-            if (stoppingPoint && this.insertionLength > 0) {
-                const generatedContent = cm.state.sliceDoc(
-                    this.insertionStart,
-                    this.insertionStart + this.insertionLength
-                );
-                if (!respectsStoppingPoint(generatedContent, stoppingPoint.instruction)) {
-                    // Content went beyond the stopping point — truncate to the stopping point
+            // Stopping-point enforcement on the buffered text.
+            if (stoppingPoint && directEdit.newText.length > 0) {
+                if (!respectsStoppingPoint(directEdit.newText, stoppingPoint.instruction)) {
                     console.warn('[Quill Co-writer] Content exceeded stopping point, truncating');
-                    const truncated = truncateToStoppingPoint(generatedContent, stoppingPoint.instruction);
-                    if (truncated.length < generatedContent.length) {
-                        // Revert the full insertion and re-insert truncated version
-                        cm.dispatch({
-                            changes: {
-                                from: this.insertionStart,
-                                to: this.insertionStart + this.insertionLength,
-                                insert: truncated
-                            }
-                        });
-                        this.insertionLength = truncated.length;
+                    const truncated = truncateToStoppingPoint(directEdit.newText, stoppingPoint.instruction);
+                    if (truncated.length < directEdit.newText.length) {
+                        directEdit.newText = truncated;
                     }
                 }
             }
 
-            console.warn('[Quill Co-writer] Direct continuation context', {
-                manuscriptExcerptChars: proseForContext.length,
-                vaultContextChars: vaultContext.length,
-                vaultContextFiles: plugin.currentAssembly?.contextItems.length ?? 0,
-                additionalFiles: this.contextFilePaths,
-                voiceProfile: this.voiceProfile
-                    ? {
-                          sentenceLengthDistribution: this.voiceProfile.sentenceLengthDistribution,
-                          dialogueRatio: this.voiceProfile.dialogueRatio,
-                          vocabularyRegister: this.voiceProfile.vocabularyRegister
-                      }
-                    : null,
-                narrativeVoicePreset: plugin.settings.narrativeVoicePreset,
-                insertionLength: this.insertionLength
-            });
+            if (plugin.settings.coWriterAppendNewline) {
+                directEdit.newText = `${directEdit.newText.replace(/\s+$/, '')}\n`;
+            }
+
+            if (directEdit.newText.replace(/\s+$/, '').length === 0) {
+                new Notice('Quill: Received empty response from the AI provider.');
+                this.directChanges.clear();
+                clearDiffEdits(cm);
+            } else {
+                pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
+            }
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') {
-                notice.hide();
-                if (this.insertionLength > 0) {
-                    // Keep partial content as draft — user must accept or reject
-                    this.draftState = 'draft';
-                    this.onStateChange?.('draft');
-                } else {
-                    this.unlockEditor();
-                    this.draftState = 'idle';
-                    this.onStateChange?.('idle');
-                    this.insertionStart = -1;
-                    this.insertionLength = 0;
+                // Keep partial prose as a pending change for review; clear only if empty.
+                if (directEdit.newText.replace(/\s+$/, '').length === 0) {
+                    this.directChanges.clear();
+                    clearDiffEdits(cm);
                 }
-                return;
+            } else {
+                new Notice(`Quill: Continuation failed \u2014 ${err instanceof Error ? err.message : String(err)}`);
+                this.directChanges.clear();
+                clearDiffEdits(cm);
             }
-            new Notice(`Quill: Continuation failed \u2014 ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
             notice.hide();
-            this.unlockEditor();
-            this.draftState = 'idle';
-            this.onStateChange?.('idle');
-            return;
+            this.onOptionsLoading?.(false);
+            this.onChatUpdate?.();
         }
-
-        notice.hide();
-
-        if (this.insertionLength === 0) {
-            new Notice('Quill: Received empty response from the AI provider.');
-            this.unlockEditor();
-            this.draftState = 'idle';
-            this.onStateChange?.('idle');
-            return;
-        }
-
-        if (plugin.settings.coWriterAppendNewline) {
-            const endPos = this.insertionStart + this.insertionLength;
-            const after = cm.state.sliceDoc(endPos, Math.min(endPos + 2, cm.state.doc.length));
-            if (after !== '\n\n') {
-                cm.dispatch({
-                    changes: { from: endPos, to: endPos, insert: '\n' },
-                    selection: { anchor: endPos + 1 }
-                });
-                this.insertionLength += 1;
-            }
-        }
-
-        this.draftState = 'draft';
-        this.onStateChange?.('draft');
-        this.onDraftComplete?.();
-        this.onChatUpdate?.();
     }
 
     /** Accept the current draft and reset state to idle. */
@@ -2145,6 +2124,7 @@ export class CoWriterSession {
         this.cancelGeneration();
         this.endCoachSession();
         this.clearFulfill();
+        this.clearDirect();
         this.manuscriptPath = null;
         this.originalText = '';
         this.insertionStart = -1;
@@ -2174,6 +2154,7 @@ export class CoWriterSession {
         this.cancelGeneration();
         this.endCoachSession();
         this.clearFulfill();
+        this.clearDirect();
         this.originalText = '';
         this.insertionStart = -1;
         this.insertionLength = 0;

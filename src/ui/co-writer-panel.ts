@@ -952,7 +952,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.inputValue = '';
             input.value = '';
             if (this.inputMode === 'direct') {
-                this.draftState = 'generating';
+                this.optionsLoading = true;
             } else if (this.inputMode === 'fulfill') {
                 this.fulfillActive = true;
             } else {

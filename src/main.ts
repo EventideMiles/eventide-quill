@@ -175,10 +175,12 @@ export default class EventideQuillPlugin extends Plugin {
                 onApprove: (owner: string, id: number) => {
                     if (owner === 'fulfill') this.approveCoWriterFulfill(id);
                     else if (owner === 'transform') this.approveTransformChange(id);
+                    else if (owner === 'direct') this.approveDirectChange(id);
                 },
                 onReject: (owner: string, id: number) => {
                     if (owner === 'fulfill') this.rejectCoWriterFulfill(id);
                     else if (owner === 'transform') this.rejectTransformChange(id);
+                    else if (owner === 'direct') this.rejectDirectChange(id);
                 }
             })
         );
@@ -1230,6 +1232,16 @@ export default class EventideQuillPlugin extends Plugin {
     /** Reject every pending Fulfill section. */
     rejectAllCoWriterFulfill(): void {
         this.coWriterSession.rejectAllFulfill();
+    }
+
+    /** Approve the pending Direct continuation: commit it at the cursor. */
+    approveDirectChange(id: number): void {
+        this.coWriterSession.approveDirectChange(this, id);
+    }
+
+    /** Reject the pending Direct continuation: discard it (nothing was written). */
+    rejectDirectChange(id: number): void {
+        this.coWriterSession.rejectDirectChange(id);
     }
 
     /** Resolve the CodeMirror view of the active markdown editor, if any. */
