@@ -609,12 +609,12 @@ export class CoWriterPanel extends AbstractChatPanel {
             });
             const runBtn = prompt.createEl('button', {
                 cls: 'quill-cowriter-init-btn mod-cta',
-                text: 'Run sweep'
+                text: this.fulfillActive ? 'Running sweep\u2026' : 'Run sweep'
             });
+            if (this.fulfillActive) runBtn.disabled = true;
             this.renderEvents.registerDomEvent(runBtn, 'click', () => {
                 if (this.fulfillActive) return;
                 this.fulfillActive = true;
-                runBtn.disabled = true;
                 this.scheduleRender();
                 this.onRunFulfill?.('');
             });

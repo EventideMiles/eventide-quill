@@ -1338,7 +1338,7 @@ export class CoWriterSession {
             for (const range of ranges) {
                 this.abortController = new AbortController();
                 const before = fullText.slice(Math.max(0, range.start - 2000), range.start);
-                const after = fullText.slice(range.end, range.end + 1000);
+                const after = fullText.slice(range.end, range.end + 2000);
                 const systemPrompt = getCoWriterGenerationPrompt(
                     this.voiceProfile ?? {
                         sentenceLengthDistribution: 'unknown',
@@ -1352,7 +1352,10 @@ export class CoWriterSession {
                     plotMapText
                 );
                 const userMessage = [
-                    'Fulfill the inline directive at this point in the scene. Write the prose that realizes it, in the established voice and perspective. Output only the prose — no labels, no explanations.',
+                    'Fulfill the inline directive at this point in the scene. Your prose will replace the directive comment and sit between the text above and the text below.',
+                    'Read the surrounding prose carefully. Do NOT repeat or rephrase content that already appears before or after the directive — the reader has already seen it.',
+                    'Insert exactly what the directive asks for. If it says "a paragraph," write one paragraph. If it asks for a specific detail, action, or description, write only that — not a summary of what is already there.',
+                    'Your prose must flow naturally into the text that follows it. Write in the established voice and perspective. Output only the prose — no labels, no explanations.',
                     ...(globalInstruction ? ['', `Overall direction for this sweep: ${globalInstruction}`] : []),
                     '',
                     `Directive: "${range.text}"`,
@@ -1360,7 +1363,7 @@ export class CoWriterSession {
                     '--- Prose before the directive ---',
                     before || '(start of document)',
                     '',
-                    '--- Prose after the directive (continue into this) ---',
+                    '--- Prose after the directive (your prose must flow into this) ---',
                     after || '(end of document)'
                 ].join('\n');
 
