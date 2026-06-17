@@ -75,6 +75,30 @@ export function toDiffSnapshots(changeSet: ChangeSet, owner: string): DiffEditSn
     }));
 }
 
+/** A bounded red box showing the removed text (struck through). Replaces the
+ *  original range so it reads as its own block, distinctly separated from the
+ *  green added box below it (no full-line wash, no bleed under the green box). */
+class RemovedBoxWidget extends WidgetType {
+    constructor(private readonly removedText: string) {
+        super();
+    }
+
+    eq(other: RemovedBoxWidget): boolean {
+        return this.removedText === other.removedText;
+    }
+
+    toDOM(): HTMLElement {
+        const wrap = window.activeDocument.createElement('div');
+        wrap.className = 'quill-diff-removed-box';
+        wrap.textContent = this.removedText;
+        return wrap;
+    }
+
+    ignoreEvent(): boolean {
+        return true;
+    }
+}
+
 /** A green widget showing the replacement text with inline Approve/Reject buttons. */
 class ChangeWidget extends WidgetType {
     constructor(
@@ -158,15 +182,15 @@ class ChangeDiffPlugin {
         for (const edit of edits) {
             if (edit.state !== 'pending') continue;
             if (edit.from < edit.to) {
-                // Red "box" over the whole line(s) the edit touches (block-level,
-                // via a per-line class so it reads as a container, not a highlight).
-                const firstLine = doc.lineAt(edit.from);
-                const lastLine = doc.lineAt(edit.to);
-                for (let ln = firstLine.number; ln <= lastLine.number; ln++) {
-                    ranges.push(Decoration.line({ class: 'quill-diff-removed-line' }).range(doc.line(ln).from));
-                }
-                // Precise strikethrough on the exact replaced sub-range only.
-                ranges.push(Decoration.mark({ class: 'quill-diff-removed-strike' }).range(edit.from, edit.to));
+                // Removed text as a bounded red block widget (replaces the range,
+                // so it is its own box — distinctly separated from the green box).
+                const removedText = doc.sliceString(edit.from, edit.to);
+                ranges.push(
+                    Decoration.replace({ widget: new RemovedBoxWidget(removedText), block: false }).range(
+                        edit.from,
+                        edit.to
+                    )
+                );
             }
             if (edit.newText.length > 0) {
                 ranges.push(
