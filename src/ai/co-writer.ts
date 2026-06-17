@@ -12,11 +12,13 @@ import {
     getCoWriterCoachRevision,
     getCoWriterCoachToOptions,
     getCoWriterOptionPrompt,
-    getCoWriterVoicePrompt
+    getCoWriterVoicePrompt,
+    type ActiveSteering
 } from './prompts';
 import { compactConversation } from './compaction';
 import { estimateTokens } from '../utils/tokens';
 import { readVaultFiles, readVaultFileText } from '../utils/vault-files';
+import { parseDirectives } from '../utils/directives';
 
 /** Replace em dashes (—) with a comma+space for prose that shouldn't use them. */
 function sanitizeProse(text: string): string {
@@ -202,6 +204,28 @@ async function buildPlotMapMessage(plugin: EventideQuillPlugin): Promise<ChatMes
     const text = await loadPlotMapText(plugin);
     if (!text) return null;
     return { role: 'system', content: `Plot map (reference):\n${text}` };
+}
+
+/**
+ * Compute active inline-directive steering for the cursor position.
+ * Returns one `inline`-source entry per directive in the contiguous trailing
+ * run. Empty when directive processing is disabled or no directives are active.
+ */
+function inlineSteering(plugin: EventideQuillPlugin, textBeforeCursor: string): ActiveSteering[] {
+    if (!plugin.settings.enableInlineDirectives) return [];
+    return parseDirectives(textBeforeCursor).map((d) => ({ source: 'inline' as const, text: d }));
+}
+
+/** Build a system message describing active inline directives, or null when none are active.
+ *  Used by the option-generation modes so option cards reflect directive intent. */
+function buildDirectiveMessage(plugin: EventideQuillPlugin, textBeforeCursor: string): ChatMessage | null {
+    const steering = inlineSteering(plugin, textBeforeCursor);
+    if (steering.length === 0) return null;
+    const body = steering.map((s) => `- ${s.text}`).join('\n');
+    return {
+        role: 'system',
+        content: `Active inline directives at the cursor:\n${body}\nReflect this intent in your suggestions.`
+    };
 }
 
 /** Current state of a co-writer drafting session. */
@@ -441,6 +465,7 @@ export class CoWriterSession {
 
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
         const optionsPlotMap = await buildPlotMapMessage(plugin);
+        const optionsDirective = buildDirectiveMessage(plugin, proseForOptions);
 
         const prompt = getCoWriterOptionPrompt(proseForOptions || '(empty document)', direction);
         const messages: ChatMessage[] = [];
@@ -449,6 +474,9 @@ export class CoWriterSession {
         }
         if (optionsPlotMap) {
             messages.push(optionsPlotMap);
+        }
+        if (optionsDirective) {
+            messages.push(optionsDirective);
         }
         messages.push(...additionalContextMessages, ...this.discussContextMessages(), {
             role: 'user',
@@ -1140,6 +1168,7 @@ export class CoWriterSession {
                 : '';
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
         const coachOptionsPlotMap = await buildPlotMapMessage(plugin);
+        const coachOptionsDirective = buildDirectiveMessage(plugin, proseForOptions);
 
         const messages: ChatMessage[] = [];
         if (vaultContext) {
@@ -1147,6 +1176,9 @@ export class CoWriterSession {
         }
         if (coachOptionsPlotMap) {
             messages.push(coachOptionsPlotMap);
+        }
+        if (coachOptionsDirective) {
+            messages.push(coachOptionsDirective);
         }
         messages.push(...additionalContextMessages, { role: 'user', content: prompt });
 
@@ -1325,6 +1357,7 @@ export class CoWriterSession {
         // Build additional context from user-added files
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
         const plotMapText = await loadPlotMapText(plugin);
+        const applySteering = inlineSteering(plugin, textBeforeCursor);
 
         const systemPrompt = getCoWriterGenerationPrompt(
             this.voiceProfile ?? {
@@ -1335,7 +1368,7 @@ export class CoWriterSession {
             },
             plugin.settings.narrativeVoicePreset,
             vaultContext,
-            false,
+            applySteering,
             plotMapText
         );
 
@@ -1482,7 +1515,11 @@ export class CoWriterSession {
      * Direct mode: stream a continuation into the editor from the cursor
      * position, following the given direction.  No options phase.
      */
-    async generateDirect(plugin: EventideQuillPlugin, direction: string): Promise<void> {
+    async generateDirect(
+        plugin: EventideQuillPlugin,
+        direction: string,
+        extraSteering?: ActiveSteering[]
+    ): Promise<void> {
         const chat = plugin.getDefaultChatProvider();
         if (!chat.provider) {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
@@ -1556,6 +1593,7 @@ export class CoWriterSession {
 
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
         const plotMapText = await loadPlotMapText(plugin);
+        const directSteering = [...inlineSteering(plugin, textBeforeCursor), ...(extraSteering ?? [])];
 
         const systemPrompt = getCoWriterGenerationPrompt(
             this.voiceProfile ?? {
@@ -1566,7 +1604,7 @@ export class CoWriterSession {
             },
             plugin.settings.narrativeVoicePreset,
             vaultContext,
-            false,
+            directSteering,
             plotMapText
         );
 
@@ -1775,18 +1813,16 @@ export class CoWriterSession {
      * context (summary, plan, discussion) into the direction.
      */
     async coachWrite(plugin: EventideQuillPlugin): Promise<void> {
-        const coachContext = this.coachSession
-            ? [
-                  'The writer wants to continue based on your coaching.',
-                  '',
-                  `Current coaching: ${this.coachSession.summary || this.coachSession.response}`,
-                  this.coachSession.phase === 'direction' || this.coachSession.phase === 'plan'
-                      ? 'You have already developed a plan. Write the scene following that plan.'
-                      : 'Based on what you know so far, write the next part of the scene.'
-              ].join('\n')
+        const coachSteering: ActiveSteering[] = this.coachSession
+            ? [{ source: 'coach', text: this.coachSession.summary || this.coachSession.response }]
+            : [];
+        const direction = this.coachSession
+            ? this.coachSession.phase === 'direction' || this.coachSession.phase === 'plan'
+                ? 'Write the scene following the coaching plan.'
+                : 'Write the next part of the scene based on what you know so far.'
             : 'Continue the passage naturally from the cursor position.';
 
-        await this.generateDirect(plugin, coachContext);
+        await this.generateDirect(plugin, direction, coachSteering);
     }
 
     /** Revert the current draft by removing the inserted text from the editor. */

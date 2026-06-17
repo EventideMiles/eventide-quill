@@ -256,14 +256,19 @@ export function getCoWriterDiscussPrompt(proseBeforeCursor: string, message: str
 /**
  * Build the system prompt for co-writer continuation generation.
  * Injects the voice profile, narrative preset rules, style constraints,
- * optional vault context, optional plot map reference, and optional inline
- * directives context.
+ * optional vault context, optional plot map reference, and optional active
+ * steering (inline directives and/or accumulated coaching direction).
  */
+export interface ActiveSteering {
+    source: 'inline' | 'coach';
+    text: string;
+}
+
 export function getCoWriterGenerationPrompt(
     voiceProfile: VoiceProfile,
     narrativePreset: NarrativeVoicePreset,
     vaultContext?: string,
-    hasDirectives?: boolean,
+    activeSteering?: ActiveSteering[],
     plotMapText?: string
 ): string {
     const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === narrativePreset) ?? NARRATIVE_VOICE_PRESETS[0];
@@ -333,14 +338,15 @@ export function getCoWriterGenerationPrompt(
         );
     }
 
-    if (hasDirectives) {
+    if (activeSteering && activeSteering.length > 0) {
+        const steeringLines = activeSteering.map((s) => `[${s.source}] "${s.text}"`);
         parts.push(
             '',
-            '--- Inline directives ---',
-            'The writer has placed inline directives (HTML comments) in the passage above.',
-            'Read the directive(s) immediately preceding the cursor position.',
-            'Follow any instructions in those directives when writing the continuation.',
-            'The directives are invisible in preview mode — write the scene, not the directive.'
+            '--- Active steering (at cursor) ---',
+            'The writer has given these steering instructions for this continuation:',
+            ...steeringLines,
+            'Follow them when writing. Inline directives remain as HTML comments in the document',
+            '\u2014 write the scene, not the directive.'
         );
     }
 

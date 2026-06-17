@@ -54,6 +54,7 @@ export interface EventideQuillSettings {
     coWriterAppendNewline: boolean;
     enableCoWriterThought: boolean;
     coWriterVoiceMatch: boolean;
+    enableInlineDirectives: boolean;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -117,7 +118,8 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     coWriterVaultContext: true,
     coWriterAppendNewline: true,
     enableCoWriterThought: true,
-    coWriterVoiceMatch: true
+    coWriterVoiceMatch: true,
+    enableInlineDirectives: true
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -1112,6 +1114,18 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 })
             );
 
+        new Setting(containerEl)
+            .setName('Inline directives')
+            .setDesc(
+                'Parse `<!-- quill: ... -->` comments immediately preceding the cursor and feed them to the co-writer as steering. Disable to ignore directives entirely.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.enableInlineDirectives).onChange(async (value) => {
+                    this.plugin.settings.enableInlineDirectives = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
         new Setting(containerEl).setName('Analysis').setHeading();
 
         new Setting(containerEl)
@@ -1334,6 +1348,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                     this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
                     this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;
+                    this.plugin.settings.enableInlineDirectives = DEFAULT_SETTINGS.enableInlineDirectives;
                     await this.plugin.saveSettings();
                     this.display();
                 })
