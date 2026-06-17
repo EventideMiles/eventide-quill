@@ -1,5 +1,6 @@
 import { TFile, Vault } from 'obsidian';
 import { ExtractedEntity, VoiceMarker, ContextItem, ContextAssembly, ContextAssemblyOptions } from './types';
+import { estimateTokens } from '../../utils/tokens';
 
 const DEFAULT_OPTIONS: ContextAssemblyOptions = {
     tokenBudget: 8192,
@@ -8,11 +9,6 @@ const DEFAULT_OPTIONS: ContextAssemblyOptions = {
     maxVaultFiles: 20,
     maxCharsPerFile: 2000
 };
-
-/** Estimate token count from character count (roughly 4 chars per token). */
-function estimateTokens(text: string): number {
-    return Math.ceil(text.length / 4);
-}
 
 /** Assemble context from the current document and related vault files. */
 export async function assembleContext(

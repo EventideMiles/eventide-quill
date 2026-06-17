@@ -1,4 +1,19 @@
 /** The narrative voice presets available for transformation generation. */
+/**
+ * A voice profile extracted from a passage of prose.
+ * Used by the co-writer to guide voice-matched continuations.
+ */
+export interface VoiceProfile {
+    /** Rough description of sentence length patterns, e.g. "mostly 10-20 words" */
+    sentenceLengthDistribution: string;
+    /** Ratio of dialogue to description (0–1) */
+    dialogueRatio: number;
+    /** Description of vocabulary register, e.g. "colloquial with occasional literary flourishes" */
+    vocabularyRegister: string;
+    /** Notable patterns or tics, e.g. ["frequent sentence fragments", "long descriptive passages"] */
+    keyPatterns: string[];
+}
+
 export type NarrativeVoicePreset =
     | 'third-limited'
     | 'third-multiple'

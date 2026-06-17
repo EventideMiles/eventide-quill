@@ -75,6 +75,9 @@ export interface EmbedResult {
 /** A single chunk from a streaming chat completion. */
 export interface ChatChunk {
     text: string;
+    /** Reasoning / thinking content, if the model supports it (Claude extended thinking,
+     *  OpenAI reasoning, or DeepSeek R1 style  tags). */
+    thought?: string;
     /** True for the final chunk in the stream. */
     done: boolean;
     model?: string;
@@ -99,6 +102,60 @@ export class ProviderError extends Error {
         this.status = status;
         this.body = body;
     }
+}
+
+/**
+ * Resolve a model identifier from a provider's models list.
+ * If modelId is provided, looks up that specific model. Otherwise returns the
+ * first model with a role matching the given role (or 'both').
+ * @param models - The provider's models array.
+ * @param role   - The required model role.
+ * @param modelId - Optional specific model ID to look up.
+ * @param name   - Provider display name (used in error messages).
+ * @returns The resolved ModelConfig.
+ * @throws ProviderError if no matching model is found.
+ */
+export function resolveModel(
+    models: ModelConfig[],
+    role: ModelConfig['role'],
+    modelId: string | undefined,
+    name: string
+): ModelConfig {
+    if (modelId) {
+        const found = models.find((m) => m.id === modelId);
+        if (found && (found.role === role || found.role === 'both')) return found;
+        throw new ProviderError(
+            `No ${role} model with id "${modelId}" configured for provider "${name}". ` +
+                'Check the model role in settings.',
+            0,
+            ''
+        );
+    }
+
+    const fallback = models.find((m) => m.role === role || m.role === 'both');
+    if (!fallback) {
+        throw new ProviderError(
+            `No ${role} model configured for provider "${name}". ` +
+                'Add a model with the appropriate role in settings.',
+            0,
+            ''
+        );
+    }
+
+    return fallback;
+}
+
+/**
+ * Build a full URL by appending a path segment to the configured endpoint.
+ * Strips trailing slashes from the base and ensures the path starts with '/'.
+ * @param endpoint - The provider's base endpoint URL.
+ * @param path     - The API path segment (with or without leading '/').
+ * @returns The full URL.
+ */
+export function buildUrl(endpoint: string, path: string): string {
+    const base = endpoint.replace(/\/+$/, '');
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    return `${base}${cleanPath}`;
 }
 
 /** Pluggable AI provider interface. Every concrete provider implements this contract. */

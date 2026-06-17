@@ -1378,10 +1378,20 @@ button.quill-feedback-persona-btn:hover {
     color: var(--text-normal);
 }
 
-.quill-feedback-chat-input-row {
+/* Buttons row (add ctx, save, send) */
+.quill-feedback-chat-btn-row {
     display: flex;
     gap: 6px;
-    align-items: flex-end;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.quill-feedback-chat-btn-spacer {
+    flex: 1;
+}
+
+/* Textarea row (below buttons) */
+.quill-feedback-chat-ta-row {
     flex-shrink: 0;
 }
 
@@ -1428,10 +1438,10 @@ button.quill-feedback-persona-btn:hover {
 }
 
 .quill-feedback-chat-input {
-    flex: 1;
-    height: 36px;
-    min-height: 36px;
-    max-height: 120px;
+    width: 100%;
+    height: 180px;
+    min-height: 80px;
+    max-height: 300px;
     resize: vertical;
     font-size: var(--font-ui-small);
     font-family: var(--font-interface);
@@ -1449,7 +1459,382 @@ button.quill-feedback-persona-btn:hover {
     outline: none;
 }
 
-.quill-feedback-chat-send {
+.quill-feedback-chat-ctx-indicator {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    padding: 4px 0 2px 0;
+    text-align: center;
+}
+
+/* --- Co-writer panel --- */
+
+/* Thought channel */
+.quill-cowriter-section {
+    flex-shrink: 0;
+    margin-bottom: 8px;
+}
+
+.quill-cowriter-thought-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px 0;
+    user-select: none;
+}
+
+.quill-cowriter-thought-toggle:hover {
+    color: var(--text-normal);
+}
+
+.quill-cowriter-thought-icon {
+    font-size: 10px;
+}
+
+.quill-cowriter-thought-content {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    padding: 8px;
+    background: var(--background-primary-alt);
+    border-radius: 4px;
+    margin-top: 4px;
+    line-height: var(--line-height-normal);
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+    overflow-wrap: break-word;
+}
+
+/* Per-message thought toggle (inside chat bubbles) */
+.quill-cowriter-message-thought-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px 0;
+    margin-bottom: 4px;
+    user-select: none;
+}
+
+.quill-cowriter-message-thought-toggle:hover {
+    color: var(--text-normal);
+}
+
+.quill-cowriter-message-thought-content {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    padding: 6px 8px;
+    background: var(--background-primary-alt);
+    border-radius: 4px;
+    margin-bottom: 8px;
+    line-height: var(--line-height-normal);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.quill-cowriter-thought-collapsed {
+    display: none;
+}
+
+/* Chat messages */
+.quill-cowriter-chat-bubble {
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    border-radius: 6px;
+    font-size: var(--font-ui-small);
+    line-height: var(--line-height-normal);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+
+.quill-cowriter-chat-user {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    margin-left: 20px;
+}
+
+.quill-cowriter-chat-assistant {
+    background: var(--background-primary-alt);
+    color: var(--text-normal);
+    margin-right: 20px;
+}
+
+.quill-cowriter-chat-streaming {
+    opacity: 0.7;
+}
+
+/* Option cards */
+.quill-cowriter-options-intro {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+
+.quill-cowriter-options {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.quill-cowriter-option-card {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.quill-cowriter-option-card:hover {
+    border-color: var(--interactive-accent);
+    background: rgba(var(--interactive-accent-rgb), 0.03);
+}
+
+.quill-cowriter-option-label {
+    font-weight: 600;
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+    margin-bottom: 4px;
+}
+
+.quill-cowriter-option-desc {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    line-height: var(--line-height-normal);
+}
+
+button.quill-cowriter-option-apply {
+    cursor: pointer;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-size: var(--font-ui-smaller);
+    font-family: var(--font-interface);
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    transition: opacity 0.1s;
+}
+
+button.quill-cowriter-option-apply:hover {
+    opacity: 0.85;
+}
+
+button.quill-cowriter-option-applying {
+    opacity: 0.5;
+    cursor: default;
+    pointer-events: none;
+}
+
+/* Expired option card (from a previous conversation turn) */
+.quill-cowriter-option-expired {
+    opacity: 0.5;
+}
+
+.quill-cowriter-option-expired-label {
+    display: block;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* Discussion response text */
+.quill-cowriter-response-text {
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+    line-height: var(--line-height-normal);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+
+/* Bottom pinned area */
+.quill-cowriter-bottom {
+    flex-shrink: 0;
+}
+
+/* Draft status bar */
+.quill-cowriter-status-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 0;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    border-top: 1px solid var(--background-modifier-border);
+    margin-top: 4px;
+}
+
+button.quill-cowriter-status-btn {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 2px 10px;
+    font-size: var(--font-ui-smaller);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    transition: background 0.1s, color 0.1s;
+}
+
+button.quill-cowriter-status-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+button.quill-cowriter-accept-btn {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border-color: var(--interactive-accent);
+}
+
+button.quill-cowriter-accept-btn:hover {
+    opacity: 0.85;
+}
+
+button.quill-cowriter-revert-btn {
+    border-color: var(--background-modifier-border);
+}
+
+/* Context pills row */
+.quill-cowriter-ctx-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px 0;
+}
+
+.quill-cowriter-ctx-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--font-ui-smaller);
+    background: var(--background-modifier-hover);
+    border-radius: 3px;
+    padding: 2px 6px;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.quill-cowriter-ctx-remove {
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    padding: 0 2px;
+    line-height: 1;
+}
+
+.quill-cowriter-token-indicator {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    padding: 4px 0 2px 0;
+    text-align: center;
+}
+
+.quill-cowriter-ctx-remove:hover {
+    color: var(--text-normal);
+}
+
+/* Buttons row (mode, add ctx, refresh, send) */
+.quill-cowriter-btn-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
+    padding: 4px 0 0 0;
+}
+
+.quill-cowriter-btn-spacer {
+    flex: 1;
+}
+
+/* Textarea row (below buttons) */
+.quill-cowriter-ta-row {
+    flex-shrink: 0;
+    padding: 0 0 4px 0;
+}
+
+button.quill-cowriter-mode-btn {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: var(--font-ui-smaller);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    height: 36px;
+    line-height: 1.4;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+    flex-shrink: 0;
+    box-sizing: border-box;
+}
+
+button.quill-cowriter-mode-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+button.quill-cowriter-mode-discuss {
+    border-color: var(--color-green);
+    color: var(--color-green);
+}
+
+button.quill-cowriter-mode-discuss:hover {
+    background: rgba(var(--color-green-rgb), 0.1);
+}
+
+button.quill-cowriter-ctx-add {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    height: 36px;
+    line-height: 1.4;
+    transition: background 0.1s, color 0.1s;
+    flex-shrink: 0;
+    box-sizing: border-box;
+}
+
+button.quill-cowriter-ctx-add:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.quill-cowriter-input {
+    width: 100%;
+    height: 180px;
+    min-height: 80px;
+    max-height: 300px;
+    resize: vertical;
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    line-height: 1.4;
+    padding: 6px 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    box-sizing: border-box;
+}
+
+.quill-cowriter-input:focus {
+    border-color: var(--interactive-accent);
+    outline: none;
+}
+
+button.quill-cowriter-send-btn {
     cursor: pointer;
     border: 1px solid var(--interactive-accent);
     border-radius: 4px;
@@ -1465,13 +1850,224 @@ button.quill-feedback-persona-btn:hover {
     box-sizing: border-box;
 }
 
-.quill-feedback-chat-send:hover {
+button.quill-cowriter-send-btn:hover {
     opacity: 0.85;
 }
 
-.quill-feedback-chat-ctx-indicator {
-    font-size: var(--font-ui-smaller);
+button.quill-cowriter-stop-btn {
+    background: var(--text-error) !important;
+    border-color: var(--text-error) !important;
+}
+
+button.quill-cowriter-stop-btn:hover {
+    opacity: 0.85;
+}
+
+/* Refresh suggestions button */
+button.quill-cowriter-refresh-btn {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    background: transparent;
     color: var(--text-muted);
-    padding: 4px 0 2px 0;
+    transition: background 0.1s, color 0.1s;
+    height: 36px;
+    line-height: 1.4;
+    box-sizing: border-box;
+    flex-shrink: 0;
+}
+
+button.quill-cowriter-refresh-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+/* Initialize prompt */
+.quill-cowriter-init {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     text-align: center;
+    padding: 32px 16px;
+    gap: 12px;
+}
+
+.quill-cowriter-init-icon {
+    font-size: 32px;
+    opacity: 0.6;
+}
+
+.quill-cowriter-init-heading {
+    font-size: var(--font-ui-medium);
+    font-weight: 600;
+    color: var(--text-normal);
+}
+
+.quill-cowriter-init-desc {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    max-width: 260px;
+    line-height: var(--line-height-normal);
+}
+
+button.quill-cowriter-init-btn {
+    cursor: pointer;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 24px;
+    font-size: var(--font-ui-medium);
+    font-family: var(--font-interface);
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    transition: opacity 0.1s;
+    margin-top: 8px;
+}
+
+button.quill-cowriter-init-btn:hover {
+    opacity: 0.85;
+}
+
+/* Guidance mode UI */
+.quill-cowriter-guidance-bar {
+    display: flex;
+    align-items: center;
+    padding: 6px 8px;
+    font-size: var(--font-smallest);
+    color: var(--text-muted);
+    border-top: 1px solid var(--background-modifier-border);
+    margin-top: 4px;
+}
+
+.quill-cowriter-guidance-phase {
+    font-style: italic;
+    color: var(--text-accent);
+    font-weight: 500;
+}
+
+button.quill-cowriter-guidance-end-btn {
+    background: var(--background-modifier-form-field);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: var(--font-smallest);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.1s;
+}
+
+button.quill-cowriter-guidance-end-btn:hover {
+    background: var(--background-modifier-border);
+    color: var(--text-normal);
+}
+
+button.quill-cowriter-guidance-options-btn {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border: none;
+    border-radius: 4px;
+    padding: 2px 10px;
+    font-size: var(--font-smallest);
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.1s;
+}
+
+button.quill-cowriter-guidance-options-btn:hover {
+    opacity: 0.85;
+}
+
+button.quill-cowriter-plan-accept {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border: none;
+    border-radius: 4px;
+    padding: 4px 12px;
+    margin-top: 10px;
+    font-size: var(--font-small);
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.1s;
+}
+
+button.quill-cowriter-plan-accept:hover {
+    opacity: 0.85;
+}
+
+/* Compact button for co-writer panel */
+button.quill-cowriter-compact-btn {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: var(--font-ui-smaller);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    transition: background 0.1s, color 0.1s;
+    height: 36px;
+    line-height: 1.4;
+    box-sizing: border-box;
+    flex-shrink: 0;
+}
+
+button.quill-cowriter-compact-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+/* Compact button for feedback panel */
+.quill-feedback-chat-compact {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: var(--font-ui-smaller);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    transition: background 0.1s, color 0.1s;
+    height: 36px;
+    line-height: 1.4;
+    box-sizing: border-box;
+    flex-shrink: 0;
+}
+
+.quill-feedback-chat-compact:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+/* New chat buttons (shared between feedback and co-writer panels) */
+button.quill-cowriter-new-chat-btn,
+.quill-feedback-chat-new-chat {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: var(--font-ui-smaller);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    transition: background 0.1s, color 0.1s;
+    height: 36px;
+    line-height: 1.4;
+    box-sizing: border-box;
+    flex-shrink: 0;
+}
+
+button.quill-cowriter-new-chat-btn:hover,
+.quill-feedback-chat-new-chat:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+/* Confirm modal button row */
+.quill-confirm-btn-row {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
 }
