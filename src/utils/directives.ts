@@ -8,8 +8,37 @@
  * cursor-scoped extraction.
  */
 
+/** A directive with its document offset range and parsed text. */
+export interface DirectiveRange {
+    start: number;
+    end: number;
+    text: string;
+}
+
 /** Matches a single quill directive comment and captures its inner text. */
 const DIRECTIVE_RE = /<!--\s*quill:\s*([\s\S]*?)\s*-->/g;
+
+/**
+ * Find every `<!-- quill: ... -->` directive in the document, in document order.
+ *
+ * Unlike {@link parseDirectives} (which is cursor-scoped), this returns ALL
+ * directives regardless of position. Used by Fulfill mode, which sweeps the
+ * whole document and fulfills each directive.
+ *
+ * @param doc  The full document text.
+ * @returns All directives with their `[start, end)` offset ranges and text.
+ */
+export function parseAllDirectives(doc: string): DirectiveRange[] {
+    const ranges: DirectiveRange[] = [];
+    for (const match of doc.matchAll(/<!--\s*quill:\s*([\s\S]*?)\s*-->/g)) {
+        const start = match.index ?? 0;
+        const text = (match[1] ?? '').trim();
+        if (text.length > 0) {
+            ranges.push({ start, end: start + match[0].length, text });
+        }
+    }
+    return ranges;
+}
 
 /**
  * Extract the inline quill directives that are active at the cursor.

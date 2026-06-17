@@ -1091,6 +1091,9 @@ export default class EventideQuillPlugin extends Plugin {
             // Auto-generate continuation options when plan/direction is reached
             void this.coWriterSession.coachToOptions(this, '');
         };
+        session.onFulfillUpdate = () => {
+            this.lintPanel?.coWriterSetFulfillState(session.fulfillSections, session.fulfillActive);
+        };
     }
 
     /**
@@ -1169,6 +1172,38 @@ export default class EventideQuillPlugin extends Plugin {
      */
     async coWriterCoachWrite(): Promise<void> {
         await this.coWriterSession.coachWrite(this);
+    }
+
+    /**
+     * Run a Fulfill sweep over every inline directive in the active document.
+     * @param globalInstruction  Optional overall direction prepended to every directive's prompt.
+     */
+    async runCoWriterFulfill(globalInstruction?: string): Promise<void> {
+        const path = this.app.workspace.getActiveFile()?.path;
+        if (path) this.coWriterSession.manuscriptPath = path;
+        await this.openCoWriterPanel();
+        this.wireCoWriterPanel();
+        await this.coWriterSession.fulfillDirectives(this, globalInstruction);
+    }
+
+    /** Approve one Fulfill section: consume its directive comment and insert the prose. */
+    approveCoWriterFulfill(id: number): void {
+        this.coWriterSession.approveFulfillSection(this, id);
+    }
+
+    /** Reject one Fulfill section: leave the directive comment in place. */
+    rejectCoWriterFulfill(id: number): void {
+        this.coWriterSession.rejectFulfillSection(id);
+    }
+
+    /** Approve every pending Fulfill section in document order. */
+    approveAllCoWriterFulfill(): void {
+        this.coWriterSession.approveAllFulfill(this);
+    }
+
+    /** Reject every pending Fulfill section. */
+    rejectAllCoWriterFulfill(): void {
+        this.coWriterSession.rejectAllFulfill();
     }
 
     /** Cancel the current feedback generation request. */

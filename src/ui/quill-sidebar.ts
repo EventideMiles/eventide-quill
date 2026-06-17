@@ -7,7 +7,7 @@ import { FixWithAiModal } from './fix-with-ai-modal';
 import { renderContextTab } from './context-panel';
 import { FeedbackPanel } from './feedback-panel';
 import { CoWriterPanel } from './co-writer-panel';
-import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase } from '../ai/co-writer';
+import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase, FulfillSection } from '../ai/co-writer';
 import type EventideQuillPlugin from '../main';
 import type { ContextAssembly } from '../core/context-engine/types';
 
@@ -404,6 +404,21 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setClearPlotMapHandler(() => {
                 void this.plugin.clearPlotMapLink();
             });
+            this.coWriterPanel.setRunFulfillHandler((globalInstruction: string) => {
+                void this.plugin.runCoWriterFulfill(globalInstruction);
+            });
+            this.coWriterPanel.setApproveFulfillSectionHandler((id: number) => {
+                this.plugin.approveCoWriterFulfill(id);
+            });
+            this.coWriterPanel.setRejectFulfillSectionHandler((id: number) => {
+                this.plugin.rejectCoWriterFulfill(id);
+            });
+            this.coWriterPanel.setApproveAllFulfillHandler(() => {
+                this.plugin.approveAllCoWriterFulfill();
+            });
+            this.coWriterPanel.setRejectAllFulfillHandler(() => {
+                this.plugin.rejectAllCoWriterFulfill();
+            });
         }
 
         // Sync current state from the session
@@ -416,6 +431,7 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setOptionsLoading(session.optionsLoading);
             this.coWriterPanel.setCoachPhase(session.coachSession?.phase ?? 'discern');
             this.coWriterPanel.setCoachActive(session.coachActive);
+            this.coWriterPanel.setFulfillState(session.fulfillSections, session.fulfillActive);
         }
 
         // Sync plot map link from the active manuscript's frontmatter
@@ -580,6 +596,11 @@ export class QuillSidebarView extends ItemView {
     /** Set whether an inline directive is active at the cursor (Direct-mode badge). */
     coWriterSetDirectiveActive(active: boolean): void {
         this.coWriterPanel?.setDirectiveActive(active);
+    }
+
+    /** Push Fulfill-mode sections and active flag to the co-writer panel. */
+    coWriterSetFulfillState(sections: FulfillSection[], active: boolean): void {
+        this.coWriterPanel?.setFulfillState(sections, active);
     }
 
     /** Get the chat context file paths from the Feedback panel. */

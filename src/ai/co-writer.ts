@@ -18,7 +18,7 @@ import {
 import { compactConversation } from './compaction';
 import { estimateTokens } from '../utils/tokens';
 import { readVaultFiles, readVaultFileText } from '../utils/vault-files';
-import { parseDirectives } from '../utils/directives';
+import { parseDirectives, parseAllDirectives } from '../utils/directives';
 
 /** Replace em dashes (—) with a comma+space for prose that shouldn't use them. */
 function sanitizeProse(text: string): string {
@@ -254,6 +254,23 @@ export interface CoWriterOption {
     description: string;
 }
 
+/** Lifecycle state of a Fulfill-mode section (one per directive in the document). */
+export type FulfillSectionState = 'generating' | 'pending' | 'approved' | 'rejected';
+
+/** One directive being fulfilled by Fulfill mode, with its generated prose and review state. */
+export interface FulfillSection {
+    id: number;
+    /** Document offset of the `<!--` opening. */
+    commentStart: number;
+    /** Document offset just past `-->`. */
+    commentEnd: number;
+    /** Parsed directive instruction. */
+    text: string;
+    /** Generated fulfillment prose (empty while generating). */
+    prose: string;
+    state: FulfillSectionState;
+}
+
 /** A chat message displayed in the co-writer panel. */
 export interface CoWriterChatMessage {
     role: 'user' | 'assistant';
@@ -342,6 +359,13 @@ export class CoWriterSession {
     coachActive = false;
     /** Whether option cards have been auto-generated for the current coach session. */
     private coachOptionsGenerated = false;
+
+    /** Fulfill-mode sections (one per directive in the document), in document order. */
+    fulfillSections: FulfillSection[] = [];
+    /** Whether a Fulfill sweep is currently in progress. */
+    fulfillActive = false;
+    /** Called whenever Fulfill sections change (generation progress, approval, rejection). */
+    onFulfillUpdate: (() => void) | null = null;
 
     /**
      * Analyze the voice of a prose passage using the AI provider.
@@ -1255,6 +1279,198 @@ export class CoWriterSession {
     }
 
     /**
+     * Fulfill mode: scan the active document for every `<!-- quill: -->` directive
+     * and generate a fulfillment for each, in document order. Generated prose is
+     * stored on the section for review (not inserted yet). Approvals commit later.
+     *
+     * @param globalInstruction  Optional overall direction prepended to every directive's prompt.
+     */
+    async fulfillDirectives(plugin: EventideQuillPlugin, globalInstruction?: string): Promise<void> {
+        const chat = plugin.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: No AI provider configured. Set one up in settings.');
+            return;
+        }
+        const activeFile = plugin.app.workspace.getActiveFile();
+        const filePath = activeFile?.path ?? this.manuscriptPath;
+        if (!filePath) {
+            new Notice('Quill: Open a manuscript to run fulfill.');
+            return;
+        }
+        this.manuscriptPath = filePath;
+        const markdownView = findEditorView(plugin.app, filePath);
+        if (!markdownView) {
+            new Notice('Quill: Open a manuscript editor to run fulfill.');
+            return;
+        }
+        const editor = markdownView.editor;
+
+        if (!plugin.currentAssembly) {
+            await plugin.assembleDocumentContext(editor.getValue(), filePath);
+        }
+
+        this.cancelGeneration();
+        this.app = plugin.app;
+
+        const fullText = editor.getValue();
+        const ranges = parseAllDirectives(fullText);
+        if (ranges.length === 0) {
+            new Notice('Quill: No inline directives found. Add some with the "insert inline directive" command.');
+            return;
+        }
+
+        // Voice profile (cached per manuscript)
+        if (plugin.settings.coWriterVoiceMatch && (!this.voiceProfile || this.voiceProfileFile !== filePath)) {
+            const profile = await this.analyzeVoice(chat.provider, chat.modelId, fullText.slice(-3000));
+            if (profile) {
+                this.voiceProfile = profile;
+                this.voiceProfileFile = filePath;
+            }
+        }
+
+        const plotMapText = await loadPlotMapText(plugin);
+
+        this.fulfillSections = ranges.map((r, i) => ({
+            id: i,
+            commentStart: r.start,
+            commentEnd: r.end,
+            text: r.text,
+            prose: '',
+            state: 'generating' as const
+        }));
+        this.fulfillActive = true;
+        this.onFulfillUpdate?.();
+
+        const notice = new Notice(
+            `Quill: Fulfilling ${ranges.length} directive${ranges.length === 1 ? '' : 's'}...`,
+            0
+        );
+
+        try {
+            for (const section of this.fulfillSections) {
+                this.abortController = new AbortController();
+                const before = fullText.slice(Math.max(0, section.commentStart - 2000), section.commentStart);
+                const after = fullText.slice(section.commentEnd, section.commentEnd + 1000);
+                const systemPrompt = getCoWriterGenerationPrompt(
+                    this.voiceProfile ?? {
+                        sentenceLengthDistribution: 'unknown',
+                        dialogueRatio: 0.5,
+                        vocabularyRegister: 'unknown',
+                        keyPatterns: []
+                    },
+                    plugin.settings.narrativeVoicePreset,
+                    undefined,
+                    [{ source: 'inline', text: section.text }],
+                    plotMapText
+                );
+                const userMessage = [
+                    'Fulfill the inline directive at this point in the scene. Write the prose that realizes it, in the established voice and perspective. Output only the prose — no labels, no explanations.',
+                    ...(globalInstruction ? ['', `Overall direction for this sweep: ${globalInstruction}`] : []),
+                    '',
+                    `Directive: "${section.text}"`,
+                    '',
+                    '--- Prose before the directive ---',
+                    before || '(start of document)',
+                    '',
+                    '--- Prose after the directive (continue into this) ---',
+                    after || '(end of document)'
+                ].join('\n');
+
+                let prose = '';
+                try {
+                    const stream = chat.provider.chatCompletion({
+                        messages: [
+                            { role: 'system', content: systemPrompt },
+                            { role: 'user', content: userMessage }
+                        ],
+                        model: chat.modelId,
+                        temperature: plugin.settings.coWriterTemperature,
+                        maxTokens: plugin.settings.coWriterMaxOutputTokens,
+                        signal: this.abortController.signal
+                    });
+                    for await (const chunk of stream) {
+                        if (chunk.done) break;
+                        prose += chunk.text;
+                    }
+                } catch (err: unknown) {
+                    if (err instanceof Error && err.name === 'AbortError') {
+                        section.state = 'rejected';
+                        this.onFulfillUpdate?.();
+                        return;
+                    }
+                    section.state = 'rejected';
+                    this.onFulfillUpdate?.();
+                    continue;
+                }
+                section.prose = sanitizeProse(prose).trim();
+                section.state = 'pending';
+                this.onFulfillUpdate?.();
+            }
+        } finally {
+            notice.hide();
+            this.fulfillActive = false;
+            this.onFulfillUpdate?.();
+        }
+    }
+
+    /**
+     * Approve one Fulfill section: replace its directive comment with the
+     * generated prose (the comment is "consumed"). Later sections' offsets are
+     * remapped so their ranges stay valid.
+     */
+    approveFulfillSection(plugin: EventideQuillPlugin, id: number): void {
+        const section = this.fulfillSections.find((s) => s.id === id);
+        if (!section || section.state !== 'pending' || !section.prose) return;
+        const markdownView = findEditorView(plugin.app, this.manuscriptPath);
+        const cm = markdownView ? (markdownView.editor as unknown as { cm: EditorView }).cm : null;
+        if (!cm) return;
+        const origEnd = section.commentEnd;
+        cm.dispatch({
+            changes: { from: section.commentStart, to: section.commentEnd, insert: section.prose },
+            selection: { anchor: section.commentStart + section.prose.length }
+        });
+        const delta = section.prose.length - (section.commentEnd - section.commentStart);
+        section.state = 'approved';
+        for (const s of this.fulfillSections) {
+            if (s.id !== id && s.commentStart >= origEnd) {
+                s.commentStart += delta;
+                s.commentEnd += delta;
+            }
+        }
+        this.onFulfillUpdate?.();
+    }
+
+    /** Reject one Fulfill section: leave the directive comment in place, un-consumed. */
+    rejectFulfillSection(id: number): void {
+        const section = this.fulfillSections.find((s) => s.id === id);
+        if (!section || section.state !== 'pending') return;
+        section.state = 'rejected';
+        this.onFulfillUpdate?.();
+    }
+
+    /** Approve every pending section, in document order (offsets remap as each commits). */
+    approveAllFulfill(plugin: EventideQuillPlugin): void {
+        for (const section of [...this.fulfillSections]) {
+            if (section.state === 'pending') this.approveFulfillSection(plugin, section.id);
+        }
+    }
+
+    /** Reject every pending section without touching the document. */
+    rejectAllFulfill(): void {
+        for (const section of this.fulfillSections) {
+            if (section.state === 'pending') section.state = 'rejected';
+        }
+        this.onFulfillUpdate?.();
+    }
+
+    /** Clear all Fulfill state (e.g., on new chat / reset). */
+    clearFulfill(): void {
+        this.fulfillSections = [];
+        this.fulfillActive = false;
+        this.onFulfillUpdate?.();
+    }
+
+    /**
      * Force an immediate compaction of the conversation history,
      * regardless of the token threshold. Summarizes older turns into
      * a context head and fires updated token estimates.
@@ -1933,6 +2149,7 @@ export class CoWriterSession {
         this.unlockEditor();
         this.cancelGeneration();
         this.endCoachSession();
+        this.clearFulfill();
         this.manuscriptPath = null;
         this.originalText = '';
         this.insertionStart = -1;
@@ -1961,6 +2178,7 @@ export class CoWriterSession {
         this.unlockEditor();
         this.cancelGeneration();
         this.endCoachSession();
+        this.clearFulfill();
         this.originalText = '';
         this.insertionStart = -1;
         this.insertionLength = 0;

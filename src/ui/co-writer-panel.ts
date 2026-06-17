@@ -1,12 +1,12 @@
 import { App, MarkdownRenderer, TFile } from 'obsidian';
 import type EventideQuillPlugin from '../main';
-import type { DraftState, CoWriterChatMessage, CoWriterOption, CoachPhase } from '../ai/co-writer';
+import type { DraftState, CoWriterChatMessage, CoWriterOption, CoachPhase, FulfillSection } from '../ai/co-writer';
 import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { ConfirmModal } from './confirm-modal';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
 
-type InputMode = 'direct' | 'discuss' | 'coach';
+type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill';
 
 /** Extract a display name from a vault path. */
 function fileNameFromPath(path: string): string {
@@ -54,6 +54,10 @@ export class CoWriterPanel extends AbstractChatPanel {
     private plotMap: string | null = null;
     /** Whether an inline directive is active at the cursor (drives the Direct-mode badge). */
     private directiveActive = false;
+    /** Fulfill-mode sections (mirrored from the session), rendered as review cards. */
+    private fulfillSections: FulfillSection[] = [];
+    /** Whether a Fulfill sweep is currently generating. */
+    private fulfillActive = false;
 
     private onSendMessage: ((direction: string) => void) | null = null;
     private onDiscussMessage: ((message: string) => void) | null = null;
@@ -71,6 +75,11 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onCoachWrite: (() => void) | null = null;
     private onLinkPlotMap: ((filePath: string) => void) | null = null;
     private onClearPlotMap: (() => void) | null = null;
+    private onRunFulfill: ((globalInstruction: string) => void) | null = null;
+    private onApproveFulfillSection: ((id: number) => void) | null = null;
+    private onRejectFulfillSection: ((id: number) => void) | null = null;
+    private onApproveAllFulfill: (() => void) | null = null;
+    private onRejectAllFulfill: (() => void) | null = null;
 
     /**
      * Conversation token estimate pushed from the plugin layer.
@@ -191,6 +200,38 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Set the current plot map link path (null = none linked). */
     setPlotMap(path: string | null): void {
         this.plotMap = path && path.length > 0 ? path : null;
+        this.scheduleRender();
+    }
+
+    /** Set the handler invoked to run a Fulfill sweep. The text is an optional global instruction. */
+    setRunFulfillHandler(handler: (globalInstruction: string) => void): void {
+        this.onRunFulfill = handler;
+    }
+
+    /** Set the handler invoked to approve one Fulfill section by id. */
+    setApproveFulfillSectionHandler(handler: (id: number) => void): void {
+        this.onApproveFulfillSection = handler;
+    }
+
+    /** Set the handler invoked to reject one Fulfill section by id. */
+    setRejectFulfillSectionHandler(handler: (id: number) => void): void {
+        this.onRejectFulfillSection = handler;
+    }
+
+    /** Set the handler invoked to approve all pending Fulfill sections. */
+    setApproveAllFulfillHandler(handler: () => void): void {
+        this.onApproveAllFulfill = handler;
+    }
+
+    /** Set the handler invoked to reject all pending Fulfill sections. */
+    setRejectAllFulfillHandler(handler: () => void): void {
+        this.onRejectAllFulfill = handler;
+    }
+
+    /** Replace the Fulfill section list and/or active flag and re-render. */
+    setFulfillState(sections: FulfillSection[], active: boolean): void {
+        this.fulfillSections = sections;
+        this.fulfillActive = active;
         this.scheduleRender();
     }
 
@@ -394,7 +435,9 @@ export class CoWriterPanel extends AbstractChatPanel {
     private renderChatArea(): void {
         const scroll = this.containerEl!.createEl('div', { cls: 'quill-sidebar-content-plain' });
 
-        if (this.chatHistory.length === 0 && !this.optionsLoading) {
+        if (this.fulfillSections.length > 0) {
+            this.renderFulfillSections(scroll);
+        } else if (this.chatHistory.length === 0 && !this.optionsLoading) {
             this.renderInitializePrompt(scroll);
         } else {
             for (const msg of this.chatHistory) {
@@ -482,6 +525,86 @@ export class CoWriterPanel extends AbstractChatPanel {
         scroll.scrollTop = scroll.scrollHeight;
     }
 
+    /** Render Fulfill-mode review cards (one per directive) plus bulk actions. */
+    private renderFulfillSections(container: HTMLElement): void {
+        const pending = this.fulfillSections.filter((s) => s.state === 'pending').length;
+        if (pending > 0) {
+            const bulk = container.createEl('div', { cls: 'quill-fulfill-bulk' });
+            const approveAllBtn = bulk.createEl('button', {
+                cls: 'quill-fulfill-bulk-btn mod-cta',
+                text: `Approve all (${pending})`
+            });
+            this.renderEvents.registerDomEvent(approveAllBtn, 'click', () => {
+                this.onApproveAllFulfill?.();
+            });
+            bulk.createEl('span', { text: ' ' });
+            const rejectAllBtn = bulk.createEl('button', {
+                cls: 'quill-fulfill-bulk-btn',
+                text: 'Reject all'
+            });
+            this.renderEvents.registerDomEvent(rejectAllBtn, 'click', () => {
+                this.onRejectAllFulfill?.();
+            });
+        }
+
+        for (const section of this.fulfillSections) {
+            this.renderFulfillCard(container, section);
+        }
+    }
+
+    /** Render a single Fulfill review card. */
+    private renderFulfillCard(container: HTMLElement, section: FulfillSection): void {
+        const card = container.createEl('div', {
+            cls: `quill-fulfill-card quill-fulfill-card-${section.state}`
+        });
+        card.createEl('div', { cls: 'quill-fulfill-card-directive', text: `\u201c${section.text}\u201d` });
+
+        if (section.state === 'generating') {
+            card.createEl('div', { cls: 'quill-fulfill-card-status', text: 'Generating\u2026' });
+            return;
+        }
+
+        if (section.prose) {
+            const proseEl = card.createEl('div', { cls: 'quill-fulfill-card-prose' });
+            void MarkdownRenderer.render(
+                this.app,
+                normalizeParagraphBreaks(section.prose),
+                proseEl,
+                '',
+                this.renderEvents
+            );
+        }
+
+        const statusText =
+            section.state === 'approved'
+                ? 'Approved \u2014 comment consumed'
+                : section.state === 'rejected'
+                  ? 'Rejected \u2014 directive kept'
+                  : '';
+        if (statusText) {
+            card.createEl('div', { cls: 'quill-fulfill-card-status', text: statusText });
+        }
+
+        if (section.state === 'pending') {
+            const btns = card.createEl('div', { cls: 'quill-fulfill-card-btns' });
+            const approveBtn = btns.createEl('button', {
+                cls: 'quill-fulfill-card-btn mod-cta',
+                text: 'Approve'
+            });
+            this.renderEvents.registerDomEvent(approveBtn, 'click', () => {
+                this.onApproveFulfillSection?.(section.id);
+            });
+            btns.createEl('span', { text: ' ' });
+            const rejectBtn = btns.createEl('button', {
+                cls: 'quill-fulfill-card-btn',
+                text: 'Reject'
+            });
+            this.renderEvents.registerDomEvent(rejectBtn, 'click', () => {
+                this.onRejectFulfillSection?.(section.id);
+            });
+        }
+    }
+
     /** Render the initialize prompt with a big button. */
     private renderInitializePrompt(container: HTMLElement): void {
         const activeFile = this.app.workspace.getActiveFile();
@@ -509,6 +632,23 @@ export class CoWriterPanel extends AbstractChatPanel {
             });
             this.renderEvents.registerDomEvent(startBtn, 'click', () => {
                 this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-input')?.focus();
+            });
+        } else if (this.inputMode === 'fulfill') {
+            prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Fulfill' });
+            prompt.createEl('div', {
+                cls: 'quill-cowriter-init-desc',
+                text: 'Sweep every `<!-- quill: -->` directive in this document and review each fulfillment as a diff. Add directives first (right-click → Insert inline directive).'
+            });
+            const runBtn = prompt.createEl('button', {
+                cls: 'quill-cowriter-init-btn mod-cta',
+                text: 'Run sweep'
+            });
+            this.renderEvents.registerDomEvent(runBtn, 'click', () => {
+                if (this.fulfillActive) return;
+                this.fulfillActive = true;
+                runBtn.disabled = true;
+                this.scheduleRender();
+                this.onRunFulfill?.('');
             });
         } else {
             prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Co-writer' });
@@ -731,24 +871,28 @@ export class CoWriterPanel extends AbstractChatPanel {
         const btnRow = container.createEl('div', { cls: 'quill-cowriter-btn-row' });
 
         const modeBtn = btnRow.createEl('button', {
-            cls: `quill-cowriter-mode-btn${this.inputMode === 'coach' ? ' quill-cowriter-mode-coach' : this.inputMode === 'discuss' ? ' quill-cowriter-mode-discuss' : ''}`,
+            cls: `quill-cowriter-mode-btn${this.inputMode === 'coach' ? ' quill-cowriter-mode-coach' : this.inputMode === 'discuss' ? ' quill-cowriter-mode-discuss' : this.inputMode === 'fulfill' ? ' quill-cowriter-mode-fulfill' : ''}`,
             text:
                 this.inputMode === 'direct'
                     ? '\u2192 Direct'
                     : this.inputMode === 'discuss'
                       ? '\u2194 Discuss'
-                      : '\u2728 Coach',
+                      : this.inputMode === 'coach'
+                        ? '\u2728 Coach'
+                        : '\u2728 Fulfill',
             title:
                 this.inputMode === 'direct'
                     ? 'Direct: AI suggests 3 continuation options'
                     : this.inputMode === 'discuss'
                       ? 'Discuss: AI responds with thoughts and analysis'
-                      : 'Coach: AI helps you figure out what to do next'
+                      : this.inputMode === 'coach'
+                        ? 'Coach: AI helps you figure out what to do next'
+                        : 'Fulfill: sweep every inline directive and review each as a diff'
         });
         if (generating) modeBtn.disabled = true;
         this.renderEvents.registerDomEvent(modeBtn, 'click', () => {
             if (generating) return;
-            const modes: InputMode[] = ['direct', 'discuss', 'coach'];
+            const modes: InputMode[] = ['direct', 'discuss', 'coach', 'fulfill'];
             const currentIndex = modes.indexOf(this.inputMode);
             const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % modes.length : 0;
             const nextMode = modes[nextIndex];
@@ -833,7 +977,7 @@ export class CoWriterPanel extends AbstractChatPanel {
 
         const actionBtn = btnRow.createEl('button', {
             cls: `quill-cowriter-send-btn mod-cta${generating ? ' quill-cowriter-stop-btn' : ''}`,
-            text: generating ? 'Stop' : 'Send'
+            text: generating ? 'Stop' : this.inputMode === 'fulfill' ? 'Run' : 'Send'
         });
 
         // Textarea row — below the buttons, ~10 lines tall
@@ -845,7 +989,9 @@ export class CoWriterPanel extends AbstractChatPanel {
                     ? 'Describe what should happen next\u2026'
                     : this.inputMode === 'coach'
                       ? "Describe your intent or answer the AI's questions\u2026"
-                      : 'Discuss the scene, ask questions, brainstorm\u2026'
+                      : this.inputMode === 'fulfill'
+                        ? 'Optional overall direction for the sweep\u2026'
+                        : 'Discuss the scene, ask questions, brainstorm\u2026'
         });
         input.value = this.inputValue;
 
@@ -855,14 +1001,17 @@ export class CoWriterPanel extends AbstractChatPanel {
         });
 
         const doSend = () => {
-            if (this.optionsLoading || this.draftState === 'generating') return;
+            if (this.optionsLoading || this.draftState === 'generating' || this.fulfillActive) return;
             const text = input.value.trim();
-            if (!text) return;
+            // Fulfill runs the sweep; an empty instruction is allowed.
+            if (text.length === 0 && this.inputMode !== 'fulfill') return;
             this.userScrolledUp = false; // Resume auto-follow on new message
             this.inputValue = '';
             input.value = '';
             if (this.inputMode === 'direct') {
                 this.draftState = 'generating';
+            } else if (this.inputMode === 'fulfill') {
+                this.fulfillActive = true;
             } else {
                 this.optionsLoading = true;
             }
@@ -872,6 +1021,8 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.scheduleRender();
             if (this.inputMode === 'direct') {
                 this.onSendMessage?.(text);
+            } else if (this.inputMode === 'fulfill') {
+                this.onRunFulfill?.(text);
             } else if (this.inputMode === 'coach') {
                 this.onCoachMessage?.(text, this.coachPhase);
             } else {
