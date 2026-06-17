@@ -1817,6 +1817,117 @@ button.quill-cowriter-plotmap-link:hover {
     margin: 2px 0;
 }
 
+/* Shared change review (sidebar cards + inline diff) — used by Fulfill, Transform, etc. */
+.quill-change-bulk {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0 8px 0;
+    border-bottom: 1px solid var(--background-modifier-border);
+    margin-bottom: 8px;
+}
+
+button.quill-change-bulk-btn {
+    font-size: var(--font-ui-smaller);
+}
+
+.quill-change-card {
+    border: 1px solid var(--background-modifier-border);
+    border-left: 3px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+}
+
+.quill-change-card-pending {
+    border-left-color: var(--color-yellow, var(--interactive-accent));
+}
+
+.quill-change-card-approved {
+    border-left-color: var(--color-green);
+    opacity: 0.75;
+}
+
+.quill-change-card-rejected {
+    border-left-color: var(--color-red);
+    opacity: 0.6;
+}
+
+.quill-change-card-label {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    font-style: italic;
+    margin-bottom: 6px;
+}
+
+.quill-change-card-removed {
+    font-size: var(--font-ui-small);
+    color: var(--text-error, var(--color-red));
+    text-decoration: line-through;
+    background: var(--background-modifier-error, rgba(255, 0, 0, 0.08));
+    border-radius: 3px;
+    padding: 4px 6px;
+    margin-bottom: 4px;
+    white-space: pre-wrap;
+}
+
+.quill-change-card-added {
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+    background: rgba(0, 128, 0, 0.08);
+    border-radius: 3px;
+    padding: 4px 6px;
+}
+
+.quill-change-card-status {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    margin-top: 6px;
+}
+
+.quill-change-card-btns {
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+button.quill-change-card-btn {
+    font-size: var(--font-ui-smaller);
+}
+
+/* Inline diff decorations (CodeMirror) */
+.quill-diff-removed {
+    color: var(--text-error, var(--color-red));
+    text-decoration: line-through;
+    background: var(--background-modifier-error, rgba(255, 0, 0, 0.08));
+}
+
+.quill-diff-added {
+    display: block;
+    background: rgba(0, 128, 0, 0.08);
+    border-left: 3px solid var(--color-green);
+    border-radius: 3px;
+    padding: 6px 8px;
+    margin: 4px 0;
+}
+
+.quill-diff-added-prose {
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+    white-space: pre-wrap;
+}
+
+.quill-diff-controls {
+    margin-top: 6px;
+    display: flex;
+    gap: 6px;
+}
+
+button.quill-diff-btn {
+    font-size: var(--font-ui-smaller);
+}
+
 /* Fulfill mode — review cards */
 .quill-fulfill-bulk {
     display: flex;
