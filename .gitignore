@@ -1,6 +1,9 @@
 # planning
 .planning/
 
+# local agent overrides (per-developer, environment-specific)
+.local/
+
 # vscode
 .vscode 
 
