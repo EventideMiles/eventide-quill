@@ -207,6 +207,9 @@ export abstract class AbstractChatPanel {
     protected getActiveDocument(): ActiveDocument | null {
         const file = this.app.workspace.getActiveFile();
         if (!file) return null;
+        // Only markdown files are valid manuscripts for chat panels; ignore
+        // canvases, images, PDFs, etc. so downstream reads don't fail.
+        if (file.extension !== 'md') return null;
 
         let wordCount = 0;
         for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {

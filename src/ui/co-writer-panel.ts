@@ -837,7 +837,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         const list = container.createEl('div', { cls: 'quill-cowriter-panel__mode-picker' });
         for (const m of COWRITER_MODES) {
             const row = list.createEl('div', {
-                cls: `quill-cowriter-panel__mode-row${this.inputMode === m.mode ? ' is-active' : ''}`,
+                cls: `quill-cowriter-panel__mode-row${this.inputMode === m.mode ? ' quill-cowriter-panel__mode-row--active' : ''}`,
                 attr: { tabindex: '0', role: 'button' }
             });
             row.createEl('span', { cls: 'quill-cowriter-panel__mode-row-icon', text: m.icon });

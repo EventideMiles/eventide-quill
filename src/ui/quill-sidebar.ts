@@ -65,10 +65,15 @@ export class QuillSidebarView extends ItemView {
         this.content = this.container.createDiv({ cls: 'quill-sidebar__content' });
         this.render();
 
-        // Re-render context and co-writer tabs when the active file changes
+        // Re-render context, co-writer, and review tabs when the active file
+        // changes (each shows the active document header / derives from it).
         this.registerEvent(
             this.app.workspace.on('active-leaf-change', () => {
-                if (this.activeTopTab === 'context' || this.activeTopTab === 'cowriter') {
+                if (
+                    this.activeTopTab === 'context' ||
+                    this.activeTopTab === 'cowriter' ||
+                    this.activeTopTab === 'review'
+                ) {
                     this.render();
                 }
             })
@@ -672,9 +677,18 @@ export class QuillSidebarView extends ItemView {
         for (const result of this.results) {
             const info = RULE_INFO[result.rule];
             const item = list.createEl('li', {
-                cls: `quill-linter__item quill-linter__item--${result.severity}`
+                cls: `quill-linter__item quill-linter__item--${result.severity}`,
+                attr: { tabindex: '0', role: 'button' }
             });
             this.renderEvents!.registerDomEvent(item, 'click', () => this.showResultDetail(result));
+            // Keyboard support: activate on Enter / Space so the item is reachable
+            // without a mouse (it otherwise has no native action behavior as an <li>).
+            this.renderEvents!.registerDomEvent(item, 'keydown', (evt: KeyboardEvent) => {
+                if (evt.key === 'Enter' || evt.key === ' ') {
+                    evt.preventDefault();
+                    this.showResultDetail(result);
+                }
+            });
 
             const badge = item.createEl('span', { cls: 'quill-linter__badge' });
             badge.setText(result.severity);

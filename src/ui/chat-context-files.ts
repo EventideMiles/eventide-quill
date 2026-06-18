@@ -89,13 +89,19 @@ export class ChatContextFiles {
             const file = this.app.vault.getAbstractFileByPath(filePath);
             if (file instanceof TFile) {
                 const content = await this.app.vault.cachedRead(file);
-                this.fileTokens.set(filePath, Math.ceil(content.length / 4));
+                // Guard against removal during the async read: don't reintroduce
+                // a stale token entry for a file that's no longer selected.
+                if (this.files.includes(filePath)) {
+                    this.fileTokens.set(filePath, Math.ceil(content.length / 4));
+                }
                 return;
             }
         } catch {
             // best-effort: leave token count at 0
         }
-        this.fileTokens.set(filePath, 0);
+        if (this.files.includes(filePath)) {
+            this.fileTokens.set(filePath, 0);
+        }
     }
 
     /** Rebuild the pill bar inside the attached container, in place. */

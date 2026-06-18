@@ -61,9 +61,8 @@ styles/
   _sidebar.scss          ← sidebar shell (tabs, subtabs, content containers)
   _linter.scss           ← linter panel + tooltip + details view + Fix-with-AI modal
   _context-panel.scss    ← Context tab
-  _feedback-panel.scss   ← Feedback panel (panel-specific only)
+  _review-panel.scss     ← Review panel (editorial feedback + critical analysis)
   _cowriter-panel.scss   ← Co-writer panel
-  _analysis-panel.scss   ← Analysis panel (panel-specific only)
   _change-review.scss    ← shared change-review cards + inline diff decorations
   _option-picker.scss    ← shared BEM picker block (personas, modes)
   _form.scss             ← shared BEM form block (sections, labels, textareas, submits)

@@ -107,10 +107,16 @@ export class ReviewPanel extends AbstractChatPanel {
             const file = this.app.vault.getAbstractFileByPath(filePath);
             if (file instanceof TFile) {
                 const content = await this.app.vault.cachedRead(file);
-                this.contextFileTokens.set(filePath, Math.ceil(content.length / 4));
+                // Guard against removal during the async read: only record a
+                // token count if the file is still selected.
+                if (this.contextFilePaths.includes(filePath)) {
+                    this.contextFileTokens.set(filePath, Math.ceil(content.length / 4));
+                }
             }
         } catch {
-            this.contextFileTokens.set(filePath, 0);
+            if (this.contextFilePaths.includes(filePath)) {
+                this.contextFileTokens.set(filePath, 0);
+            }
         }
         if (this.containerEl) this.render();
     }
@@ -277,6 +283,11 @@ export class ReviewPanel extends AbstractChatPanel {
             const last = this.chatHistory[this.chatHistory.length - 1];
             if (last && last.role === 'assistant') {
                 last.content = `Error: ${message}`;
+            } else {
+                // Stream can fail before any assistant chunk exists (or after a
+                // user turn). Push a fresh assistant message so the error is
+                // always surfaced rather than silently dropped.
+                this.chatHistory.push({ role: 'assistant', content: `Error: ${message}` });
             }
             await this.rerenderResultsTab();
         });
@@ -378,7 +389,11 @@ export class ReviewPanel extends AbstractChatPanel {
 
     private computeContextTokens(): { totalTokens: number; maxTokens: number } {
         if (this.contextTokenOverride !== null) {
-            const totalTokens = this.contextTokenOverride + this.totalContextTokens() + this.getChatContextTokens();
+            // Critical engine: the override already covers the analysis
+            // conversation. Editorial manuscript tokens (totalContextTokens)
+            // are not part of a critical request, so only the override plus
+            // shared chat reference files count here.
+            const totalTokens = this.contextTokenOverride + this.getChatContextTokens();
             return { totalTokens, maxTokens: this.maxAllowedTokens };
         }
         let fromIndex = 0;

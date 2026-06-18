@@ -433,7 +433,7 @@
         cursor: pointer;
 
         &:hover,
-        &.is-active {
+        &--active {
             background: var(--background-modifier-hover);
         }
     }
@@ -753,6 +753,6 @@
 
 // Active mode row emphasizes its label color. Cross-element rule kept outside
 // the block to avoid double-element nesting (&__x &__y would be ambiguous).
-.quill-cowriter-panel__mode-row.is-active .quill-cowriter-panel__mode-row-label {
+.quill-cowriter-panel__mode-row--active .quill-cowriter-panel__mode-row-label {
     color: var(--text-normal);
 }

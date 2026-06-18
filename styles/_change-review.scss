@@ -65,8 +65,8 @@
         font-size: var(--font-ui-small);
         color: var(--text-muted);
         text-decoration: line-through;
-        text-decoration-color: rgba(255, 0, 0, 0.45);
-        background: var(--background-modifier-error, rgba(255, 0, 0, 0.1));
+        text-decoration-color: rgba(var(--color-red-rgb), 0.45);
+        background: var(--background-modifier-error, rgba(var(--color-red-rgb), 0.1));
         border-radius: 3px;
         padding: $space-xs $space-sm;
         margin-bottom: $space-xs;
@@ -76,7 +76,7 @@
     &__added {
         font-size: var(--font-ui-small);
         color: var(--text-normal);
-        background: rgba(0, 128, 0, 0.08);
+        background: rgba(var(--color-green-rgb), 0.08);
         border-radius: 3px;
         padding: $space-xs $space-sm;
     }
@@ -108,9 +108,9 @@
 
 .quill-change-diff {
     &__removed-mark {
-        background: rgba(255, 0, 0, 0.08);
+        background: rgba(var(--color-red-rgb), 0.08);
         text-decoration: line-through;
-        text-decoration-color: rgba(255, 0, 0, 0.45);
+        text-decoration-color: rgba(var(--color-red-rgb), 0.45);
         border-radius: 2px;
     }
 
@@ -124,20 +124,20 @@
     // Kept subtle so it reads as a tint, not a blast of red.
     &__removed-box {
         display: block;
-        background: rgba(255, 0, 0, 0.05);
+        background: rgba(var(--color-red-rgb), 0.05);
         border-left: 3px solid var(--color-red);
         border-radius: 3px;
         padding: $space-sm $space-md;
         margin: 0 0 $space-sm 0;
         color: var(--text-muted);
         text-decoration: line-through;
-        text-decoration-color: rgba(255, 0, 0, 0.45);
+        text-decoration-color: rgba(var(--color-red-rgb), 0.45);
         white-space: pre-wrap;
     }
 
     &__added {
         display: block;
-        background: rgba(0, 128, 0, 0.07);
+        background: rgba(var(--color-green-rgb), 0.07);
         border-left: 3px solid var(--color-green);
         border-radius: 3px;
         padding: $space-sm $space-md;

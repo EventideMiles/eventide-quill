@@ -1581,6 +1581,14 @@ export default class EventideQuillPlugin extends Plugin {
         scope: AnalysisScope | 'auto',
         customInstruction?: string
     ): Promise<void> {
+        // Critical analysis can be disabled from settings. Guard at this single
+        // chokepoint so every entry point (command palette, context menu, Review
+        // panel) is covered uniformly.
+        if (!this.settings.enableCriticalAnalysis) {
+            new Notice('Quill: Critical analysis is disabled in settings.');
+            return;
+        }
+
         const chat = this.getDefaultChatProvider();
         if (!chat.provider) {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
@@ -1665,6 +1673,8 @@ export default class EventideQuillPlugin extends Plugin {
                 model: chat.modelId,
                 signal: this.analysisAbort.signal,
                 customInstruction,
+                temperature: this.settings.analysisTemperature,
+                maxTokens: this.settings.analysisMaxOutputTokens,
                 existingMessages: initialMessages
             });
 
@@ -2047,7 +2057,14 @@ export default class EventideQuillPlugin extends Plugin {
         // Manuscripts and reference files are always injected fresh as system
         // messages. They are NOT stored in feedbackCurrentMessages, so they
         // survive compaction and never pollute the conversation history.
-        const manuscriptPaths = this.lintPanel?.reviewContextFiles() ?? [];
+        // Mirror requestFeedback: the active document is the primary manuscript,
+        // with additional files layered on top — otherwise follow-up chats lose
+        // the primary manuscript context.
+        const activeFile = this.app.workspace.getActiveFile();
+        const activePath = activeFile && activeFile.extension === 'md' ? activeFile.path : null;
+        const additionalPaths = this.lintPanel?.reviewContextFiles() ?? [];
+        const manuscriptPaths =
+            activePath && !additionalPaths.includes(activePath) ? [activePath, ...additionalPaths] : additionalPaths;
         const chatContextFilePaths = this.lintPanel?.reviewChatContextFiles() ?? [];
 
         const manuscriptMessages = await readVaultFiles(this.app.vault, manuscriptPaths, 'Manuscript');
