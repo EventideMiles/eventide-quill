@@ -19,6 +19,7 @@ MIT license. Built from scratch. Mobile-ready. Local-model first.
 - **Styles: Sass / SCSS** — source under `styles/` (entry `styles/main.scss` + `_*.scss` partials), compiled to `styles.css` by the `sass` package. See "Styling" below.
 - **Formatter: Prettier** (`prettier.config.mjs`: `singleQuote`, `tabWidth: 4`, `printWidth: 120`, `trailingComma: 'none'`, `semi: true`)
 - **Linting: ESLint** with `eslint-plugin-obsidianmd` (configured in `eslint.config.mts`)
+- **Style linting: stylelint** + `stylelint-scss` on `styles/**/*.scss` (configured in `.stylelintrc.json`). Lenient, color-focused: enforces `color-no-hex` (use Obsidian CSS vars / `rgba(var(--color-*-rgb), …)` instead) and a few safety nets. `scss/comment-no-empty` is deliberately disabled — the bare `//` dividers inside block comments are intentional.
 - **Types: `obsidian`** type definitions (configured in `tsconfig.json`)
 - **Editor config: `.editorconfig`** (also declares `quote_type = single`)
 
@@ -28,8 +29,9 @@ Scripts (see `package.json`):
 |--------|--------------|
 | `npm run dev` | esbuild watch mode |
 | `npm run build` | **Four stages:** `sass` → `prettier --write` → `tsc -noEmit -skipLibCheck` (typecheck, no emit) → esbuild production |
-| `npm run lint` | `eslint .` |
-| `npm run lint:fix` | `eslint . --fix` then `prettier --write` |
+| `npm run lint` | `eslint .` then `stylelint 'styles/**/*.scss'` |
+| `npm run lint:styles` | `stylelint 'styles/**/*.scss'` (SCSS only) |
+| `npm run lint:fix` | `eslint . --fix` then `prettier --write 'src/**/*.ts'` then `stylelint --fix 'styles/**/*.scss'` |
 | `npm run prettier:check` | `prettier --check 'src/**/*.ts'` |
 | `npm run prettier:fix` | `prettier --write 'src/**/*.ts'` |
 | `npm run sass` | `sass styles/main.scss styles.css` (one-shot build of styles.css from SCSS sources) |
@@ -173,6 +175,7 @@ src/
 | Single quotes, 120-col, no trailing comma, semicolons | Prettier via `build` / `lint:fix` / `prettier:check` + CI | `prettier.config.mjs` |
 | `strict`, `noImplicitReturns`, `noUncheckedIndexedAccess`, `forceConsistentCasingInFileNames`, `noFallthroughCasesInSwitch` | `tsconfig.json` | TypeScript compiler (runs inside `build`) |
 | Obsidian-specific lint rules | `eslint.config.mts` + `eslint-plugin-obsidianmd` | |
+| No hex color literals in SCSS (use theme-aware CSS vars) | stylelint `color-no-hex` via `lint` + CI | `.stylelintrc.json`; note stock stylelint can't distinguish numeric `rgba(255,0,0,…)` from `rgba(var(--…-rgb), …)`, so that stays review-enforced |
 | Naming conventions (case, prefixes) | **Code review only** | No ESLint rules for naming |
 | JSDoc coverage | **Code review only** | Aim for 100%, currently partial |
 | Import ordering | **Not enforced** | Loose convention only |

@@ -1,0 +1,11 @@
+{
+    "customSyntax": "postcss-scss",
+    "plugins": ["stylelint-scss"],
+    "rules": {
+        "color-no-hex": true,
+        "no-duplicate-at-import-rules": true,
+        "scss/at-rule-no-unknown": true,
+        "comment-no-empty": null,
+        "scss/comment-no-empty": null
+    }
+}
