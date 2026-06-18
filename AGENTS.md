@@ -9,36 +9,81 @@ MIT license. Built from scratch. Mobile-ready. Local-model first.
 
 - Target: Obsidian Community Plugin (TypeScript → bundled JavaScript via esbuild).
 - Entry point: `src/main.ts` compiled to `main.js` and loaded by Obsidian.
-- Required release artifacts: `main.js`, `manifest.json`, and `styles.css`.
+- Plugin id: `eventide-quill` (`manifest.json`); `minAppVersion` 1.7.2; `isDesktopOnly: false` (mobile-supported).
+- Required release artifacts: `main.js`, `manifest.json`, and `styles.css` (hand-maintained, ~2.4k lines).
 
 ## Environment & tooling
 
 - **Package manager: npm**
 - **Bundler: esbuild** (configured in `esbuild.config.mjs`)
+- **Formatter: Prettier** (`prettier.config.mjs`: `singleQuote`, `tabWidth: 4`, `printWidth: 120`, `trailingComma: 'none'`, `semi: true`)
 - **Linting: ESLint** with `eslint-plugin-obsidianmd` (configured in `eslint.config.mts`)
 - **Types: `obsidian`** type definitions (configured in `tsconfig.json`)
-- **Editor config: `.editorconfig`**
-- Run `npm run dev` for watch mode, `npm run build` for production.
-- Run `npm run lint` to lint.
+- **Editor config: `.editorconfig`** (also declares `quote_type = single`)
+
+Scripts (see `package.json`):
+
+| Script | What it does |
+|--------|--------------|
+| `npm run dev` | esbuild watch mode |
+| `npm run build` | **Three stages:** `prettier --write` → `tsc -noEmit -skipLibCheck` (typecheck, no emit) → esbuild production |
+| `npm run lint` | `eslint .` |
+| `npm run lint:fix` | `eslint . --fix` then `prettier --write` |
+| `npm run prettier:check` | `prettier --check 'src/**/*.ts'` |
+| `npm run prettier:fix` | `prettier --write 'src/**/*.ts'` |
+| `npm run version` | `node version-bump.mjs && git add manifest.json versions.json` (run via `npm version`) |
+
+There is **no standalone `typecheck` script** — `tsc` runs inside `build`. There is **no `test` script and no test framework** (see Verification below).
+
+## Verification
+
+No automated test framework exists in this project (no jest/vitest/mocha, no `*.test.ts`). Verify changes by:
+
+1. `npm run build` (Prettier + `tsc` + esbuild), and
+2. `npm run lint`, and
+3. Manual smoke test in Obsidian (especially on mobile) for UI or provider changes.
+
+CI (`.github/workflows/lint.yml`) runs `build` + `lint` on every push and PR across Node 20/22/24.
 
 ## Architecture principles
 
 1. **Deterministic first, AI second.** Prose linter, character extraction, and metrics run locally without AI cost.
 2. **Async by default.** No operation blocks the editor.
-3. **Pluggable providers.** Ollama default, OpenAI-compatible as fallback.
+3. **Pluggable providers.** Ollama and OpenAI-compatible are both first-class. LM Studio (OpenAI-compatible) is the primary local test target.
 4. **Mobile as a first-class target.** Test on phone before shipping desktop.
 
 ## Source layout
 
+Several files are large and intentionally monolithic; match the surrounding pattern rather than refactoring on first touch.
+
 ```
 src/
-  main.ts           # Plugin lifecycle (onload, onunload, addCommand)
-  settings.ts       # Settings interface and defaults
-  core/             # Domain logic (linter, context engine, etc.)
-  ai/               # Provider architecture, streaming, prompts
-  ui/               # Views, modals, panels
-  utils/            # Helpers, constants
-  types.ts          # Shared TypeScript interfaces
+  main.ts              # Plugin lifecycle (~1.7k lines)
+  settings.ts          # Settings schema + UI (~1.4k lines)
+  types.ts             # Shared TypeScript interfaces (NARRATIVE_VOICE_PRESETS)
+  core/
+    change-set.ts
+    context-engine.ts     # barrel re-export — import from here
+    context-engine/       # Manuscript context engine
+      context-assembler.ts, context-cache.ts, entity-extractor.ts,
+      voice-analyzer.ts, types.ts
+    linter/               # Prose linter (Novelist Edition)
+      apply-fix.ts, decorations.ts (CodeMirror decorations + debounced timers),
+      fixes.ts, linter.ts, rules.ts, types.ts, word-lists.json (data asset)
+  ai/                  # Provider architecture, streaming, prompts
+    compaction.ts, co-writer.ts (~2k lines, largest file in repo),
+    feedback.ts, linter-ai.ts, modes.ts, ollama-provider.ts,
+    openai-provider.ts, prompts.ts, provider-registry.ts,
+    provider.ts (ProviderError), streaming.ts, transform.ts,
+    transport.ts (HttpError, StreamingUnavailableError, fetch exception)
+  ui/                  # Views, modals, panels
+    change-card.ts, change-diff-extension.ts, chat-panel.ts, confirm-modal.ts,
+    context-panel.ts, co-writer-panel.ts (~1k lines), feedback-panel.ts,
+    fix-with-ai-modal.ts, quill-sidebar.ts (~800 lines), token-indicator.ts,
+    transform-modal.ts, vault-file-suggest-modal.ts
+  utils/               # Helpers, constants
+    directives.ts, find-editor.ts, frontmatter.ts, text-analysis.ts,
+    tokens.ts, vault-files.ts
 ```
 
 ## Coding conventions
@@ -48,23 +93,26 @@ src/
 - **kebab-case.ts** for module files (e.g., `feedback-panel.ts`).
 - **PascalCase** for interfaces, types, and type aliases (no `I` prefix).
 - **camelCase** for functions, variables, parameters, and private fields.
-- **UPPER_SNAKE_CASE** for module-level exported constants (e.g., `DEFAULT_SETTINGS`, `FEEDBACK_PERSONAS`).
 - **camelCase** for local `const` declarations inside functions (e.g., `const doc = view.state.doc`).
+- **UPPER_SNAKE_CASE** for module-level exported constants (e.g., `DEFAULT_SETTINGS` in `settings.ts`, `FEEDBACK_PERSONAS` in `ai/feedback.ts`, `NARRATIVE_VOICE_PRESETS` in `types.ts`).
 - **camelCase** for settings object properties; the settings object itself is UPPER_SNAKE_CASE (e.g., `DEFAULT_SETTINGS` with properties like `linterMode`, `enableLongSentences`).
 - **Boolean variables:** predicates (functions returning boolean) use `is-`/`has-`/`needs-` prefixes (e.g., `isBlank`, `hasContent`, `needsSpaceBetween`). Class state properties use descriptive names without prefixes (e.g., `chatLoading`, `userScrolledUp`).
 - **Event handlers:** use `on<EventName>` pattern (e.g., `onChoose`, `onSubmit`, `onGenerate`).
-- **Settings booleans:** use `enable<RuleName>` prefix (e.g., `enableLongSentences`, `enablePassiveVoice`).
+- **Feature/rule-toggle settings booleans** use the `enable<RuleName>` prefix (e.g., `enableLongSentences`, `enablePassiveVoice`, `enableCoWriterThought`). This applies to *toggles*, not all settings booleans — behavioral flags like `lintOnSave`, `coWriterVaultContext`, `contextAutoScan`, `coWriterAppendNewline` are plain camelCase.
 
 ### Code style
 
-- **Spaces, not tabs.** Indent size: 4 (enforced in `.editorconfig`).
-- Keep imports sorted: external → internal, `type` imports last.
-- **JSDoc on every function.** All functions and methods must have a `/** ... */` docstring.
+- **Spaces, not tabs.** Indent size: 4.
+- **Single quotes, 120-col width, no trailing commas, semicolons required** — all **enforced by Prettier** (`prettier.config.mjs`), run by `build`, `lint:fix`, `prettier:check`, and CI.
+- Imports: roughly external → internal. `type` imports are mixed in with regular imports in practice (e.g., `main.ts`); Prettier does not reorder imports, so this is a loose convention, not a rule.
+- **JSDoc coverage is partial.** Add `/** ... */` docstrings to public functions and methods where they aid readers; do not block a change solely to add JSDoc. Some modules (e.g., `core/linter/linter.ts`) currently have low coverage.
 
 ### Error handling
 
-- Use typed error classes (extend `Error`) rather than throwing raw strings or generic `Error`.
-- Example: `ProviderError` in `src/ai/provider.ts`, `HttpError` in `src/ai/transport.ts`.
+- Use typed error classes (extend `Error`) rather than throwing raw strings or generic `Error`. Three currently exist:
+    - `ProviderError` — `src/ai/provider.ts`
+    - `HttpError` — `src/ai/transport.ts`
+    - `StreamingUnavailableError` — `src/ai/transport.ts`
 - Propagate errors with `throw` rather than returning error objects, unless the function signature explicitly supports `Result<T, E>` or similar patterns.
 
 ## Coding rules — enforced vs. convention
@@ -72,11 +120,14 @@ src/
 | Rule | Enforced by | Notes |
 |------|-------------|-------|
 | Spaces (4), UTF-8, LF, trailing newline | `.editorconfig` | Auto-applied by editors |
-| Quote style (single) | **Not enforced** | Convention only; no ESLint/Prettier rule |
-| `strict`, `noImplicitReturns`, `noUncheckedIndexedAccess`, `forceConsistentCasingInFileNames` | `tsconfig.json` | TypeScript compiler |
+| Single quotes, 120-col, no trailing comma, semicolons | Prettier via `build` / `lint:fix` / `prettier:check` + CI | `prettier.config.mjs` |
+| `strict`, `noImplicitReturns`, `noUncheckedIndexedAccess`, `forceConsistentCasingInFileNames`, `noFallthroughCasesInSwitch` | `tsconfig.json` | TypeScript compiler (runs inside `build`) |
 | Obsidian-specific lint rules | `eslint.config.mts` + `eslint-plugin-obsidianmd` | |
-| Naming conventions (case, prefixes) | **Code review only** | No ESLint rules for naming yet |
-| JSDoc coverage | **Code review only** | Aim for 100% |
+| Naming conventions (case, prefixes) | **Code review only** | No ESLint rules for naming |
+| JSDoc coverage | **Code review only** | Aim for 100%, currently partial |
+| Import ordering | **Not enforced** | Loose convention only |
+
+The project does not use `eslint-config-prettier`. The obsidianmd ESLint rules and Prettier do not currently conflict stylistically; if you add an ESLint rule that overlaps with Prettier, add `eslint-config-prettier` at the same time.
 
 ## Branch strategy
 
@@ -86,14 +137,15 @@ src/
     - `feature/<short-description>` — new features
     - `bugfix/<short-description>` — bug fixes
 - Example: `feature/prose-linter`, `bugfix/settings-crash`
-- Open a PR to `main` when the feature is ready. CodeRabbit will review automatically.
+- Open a PR to `main` when the feature is ready. CodeRabbit will review automatically (`.github/coderabbit.yaml`, profile `chill`).
+- Releases are cut by pushing a tag; `.github/workflows/release.yml` builds and creates a draft GitHub release attaching `main.js`, `manifest.json`, and `styles.css`.
 
 ## Security & compliance
 
-- No `innerHTML`. Use `createEl()` + `textContent`.
-- No raw timers. Use `registerInterval()` (exceptions: known debounced timers in `decorations.ts`).
-- No raw DOM listeners. Use `registerDomEvent()` (exceptions: raw `addEventListener` in `feedback-panel.ts`).
-- No `fetch`. Use `requestUrl()` for HTTP (mobile-compatible) (exception: `fetch` in `transport.ts` for SSE streaming, guarded by `isStreamingSupported()`).
+- No `innerHTML`. Use `createEl()` + `textContent`. (Currently zero uses in `src/`.)
+- No raw DOM listeners. Prefer Obsidian's `registerDomEvent()` on a `Component` — often a child `Component` stored on a local field (e.g. `this.renderEvents.registerDomEvent(...)` in `quill-sidebar.ts`, `co-writer-panel.ts`; `component.registerDomEvent(...)` in `context-panel.ts`). Raw `addEventListener` is currently used in 9 files (`settings.ts`, `ui/feedback-panel.ts`, `ui/fix-with-ai-modal.ts`, `core/linter/decorations.ts`, `ui/confirm-modal.ts`, `ui/change-diff-extension.ts`, `ui/transform-modal.ts`, `ui/chat-panel.ts`, `ui/co-writer-panel.ts`); the heaviest is `settings.ts` via the `.inputEl.addEventListener('blur', ...)` idiom for reading values out of `TextComponent`. Prefer `registerDomEvent()` for new code; if `addEventListener` is unavoidable, leave an inline comment.
+- No raw timers. Prefer teardown via the `Component` lifecycle (`register()` / child components). Raw `window.setTimeout` is currently used in `core/linter/decorations.ts` and `ui/co-writer-panel.ts` (defer-to-next-frame paints), each with an inline justification comment. `Plugin#registerInterval` is not currently used anywhere in the codebase; follow the same pattern — add a comment explaining why a raw timer is necessary.
+- No `fetch`. Use `requestUrl()` for HTTP (mobile-compatible). Sole exception: `fetch` in `src/ai/transport.ts` for SSE streaming, guarded by `isStreamingSupported()` with an inline `eslint-disable-next-line` comment.
 - Use `Component` lifecycle + `register()` for proper teardown.
 - All UI text is sentence-case.
 - No telemetry. Never send vault contents without explicit opt-in.
@@ -116,7 +168,7 @@ src/
 7. **Selection Transformations** — rewrite selected passages in place.
 8. **Critical Analysis / Continuity Engine** — plot logic, character consistency.
 9. **Writer Guidance Layers** — inline directives (`<!-- quill: -->`) + plot map.
-10. **AI Generation Style Constraints** — 18 rules + 6 narrative perspective presets.
+10. **AI Generation Style Constraints** — 18 rules + 6 narrative perspective presets (`NARRATIVE_VOICE_PRESETS`).
 
 ## Committing
 
@@ -125,12 +177,16 @@ src/
 ## Planning files
 
 - `.planning/` is gitignored and local-only. Never force-add (`git add -f`) or commit planning files.
-- Use `.planning/pr-<feature>.md` for PR scope documents (scope, rules, fixes, known issues, data flow).
+- Naming patterns used in `.planning/`:
+    - `pr-<feature>.md` — PR scope documents (scope, rules, fixes, known issues, data flow)
+    - `pr-merge-<feature>.md` — merge records (what landed, follow-ups)
+    - `eventide-quill-features.md` — master feature catalog
+    - `issue-<n>.md` — issue investigation notes
 
 ## When in doubt
 
 - Prefer the existing code's pattern over any convention described here.
-- If a convention conflicts with an enforced config rule (e.g., `.editorconfig` vs. AGENTS.md), the config file wins.
+- If a convention conflicts with an enforced config rule (e.g., `.editorconfig` or `prettier.config.mjs` vs. AGENTS.md), the config file wins.
 
 ## References
 
