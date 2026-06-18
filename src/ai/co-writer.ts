@@ -20,7 +20,13 @@ import { estimateTokens } from '../utils/tokens';
 import { readVaultFiles, readVaultFileText } from '../utils/vault-files';
 import { parseDirectives, parseAllDirectives } from '../utils/directives';
 import { ChangeSet } from '../core/change-set';
-import { clearDiffEdits, pushDiffEdits, setDiffEdits, toDiffSnapshots } from '../ui/change-diff-extension';
+import {
+    clearDiffEdits,
+    pushDiffEdits,
+    setDiffEdits,
+    syncChangeSetPositions,
+    toDiffSnapshots
+} from '../ui/change-diff-extension';
 
 /** Replace em dashes (—) with a comma+space for prose that shouldn't use them. */
 function sanitizeProse(text: string): string {
@@ -1411,6 +1417,7 @@ export class CoWriterSession {
         void plugin;
         const cm = this.getManuscriptCm();
         if (!cm) return;
+        syncChangeSetPositions(cm, this.fulfillChanges, 'fulfill');
         const change = this.fulfillChanges.approve(id);
         if (!change) return;
         cm.dispatch({
@@ -1423,8 +1430,9 @@ export class CoWriterSession {
 
     /** Reject one Fulfill edit: leave the directive comment in place, un-consumed. */
     rejectFulfillSection(id: number): void {
-        this.fulfillChanges.reject(id);
         const cm = this.getManuscriptCm();
+        if (cm) syncChangeSetPositions(cm, this.fulfillChanges, 'fulfill');
+        this.fulfillChanges.reject(id);
         if (cm) pushDiffEdits(cm, toDiffSnapshots(this.fulfillChanges, 'fulfill'));
         this.onFulfillUpdate?.();
     }
@@ -1434,6 +1442,7 @@ export class CoWriterSession {
         void plugin;
         const cm = this.getManuscriptCm();
         if (!cm) return;
+        syncChangeSetPositions(cm, this.fulfillChanges, 'fulfill');
         for (const change of this.fulfillChanges.approveAll()) {
             cm.dispatch({ changes: change });
         }
@@ -1467,6 +1476,7 @@ export class CoWriterSession {
         void plugin;
         const cm = this.getManuscriptCm();
         if (!cm) return;
+        syncChangeSetPositions(cm, this.directChanges, 'direct');
         const change = this.directChanges.approve(id);
         if (!change) return;
         cm.dispatch({

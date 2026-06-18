@@ -75,6 +75,28 @@ export function toDiffSnapshots(changeSet: ChangeSet, owner: string): DiffEditSn
     }));
 }
 
+/**
+ * Copy the live (mapPos-remapped) positions from the editor's diff field back
+ * into a {@link ChangeSet}'s pending edits. Call this before approving or
+ * rejecting so the ChangeSet's stored offsets match the document even after the
+ * writer manually edits during review: the diff field remaps via `mapPos` on
+ * every change, but the ChangeSet is pure logic and does not, so its offsets go
+ * stale until re-synced here. Without this, an approve could dispatch at a
+ * pre-edit offset and mangle surrounding text.
+ */
+export function syncChangeSetPositions(view: EditorView, changeSet: ChangeSet, owner: string): void {
+    const snapshots = view.state.field(diffEditsField);
+    if (!snapshots || snapshots.length === 0) return;
+    for (const snap of snapshots) {
+        if (snap.owner !== owner) continue;
+        const edit = changeSet.get(snap.id);
+        if (edit && edit.state === 'pending') {
+            edit.from = snap.from;
+            edit.to = snap.to;
+        }
+    }
+}
+
 /** A single widget rendering a proposed edit's diff: the removed text in a red
  *  box (struck through) when present, and the replacement in a green box with
  *  inline Approve/Reject. Both boxes live in one widget so they always render

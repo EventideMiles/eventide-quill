@@ -31,7 +31,12 @@ import { compactConversation } from './ai/compaction';
 import { estimateTokens } from './utils/tokens';
 import { readVaultFileText } from './utils/vault-files';
 import { parseDirectives } from './utils/directives';
-import { getChangeDiffExtension, clearDiffEdits, setDiffEdits } from './ui/change-diff-extension';
+import {
+    getChangeDiffExtension,
+    clearDiffEdits,
+    setDiffEdits,
+    syncChangeSetPositions
+} from './ui/change-diff-extension';
 import { ChangeSet } from './core/change-set';
 import { readVaultFiles } from './utils/vault-files';
 
@@ -1290,16 +1295,16 @@ export default class EventideQuillPlugin extends Plugin {
 
     /** Approve the pending transform edit: commit the rewrite and clear the diff. */
     approveTransformChange(id: number): void {
+        const cm = this.getActiveCm();
+        if (!cm) return;
+        syncChangeSetPositions(cm, this.transformChangeSet, 'transform');
         const change = this.transformChangeSet.approve(id);
         if (!change) return;
-        const cm = this.getActiveCm();
-        if (cm) {
-            cm.dispatch({
-                changes: change,
-                effects: setDiffEdits.of([]),
-                selection: { anchor: change.from + change.insert.length }
-            });
-        }
+        cm.dispatch({
+            changes: change,
+            effects: setDiffEdits.of([]),
+            selection: { anchor: change.from + change.insert.length }
+        });
     }
 
     /** Reject the pending transform edit: leave the original passage and clear the diff. */
