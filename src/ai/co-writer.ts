@@ -49,7 +49,7 @@ function parseStoppingPoint(direction: string): { instruction: string; isExplici
 
     // "stop at next period" or similar natural language (checked before the
     // generic "stop at [marker]" pattern so it takes precedence)
-    const naturalStopMatch = lower.match(/stop\s+at\s+(next\s+(?:period|sentence|paragraph|beat|scene|line))/);
+    const naturalStopMatch = lower.match(/stop\s+at\s+(next\s+(?:period|sentence|paragraph|line))/);
     if (naturalStopMatch?.[1]) {
         return { instruction: `Stop at the next ${naturalStopMatch[1].replace('next ', '')}.`, isExplicit: true };
     }
