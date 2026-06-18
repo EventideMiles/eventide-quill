@@ -506,7 +506,7 @@ export class ReviewPanel extends AbstractChatPanel {
 
     private renderManuscriptsSection(container: HTMLElement): void {
         const section = container.createDiv({ cls: 'quill-form__section' });
-        section.createEl('p', { cls: 'quill-form__label', text: 'Manuscripts' });
+        section.createEl('p', { cls: 'quill-form__label', text: 'Additional manuscripts' });
 
         // Budget bar
         if (this.maxAllowedTokens > 0) {
@@ -534,7 +534,7 @@ export class ReviewPanel extends AbstractChatPanel {
         const list = section.createDiv({ cls: 'quill-review-panel__file-list' });
         if (this.contextFilePaths.length === 0) {
             list.createEl('p', {
-                text: 'Add one or more manuscripts to analyze. The active document is auto-included when you open this tab.',
+                text: 'The active document is always reviewed. Add additional files here for more context.',
                 cls: 'quill-empty-hint'
             });
         } else {
@@ -640,10 +640,8 @@ export class ReviewPanel extends AbstractChatPanel {
     }
 
     private triggerEditorial(personaId: string): void {
-        if (this.contextFilePaths.length === 0) {
-            new Notice('Quill: Add at least one manuscript file to review.');
-            return;
-        }
+        // No manuscript-count check needed — the active document is always the
+        // primary manuscript. The manuscripts list is for ADDITIONAL files only.
         this.onEditorialGenerate?.(personaId, personaId === 'custom' ? this.customInstruction : undefined);
     }
 

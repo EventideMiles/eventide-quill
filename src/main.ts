@@ -1262,6 +1262,7 @@ export default class EventideQuillPlugin extends Plugin {
         const path = this.app.workspace.getActiveFile()?.path;
         if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
+        await this.ensureContextInitialized();
         this.wireCoWriterPanel();
         await this.coWriterSession.generateDirect(this, direction);
     }
@@ -1273,6 +1274,7 @@ export default class EventideQuillPlugin extends Plugin {
         const path = this.app.workspace.getActiveFile()?.path;
         if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
+        await this.ensureContextInitialized();
         this.wireCoWriterPanel();
         await this.coWriterSession.generateOptions(this, direction);
     }
@@ -1293,6 +1295,7 @@ export default class EventideQuillPlugin extends Plugin {
         const path = this.app.workspace.getActiveFile()?.path;
         if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
+        await this.ensureContextInitialized();
         this.wireCoWriterPanel();
         await this.coWriterSession.sendDiscussion(this, message);
     }
@@ -1305,6 +1308,7 @@ export default class EventideQuillPlugin extends Plugin {
         const path = this.app.workspace.getActiveFile()?.path;
         if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
+        await this.ensureContextInitialized();
         this.wireCoWriterPanel();
         await this.coWriterSession.sendCoach(this, message);
     }
@@ -1591,6 +1595,11 @@ export default class EventideQuillPlugin extends Plugin {
             return;
         }
 
+        // Auto-initialize context so the deterministic signal (characters, voice
+        // marker, plot threads) is available even if the writer never visited
+        // the Context tab.
+        await this.ensureContextInitialized();
+
         const resolved = this.resolveAnalysisScope(scope);
         if (!resolved) {
             new Notice('Quill: Open a Markdown document with text before running analysis.');
@@ -1865,16 +1874,43 @@ export default class EventideQuillPlugin extends Plugin {
         this.lintPanel?.switchToCoWriterTab();
     }
 
-    /** Open the sidebar and switch to the Review tab. Auto-adds the active
-     *  document to the editorial manuscripts list if one is open. */
+    /**
+     * Ensure the context engine has been initialized for the active document.
+     *
+     * If the Context tab hasn't been scanned for the current file (or was scanned
+     * for a different file), this triggers a scan so that `currentAssembly`
+     * (entities, voice marker, plot threads) is available for AI calls. This is
+     * called by requestFeedback, requestAnalysis, and the co-writer session before
+     * they read deterministic signal from the context engine.
+     *
+     * Best-effort: if the scan fails, the AI call proceeds without deterministic
+     * signal (the prompts degrade gracefully).
+     */
+    async ensureContextInitialized(): Promise<void> {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== 'md') return;
+        const activePath = activeFile.path;
+
+        // Already initialized for this file — nothing to do.
+        if (this.contextActiveFile === activePath && this.currentAssembly) return;
+
+        // Need to scan. Find the editor for this file (sidebar may have focus).
+        const view = findEditorView(this.app, activePath);
+        if (!view) return;
+
+        try {
+            await this.assembleDocumentContext(view.editor.getValue(), activePath);
+            // Push the fresh assembly to the sidebar so the Context tab updates.
+            this.lintPanel?.setContextAssembly(this.currentAssembly);
+        } catch {
+            // Best-effort: AI calls degrade gracefully without context signal.
+        }
+    }
+
+    /** Open the sidebar and switch to the Review tab. */
     async openReviewPanel(): Promise<void> {
         await this.openLintPanel();
         this.lintPanel?.switchToReviewTab();
-        // Auto-add the active document to manuscripts (used by editorial engine)
-        const activeFile = this.app.workspace.getActiveFile();
-        if (activeFile && activeFile.extension === 'md') {
-            this.lintPanel?.reviewAddContextFile(activeFile.path);
-        }
     }
 
     /**
@@ -1898,6 +1934,10 @@ export default class EventideQuillPlugin extends Plugin {
             return;
         }
 
+        // Auto-initialize context so vault context and deterministic signal
+        // are available even if the writer never visited the Context tab.
+        await this.ensureContextInitialized();
+
         // Cancel any in-flight feedback request
         this.feedbackAbort?.abort();
         this.feedbackAbort = new AbortController();
@@ -1908,10 +1948,17 @@ export default class EventideQuillPlugin extends Plugin {
         // Capture the controller for this specific request so we can guard its cleanup.
         const myFeedbackAbort = this.feedbackAbort;
 
-        const feedbackContextPaths = this.lintPanel?.reviewContextFiles() ?? [];
-        if (feedbackContextPaths.length === 0) {
-            new Notice('Quill: Add manuscripts to the feedback tab before requesting analysis.');
-            this.lintPanel?.reviewError('No manuscripts selected.');
+        // The active document is always the primary manuscript. Additional
+        // files from the manuscripts list are layered on top.
+        const activeFile = this.app.workspace.getActiveFile();
+        const activePath = activeFile && activeFile.extension === 'md' ? activeFile.path : null;
+        const additionalPaths = this.lintPanel?.reviewContextFiles() ?? [];
+        const manuscriptPaths =
+            activePath && !additionalPaths.includes(activePath) ? [activePath, ...additionalPaths] : additionalPaths;
+
+        if (manuscriptPaths.length === 0) {
+            new Notice('Quill: Open a Markdown document to review.');
+            this.lintPanel?.reviewError('No active document to review.');
             return;
         }
 
@@ -1934,7 +1981,7 @@ export default class EventideQuillPlugin extends Plugin {
         // Read manuscript files and inject them as system messages.
         // They are NOT stored in feedbackCurrentMessages — injected fresh on
         // every API call so they always survive compaction.
-        const manuscriptMessages = await readVaultFiles(this.app.vault, feedbackContextPaths, 'Manuscript');
+        const manuscriptMessages = await readVaultFiles(this.app.vault, manuscriptPaths, 'Manuscript');
 
         if (manuscriptMessages.length === 0) {
             new Notice('Quill: Could not read any content from the selected manuscripts.');
