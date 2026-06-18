@@ -31,7 +31,6 @@ export interface EventideQuillSettings {
     aiDefaultChatProvider: string;
     aiDefaultEmbedProvider: string;
     transformTemperature: number;
-    transformAppendNewline: boolean;
     transformVaultContext: boolean;
     transformMaxOutputTokens: number;
     narrativeVoicePreset: NarrativeVoicePreset;
@@ -54,6 +53,7 @@ export interface EventideQuillSettings {
     coWriterAppendNewline: boolean;
     enableCoWriterThought: boolean;
     coWriterVoiceMatch: boolean;
+    enableInlineDirectives: boolean;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -95,7 +95,6 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     aiDefaultChatProvider: 'local-default/local-chat',
     aiDefaultEmbedProvider: 'local-default/local-embed',
     transformTemperature: 1.0,
-    transformAppendNewline: true,
     transformVaultContext: true,
     transformMaxOutputTokens: 4096,
     narrativeVoicePreset: 'third-limited',
@@ -117,7 +116,8 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     coWriterVaultContext: true,
     coWriterAppendNewline: true,
     enableCoWriterThought: true,
-    coWriterVoiceMatch: true
+    coWriterVoiceMatch: true,
+    enableInlineDirectives: true
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -1020,18 +1020,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     })
             );
 
-        new Setting(containerEl)
-            .setName('Append trailing blank line')
-            .setDesc(
-                'Add a blank line after the transformed text so you can continue writing without pressing enter twice.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.transformAppendNewline).onChange(async (value) => {
-                    this.plugin.settings.transformAppendNewline = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
         new Setting(containerEl).setName('Co-writer').setHeading();
 
         new Setting(containerEl)
@@ -1108,6 +1096,18 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addToggle((toggle) =>
                 toggle.setValue(this.plugin.settings.coWriterVoiceMatch).onChange(async (value) => {
                     this.plugin.settings.coWriterVoiceMatch = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(containerEl)
+            .setName('Inline directives')
+            .setDesc(
+                'Parse `<!-- quill: ... -->` comments immediately preceding the cursor and feed them to the co-writer as steering. Disable to ignore directives entirely.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.enableInlineDirectives).onChange(async (value) => {
+                    this.plugin.settings.enableInlineDirectives = value;
                     await this.plugin.saveSettings();
                 })
             );
@@ -1311,7 +1311,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addButton((button) =>
                 button.setButtonText('Restore defaults').onClick(async () => {
                     this.plugin.settings.transformTemperature = DEFAULT_SETTINGS.transformTemperature;
-                    this.plugin.settings.transformAppendNewline = DEFAULT_SETTINGS.transformAppendNewline;
                     this.plugin.settings.transformVaultContext = DEFAULT_SETTINGS.transformVaultContext;
                     this.plugin.settings.transformMaxOutputTokens = DEFAULT_SETTINGS.transformMaxOutputTokens;
                     this.plugin.settings.narrativeVoicePreset = DEFAULT_SETTINGS.narrativeVoicePreset;
@@ -1334,6 +1333,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                     this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
                     this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;
+                    this.plugin.settings.enableInlineDirectives = DEFAULT_SETTINGS.enableInlineDirectives;
                     await this.plugin.saveSettings();
                     this.display();
                 })

@@ -16,13 +16,29 @@ import { FixWithAiModal } from './ui/fix-with-ai-modal';
 import { ContextCache } from './core/context-engine';
 import { extractAllEntities, analyzeVoice, assembleContext } from './core/context-engine';
 import type { ContextAssembly, ContextItem, ExtractedEntity, EntityType } from './core/context-engine/types';
-import { loadQuillContextData, writeQuillContextData, buildQuillContextData, entityFromId } from './utils/frontmatter';
+import {
+    loadQuillContextData,
+    writeQuillContextData,
+    buildQuillContextData,
+    setPlotMap,
+    entityFromId
+} from './utils/frontmatter';
 import { buildFeedbackMessages, getPersonaById, getFeedback } from './ai/feedback';
 import type { ChatMessage } from './ai/provider';
 import { AI_MODE_CONFIGS } from './ai/modes';
-import { CoWriterSession, type GuidancePhase, loadAdditionalContext } from './ai/co-writer';
+import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
 import { compactConversation } from './ai/compaction';
 import { estimateTokens } from './utils/tokens';
+import { readVaultFileText } from './utils/vault-files';
+import { parseDirectives } from './utils/directives';
+import {
+    getChangeDiffExtension,
+    clearDiffEdits,
+    diffEditsField,
+    setDiffEdits,
+    syncChangeSetPositions
+} from './ui/change-diff-extension';
+import { ChangeSet } from './core/change-set';
 import { readVaultFiles } from './utils/vault-files';
 
 /** Generate a content-based fingerprint for a lint result. Uses the flagged
@@ -89,12 +105,24 @@ export default class EventideQuillPlugin extends Plugin {
     private providerMap = new Map<string, AiProvider>();
     /** True while a selection transformation is being processed. Used to gate the context menu. */
     transformInProgress = false;
+    /** Abort controller for an in-flight transform, so Escape can cancel it. */
+    transformAbortController: AbortController | null = null;
+
+    /** Cancel an in-flight transform (called on Escape). */
+    cancelTransform(): void {
+        this.transformAbortController?.abort();
+        this.transformAbortController = null;
+    }
     /** Dismissed lint fingerprints for the current session. Cleared when the linter is deactivated. */
     private dismissedFingerprints = new Set<string>();
     /** Context cache for extracted entities and voice markers. */
     private contextCache = new ContextCache();
     /** Current context assembly for the active document. */
     currentAssembly: ContextAssembly | null = null;
+    /** Path of the plot map note linked to the active document, or null when none is linked. */
+    currentPlotMap: string | null = null;
+    /** Path of the document currentPlotMap was loaded from (staleness guard). */
+    private plotMapFile: string | null = null;
     /** User modifications to entities (pins, removals, manual adds) keyed by entity ID. */
     private entityMods = new Map<
         string,
@@ -108,6 +136,8 @@ export default class EventideQuillPlugin extends Plugin {
     private manualContextItems: ContextItem[] = [];
     /** Co-writer session for the collaborative drafting feature. */
     coWriterSession: CoWriterSession = new CoWriterSession();
+    /** Proposed transform edit awaiting inline review (one at a time). */
+    transformChangeSet: ChangeSet = new ChangeSet();
 
     /** Plugin entry point: register commands, views, extensions, and event handlers. */
     async onload() {
@@ -129,6 +159,50 @@ export default class EventideQuillPlugin extends Plugin {
                     return !!chat.provider;
                 }
             )
+        );
+
+        // Track whether an inline directive is active at the cursor so the
+        // co-writer panel can show its "Directive active" badge. Reactive
+        // (fires on cursor/doc changes) and lifecycle-safe (auto-removed on unload).
+        this.registerEditorExtension(
+            EditorView.updateListener.of((update) => {
+                if (!this.settings.enableInlineDirectives) return;
+                if (!update.selectionSet && !update.docChanged) return;
+                const pos = update.state.selection.main.head;
+                const textBeforeCursor = update.state.sliceDoc(Math.max(0, pos - 4000), pos);
+                const active = parseDirectives(textBeforeCursor).length > 0;
+                this.lintPanel?.coWriterSetDirectiveActive(active);
+            })
+        );
+
+        // Inline change-diff (red removals / green additions) for proposed edits
+        // from Fulfill, Transform, and (later) Co-writer direct. Registered once,
+        // globally; it only renders when a snapshot is pushed to a given editor.
+        this.registerEditorExtension(
+            getChangeDiffExtension({
+                onApprove: (owner: string, id: number) => {
+                    if (owner === 'fulfill') this.approveCoWriterFulfill(id);
+                    else if (owner === 'transform') this.approveTransformChange(id);
+                    else if (owner === 'direct') this.approveDirectChange(id);
+                },
+                onReject: (owner: string, id: number) => {
+                    if (owner === 'fulfill') this.rejectCoWriterFulfill(id);
+                    else if (owner === 'transform') this.rejectTransformChange(id);
+                    else if (owner === 'direct') this.rejectDirectChange(id);
+                }
+            })
+        );
+
+        // Escape cancels an in-flight transform.
+        this.registerEditorExtension(
+            EditorView.domEventHandlers({
+                keydown: (event: KeyboardEvent) => {
+                    if (event.key === 'Escape' && this.transformInProgress) {
+                        this.cancelTransform();
+                    }
+                    return false;
+                }
+            })
         );
 
         this.registerView(QUILL_VIEW_TYPE, (leaf: WorkspaceLeaf) => {
@@ -179,6 +253,8 @@ export default class EventideQuillPlugin extends Plugin {
                         this.pinnedContextPaths.clear();
                         this.removedContextPaths.clear();
                         this.manualContextItems = [];
+                        this.currentPlotMap = null;
+                        this.plotMapFile = null;
                         this.lintPanel?.setContextAssembly(null);
                     }
                 }
@@ -252,6 +328,14 @@ export default class EventideQuillPlugin extends Plugin {
                         });
                 });
 
+                menu.addItem((item) => {
+                    item.setTitle('Quill: Insert inline directive')
+                        .setIcon('quote')
+                        .onClick(() => {
+                            this.insertInlineDirective(editor);
+                        });
+                });
+
                 // Feedback menu item
                 menu.addSeparator();
                 menu.addItem((item) => {
@@ -262,14 +346,37 @@ export default class EventideQuillPlugin extends Plugin {
                         });
                 });
 
-                // Co-writer: open panel
+                // Co-writer submenu: jump straight to a mode
                 menu.addSeparator();
                 menu.addItem((item) => {
-                    item.setTitle('Quill: Co-writer')
-                        .setIcon('arrow-right')
-                        .onClick(() => {
-                            void this.openCoWriterPanel();
+                    item.setTitle('Quill: Co-writer').setIcon('feather');
+                    // setSubmenu exists at runtime but isn't in the obsidian type defs.
+                    const sub = (item as unknown as { setSubmenu(): Menu }).setSubmenu();
+                    sub.addItem((s) => {
+                        s.setTitle('Direct').onClick(async () => {
+                            await this.openCoWriterPanel();
+                            this.lintPanel?.coWriterSetMode('direct');
                         });
+                    });
+                    sub.addItem((s) => {
+                        s.setTitle('Discuss').onClick(async () => {
+                            await this.openCoWriterPanel();
+                            this.lintPanel?.coWriterSetMode('discuss');
+                        });
+                    });
+                    sub.addItem((s) => {
+                        s.setTitle('Coach').onClick(async () => {
+                            await this.openCoWriterPanel();
+                            this.lintPanel?.coWriterSetMode('coach');
+                        });
+                    });
+                    sub.addItem((s) => {
+                        s.setTitle('Fulfill \u2014 run sweep').onClick(async () => {
+                            await this.openCoWriterPanel();
+                            this.lintPanel?.coWriterSetMode('fulfill');
+                            await this.runCoWriterFulfill('');
+                        });
+                    });
                 });
 
                 // Linter fix items
@@ -422,6 +529,14 @@ export default class EventideQuillPlugin extends Plugin {
             }
         });
 
+        this.addCommand({
+            id: 'quill-insert-directive',
+            name: 'Quill: Insert inline directive',
+            editorCallback: (editor) => {
+                this.insertInlineDirective(editor);
+            }
+        });
+
         this.addSettingTab(new EventideQuillSettingTab(this.app, this));
     }
 
@@ -431,6 +546,15 @@ export default class EventideQuillPlugin extends Plugin {
     /** Retrieve the CodeMirror EditorView from an Obsidian Editor instance. */
     private getCmView(editor: Editor): EditorView | undefined {
         return (editor as unknown as { cm: EditorView }).cm;
+    }
+
+    /** Insert an inline `<!-- quill:  -->` directive at the cursor and place the
+     *  caret between 'quill: ' and ' -->' so the writer can type the instruction. */
+    private insertInlineDirective(editor: Editor): void {
+        const cursor = editor.getCursor();
+        const base = editor.posToOffset(cursor);
+        editor.replaceRange('<!-- quill:  -->', cursor);
+        editor.setCursor(editor.offsetToPos(base + '<!-- quill: '.length));
     }
 
     /** Toggle the prose linter on or off for the active editor, dispatching state to CodeMirror. */
@@ -790,6 +914,9 @@ export default class EventideQuillPlugin extends Plugin {
                 });
             }
         }
+
+        this.currentPlotMap = fm.plotMap ?? null;
+        this.plotMapFile = file.path;
     }
 
     /** Sync current in-memory mods to the document's frontmatter.
@@ -807,6 +934,46 @@ export default class EventideQuillPlugin extends Plugin {
         writeQuillContextData(this.app, file, data).catch((err) => {
             console.warn('Quill: failed to sync context data', err);
         });
+    }
+
+    /** Refresh currentPlotMap from the active file's frontmatter if it is stale.
+     *  Cheap (metadata cache read). Safe to call repeatedly. */
+    refreshPlotMap(): void {
+        const active = this.app.workspace.getActiveFile();
+        if (!active) {
+            this.currentPlotMap = null;
+            this.plotMapFile = null;
+            return;
+        }
+        if (active.path === this.plotMapFile) return;
+        const fm = loadQuillContextData(this.app, active);
+        this.currentPlotMap = fm.plotMap ?? null;
+        this.plotMapFile = active.path;
+    }
+
+    /** Link a plot map note to the active manuscript. Persists to frontmatter. */
+    async setPlotMapLink(path: string): Promise<void> {
+        const active = this.app.workspace.getActiveFile();
+        if (!active) {
+            new Notice('Quill: Open a manuscript to link a plot map.');
+            return;
+        }
+        this.currentPlotMap = path;
+        this.plotMapFile = active.path;
+        await setPlotMap(this.app, active, path);
+        this.lintPanel?.coWriterSetPlotMap(path);
+        await this.updateCoWriterPlotMapTokens();
+    }
+
+    /** Unlink the plot map from the active manuscript. Persists to frontmatter. */
+    async clearPlotMapLink(): Promise<void> {
+        const active = this.app.workspace.getActiveFile();
+        if (!active) return;
+        this.currentPlotMap = null;
+        this.plotMapFile = active.path;
+        await setPlotMap(this.app, active, null);
+        this.lintPanel?.coWriterSetPlotMap(null);
+        await this.updateCoWriterPlotMapTokens();
     }
 
     /** Toggle the pinned state of an entity. Persists across re-assemblies and to frontmatter. */
@@ -959,16 +1126,13 @@ export default class EventideQuillPlugin extends Plugin {
         session.onThought = (thought: string) => {
             this.lintPanel?.coWriterSetThoughtContent(thought);
         };
-        session.onStateChange = (state) => {
-            this.lintPanel?.coWriterSetDraftState(state);
-        };
         session.onChatUpdate = () => {
             if (this.lintPanel) {
                 this.lintPanel.coWriterSetChatHistory(session.chatHistory);
                 this.lintPanel.coWriterSetCurrentOptions(session.currentOptions);
                 this.lintPanel.coWriterSetOptionsLoading(session.optionsLoading);
-                this.lintPanel.coWriterSetGuidancePhase(session.guidanceSession?.phase ?? 'discern');
-                this.lintPanel.coWriterSetGuidanceActive(session.guidanceActive);
+                this.lintPanel.coWriterSetCoachPhase(session.coachSession?.phase ?? 'discern');
+                this.lintPanel.coWriterSetCoachActive(session.coachActive);
             }
         };
         session.onOptionsLoading = (loading: boolean) => {
@@ -991,9 +1155,12 @@ export default class EventideQuillPlugin extends Plugin {
             // Auto-regenerate fresh options after accepting a draft
             void this.sendCoWriterOptions('');
         };
-        session.onGuidanceDirectionReady = () => {
+        session.onCoachDirectionReady = () => {
             // Auto-generate continuation options when plan/direction is reached
-            void this.coWriterSession.guidanceToOptions(this, '');
+            void this.coWriterSession.coachToOptions(this, '');
+        };
+        session.onFulfillUpdate = () => {
+            this.lintPanel?.coWriterSetFulfillState(session.fulfillChanges.edits, session.fulfillActive);
         };
     }
 
@@ -1041,38 +1208,113 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
-     * Send a guidance message to the co-writer.
+     * Send a coach message to the co-writer.
      * The AI analyzes the passage and guides the writer through a structured process.
      */
-    async sendCoWriterGuidance(message: string, phase: string): Promise<void> {
+    async sendCoWriterCoach(message: string): Promise<void> {
         const path = this.app.workspace.getActiveFile()?.path;
         if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
         this.wireCoWriterPanel();
-        await this.coWriterSession.sendGuidance(this, message, phase as GuidancePhase);
+        await this.coWriterSession.sendCoach(this, message);
     }
 
     /**
-     * Transition from guidance mode to option generation.
+     * Transition from coach mode to option generation.
      */
-    async coWriterGuidanceToOptions(): Promise<void> {
-        await this.coWriterSession.guidanceToOptions(this, '');
+    async coWriterCoachToOptions(): Promise<void> {
+        await this.coWriterSession.coachToOptions(this, '');
     }
 
     /**
-     * End the current guidance session.
+     * End the current coach session.
      */
-    endCoWriterGuidance(): void {
-        this.coWriterSession.endGuidanceSession();
-        this.lintPanel?.coWriterSetGuidanceActive(false);
-        this.lintPanel?.coWriterSetGuidancePhase('discern');
+    endCoWriterCoach(): void {
+        this.coWriterSession.endCoachSession();
+        this.lintPanel?.coWriterSetCoachActive(false);
+        this.lintPanel?.coWriterSetCoachPhase('discern');
     }
 
     /**
-     * Write a prose continuation based on the current guidance session state.
+     * Write a prose continuation based on the current coach session state.
      */
-    async coWriterGuidanceWrite(): Promise<void> {
-        await this.coWriterSession.guidanceWrite(this);
+    async coWriterCoachWrite(): Promise<void> {
+        await this.coWriterSession.coachWrite(this);
+    }
+
+    /**
+     * Run a Fulfill sweep over every inline directive in the active document.
+     * @param globalInstruction  Optional overall direction prepended to every directive's prompt.
+     */
+    async runCoWriterFulfill(globalInstruction?: string): Promise<void> {
+        const path = this.app.workspace.getActiveFile()?.path;
+        if (path) this.coWriterSession.manuscriptPath = path;
+        // Set fulfillActive BEFORE openCoWriterPanel so that the panel re-sync
+        // inside switchToCoWriterTab doesn't reset the button to its idle state.
+        this.coWriterSession.fulfillActive = true;
+        await this.openCoWriterPanel();
+        this.wireCoWriterPanel();
+        await this.coWriterSession.fulfillDirectives(this, globalInstruction);
+    }
+
+    /** Approve one Fulfill section: consume its directive comment and insert the prose. */
+    approveCoWriterFulfill(id: number): void {
+        this.coWriterSession.approveFulfillSection(this, id);
+    }
+
+    /** Reject one Fulfill section: leave the directive comment in place. */
+    rejectCoWriterFulfill(id: number): void {
+        this.coWriterSession.rejectFulfillSection(id);
+    }
+
+    /** Approve every pending Fulfill section in document order. */
+    approveAllCoWriterFulfill(): void {
+        this.coWriterSession.approveAllFulfill(this);
+    }
+
+    /** Reject every pending Fulfill section. */
+    rejectAllCoWriterFulfill(): void {
+        this.coWriterSession.rejectAllFulfill();
+    }
+
+    /** Approve the pending Direct continuation: commit it at the cursor. */
+    approveDirectChange(id: number): void {
+        this.coWriterSession.approveDirectChange(this, id);
+    }
+
+    /** Reject the pending Direct continuation: discard it (nothing was written). */
+    rejectDirectChange(id: number): void {
+        this.coWriterSession.rejectDirectChange(id);
+    }
+
+    /** Resolve the CodeMirror view of the active markdown editor, if any. */
+    private getActiveCm(): EditorView | undefined {
+        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!view) return undefined;
+        return (view.editor as unknown as { cm: EditorView }).cm;
+    }
+
+    /** Approve the pending transform edit: commit the rewrite and clear the diff. */
+    approveTransformChange(id: number): void {
+        const cm = this.getActiveCm();
+        if (!cm) return;
+        syncChangeSetPositions(cm, this.transformChangeSet, 'transform');
+        const change = this.transformChangeSet.approve(id);
+        if (!change) return;
+        const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'transform');
+        cm.dispatch({
+            changes: change,
+            effects: setDiffEdits.of(preserved),
+            selection: { anchor: change.from + change.insert.length }
+        });
+    }
+
+    /** Reject the pending transform edit: leave the original passage and clear the diff. */
+    rejectTransformChange(id: number): void {
+        void id;
+        this.transformChangeSet.rejectAll();
+        const cm = this.getActiveCm();
+        if (cm) clearDiffEdits(cm, 'transform');
     }
 
     /** Cancel the current feedback generation request. */
@@ -1095,8 +1337,8 @@ export default class EventideQuillPlugin extends Plugin {
      */
     resetCoWriterChat(clearContext: boolean): void {
         this.coWriterSession.resetChat(clearContext);
-        this.lintPanel?.coWriterSetGuidanceActive(false);
-        this.lintPanel?.coWriterSetGuidancePhase('discern');
+        this.lintPanel?.coWriterSetCoachActive(false);
+        this.lintPanel?.coWriterSetCoachPhase('discern');
         this.lintPanel?.coWriterSetContextTokenEstimate(0);
         if (clearContext) {
             this.lintPanel?.coWriterSetAdditionalContextTokens(0);
@@ -1136,16 +1378,6 @@ export default class EventideQuillPlugin extends Plugin {
         }
     }
 
-    /** Accept the current co-writer draft. */
-    acceptCoWriterDraft(): void {
-        this.coWriterSession.acceptDraft();
-    }
-
-    /** Revert the current co-writer draft, removing the inserted text. */
-    revertCoWriterDraft(editor: Editor): void {
-        this.coWriterSession.revertDraft(editor);
-    }
-
     /** Add a context file to the co-writer session. */
     async addCoWriterContextFile(filePath: string): Promise<void> {
         this.coWriterSession.addContextFile(filePath);
@@ -1171,6 +1403,22 @@ export default class EventideQuillPlugin extends Plugin {
         }
         const messages = await loadAdditionalContext(this, files);
         this.lintPanel?.coWriterSetAdditionalContextTokens(estimateTokens(messages));
+    }
+
+    /**
+     * Compute the linked plot map's token estimate and push it to the co-writer
+     * panel. Reads the plot map note text (capped) and estimates its token cost.
+     */
+    async updateCoWriterPlotMapTokens(): Promise<void> {
+        const path = this.currentPlotMap;
+        if (!path) {
+            this.lintPanel?.coWriterSetPlotMapTokens(0);
+            return;
+        }
+        const text = await readVaultFileText(this.app.vault, path, this.settings.contextMaxCharsPerFile);
+        // Discard stale results if the linked plot map changed during the read.
+        if (path !== this.currentPlotMap) return;
+        this.lintPanel?.coWriterSetPlotMapTokens(text ? estimateTokens(text) : 0);
     }
 
     /** Open the sidebar and switch to the Co-writer tab. */

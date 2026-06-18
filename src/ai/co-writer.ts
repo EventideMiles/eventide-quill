@@ -7,16 +7,27 @@ import { AiProvider, type ChatMessage } from './provider';
 import {
     getCoWriterDiscussPrompt,
     getCoWriterGenerationPrompt,
-    getCoWriterGuidanceFollowUp,
-    getCoWriterGuidancePrompt,
-    getCoWriterGuidanceRevision,
-    getCoWriterGuidanceToOptions,
+    getCoWriterCoachFollowUp,
+    getCoWriterCoachPrompt,
+    getCoWriterCoachRevision,
+    getCoWriterCoachToOptions,
     getCoWriterOptionPrompt,
-    getCoWriterVoicePrompt
+    getCoWriterVoicePrompt,
+    type ActiveSteering
 } from './prompts';
 import { compactConversation } from './compaction';
 import { estimateTokens } from '../utils/tokens';
-import { readVaultFiles } from '../utils/vault-files';
+import { readVaultFiles, readVaultFileText } from '../utils/vault-files';
+import { parseDirectives, parseAllDirectives } from '../utils/directives';
+import { ChangeSet } from '../core/change-set';
+import {
+    clearDiffEdits,
+    diffEditsField,
+    pushDiffEdits,
+    setDiffEdits,
+    syncChangeSetPositions,
+    toDiffSnapshots
+} from '../ui/change-diff-extension';
 
 /** Replace em dashes (—) with a comma+space for prose that shouldn't use them. */
 function sanitizeProse(text: string): string {
@@ -38,7 +49,7 @@ function parseStoppingPoint(direction: string): { instruction: string; isExplici
 
     // "stop at next period" or similar natural language (checked before the
     // generic "stop at [marker]" pattern so it takes precedence)
-    const naturalStopMatch = lower.match(/stop\s+at\s+(next\s+(?:period|sentence|paragraph|beat|scene|line))/);
+    const naturalStopMatch = lower.match(/stop\s+at\s+(?:the\s+)?(next\s+(?:period|sentence|paragraph|line))/);
     if (naturalStopMatch?.[1]) {
         return { instruction: `Stop at the next ${naturalStopMatch[1].replace('next ', '')}.`, isExplicit: true };
     }
@@ -79,6 +90,23 @@ function respectsStoppingPoint(content: string, instruction: string): boolean {
         return actualCount === expectedCount;
     }
 
+    // Check for natural stop instructions produced by parseStoppingPoint
+    // (e.g., "Stop at the next period."). Counts the relevant boundary in the
+    // generated content; respected means no more than one boundary unit.
+    const naturalMatch = instruction.match(/Stop at the next (period|sentence|paragraph|line)\b/);
+    if (naturalMatch?.[1]) {
+        switch (naturalMatch[1]) {
+            case 'period':
+                return (content.match(/\./g) ?? []).length <= 1;
+            case 'sentence':
+                return (content.match(/[.!?]/g) ?? []).length <= 1;
+            case 'paragraph':
+                return (content.match(/\n\s*\n/g) ?? []).length === 0;
+            case 'line':
+                return (content.match(/\n/g) ?? []).length === 0;
+        }
+    }
+
     // Check for "stop at" markers
     if (instruction.includes('Stop exactly at')) {
         // Content should end near the specified marker
@@ -111,6 +139,31 @@ function truncateToStoppingPoint(content: string, instruction: string): string {
         const paragraphs = content.split(/\n\s*\n/);
         const truncated = paragraphs.slice(0, expectedCount).join('\n\n');
         return truncated;
+    }
+
+    // Handle natural stop instructions produced by parseStoppingPoint
+    // (e.g., "Stop at the next period."). Cut at the first matching boundary
+    // and include the boundary character(s) where it makes sense.
+    const naturalMatch = instruction.match(/Stop at the next (period|sentence|paragraph|line)\b/);
+    if (naturalMatch?.[1]) {
+        switch (naturalMatch[1]) {
+            case 'period': {
+                const idx = content.search(/\./);
+                return idx >= 0 ? content.slice(0, idx + 1) : content;
+            }
+            case 'sentence': {
+                const idx = content.search(/[.!?]/);
+                return idx >= 0 ? content.slice(0, idx + 1) : content;
+            }
+            case 'paragraph': {
+                const idx = content.search(/\n\s*\n/);
+                return idx >= 0 ? content.slice(0, idx).replace(/\s+$/, '') : content;
+            }
+            case 'line': {
+                const idx = content.search(/\n/);
+                return idx >= 0 ? content.slice(0, idx) : content;
+            }
+        }
     }
 
     // Handle "stop at" markers
@@ -182,19 +235,67 @@ export async function loadAdditionalContext(
     return readVaultFiles(plugin.app.vault, contextFilePaths, 'Reference file', plugin.settings.contextMaxCharsPerFile);
 }
 
+/**
+ * Load the active manuscript's linked plot map text, if any.
+ * Returns empty string when no plot map is linked or it cannot be read.
+ * Capped by the `contextMaxCharsPerFile` setting.
+ */
+async function loadPlotMapText(plugin: EventideQuillPlugin): Promise<string> {
+    const plotMapPath = plugin.currentPlotMap;
+    if (!plotMapPath) return '';
+    const text = await readVaultFileText(plugin.app.vault, plotMapPath, plugin.settings.contextMaxCharsPerFile);
+    // The user may have unlinked or swapped the plot map during the read.
+    // Drop the result if the active link no longer matches the one we read so
+    // stale text from the old note is never sent as AI context.
+    if (plugin.currentPlotMap !== plotMapPath) return '';
+    if (!text) {
+        console.warn('Quill: Linked plot map note could not be read:', plotMapPath);
+    }
+    return text;
+}
+
+/** Build a plot map system message, or null when there is no plot map text. */
+async function buildPlotMapMessage(plugin: EventideQuillPlugin): Promise<ChatMessage | null> {
+    const text = await loadPlotMapText(plugin);
+    if (!text) return null;
+    return { role: 'system', content: `Plot map (reference):\n${text}` };
+}
+
+/**
+ * Compute active inline-directive steering for the cursor position.
+ * Returns one `inline`-source entry per directive in the contiguous trailing
+ * run. Empty when directive processing is disabled or no directives are active.
+ */
+function inlineSteering(plugin: EventideQuillPlugin, textBeforeCursor: string): ActiveSteering[] {
+    if (!plugin.settings.enableInlineDirectives) return [];
+    return parseDirectives(textBeforeCursor).map((d) => ({ source: 'inline' as const, text: d }));
+}
+
+/** Build a system message describing active inline directives, or null when none are active.
+ *  Used by the option-generation modes so option cards reflect directive intent. */
+function buildDirectiveMessage(plugin: EventideQuillPlugin, textBeforeCursor: string): ChatMessage | null {
+    const steering = inlineSteering(plugin, textBeforeCursor);
+    if (steering.length === 0) return null;
+    const body = steering.map((s) => `- ${s.text}`).join('\n');
+    return {
+        role: 'system',
+        content: `Active inline directives at the cursor:\n${body}\nReflect this intent in your suggestions.`
+    };
+}
+
 /** Current state of a co-writer drafting session. */
 export type DraftState = 'idle' | 'generating' | 'draft';
 
-/** Guidance mode phase. */
-export type GuidancePhase = 'discern' | 'clarify' | 'plan' | 'direction';
+/** Coach mode phase. */
+export type CoachPhase = 'discern' | 'clarify' | 'plan' | 'direction';
 
-/** A guidance session state. */
-export interface GuidanceSession {
-    /** Current phase of the guidance process. */
-    phase: GuidancePhase;
+/** A coach session state. */
+export interface CoachSession {
+    /** Current phase of the coaching process. */
+    phase: CoachPhase;
     /** The AI's analysis or response for the current phase. */
     response: string;
-    /** Summary of the guidance for use in option generation. */
+    /** Summary of the coaching for use in option generation. */
     summary: string;
     /** Whether this is the first turn (phase 1: discern intent). */
     isFirstTurn: boolean;
@@ -273,8 +374,6 @@ export class CoWriterSession {
     // --- Callbacks ---
 
     onThought: ((thought: string) => void) | null = null;
-    onStateChange: ((state: DraftState) => void) | null = null;
-    onDraftComplete: (() => void) | null = null;
     onChatUpdate: (() => void) | null = null;
     onOptionsLoading: ((loading: boolean) => void) | null = null;
     /** Called after a draft is accepted, to trigger fresh options. */
@@ -288,14 +387,23 @@ export class CoWriterSession {
     onDiscussFinished: (() => void) | null = null;
     /** Called when the discuss response encounters an error. */
     onDiscussError: ((message: string) => void) | null = null;
-    /** Called when the guidance mode reaches the direction phase, to auto-generate options. */
-    onGuidanceDirectionReady: (() => void) | null = null;
-    /** Current guidance session, if guidance mode is active. */
-    guidanceSession: GuidanceSession | null = null;
-    /** Whether guidance mode is currently active. */
-    guidanceActive = false;
-    /** Whether option cards have been auto-generated for the current guidance session. */
-    private guidanceOptionsGenerated = false;
+    /** Called when the coach mode reaches the direction phase, to auto-generate options. */
+    onCoachDirectionReady: (() => void) | null = null;
+    /** Current coach session, if coach mode is active. */
+    coachSession: CoachSession | null = null;
+    /** Whether coach mode is currently active. */
+    coachActive = false;
+    /** Whether option cards have been auto-generated for the current coach session. */
+    private coachOptionsGenerated = false;
+
+    /** Fulfill-mode proposed edits (one per directive), in document order. */
+    fulfillChanges: ChangeSet = new ChangeSet();
+    /** Direct-mode proposed continuation (pure insertion at the cursor), awaiting review. */
+    directChanges: ChangeSet = new ChangeSet();
+    /** Whether a Fulfill sweep is currently in progress. */
+    fulfillActive = false;
+    /** Called whenever Fulfill edits change (generation progress, approval, rejection). */
+    onFulfillUpdate: (() => void) | null = null;
 
     /**
      * Analyze the voice of a prose passage using the AI provider.
@@ -372,11 +480,6 @@ export class CoWriterSession {
         }
         const editor = markdownView.editor;
 
-        // If a draft exists, revert it before starting fresh
-        if (this.draftState === 'draft') {
-            this.revertDraft(editor);
-        }
-
         // Populate context engine so the context tab shows data before the API call
         if (!plugin.currentAssembly) {
             await plugin.assembleDocumentContext(editor.getValue(), filePath);
@@ -418,11 +521,19 @@ export class CoWriterSession {
                 : '';
 
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
+        const optionsPlotMap = await buildPlotMapMessage(plugin);
+        const optionsDirective = buildDirectiveMessage(plugin, proseForOptions);
 
         const prompt = getCoWriterOptionPrompt(proseForOptions || '(empty document)', direction);
         const messages: ChatMessage[] = [];
         if (vaultContext) {
             messages.push({ role: 'system', content: `Vault context for reference:\n${vaultContext}` });
+        }
+        if (optionsPlotMap) {
+            messages.push(optionsPlotMap);
+        }
+        if (optionsDirective) {
+            messages.push(optionsDirective);
         }
         messages.push(...additionalContextMessages, ...this.discussContextMessages(), {
             role: 'user',
@@ -512,15 +623,18 @@ export class CoWriterSession {
     /**
      * Parse the AI's response into an array of CoWriterOption.
      * Expects a JSON array of { label, description } objects.
+     * @param response - The raw model response.
+     * @param expectedCount - Required array length. Defaults to 3 (Direct mode);
+     *   Coach mode passes 1 since the coaching session already established intent.
      */
-    private parseOptionsResponse(response: string): CoWriterOption[] | null {
+    private parseOptionsResponse(response: string, expectedCount = 3): CoWriterOption[] | null {
         const trimmed = response.trim();
         const jsonMatch = trimmed.match(/\[[\s\S]*\]/);
         if (!jsonMatch) return null;
 
         try {
             const parsed = JSON.parse(jsonMatch[0]) as unknown[];
-            if (!Array.isArray(parsed) || parsed.length !== 3) return null;
+            if (!Array.isArray(parsed) || parsed.length !== expectedCount) return null;
 
             return parsed.map((item) => {
                 const obj = item as Record<string, unknown>;
@@ -608,6 +722,14 @@ export class CoWriterSession {
         }
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
         injectedContext.push(...additionalContextMessages);
+        const discussPlotMap = await buildPlotMapMessage(plugin);
+        if (discussPlotMap) {
+            injectedContext.push(discussPlotMap);
+        }
+        const discussDirective = buildDirectiveMessage(plugin, proseForContext);
+        if (discussDirective) {
+            injectedContext.push(discussDirective);
+        }
 
         const prompt = getCoWriterDiscussPrompt(proseForContext || '(empty document)', message);
 
@@ -754,7 +876,7 @@ export class CoWriterSession {
     }
 
     /**
-     * Start a guidance session with the AI.
+     * Start a coach session with the AI.
      * The AI analyzes the passage, asks clarifying questions, and produces
      * a structured plan with executable direction.
      *
@@ -762,13 +884,9 @@ export class CoWriterSession {
      * 1. Intent discernment — AI proposes what the writer might be trying to achieve
      * 2. Clarifying questions — AI asks targeted questions to narrow down direction
      * 3. Plan — AI creates a structured plan based on clarified intent
-     * 4. Direction — AI provides concrete, actionable guidance
+     * 4. Direction — AI provides concrete, actionable direction
      */
-    async sendGuidance(
-        plugin: EventideQuillPlugin,
-        message: string,
-        currentPhase: GuidancePhase = 'discern'
-    ): Promise<void> {
+    async sendCoach(plugin: EventideQuillPlugin, message: string): Promise<void> {
         const chat = plugin.getDefaultChatProvider();
         if (!chat.provider) {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
@@ -779,14 +897,14 @@ export class CoWriterSession {
         const activeFile = plugin.app.workspace.getActiveFile();
         const filePath = activeFile?.path ?? this.manuscriptPath;
         if (!filePath) {
-            new Notice('Quill: Open a manuscript to use guidance.');
+            new Notice('Quill: Open a manuscript to use coaching.');
             return;
         }
         this.manuscriptPath = filePath;
 
         const markdownView = findEditorView(plugin.app, filePath);
         if (!markdownView) {
-            new Notice('Quill: Open a manuscript editor to use guidance.');
+            new Notice('Quill: Open a manuscript editor to use coaching.');
             return;
         }
         const editor = markdownView.editor;
@@ -823,19 +941,27 @@ export class CoWriterSession {
         }
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
         injectedContext.push(...additionalContextMessages);
+        const coachPlotMap = await buildPlotMapMessage(plugin);
+        if (coachPlotMap) {
+            injectedContext.push(coachPlotMap);
+        }
+        const coachDirective = buildDirectiveMessage(plugin, proseForContext);
+        if (coachDirective) {
+            injectedContext.push(coachDirective);
+        }
 
-        // Initialize guidance session on first call
-        if (!this.guidanceSession || (this.guidanceSession.phase === 'discern' && message)) {
-            const prompt = getCoWriterGuidancePrompt(proseForContext || '(empty document)', message);
-            this.guidanceSession = {
+        // Initialize coach session on first call
+        if (!this.coachSession || (this.coachSession.phase === 'discern' && message)) {
+            const prompt = getCoWriterCoachPrompt(proseForContext || '(empty document)', message);
+            this.coachSession = {
                 phase: 'discern',
                 response: '',
                 summary: '',
                 isFirstTurn: true,
                 clarifyRound: 0
             };
-            this.guidanceActive = true;
-            this.guidanceOptionsGenerated = false;
+            this.coachActive = true;
+            this.coachOptionsGenerated = false;
 
             const systemPrompt: ChatMessage = {
                 role: 'system',
@@ -846,23 +972,23 @@ export class CoWriterSession {
             this.discussCurrentMessages = [systemPrompt, { role: 'user', content: prompt }];
         } else {
             // Subsequent turn
-            const phase = this.guidanceSession.phase;
+            const phase = this.coachSession.phase;
             if (phase === 'plan' || phase === 'direction') {
                 // Revision mode — user gave feedback on an existing plan
-                const revisionPrompt = getCoWriterGuidanceRevision(
+                const revisionPrompt = getCoWriterCoachRevision(
                     proseForContext || '(empty document)',
                     message,
-                    this.guidanceSession.response || this.guidanceSession.summary,
-                    phase === 'direction' ? this.guidanceSession.response : ''
+                    this.coachSession.response || this.coachSession.summary,
+                    phase === 'direction' ? this.coachSession.response : ''
                 );
                 this.discussCurrentMessages.push({ role: 'user', content: revisionPrompt });
             } else {
                 // Normal follow-up (discern or clarify phase)
-                const followUpPrompt = getCoWriterGuidanceFollowUp(
+                const followUpPrompt = getCoWriterCoachFollowUp(
                     proseForContext || '(empty document)',
                     message,
                     phase === 'discern' ? 1 : 2,
-                    this.guidanceSession.clarifyRound
+                    this.coachSession.clarifyRound
                 );
                 this.discussCurrentMessages.push({ role: 'user', content: followUpPrompt });
             }
@@ -895,7 +1021,7 @@ export class CoWriterSession {
                     this.onOptionsLoading?.(false);
                     return;
                 }
-                console.warn('Quill: Guidance compaction summarization failed, continuing without compaction.', err);
+                console.warn('Quill: Coach compaction summarization failed, continuing without compaction.', err);
             }
         }
 
@@ -905,12 +1031,12 @@ export class CoWriterSession {
             ...this.discussCurrentMessages.slice(1)
         ];
 
-        console.warn('[Quill Co-writer] Guidance context', {
+        console.warn('[Quill Co-writer] Coach context', {
             manuscriptExcerptChars: proseForContext.length,
             vaultContextChars: vaultContext.length,
             vaultContextFiles: plugin.currentAssembly?.contextItems.length ?? 0,
             additionalFiles: this.contextFilePaths,
-            phase: this.guidanceSession?.phase,
+            phase: this.coachSession?.phase,
             totalTokens,
             maxTokens
         });
@@ -943,37 +1069,37 @@ export class CoWriterSession {
                 }
             }
 
-            // Update guidance session
-            if (this.guidanceSession) {
-                this.guidanceSession.response = response;
-                this.guidanceSession.isFirstTurn = false;
+            // Update coach session
+            if (this.coachSession) {
+                this.coachSession.response = response;
+                this.coachSession.isFirstTurn = false;
 
                 const askedQuestions = response.includes('?');
 
                 // Advance phase
-                if (this.guidanceSession.phase === 'discern') {
-                    this.guidanceSession.phase = 'clarify';
-                    this.guidanceSession.clarifyRound = 1;
-                } else if (this.guidanceSession.phase === 'clarify') {
-                    if (askedQuestions && this.guidanceSession.clarifyRound < 2) {
-                        this.guidanceSession.clarifyRound++;
+                if (this.coachSession.phase === 'discern') {
+                    this.coachSession.phase = 'clarify';
+                    this.coachSession.clarifyRound = 1;
+                } else if (this.coachSession.phase === 'clarify') {
+                    if (askedQuestions && this.coachSession.clarifyRound < 2) {
+                        this.coachSession.clarifyRound++;
                     } else {
-                        this.guidanceSession.phase = 'plan';
+                        this.coachSession.phase = 'plan';
                     }
-                } else if (this.guidanceSession.phase === 'plan') {
-                    this.guidanceSession.phase = 'direction';
+                } else if (this.coachSession.phase === 'plan') {
+                    this.coachSession.phase = 'direction';
                 }
 
                 // Build summary for option generation
-                this.guidanceSession.summary = this.buildGuidanceSummary();
+                this.coachSession.summary = this.buildCoachSummary();
             }
 
             // Determine if this is a revision (plan/direction follow-up after options generated)
             const isRevision =
-                this.guidanceOptionsGenerated &&
-                this.guidanceSession !== null &&
-                (this.guidanceSession.phase === 'plan' || this.guidanceSession.phase === 'direction') &&
-                !this.guidanceSession.isFirstTurn;
+                this.coachOptionsGenerated &&
+                this.coachSession !== null &&
+                (this.coachSession.phase === 'plan' || this.coachSession.phase === 'direction') &&
+                !this.coachSession.isFirstTurn;
 
             // Update chat history
             const lastIdx = this.chatHistory.length - 1;
@@ -1001,14 +1127,18 @@ export class CoWriterSession {
 
             // Auto-generate options when plan or direction phase is reached for the first time
             const reachedPlanOrDirection =
-                this.guidanceSession?.phase === 'plan' || this.guidanceSession?.phase === 'direction';
-            const willAutoGenerate = reachedPlanOrDirection && !this.guidanceOptionsGenerated;
+                this.coachSession?.phase === 'plan' || this.coachSession?.phase === 'direction';
+            const willAutoGenerate = reachedPlanOrDirection && !this.coachOptionsGenerated;
+
+            // Unlock before the callback so coachToOptions (which re-locks) is
+            // not immediately unlocked by a deferred unlockEditor call.
+            this.unlockEditor();
+
             if (willAutoGenerate) {
-                this.guidanceOptionsGenerated = true;
-                this.onGuidanceDirectionReady?.();
+                this.coachOptionsGenerated = true;
+                this.onCoachDirectionReady?.();
             }
 
-            this.unlockEditor();
             if (!willAutoGenerate) {
                 this.optionsLoading = false;
                 this.onOptionsLoading?.(false);
@@ -1023,7 +1153,7 @@ export class CoWriterSession {
             }
             const msg = err instanceof Error ? err.message : String(err);
             this.onDiscussError?.(msg);
-            new Notice(`Quill: Guidance failed — ${msg}`);
+            new Notice(`Quill: Coaching failed — ${msg}`);
             this.unlockEditor();
             this.optionsLoading = false;
             this.onOptionsLoading?.(false);
@@ -1032,20 +1162,20 @@ export class CoWriterSession {
     }
 
     /**
-     * Build a summary of the guidance session for use in option generation.
+     * Build a summary of the coaching session for use in option generation.
      */
-    private buildGuidanceSummary(): string {
-        if (!this.guidanceSession) return '';
-        return this.guidanceSession.response.trim().slice(0, 2000);
+    private buildCoachSummary(): string {
+        if (!this.coachSession) return '';
+        return this.coachSession.response.trim().slice(0, 2000);
     }
 
     /**
-     * Transition from guidance mode to option generation.
-     * Uses the guidance summary to generate continuation options.
+     * Transition from coach mode to option generation.
+     * Uses the coach summary to generate continuation options.
      */
-    async guidanceToOptions(plugin: EventideQuillPlugin, direction: string): Promise<void> {
-        if (!this.guidanceSession) {
-            new Notice('Quill: No active guidance session.');
+    async coachToOptions(plugin: EventideQuillPlugin, direction: string): Promise<void> {
+        if (!this.coachSession) {
+            new Notice('Quill: No active coaching session.');
             return;
         }
 
@@ -1061,21 +1191,17 @@ export class CoWriterSession {
         const activeFile = plugin.app.workspace.getActiveFile();
         const filePath = activeFile?.path ?? this.manuscriptPath;
         if (!filePath) {
-            new Notice('Quill: Open a manuscript to use guidance.');
+            new Notice('Quill: Open a manuscript to use coaching.');
             return;
         }
         this.manuscriptPath = filePath;
 
         const markdownView = findEditorView(plugin.app, filePath);
         if (!markdownView) {
-            new Notice('Quill: Open a manuscript editor to use guidance.');
+            new Notice('Quill: Open a manuscript editor to use coaching.');
             return;
         }
         const editor = markdownView.editor;
-
-        if (this.draftState === 'draft') {
-            this.revertDraft(editor);
-        }
 
         if (!plugin.currentAssembly) {
             await plugin.assembleDocumentContext(editor.getValue(), filePath);
@@ -1093,12 +1219,12 @@ export class CoWriterSession {
         const textBeforeCursor = fullText.slice(0, cursorOffset);
         const proseForOptions = textBeforeCursor.slice(-4000);
 
-        const guidanceSummary = this.buildGuidanceSummary();
-        const prompt = getCoWriterGuidanceToOptions(proseForOptions || '(empty document)', guidanceSummary, direction);
+        const coachSummary = this.buildCoachSummary();
+        const prompt = getCoWriterCoachToOptions(proseForOptions || '(empty document)', coachSummary, direction);
 
         this.chatHistory.push({
             role: 'user',
-            content: direction || 'Generate continuation options based on the guidance provided.'
+            content: direction || 'Generate continuation options based on the coaching provided.'
         });
 
         const vaultContext =
@@ -1106,10 +1232,18 @@ export class CoWriterSession {
                 ? buildVaultContext(plugin.currentAssembly.contextItems)
                 : '';
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
+        const coachOptionsPlotMap = await buildPlotMapMessage(plugin);
+        const coachOptionsDirective = buildDirectiveMessage(plugin, proseForOptions);
 
         const messages: ChatMessage[] = [];
         if (vaultContext) {
             messages.push({ role: 'system', content: `Vault context for reference:\n${vaultContext}` });
+        }
+        if (coachOptionsPlotMap) {
+            messages.push(coachOptionsPlotMap);
+        }
+        if (coachOptionsDirective) {
+            messages.push(coachOptionsDirective);
         }
         messages.push(...additionalContextMessages, { role: 'user', content: prompt });
 
@@ -1136,29 +1270,22 @@ export class CoWriterSession {
                 }
             }
 
-            const parsed = this.parseOptionsResponse(response);
-            if (parsed && parsed.length === 3) {
+            const parsed = this.parseOptionsResponse(response, 1);
+            if (parsed && parsed.length === 1) {
                 this.currentOptions = parsed;
             } else {
                 this.currentOptions = [
                     {
-                        label: 'Follow the plan',
-                        description: 'Execute the guidance plan as written, advancing the scene naturally.'
-                    },
-                    {
-                        label: 'Adjust the approach',
-                        description: 'Modify the guidance plan slightly to better fit the established voice and pacing.'
-                    },
-                    {
-                        label: 'Explore an alternative',
-                        description: 'Take the guidance in a different but related direction that feels more authentic.'
+                        label: 'Continue from coaching',
+                        description:
+                            'Advance the scene following the coaching plan, in the established voice and pacing.'
                     }
                 ];
             }
 
             this.chatHistory.push({
                 role: 'assistant',
-                content: 'Here are three continuation options based on the guidance:',
+                content: 'Here is a continuation option based on the coaching:',
                 options: this.currentOptions,
                 thought: thought || undefined
             });
@@ -1183,13 +1310,278 @@ export class CoWriterSession {
     }
 
     /**
-     * End the current guidance session.
+     * End the current coach session.
      */
-    endGuidanceSession(): void {
-        this.guidanceSession = null;
-        this.guidanceActive = false;
-        this.guidanceOptionsGenerated = false;
+    endCoachSession(): void {
+        this.coachSession = null;
+        this.coachActive = false;
+        this.coachOptionsGenerated = false;
         this.discussCurrentMessages = [];
+    }
+
+    /**
+     * Fulfill mode: scan the active document for every `<!-- quill: -->` directive
+     * and generate a fulfillment for each, in document order. Each completed
+     * fulfillment is added to {@link fulfillChanges} as a proposed edit (replace
+     * the comment with prose) and rendered for review via the shared change-diff.
+     *
+     * @param globalInstruction  Optional overall direction prepended to every directive's prompt.
+     */
+    async fulfillDirectives(plugin: EventideQuillPlugin, globalInstruction?: string): Promise<void> {
+        const chat = plugin.getDefaultChatProvider();
+        if (!chat.provider) {
+            this.fulfillActive = false;
+            this.onFulfillUpdate?.();
+            new Notice('Quill: No AI provider configured. Set one up in settings.');
+            return;
+        }
+        const activeFile = plugin.app.workspace.getActiveFile();
+        const filePath = activeFile?.path ?? this.manuscriptPath;
+        if (!filePath) {
+            this.fulfillActive = false;
+            this.onFulfillUpdate?.();
+            new Notice('Quill: Open a manuscript to run fulfill.');
+            return;
+        }
+        this.manuscriptPath = filePath;
+        const markdownView = findEditorView(plugin.app, filePath);
+        if (!markdownView) {
+            this.fulfillActive = false;
+            this.onFulfillUpdate?.();
+            new Notice('Quill: Open a manuscript editor to run fulfill.');
+            return;
+        }
+        const editor = markdownView.editor;
+
+        if (!plugin.currentAssembly) {
+            await plugin.assembleDocumentContext(editor.getValue(), filePath);
+        }
+
+        this.cancelGeneration();
+        this.app = plugin.app;
+
+        const cm = (editor as unknown as { cm: EditorView }).cm;
+        if (!cm) {
+            this.fulfillActive = false;
+            this.onFulfillUpdate?.();
+            new Notice('Quill: Could not access editor for fulfill.');
+            return;
+        }
+
+        const fullText = editor.getValue();
+        const ranges = parseAllDirectives(fullText);
+        if (ranges.length === 0) {
+            this.fulfillActive = false;
+            this.onFulfillUpdate?.();
+            new Notice('Quill: No inline directives found. Add some with the "insert inline directive" command.');
+            return;
+        }
+
+        // Voice profile (cached per manuscript)
+        if (plugin.settings.coWriterVoiceMatch && (!this.voiceProfile || this.voiceProfileFile !== filePath)) {
+            const profile = await this.analyzeVoice(chat.provider, chat.modelId, fullText.slice(-3000));
+            if (profile) {
+                this.voiceProfile = profile;
+                this.voiceProfileFile = filePath;
+            }
+        }
+
+        const plotMapText = await loadPlotMapText(plugin);
+
+        this.fulfillChanges.clear();
+        this.fulfillActive = true;
+        clearDiffEdits(cm, 'fulfill');
+        this.onFulfillUpdate?.();
+
+        const notice = new Notice(
+            `Quill: Fulfilling ${ranges.length} directive${ranges.length === 1 ? '' : 's'}...`,
+            0
+        );
+
+        try {
+            for (const range of ranges) {
+                this.abortController = new AbortController();
+                // Re-read the editor each iteration: the user may have edited
+                // during a prior sequential call, which would shift offsets.
+                const currentDoc = editor.getValue();
+                // Validate the directive comment is still at the expected
+                // offset; skip if it was moved, edited, or removed.
+                const currentSlice = currentDoc.slice(range.start, range.end);
+                const directiveMatch = currentSlice.match(/<!--\s*quill:\s*([\s\S]*?)\s*-->/);
+                if (!directiveMatch || (directiveMatch[1] ?? '').trim() !== range.text) {
+                    continue;
+                }
+                const before = currentDoc.slice(Math.max(0, range.start - 2000), range.start);
+                const after = currentDoc.slice(range.end, range.end + 2000);
+                const systemPrompt = getCoWriterGenerationPrompt(
+                    this.voiceProfile ?? {
+                        sentenceLengthDistribution: 'unknown',
+                        dialogueRatio: 0.5,
+                        vocabularyRegister: 'unknown',
+                        keyPatterns: []
+                    },
+                    plugin.settings.narrativeVoicePreset,
+                    undefined,
+                    [{ source: 'inline', text: range.text }],
+                    plotMapText
+                );
+                const userMessage = [
+                    'Fulfill the inline directive at this point in the scene. Your prose will replace the directive comment and sit between the text above and the text below.',
+                    'Read the surrounding prose carefully. Do NOT repeat or rephrase content that already appears before or after the directive — the reader has already seen it.',
+                    'Insert exactly what the directive asks for. If it says "a paragraph," write one paragraph. If it asks for a specific detail, action, or description, write only that — not a summary of what is already there.',
+                    'Your prose must flow naturally into the text that follows it. Write in the established voice and perspective. Output only the prose — no labels, no explanations.',
+                    ...(globalInstruction ? ['', `Overall direction for this sweep: ${globalInstruction}`] : []),
+                    '',
+                    `Directive: "${range.text}"`,
+                    '',
+                    '--- Prose before the directive ---',
+                    before || '(start of document)',
+                    '',
+                    '--- Prose after the directive (your prose must flow into this) ---',
+                    after || '(end of document)'
+                ].join('\n');
+
+                let prose = '';
+                try {
+                    const stream = chat.provider.chatCompletion({
+                        messages: [
+                            { role: 'system', content: systemPrompt },
+                            { role: 'user', content: userMessage }
+                        ],
+                        model: chat.modelId,
+                        temperature: plugin.settings.coWriterTemperature,
+                        maxTokens: plugin.settings.coWriterMaxOutputTokens,
+                        signal: this.abortController.signal
+                    });
+                    for await (const chunk of stream) {
+                        if (chunk.done) break;
+                        prose += chunk.text;
+                    }
+                } catch (err: unknown) {
+                    if (err instanceof Error && err.name === 'AbortError') {
+                        return;
+                    }
+                    // Skip this directive on error; already-completed edits remain reviewable.
+                    continue;
+                }
+                this.fulfillChanges.add({
+                    from: range.start,
+                    to: range.end,
+                    newText: sanitizeProse(prose).trim(),
+                    label: range.text
+                });
+                pushDiffEdits(cm, toDiffSnapshots(this.fulfillChanges, 'fulfill'));
+                this.onFulfillUpdate?.();
+            }
+        } finally {
+            notice.hide();
+            this.fulfillActive = false;
+            this.onFulfillUpdate?.();
+        }
+    }
+
+    /** Resolve the CodeMirror view for the active manuscript, or null. */
+    private getManuscriptCm(): EditorView | null {
+        if (!this.app || !this.manuscriptPath) return null;
+        const markdownView = findEditorView(this.app, this.manuscriptPath);
+        return markdownView ? (markdownView.editor as unknown as { cm: EditorView }).cm : null;
+    }
+    /**
+     * Approve one Fulfill edit: replace its directive comment with the generated
+     * prose (the comment is consumed). The shared change-diff is updated in the
+     * same transaction so there is no flicker. Later edits' offsets are remapped
+     * by the ChangeSet.
+     */
+    approveFulfillSection(plugin: EventideQuillPlugin, id: number): void {
+        void plugin;
+        const cm = this.getManuscriptCm();
+        if (!cm) return;
+        syncChangeSetPositions(cm, this.fulfillChanges, 'fulfill');
+        const change = this.fulfillChanges.approve(id);
+        if (!change) return;
+        const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'fulfill');
+        cm.dispatch({
+            changes: change,
+            effects: setDiffEdits.of([...preserved, ...toDiffSnapshots(this.fulfillChanges, 'fulfill')]),
+            selection: { anchor: change.from + change.insert.length }
+        });
+        this.onFulfillUpdate?.();
+    }
+
+    /** Reject one Fulfill edit: leave the directive comment in place, un-consumed. */
+    rejectFulfillSection(id: number): void {
+        const cm = this.getManuscriptCm();
+        if (cm) syncChangeSetPositions(cm, this.fulfillChanges, 'fulfill');
+        this.fulfillChanges.reject(id);
+        if (cm) pushDiffEdits(cm, toDiffSnapshots(this.fulfillChanges, 'fulfill'));
+        this.onFulfillUpdate?.();
+    }
+
+    /** Approve every pending edit. Changes dispatch sequentially (offsets remap as each commits). */
+    approveAllFulfill(plugin: EventideQuillPlugin): void {
+        void plugin;
+        const cm = this.getManuscriptCm();
+        if (!cm) return;
+        syncChangeSetPositions(cm, this.fulfillChanges, 'fulfill');
+        for (const change of this.fulfillChanges.approveAll()) {
+            cm.dispatch({ changes: change });
+        }
+        pushDiffEdits(cm, toDiffSnapshots(this.fulfillChanges, 'fulfill'));
+        this.onFulfillUpdate?.();
+    }
+
+    /** Reject every pending edit without touching the document. */
+    rejectAllFulfill(): void {
+        this.fulfillChanges.rejectAll();
+        const cm = this.getManuscriptCm();
+        if (cm) pushDiffEdits(cm, toDiffSnapshots(this.fulfillChanges, 'fulfill'));
+        this.onFulfillUpdate?.();
+    }
+
+    /** Clear all Fulfill state (e.g., on new chat / reset). */
+    clearFulfill(): void {
+        this.fulfillChanges.clear();
+        this.fulfillActive = false;
+        const cm = this.getManuscriptCm();
+        if (cm) clearDiffEdits(cm, 'fulfill');
+        this.onFulfillUpdate?.();
+    }
+
+    /**
+     * Approve the Direct continuation: commit the buffered prose at the cursor
+     * and clear the diff. Fires onDraftAccepted so fresh options regenerate
+     * (preserving the old accept-a-draft behavior).
+     */
+    approveDirectChange(plugin: EventideQuillPlugin, id: number): void {
+        void plugin;
+        const cm = this.getManuscriptCm();
+        if (!cm) return;
+        syncChangeSetPositions(cm, this.directChanges, 'direct');
+        const change = this.directChanges.approve(id);
+        if (!change) return;
+        const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'direct');
+        cm.dispatch({
+            changes: change,
+            effects: setDiffEdits.of(preserved),
+            selection: { anchor: change.from + change.insert.length }
+        });
+        this.onDraftAccepted?.();
+    }
+
+    /** Reject the Direct continuation: discard the buffered prose (nothing was
+     *  ever written to the document) and clear the diff. */
+    rejectDirectChange(id: number): void {
+        void id;
+        this.directChanges.clear();
+        const cm = this.getManuscriptCm();
+        if (cm) clearDiffEdits(cm, 'direct');
+    }
+
+    /** Clear Direct change state (e.g., on reset / new chat). */
+    clearDirect(): void {
+        this.directChanges.clear();
+        const cm = this.getManuscriptCm();
+        if (cm) clearDiffEdits(cm, 'direct');
     }
 
     /**
@@ -1294,6 +1686,8 @@ export class CoWriterSession {
 
         // Build additional context from user-added files
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
+        const plotMapText = await loadPlotMapText(plugin);
+        const applySteering = inlineSteering(plugin, textBeforeCursor);
 
         const systemPrompt = getCoWriterGenerationPrompt(
             this.voiceProfile ?? {
@@ -1304,7 +1698,8 @@ export class CoWriterSession {
             },
             plugin.settings.narrativeVoicePreset,
             vaultContext,
-            false
+            applySteering,
+            plotMapText
         );
 
         const userMessage = [
@@ -1323,27 +1718,33 @@ export class CoWriterSession {
             { role: 'user', content: userMessage }
         ];
 
-        // Set up streaming — applyOption
+        // Set up streaming — applyOption (preview-diff)
         this.abortController = new AbortController();
         this.thoughtBuffer = '';
-        this.insertionStart = cursorOffset;
-        this.insertionLength = 0;
-        this.originalText = fullText;
-        this.draftState = 'generating';
-        this.onStateChange?.('generating');
-        this.lockEditor();
+        this.directChanges.clear();
+        const applyEdit = this.directChanges.add({
+            from: cursorOffset,
+            to: cursorOffset,
+            newText: '',
+            label: option.label
+        });
+        // 'generating' hides Approve/Reject while streaming; flipped to 'pending'
+        // once the result is final.
+        applyEdit.state = 'generating';
+        this.onOptionsLoading?.(true);
+        this.onChatUpdate?.();
 
         const cm = (editor as unknown as { cm: EditorView }).cm;
         if (!cm) {
             new Notice('Quill: Could not access editor for streaming.');
-            this.unlockEditor();
-            this.draftState = 'idle';
-            this.onStateChange?.('idle');
+            this.onOptionsLoading?.(false);
             return;
         }
+        syncChangeSetPositions(cm, this.directChanges, 'direct');
+        pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
 
         const notice = Platform.isMobile
-            ? new Notice('Quill: Continuing (mobile — this may take a moment)...', 0)
+            ? new Notice('Quill: Continuing (mobile \u2014 this may take a moment)...', 0)
             : new Notice('Quill: Continuing...', 0);
 
         try {
@@ -1357,100 +1758,60 @@ export class CoWriterSession {
 
             for await (const chunk of stream) {
                 if (chunk.done) break;
-
                 if (chunk.thought) {
                     this.thoughtBuffer += chunk.thought;
                     this.onThought?.(this.thoughtBuffer);
                 }
-
                 if (!chunk.text) continue;
-
-                const cleanText = sanitizeProse(chunk.text);
-                const insertAt = this.insertionStart + this.insertionLength;
-                cm.dispatch({
-                    changes: {
-                        from: insertAt,
-                        to: insertAt,
-                        insert: cleanText
-                    },
-                    selection: { anchor: insertAt + cleanText.length }
-                });
-                this.insertionLength += cleanText.length;
+                applyEdit.newText += sanitizeProse(chunk.text);
+                syncChangeSetPositions(cm, this.directChanges, 'direct');
+                pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
             }
 
-            console.warn('[Quill Co-writer] Draft continuation context', {
-                manuscriptExcerptChars: textBeforeCursor.slice(-8000).length,
-                vaultContextChars: vaultContext.length,
-                vaultContextFiles: plugin.currentAssembly?.contextItems.length ?? 0,
-                additionalFiles: this.contextFilePaths,
-                voiceProfile: this.voiceProfile
-                    ? {
-                          sentenceLengthDistribution: this.voiceProfile.sentenceLengthDistribution,
-                          dialogueRatio: this.voiceProfile.dialogueRatio,
-                          vocabularyRegister: this.voiceProfile.vocabularyRegister
-                      }
-                    : null,
-                narrativeVoicePreset: plugin.settings.narrativeVoicePreset,
-                insertionLength: this.insertionLength
-            });
+            if (plugin.settings.coWriterAppendNewline) {
+                applyEdit.newText = `${applyEdit.newText.replace(/\s+$/, '')}\n`;
+            }
+
+            if (applyEdit.newText.replace(/\s+$/, '').length === 0) {
+                new Notice('Quill: Received empty response from the AI provider.');
+                this.directChanges.clear();
+                clearDiffEdits(cm, 'direct');
+            } else {
+                applyEdit.state = 'pending';
+                syncChangeSetPositions(cm, this.directChanges, 'direct');
+                pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
+            }
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') {
-                notice.hide();
-                if (this.insertionLength > 0) {
-                    // Keep partial content as draft — user must accept or reject
-                    this.draftState = 'draft';
-                    this.onStateChange?.('draft');
+                if (applyEdit.newText.replace(/\s+$/, '').length === 0) {
+                    this.directChanges.clear();
+                    clearDiffEdits(cm, 'direct');
                 } else {
-                    this.unlockEditor();
-                    this.draftState = 'idle';
-                    this.onStateChange?.('idle');
-                    this.insertionStart = -1;
-                    this.insertionLength = 0;
+                    applyEdit.state = 'pending';
+                    syncChangeSetPositions(cm, this.directChanges, 'direct');
+                    pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
                 }
-                return;
+            } else {
+                new Notice(`Quill: Continuation failed \u2014 ${err instanceof Error ? err.message : String(err)}`);
+                this.directChanges.clear();
+                clearDiffEdits(cm, 'direct');
             }
-            new Notice(`Quill: Continuation failed — ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
             notice.hide();
-            this.unlockEditor();
-            this.draftState = 'idle';
-            this.onStateChange?.('idle');
-            return;
+            this.onOptionsLoading?.(false);
+            this.onChatUpdate?.();
         }
-
-        notice.hide();
-
-        if (this.insertionLength === 0) {
-            new Notice('Quill: Received empty response from the AI provider.');
-            this.unlockEditor();
-            this.draftState = 'idle';
-            this.onStateChange?.('idle');
-            return;
-        }
-
-        // Append trailing newline if enabled
-        if (plugin.settings.coWriterAppendNewline) {
-            const endPos = this.insertionStart + this.insertionLength;
-            const after = cm.state.sliceDoc(endPos, Math.min(endPos + 2, cm.state.doc.length));
-            if (after !== '\n\n') {
-                cm.dispatch({
-                    changes: { from: endPos, to: endPos, insert: '\n' },
-                    selection: { anchor: endPos + 1 }
-                });
-                this.insertionLength += 1;
-            }
-        }
-
-        this.draftState = 'draft';
-        this.onStateChange?.('draft');
-        this.onDraftComplete?.();
-        this.onChatUpdate?.();
     }
 
     /**
      * Direct mode: stream a continuation into the editor from the cursor
      * position, following the given direction.  No options phase.
      */
-    async generateDirect(plugin: EventideQuillPlugin, direction: string): Promise<void> {
+    async generateDirect(
+        plugin: EventideQuillPlugin,
+        direction: string,
+        extraSteering?: ActiveSteering[]
+    ): Promise<void> {
         const chat = plugin.getDefaultChatProvider();
         if (!chat.provider) {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
@@ -1473,10 +1834,6 @@ export class CoWriterSession {
         }
         const editor = markdownView.editor;
 
-        if (this.draftState === 'draft') {
-            this.revertDraft(editor);
-        }
-
         if (!plugin.currentAssembly) {
             await plugin.assembleDocumentContext(editor.getValue(), filePath);
         }
@@ -1485,8 +1842,18 @@ export class CoWriterSession {
         this.app = plugin.app;
         this.currentOptions = [];
 
-        const cursor = editor.getCursor();
         const fullText = editor.getValue();
+        // When direction is empty, the continuation is appended at EOF, so the
+        // generation context must be built from the full document — not from
+        // the (possibly mid-document) cursor position. Move the cursor now and
+        // derive cursorOffset from the insertion point so voice/steering/prose
+        // context all match the eventual edit location.
+        if (!direction) {
+            const endPos = editor.offsetToPos(fullText.length);
+            editor.setCursor(endPos);
+            editor.scrollIntoView({ from: endPos, to: endPos }, true);
+        }
+        const cursor = editor.getCursor();
         const cursorOffset = editor.posToOffset(cursor);
 
         this.chatHistory.push({
@@ -1523,6 +1890,8 @@ export class CoWriterSession {
                 : '';
 
         const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
+        const plotMapText = await loadPlotMapText(plugin);
+        const directSteering = [...inlineSteering(plugin, textBeforeCursor), ...(extraSteering ?? [])];
 
         const systemPrompt = getCoWriterGenerationPrompt(
             this.voiceProfile ?? {
@@ -1533,7 +1902,8 @@ export class CoWriterSession {
             },
             plugin.settings.narrativeVoicePreset,
             vaultContext,
-            false
+            directSteering,
+            plotMapText
         );
 
         const proseForContext = textBeforeCursor.slice(-12000);
@@ -1567,33 +1937,31 @@ export class CoWriterSession {
             { role: 'user', content: userMessage }
         ];
 
-        // Set up streaming — generateDirect
+        // Set up streaming — generateDirect (preview-diff)
         this.abortController = new AbortController();
         this.thoughtBuffer = '';
-        this.insertionStart = cursorOffset;
-        this.insertionLength = 0;
-        this.originalText = fullText;
+        this.directChanges.clear();
+        const directEdit = this.directChanges.add({
+            from: cursorOffset,
+            to: cursorOffset,
+            newText: '',
+            label: direction ? `Continue: ${direction.slice(0, 80)}` : 'Continuation'
+        });
+        // 'generating' hides Approve/Reject until the stream concludes or is
+        // cancelled; flipped to 'pending' below once there is a final result.
+        directEdit.state = 'generating';
 
-        if (!direction) {
-            const endPos = editor.offsetToPos(fullText.length);
-            editor.setCursor(endPos);
-            editor.scrollIntoView({ from: endPos, to: endPos }, true);
-            this.insertionStart = fullText.length;
-        }
-
-        this.draftState = 'generating';
-        this.onStateChange?.('generating');
+        this.onOptionsLoading?.(true);
         this.onChatUpdate?.();
-        this.lockEditor();
 
         const cm = (editor as unknown as { cm: EditorView }).cm;
         if (!cm) {
             new Notice('Quill: Could not access editor for streaming.');
-            this.unlockEditor();
-            this.draftState = 'idle';
-            this.onStateChange?.('idle');
+            this.onOptionsLoading?.(false);
             return;
         }
+        syncChangeSetPositions(cm, this.directChanges, 'direct');
+        pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
 
         const notice = Platform.isMobile
             ? new Notice('Quill: Continuing (mobile \u2014 this may take a moment)...', 0)
@@ -1610,174 +1978,81 @@ export class CoWriterSession {
 
             for await (const chunk of stream) {
                 if (chunk.done) break;
-
                 if (chunk.thought) {
                     this.thoughtBuffer += chunk.thought;
                     this.onThought?.(this.thoughtBuffer);
                 }
-
                 if (!chunk.text) continue;
-
-                const cleanText = sanitizeProse(chunk.text);
-                const insertAt = this.insertionStart + this.insertionLength;
-                cm.dispatch({
-                    changes: {
-                        from: insertAt,
-                        to: insertAt,
-                        insert: cleanText
-                    },
-                    selection: { anchor: insertAt + cleanText.length }
-                });
-                this.insertionLength += cleanText.length;
+                // Stream into the preview widget (the document is not modified
+                // during generation). Approve commits; Reject discards.
+                directEdit.newText += sanitizeProse(chunk.text);
+                syncChangeSetPositions(cm, this.directChanges, 'direct');
+                pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
             }
 
-            // Check if the generated content respects the stopping point
-            if (stoppingPoint && this.insertionLength > 0) {
-                const generatedContent = cm.state.sliceDoc(
-                    this.insertionStart,
-                    this.insertionStart + this.insertionLength
-                );
-                if (!respectsStoppingPoint(generatedContent, stoppingPoint.instruction)) {
-                    // Content went beyond the stopping point — truncate to the stopping point
+            // Stopping-point enforcement on the buffered text.
+            if (stoppingPoint && directEdit.newText.length > 0) {
+                if (!respectsStoppingPoint(directEdit.newText, stoppingPoint.instruction)) {
                     console.warn('[Quill Co-writer] Content exceeded stopping point, truncating');
-                    const truncated = truncateToStoppingPoint(generatedContent, stoppingPoint.instruction);
-                    if (truncated.length < generatedContent.length) {
-                        // Revert the full insertion and re-insert truncated version
-                        cm.dispatch({
-                            changes: {
-                                from: this.insertionStart,
-                                to: this.insertionStart + this.insertionLength,
-                                insert: truncated
-                            }
-                        });
-                        this.insertionLength = truncated.length;
+                    const truncated = truncateToStoppingPoint(directEdit.newText, stoppingPoint.instruction);
+                    if (truncated.length < directEdit.newText.length) {
+                        directEdit.newText = truncated;
                     }
                 }
             }
 
-            console.warn('[Quill Co-writer] Direct continuation context', {
-                manuscriptExcerptChars: proseForContext.length,
-                vaultContextChars: vaultContext.length,
-                vaultContextFiles: plugin.currentAssembly?.contextItems.length ?? 0,
-                additionalFiles: this.contextFilePaths,
-                voiceProfile: this.voiceProfile
-                    ? {
-                          sentenceLengthDistribution: this.voiceProfile.sentenceLengthDistribution,
-                          dialogueRatio: this.voiceProfile.dialogueRatio,
-                          vocabularyRegister: this.voiceProfile.vocabularyRegister
-                      }
-                    : null,
-                narrativeVoicePreset: plugin.settings.narrativeVoicePreset,
-                insertionLength: this.insertionLength
-            });
+            if (plugin.settings.coWriterAppendNewline) {
+                directEdit.newText = `${directEdit.newText.replace(/\s+$/, '')}\n`;
+            }
+
+            if (directEdit.newText.replace(/\s+$/, '').length === 0) {
+                new Notice('Quill: Received empty response from the AI provider.');
+                this.directChanges.clear();
+                clearDiffEdits(cm, 'direct');
+            } else {
+                directEdit.state = 'pending';
+                syncChangeSetPositions(cm, this.directChanges, 'direct');
+                pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
+            }
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') {
-                notice.hide();
-                if (this.insertionLength > 0) {
-                    // Keep partial content as draft — user must accept or reject
-                    this.draftState = 'draft';
-                    this.onStateChange?.('draft');
+                // Keep partial prose as a reviewable change; clear only if empty.
+                if (directEdit.newText.replace(/\s+$/, '').length === 0) {
+                    this.directChanges.clear();
+                    clearDiffEdits(cm, 'direct');
                 } else {
-                    this.unlockEditor();
-                    this.draftState = 'idle';
-                    this.onStateChange?.('idle');
-                    this.insertionStart = -1;
-                    this.insertionLength = 0;
+                    directEdit.state = 'pending';
+                    syncChangeSetPositions(cm, this.directChanges, 'direct');
+                    pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
                 }
-                return;
+            } else {
+                new Notice(`Quill: Continuation failed \u2014 ${err instanceof Error ? err.message : String(err)}`);
+                this.directChanges.clear();
+                clearDiffEdits(cm, 'direct');
             }
-            new Notice(`Quill: Continuation failed \u2014 ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
             notice.hide();
-            this.unlockEditor();
-            this.draftState = 'idle';
-            this.onStateChange?.('idle');
-            return;
+            this.onOptionsLoading?.(false);
+            this.onChatUpdate?.();
         }
-
-        notice.hide();
-
-        if (this.insertionLength === 0) {
-            new Notice('Quill: Received empty response from the AI provider.');
-            this.unlockEditor();
-            this.draftState = 'idle';
-            this.onStateChange?.('idle');
-            return;
-        }
-
-        if (plugin.settings.coWriterAppendNewline) {
-            const endPos = this.insertionStart + this.insertionLength;
-            const after = cm.state.sliceDoc(endPos, Math.min(endPos + 2, cm.state.doc.length));
-            if (after !== '\n\n') {
-                cm.dispatch({
-                    changes: { from: endPos, to: endPos, insert: '\n' },
-                    selection: { anchor: endPos + 1 }
-                });
-                this.insertionLength += 1;
-            }
-        }
-
-        this.draftState = 'draft';
-        this.onStateChange?.('draft');
-        this.onDraftComplete?.();
-        this.onChatUpdate?.();
-    }
-
-    /** Accept the current draft and reset state to idle. */
-    acceptDraft(): void {
-        if (this.draftState !== 'draft') return;
-        this.unlockEditor();
-        this.draftState = 'idle';
-        this.insertionStart = -1;
-        this.insertionLength = 0;
-        this.originalText = '';
-        this.thoughtBuffer = '';
-        this.onStateChange?.('idle');
-        this.onDraftAccepted?.();
     }
 
     /**
-     * Write a prose continuation based on the current guidance session state.
-     * Skips further Q&A and goes straight to generation, injecting the guidance
+     * Write a prose continuation based on the current coach session state.
+     * Skips further Q&A and goes straight to generation, injecting the coaching
      * context (summary, plan, discussion) into the direction.
      */
-    async guidanceWrite(plugin: EventideQuillPlugin): Promise<void> {
-        const guidanceContext = this.guidanceSession
-            ? [
-                  'The writer wants to continue based on your guidance.',
-                  '',
-                  `Current guidance: ${this.guidanceSession.summary || this.guidanceSession.response}`,
-                  this.guidanceSession.phase === 'direction' || this.guidanceSession.phase === 'plan'
-                      ? 'You have already developed a plan. Write the scene following that plan.'
-                      : 'Based on what you know so far, write the next part of the scene.'
-              ].join('\n')
+    async coachWrite(plugin: EventideQuillPlugin): Promise<void> {
+        const coachSteering: ActiveSteering[] = this.coachSession
+            ? [{ source: 'coach', text: this.coachSession.summary || this.coachSession.response }]
+            : [];
+        const direction = this.coachSession
+            ? this.coachSession.phase === 'direction' || this.coachSession.phase === 'plan'
+                ? 'Write the scene following the coaching plan.'
+                : 'Write the next part of the scene based on what you know so far.'
             : 'Continue the passage naturally from the cursor position.';
 
-        await this.generateDirect(plugin, guidanceContext);
-    }
-
-    /** Revert the current draft by removing the inserted text from the editor. */
-    revertDraft(editor: Editor): void {
-        if (this.draftState !== 'draft' || this.insertionStart < 0 || this.insertionLength <= 0) return;
-        this.unlockEditor();
-
-        const cm = (editor as unknown as { cm: EditorView }).cm;
-        if (!cm) return;
-
-        cm.dispatch({
-            changes: {
-                from: this.insertionStart,
-                to: this.insertionStart + this.insertionLength,
-                insert: ''
-            },
-            selection: { anchor: this.insertionStart }
-        });
-
-        this.draftState = 'idle';
-        this.insertionStart = -1;
-        this.insertionLength = 0;
-        this.originalText = '';
-        this.thoughtBuffer = '';
-        this.onStateChange?.('idle');
+        await this.generateDirect(plugin, direction, coachSteering);
     }
 
     /**
@@ -1858,11 +2133,13 @@ export class CoWriterSession {
         this.voiceProfileFile = null;
     }
 
-    /** Reset the entire session including guidance and context. */
+    /** Reset the entire session including coach and context. */
     reset(): void {
         this.unlockEditor();
         this.cancelGeneration();
-        this.endGuidanceSession();
+        this.endCoachSession();
+        this.clearFulfill();
+        this.clearDirect();
         this.manuscriptPath = null;
         this.originalText = '';
         this.insertionStart = -1;
@@ -1875,7 +2152,6 @@ export class CoWriterSession {
         this.chatHistory = [];
         this.currentOptions = [];
         this.optionsLoading = false;
-        this.onStateChange?.('idle');
         this.onChatUpdate?.();
         this.onOptionsLoading?.(false);
     }
@@ -1890,7 +2166,9 @@ export class CoWriterSession {
     resetChat(clearContext = false): void {
         this.unlockEditor();
         this.cancelGeneration();
-        this.endGuidanceSession();
+        this.endCoachSession();
+        this.clearFulfill();
+        this.clearDirect();
         this.originalText = '';
         this.insertionStart = -1;
         this.insertionLength = 0;
@@ -1902,7 +2180,6 @@ export class CoWriterSession {
         this.chatHistory = [];
         this.currentOptions = [];
         this.optionsLoading = false;
-        this.onStateChange?.('idle');
         this.onChatUpdate?.();
         this.onOptionsLoading?.(false);
     }

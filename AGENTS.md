@@ -3,6 +3,8 @@
 A feedback-first, novelist-focused writing assistant for Obsidian.
 MIT license. Built from scratch. Mobile-ready. Local-model first.
 
+> **Local overrides:** If `.local/AGENTS.md` exists (gitignored), read it at the start of each session and apply its guidance on top of this file. It holds per-developer, environment-specific rules that are never committed. See `AGENTS.local.example.md` for a template.
+
 ## Project overview
 
 - Target: Obsidian Community Plugin (TypeScript → bundled JavaScript via esbuild).
