@@ -223,7 +223,10 @@ The project does not use `eslint-config-prettier`. The obsidianmd ESLint rules a
 
 ## Committing
 
-- Do not commit or push unless the user explicitly asks you to. Build and lint to verify your work, but leave the commits to the user.
+- **Committing** is allowed at reasonable checkpoints (after a feature lands, a bug is fixed, or a logical unit of work completes). Always build and lint before committing to verify your work.
+- **Pushing** to a remote is NOT allowed without explicit permission each time. The user will say "push" or "push to origin" when they want a push.
+- Write concise commit messages that match the repo's conventional-commit style (`feat:`, `fix:`, `refactor:`, `docs:`, `chore:`).
+- Never force-push, amend another developer's commit, or rewrite published history.
 
 ## Planning files
 
