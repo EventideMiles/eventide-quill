@@ -1592,6 +1592,15 @@ export default class EventideQuillPlugin extends Plugin {
             return;
         }
 
+        console.warn(
+            `[Quill Analysis] scope resolved: requested="${scope}" → actual="${resolved.scope}", ` +
+                `file="${resolved.fileName}", lines ${resolved.lineStart}\u2013${resolved.lineEnd}, ` +
+                `${resolved.text.length} chars`,
+            '\n--- text ---\n',
+            resolved.text,
+            '\n--- end text ---'
+        );
+
         // Cancel any in-flight analysis request.
         this.analysisAbort?.abort();
         this.analysisAbort = new AbortController();
@@ -1638,6 +1647,22 @@ export default class EventideQuillPlugin extends Plugin {
             customInstruction
         });
         this.analysisCurrentMessages = [...initialMessages];
+
+        console.warn(
+            `[Quill Analysis] sending to AI — mode="${mode}", ` +
+                `characters=${characters.length} (${characters.map((c) => c.name).join(', ') || 'none'}), ` +
+                `plotThreads=${plotThreads.length} (${plotThreads.join(', ') || 'none'}), ` +
+                `voiceMarker=${voiceMarker ? `${voiceMarker.pov}/${voiceMarker.tense}/${voiceMarker.avgSentenceLength}w` : 'none'}, ` +
+                `vaultContext=${vaultContext.length} chars`,
+            '\n--- messages ---\n',
+            this.analysisCurrentMessages
+                .map(
+                    (m) =>
+                        `[${m.role}]\n${m.content.slice(0, 500)}${m.content.length > 500 ? `\u2026 (+${m.content.length - 500} more)` : ''}`
+                )
+                .join('\n\n'),
+            '\n--- end messages ---'
+        );
 
         try {
             const stream = getAnalysis(chat.provider, mode, {
