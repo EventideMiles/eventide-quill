@@ -4,7 +4,7 @@ import { App, TFile } from 'obsidian';
  * State + pill-bar DOM for a list of context files added mid-conversation.
  *
  * Shared by sidebar panels that let the writer add reference files during a
- * follow-up chat (FeedbackPanel, AnalysisPanel). The panel constructs one
+ * follow-up chat (ReviewPanel, ). The panel constructs one
  * instance, attaches it to the bottom-area element where pills should render,
  * and uses `add` / `remove` / `clear` to manage the list. The class handles
  * token estimation, pill-bar DOM updates (in-place, no full re-render), and

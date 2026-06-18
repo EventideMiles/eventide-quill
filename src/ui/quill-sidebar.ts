@@ -5,10 +5,8 @@ import { applyReplacement } from '../core/linter/apply-fix';
 import { findEditorView } from '../utils/find-editor';
 import { FixWithAiModal } from './fix-with-ai-modal';
 import { renderContextTab } from './context-panel';
-import { FeedbackPanel } from './feedback-panel';
+import { ReviewPanel } from './review-panel';
 import { CoWriterPanel } from './co-writer-panel';
-import { AnalysisPanel, type ScopeChoice } from './analysis-panel';
-import type { AnalysisMode } from '../ai/analysis';
 import type { InputMode } from './co-writer-panel';
 import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase } from '../ai/co-writer';
 import type { ProposedEdit } from '../core/change-set';
@@ -17,7 +15,7 @@ import type { ContextAssembly } from '../core/context-engine/types';
 
 export const QUILL_VIEW_TYPE = 'quill-sidebar';
 
-type TopTab = 'linter' | 'context' | 'feedback' | 'cowriter' | 'analysis';
+type TopTab = 'linter' | 'context' | 'review' | 'cowriter';
 type LinterSubTab = 'results' | 'details';
 
 export class QuillSidebarView extends ItemView {
@@ -34,12 +32,10 @@ export class QuillSidebarView extends ItemView {
     private cachedEditorText: string | null = null;
     /** Current context assembly to display in the Context tab. */
     private currentAssembly: ContextAssembly | null = null;
-    /** Feedback panel for the Feedback tab. */
-    private feedbackPanel: FeedbackPanel | null = null;
+    /** Review panel for the Review tab (editorial feedback + critical analysis). */
+    private reviewPanel: ReviewPanel | null = null;
     /** Co-writer panel for the Co-writer tab. */
     private coWriterPanel: CoWriterPanel | null = null;
-    /** Analysis panel for the Analysis tab. */
-    private analysisPanel: AnalysisPanel | null = null;
 
     /** Create the sidebar view for the given workspace leaf. */
     constructor(leaf: WorkspaceLeaf, plugin: EventideQuillPlugin) {
@@ -259,24 +255,19 @@ export class QuillSidebarView extends ItemView {
             renderContextTab(ctxScroll, this.currentAssembly, this.plugin, this.renderEvents);
         } else if (this.activeTopTab === 'cowriter') {
             this.renderCoWriterTab();
-        } else if (this.activeTopTab === 'analysis' && this.plugin.settings.enableCriticalAnalysis) {
-            this.renderAnalysisTab();
         } else {
-            this.renderFeedbackTab();
+            this.renderReviewTab();
         }
     }
 
-    /** Render the top-level tab bar (Linter / Context / Feedback / Co-writer). */
+    /** Render the top-level tab bar. */
     private renderTopTabBar() {
         const tabs: { id: TopTab; label: string }[] = [
             { id: 'linter', label: 'Linter' },
             { id: 'context', label: 'Context' },
-            { id: 'feedback', label: 'Feedback' },
+            { id: 'review', label: 'Review' },
             { id: 'cowriter', label: 'Co-writer' }
         ];
-        if (this.plugin.settings.enableCriticalAnalysis) {
-            tabs.push({ id: 'analysis', label: 'Analysis' });
-        }
 
         for (const tab of tabs) {
             const btn = this.tabBar.createEl('button', {
@@ -305,69 +296,56 @@ export class QuillSidebarView extends ItemView {
         }
     }
 
-    /** Render the feedback tab, initializing or re-attaching the FeedbackPanel. */
-    private renderFeedbackTab() {
-        if (!this.feedbackPanel) {
-            this.feedbackPanel = new FeedbackPanel(this.app);
-            this.feedbackPanel.setGenerateHandler((personaId: string, customInstruction?: string) => {
+    /** Render the Review tab, initializing or re-attaching the ReviewPanel. */
+    private renderReviewTab() {
+        if (!this.reviewPanel) {
+            this.reviewPanel = new ReviewPanel(this.app);
+            this.reviewPanel.setEditorialGenerateHandler((personaId, customInstruction) => {
                 void this.plugin.requestFeedback(personaId, customInstruction);
             });
-            this.feedbackPanel.setChatMessageHandler((message: string) => {
-                void this.plugin.sendFeedbackChatMessage(message);
-            });
-            this.feedbackPanel.setCancelGenerationHandler(() => {
-                this.plugin.cancelFeedbackGeneration();
-            });
-            this.feedbackPanel.setCompactHandler(() => {
-                void this.plugin.compactFeedback();
-            });
-            this.feedbackPanel.setNewChatHandler(() => {
-                this.plugin.resetFeedbackChat();
-            });
-        }
-        const chat = this.plugin.getDefaultChatProvider();
-        if (chat.provider) {
-            this.feedbackPanel.setMaxAllowedTokens(chat.provider.config.maxContextTokens);
-        }
-        this.feedbackPanel.setContainer(this.content);
-    }
-
-    /** Switch to the Feedback tab and show the Create sub-tab. */
-    switchToFeedbackTab(): void {
-        this.activeTopTab = 'feedback';
-        this.render();
-    }
-
-    /** Render the Analysis tab, initializing or re-attaching the AnalysisPanel. */
-    private renderAnalysisTab() {
-        if (!this.analysisPanel) {
-            this.analysisPanel = new AnalysisPanel(this.app);
-            this.analysisPanel.setGenerateHandler((mode, scope, customInstruction) => {
+            this.reviewPanel.setCriticalGenerateHandler((mode, scope, customInstruction) => {
                 void this.plugin.requestAnalysis(mode, scope, customInstruction);
             });
-            this.analysisPanel.setChatMessageHandler((message) => {
-                void this.plugin.sendAnalysisChatMessage(message);
+            this.reviewPanel.setChatMessageHandler((message) => {
+                // Dispatch to the right engine's chat handler.
+                if (this.reviewPanel?.activeEngine === 'editorial') {
+                    void this.plugin.sendFeedbackChatMessage(message);
+                } else {
+                    void this.plugin.sendAnalysisChatMessage(message);
+                }
             });
-            this.analysisPanel.setCancelGenerationHandler(() => {
-                this.plugin.cancelAnalysisGeneration();
+            this.reviewPanel.setCancelGenerationHandler(() => {
+                if (this.reviewPanel?.activeEngine === 'editorial') {
+                    this.plugin.cancelFeedbackGeneration();
+                } else {
+                    this.plugin.cancelAnalysisGeneration();
+                }
             });
-            this.analysisPanel.setCompactHandler(() => {
-                void this.plugin.compactAnalysis();
+            this.reviewPanel.setCompactHandler(() => {
+                if (this.reviewPanel?.activeEngine === 'editorial') {
+                    void this.plugin.compactFeedback();
+                } else {
+                    void this.plugin.compactAnalysis();
+                }
             });
-            this.analysisPanel.setNewChatHandler(() => {
-                this.plugin.resetAnalysisChat();
+            this.reviewPanel.setNewChatHandler(() => {
+                if (this.reviewPanel?.activeEngine === 'editorial') {
+                    this.plugin.resetFeedbackChat();
+                } else {
+                    this.plugin.resetAnalysisChat();
+                }
             });
         }
         const chat = this.plugin.getDefaultChatProvider();
         if (chat.provider) {
-            this.analysisPanel.setMaxAllowedTokens(chat.provider.config.maxContextTokens);
+            this.reviewPanel.setMaxAllowedTokens(chat.provider.config.maxContextTokens);
         }
-        this.analysisPanel.setContainer(this.content);
+        this.reviewPanel.setContainer(this.content);
     }
 
-    /** Switch to the Analysis tab. */
-    switchToAnalysisTab(): void {
-        this.activeTopTab = 'analysis';
+    /** Switch to the Review tab. */
+    switchToReviewTab(): void {
+        this.activeTopTab = 'review';
         this.render();
     }
 
@@ -482,64 +460,94 @@ export class QuillSidebarView extends ItemView {
         this.coWriterPanel.setContainer(this.content);
     }
 
-    /** Start the loading state in the Feedback panel for the given persona ID. */
-    feedbackStartLoading(personaId: string): void {
-        this.feedbackPanel?.startLoading(personaId);
+    // --- Review tab passthroughs (unified for editorial + critical engines) ---
+
+    reviewStartLoading(engine: 'editorial' | 'critical', headerLabel: string, subLabel?: string): void {
+        this.reviewPanel?.startLoading(engine, headerLabel, subLabel);
     }
 
-    /** Append a chunk of text to the current feedback report. */
-    feedbackAppendChunk(text: string): void {
-        this.feedbackPanel?.appendChunk(text);
+    reviewAppendChunk(text: string): void {
+        this.reviewPanel?.appendChunk(text);
     }
 
-    /** Mark the current feedback report as complete. */
-    async feedbackFinished(): Promise<void> {
-        await this.feedbackPanel?.finishLoading();
+    async reviewFinished(): Promise<void> {
+        await this.reviewPanel?.finishLoading();
     }
 
-    /** Show an error in the feedback panel. */
-    feedbackError(message: string): void {
-        this.feedbackPanel?.showError(message);
+    reviewError(message: string): void {
+        this.reviewPanel?.showError(message);
     }
 
-    /** Get the list of context file paths the user has selected in the Feedback panel. */
-    feedbackPanelContextFiles(): string[] {
-        return this.feedbackPanel?.getContextFilePaths() ?? [];
+    reviewResetResults(): void {
+        this.reviewPanel?.resetResults();
     }
 
-    /** Add a file to the manuscript context list in the feedback panel. */
-    feedbackPanelAddContextFile(filePath: string): void {
-        if (this.feedbackPanel) {
-            void this.feedbackPanel.addContextFile(filePath);
-        }
+    // Manuscripts (editorial engine only)
+
+    reviewContextFiles(): string[] {
+        return this.reviewPanel?.getContextFilePaths() ?? [];
     }
 
-    /** Get the chat history from the Feedback panel. */
-    feedbackChatHistory(): { role: 'user' | 'assistant' | 'system'; content: string }[] {
-        return this.feedbackPanel?.getChatHistory() ?? [];
+    reviewAddContextFile(filePath: string): void {
+        void this.reviewPanel?.addContextFile(filePath);
     }
 
-    /** Append a system message to the feedback panel's chat (e.g. compaction notice). */
-    feedbackAppendChatSystemMessage(content: string): void {
-        this.feedbackPanel?.appendChatSystemMessage(content);
+    // Chat lifecycle (shared by both engines)
+
+    reviewChatHistory(): { role: 'user' | 'assistant' | 'system'; content: string }[] {
+        return this.reviewPanel?.getChatHistory() ?? [];
     }
 
-    /** Append a system message in-place without a full DOM rebuild (avoids flicker during streaming). */
-    feedbackAppendChatSystemMessageInPlace(content: string): void {
-        this.feedbackPanel?.appendChatSystemMessageInPlace(content);
+    reviewAppendChatSystemMessage(content: string): void {
+        this.reviewPanel?.appendChatSystemMessage(content);
     }
 
-    /** Replace the chat history in the Feedback panel. */
-    replaceChatHistory(history: { role: 'user' | 'assistant' | 'system'; content: string }[]): void {
-        this.feedbackPanel?.replaceChatHistory(history);
+    reviewAppendChatSystemMessageInPlace(content: string): void {
+        this.reviewPanel?.appendChatSystemMessageInPlace(content);
     }
 
-    /** Reset feedback results and return to the Create feedback subtab. */
-    resetFeedbackResults(): void {
-        this.feedbackPanel?.resetResults();
+    reviewReplaceChatHistory(history: { role: 'user' | 'assistant' | 'system'; content: string }[]): void {
+        this.reviewPanel?.replaceChatHistory(history);
     }
 
-    /** Push thought content to the Co-writer panel. */
+    reviewSetContextTokenEstimate(tokens: number): void {
+        this.reviewPanel?.setContextTokenEstimate(tokens);
+    }
+
+    reviewSaveConversation(): void {
+        this.reviewPanel?.saveConversation();
+    }
+
+    reviewChatStartLoading(): void {
+        this.reviewPanel?.chatStartLoading();
+    }
+
+    reviewChatAppendChunk(text: string): void {
+        this.reviewPanel?.chatAppendChunk(text);
+    }
+
+    async reviewChatFinished(): Promise<void> {
+        await this.reviewPanel?.chatFinished();
+    }
+
+    async reviewChatError(message: string): Promise<void> {
+        await this.reviewPanel?.chatError(message);
+    }
+
+    // Chat context files (shared)
+
+    reviewChatContextFiles(): string[] {
+        return this.reviewPanel?.getChatContextFiles() ?? [];
+    }
+
+    reviewChatContextTokens(): number {
+        return this.reviewPanel?.getChatContextTokens() ?? 0;
+    }
+
+    async reviewAddChatContextFile(filePath: string): Promise<void> {
+        await this.reviewPanel?.addChatContextFile(filePath);
+    }
+
     coWriterSetThoughtContent(thought: string): void {
         this.coWriterPanel?.setThoughtContent(thought);
     }
@@ -640,121 +648,6 @@ export class QuillSidebarView extends ItemView {
     /** Push Fulfill-mode sections and active flag to the co-writer panel. */
     coWriterSetFulfillState(sections: ProposedEdit[], active: boolean): void {
         this.coWriterPanel?.setFulfillState(sections, active);
-    }
-
-    /** Get the chat context file paths from the Feedback panel. */
-    feedbackChatContextFiles(): string[] {
-        return this.feedbackPanel?.getChatContextFiles() ?? [];
-    }
-
-    /** Get the chat context token count from the Feedback panel. */
-    feedbackChatContextTokens(): number {
-        return this.feedbackPanel?.getChatContextTokens() ?? 0;
-    }
-
-    /** Set the context token estimate from the plugin layer. */
-    feedbackSetContextTokenEstimate(tokens: number): void {
-        this.feedbackPanel?.setContextTokenEstimate(tokens);
-    }
-
-    /** Export the current feedback conversation to a markdown file. */
-    feedbackSaveConversation(): void {
-        this.feedbackPanel?.saveConversation();
-    }
-
-    /** Start loading state for a chat follow-up. */
-    chatStartLoading(): void {
-        this.feedbackPanel?.chatStartLoading();
-    }
-
-    /** Append a chunk of text to the streaming chat response. */
-    chatAppendChunk(text: string): void {
-        this.feedbackPanel?.chatAppendChunk(text);
-    }
-
-    /** Mark the current chat response as complete. */
-    async chatFinished(): Promise<void> {
-        await this.feedbackPanel?.chatFinished();
-    }
-
-    /** Show an error in the chat response. */
-    async chatError(message: string): Promise<void> {
-        await this.feedbackPanel?.chatError(message);
-    }
-
-    // --- Analysis tab passthroughs (prefixed `analysis*` to avoid collision
-    //     with the unprefixed feedback-chat methods above). ---
-
-    analysisStartLoading(mode: AnalysisMode, scope: ScopeChoice): void {
-        this.analysisPanel?.startLoading(mode, scope);
-    }
-
-    analysisAppendChunk(text: string): void {
-        this.analysisPanel?.appendChunk(text);
-    }
-
-    async analysisFinished(): Promise<void> {
-        await this.analysisPanel?.finishLoading();
-    }
-
-    analysisError(message: string): void {
-        this.analysisPanel?.showError(message);
-    }
-
-    analysisResetResults(): void {
-        this.analysisPanel?.resetResults();
-    }
-
-    analysisChatHistory(): { role: 'user' | 'assistant' | 'system'; content: string }[] {
-        return this.analysisPanel?.getChatHistory() ?? [];
-    }
-
-    analysisAppendChatSystemMessage(content: string): void {
-        this.analysisPanel?.appendChatSystemMessage(content);
-    }
-
-    analysisAppendChatSystemMessageInPlace(content: string): void {
-        this.analysisPanel?.appendChatSystemMessageInPlace(content);
-    }
-
-    analysisReplaceChatHistory(history: { role: 'user' | 'assistant' | 'system'; content: string }[]): void {
-        this.analysisPanel?.replaceChatHistory(history);
-    }
-
-    analysisSetContextTokenEstimate(tokens: number): void {
-        this.analysisPanel?.setContextTokenEstimate(tokens);
-    }
-
-    analysisChatContextFiles(): string[] {
-        return this.analysisPanel?.getChatContextFiles() ?? [];
-    }
-
-    analysisChatContextTokens(): number {
-        return this.analysisPanel?.getChatContextTokens() ?? 0;
-    }
-
-    async analysisAddChatContextFile(filePath: string): Promise<void> {
-        await this.analysisPanel?.addChatContextFile(filePath);
-    }
-
-    analysisSaveConversation(): void {
-        this.analysisPanel?.saveConversation();
-    }
-
-    analysisChatStartLoading(): void {
-        this.analysisPanel?.chatStartLoading();
-    }
-
-    analysisChatAppendChunk(text: string): void {
-        this.analysisPanel?.chatAppendChunk(text);
-    }
-
-    async analysisChatFinished(): Promise<void> {
-        await this.analysisPanel?.chatFinished();
-    }
-
-    async analysisChatError(message: string): Promise<void> {
-        await this.analysisPanel?.chatError(message);
     }
 
     /** Render the list of lint results with severity badges and location info. */

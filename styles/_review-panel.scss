@@ -3,7 +3,7 @@
 /* Feedback panel styles */
 @use 'base' as *;
 
-.quill-feedback-panel {
+.quill-review-panel {
     /* Legacy context section (currently unused; kept for future revival) */
     &__context {
         border-bottom: 1px solid var(--background-modifier-border);
@@ -392,5 +392,42 @@
         border-radius: $radius-sm;
         margin-bottom: $space-lg;
         line-height: var(--line-height-normal);
+    }
+
+    // --- Critical analysis engine: scope picker + scope tag ---
+
+    &__scope-row {
+        display: flex;
+        gap: $space-xs;
+        margin-bottom: $space-lg;
+    }
+
+    &__scope-btn {
+        flex: 1;
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-sm $space-md !important;
+        background: var(--background-normal);
+        color: var(--text-muted);
+        font-size: var(--font-ui-smaller);
+        transition: border-color $transition-base, color $transition-base;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+        }
+
+        &--active {
+            border-color: var(--interactive-accent);
+            color: var(--text-normal);
+        }
+    }
+
+    &__scope-tag {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        padding: 2px $space-sm;
+        border-radius: 3px;
+        background: var(--background-modifier-hover);
     }
 }

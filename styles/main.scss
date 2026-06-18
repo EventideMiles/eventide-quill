@@ -14,10 +14,9 @@
 @use 'sidebar';
 @use 'linter';
 @use 'context-panel';
-@use 'feedback-panel';
+@use 'review-panel';
 @use 'cowriter-panel';
 @use 'change-review';
-@use 'analysis-panel';
 
 @use 'modals';
 @use 'settings';

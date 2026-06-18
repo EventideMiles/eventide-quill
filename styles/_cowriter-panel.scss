@@ -2,8 +2,8 @@
 //
 // Block: quill-cowriter-panel. All elements belong to this block.
 // The block itself is implicit — the elements are scoped to the panel by the
-// parent sidebar tab. A couple of rules are emitted by AnalysisPanel and
-// FeedbackPanel too (the __send-btn base + __send-btn--stop modifier), which
+// parent sidebar tab. A couple of rules are emitted by  and
+// ReviewPanel too (the __send-btn base + __send-btn--stop modifier), which
 // is why those classes also appear in those TS files.
 
 @use 'base' as *;
@@ -537,7 +537,7 @@
         }
 
         // Stop variant — same DOM node, toggled on while a generation is in
-        // flight. Also emitted by AnalysisPanel and FeedbackPanel.
+        // flight. Also emitted by  and ReviewPanel.
         &--stop {
             background: var(--text-error) !important;
             border-color: var(--text-error) !important;

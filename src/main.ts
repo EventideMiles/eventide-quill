@@ -25,7 +25,13 @@ import {
     entityFromId
 } from './utils/frontmatter';
 import { buildFeedbackMessages, getPersonaById, getFeedback } from './ai/feedback';
-import { getAnalysis, buildAnalysisMessages, type AnalysisMode, type AnalysisScope } from './ai/analysis';
+import {
+    getAnalysis,
+    buildAnalysisMessages,
+    ANALYSIS_MODES,
+    type AnalysisMode,
+    type AnalysisScope
+} from './ai/analysis';
 import type { ChatMessage } from './ai/provider';
 
 import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
@@ -348,7 +354,7 @@ export default class EventideQuillPlugin extends Plugin {
                     item.setTitle('Quill: Get AI feedback')
                         .setIcon('message-square')
                         .onClick(() => {
-                            void this.openFeedbackPanel();
+                            void this.openReviewPanel();
                         });
                 });
 
@@ -361,25 +367,25 @@ export default class EventideQuillPlugin extends Plugin {
                         const sub = (item as unknown as { setSubmenu(): Menu }).setSubmenu();
                         sub.addItem((s) => {
                             s.setTitle('Plot logic').onClick(async () => {
-                                await this.openAnalysisPanel();
+                                await this.openReviewPanel();
                                 await this.requestAnalysis('plot-logic', 'auto');
                             });
                         });
                         sub.addItem((s) => {
                             s.setTitle('Character consistency').onClick(async () => {
-                                await this.openAnalysisPanel();
+                                await this.openReviewPanel();
                                 await this.requestAnalysis('character-consistency', 'auto');
                             });
                         });
                         sub.addItem((s) => {
                             s.setTitle('Continuity').onClick(async () => {
-                                await this.openAnalysisPanel();
+                                await this.openReviewPanel();
                                 await this.requestAnalysis('continuity', 'auto');
                             });
                         });
                         sub.addItem((s) => {
                             s.setTitle('Voice drift').onClick(async () => {
-                                await this.openAnalysisPanel();
+                                await this.openReviewPanel();
                                 await this.requestAnalysis('voice-drift', 'auto');
                             });
                         });
@@ -557,7 +563,7 @@ export default class EventideQuillPlugin extends Plugin {
             id: 'quill-feedback-open',
             name: 'Quill: Get AI feedback',
             callback: () => {
-                void this.openFeedbackPanel();
+                void this.openReviewPanel();
             }
         });
 
@@ -573,7 +579,7 @@ export default class EventideQuillPlugin extends Plugin {
             id: 'quill-analysis-open',
             name: 'Quill: Open critical analysis',
             callback: () => {
-                void this.openAnalysisPanel();
+                void this.openReviewPanel();
             }
         });
 
@@ -581,7 +587,7 @@ export default class EventideQuillPlugin extends Plugin {
             id: 'quill-analyze-plot-logic',
             name: 'Quill: Analyze plot logic',
             editorCallback: async (editor) => {
-                await this.openAnalysisPanel();
+                await this.openReviewPanel();
                 await this.requestAnalysis('plot-logic', 'auto');
             }
         });
@@ -590,7 +596,7 @@ export default class EventideQuillPlugin extends Plugin {
             id: 'quill-analyze-character-consistency',
             name: 'Quill: Analyze character consistency',
             editorCallback: async (editor) => {
-                await this.openAnalysisPanel();
+                await this.openReviewPanel();
                 await this.requestAnalysis('character-consistency', 'auto');
             }
         });
@@ -599,7 +605,7 @@ export default class EventideQuillPlugin extends Plugin {
             id: 'quill-analyze-continuity',
             name: 'Quill: Analyze continuity',
             editorCallback: async (editor) => {
-                await this.openAnalysisPanel();
+                await this.openReviewPanel();
                 await this.requestAnalysis('continuity', 'auto');
             }
         });
@@ -608,7 +614,7 @@ export default class EventideQuillPlugin extends Plugin {
             id: 'quill-analyze-voice-drift',
             name: 'Quill: Analyze voice drift',
             editorCallback: async (editor) => {
-                await this.openAnalysisPanel();
+                await this.openReviewPanel();
                 await this.requestAnalysis('voice-drift', 'auto');
             }
         });
@@ -1436,7 +1442,7 @@ export default class EventideQuillPlugin extends Plugin {
     resetFeedbackChat(): void {
         this.feedbackAbort?.abort();
         this.feedbackCurrentMessages = [];
-        this.lintPanel?.resetFeedbackResults();
+        this.lintPanel?.reviewResetResults();
     }
 
     /**
@@ -1454,7 +1460,7 @@ export default class EventideQuillPlugin extends Plugin {
             const result = await compactConversation(chat.provider, this.feedbackCurrentMessages, sentenceCount);
             if (result) {
                 this.feedbackCurrentMessages = result.messages;
-                this.lintPanel?.feedbackAppendChatSystemMessageInPlace(result.summary);
+                this.lintPanel?.reviewAppendChatSystemMessageInPlace(result.summary);
             }
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') return;
@@ -1473,7 +1479,7 @@ export default class EventideQuillPlugin extends Plugin {
     resetAnalysisChat(): void {
         this.analysisAbort?.abort();
         this.analysisCurrentMessages = [];
-        this.lintPanel?.analysisResetResults();
+        this.lintPanel?.reviewResetResults();
     }
 
     /** Manually compact the analysis conversation. */
@@ -1489,7 +1495,7 @@ export default class EventideQuillPlugin extends Plugin {
             const result = await compactConversation(chat.provider, this.analysisCurrentMessages, sentenceCount);
             if (result) {
                 this.analysisCurrentMessages = result.messages;
-                this.lintPanel?.analysisAppendChatSystemMessageInPlace(result.summary);
+                this.lintPanel?.reviewAppendChatSystemMessageInPlace(result.summary);
             }
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') return;
@@ -1588,7 +1594,7 @@ export default class EventideQuillPlugin extends Plugin {
         const resolved = this.resolveAnalysisScope(scope);
         if (!resolved) {
             new Notice('Quill: Open a Markdown document with text before running analysis.');
-            this.lintPanel?.analysisError('No active document to analyze.');
+            this.lintPanel?.reviewError('No active document to analyze.');
             return;
         }
 
@@ -1606,7 +1612,12 @@ export default class EventideQuillPlugin extends Plugin {
         this.analysisAbort = new AbortController();
         const myAnalysisAbort = this.analysisAbort;
 
-        this.lintPanel?.analysisStartLoading(mode, scope);
+        const modeMeta = ANALYSIS_MODES.find((m) => m.id === mode);
+        this.lintPanel?.reviewStartLoading(
+            'critical',
+            modeMeta?.label ?? mode,
+            scope === 'auto' ? 'auto scope' : scope
+        );
 
         // Collect deterministic signal from the context engine.
         // Guard against stale context: if the assembly was built for a different
@@ -1685,17 +1696,17 @@ export default class EventideQuillPlugin extends Plugin {
             for await (const chunk of stream) {
                 if (chunk.done) {
                     this.analysisCurrentMessages.push({ role: 'assistant', content: fullResponse });
-                    this.lintPanel?.analysisSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
-                    await this.lintPanel?.analysisFinished();
+                    this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
+                    await this.lintPanel?.reviewFinished();
                 } else {
                     fullResponse += chunk.text;
-                    this.lintPanel?.analysisAppendChunk(chunk.text);
+                    this.lintPanel?.reviewAppendChunk(chunk.text);
                 }
             }
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') return;
             const msg = err instanceof Error ? err.message : String(err);
-            this.lintPanel?.analysisError(msg);
+            this.lintPanel?.reviewError(msg);
             new Notice('Quill: Analysis request failed.');
         } finally {
             if (this.analysisAbort === myAnalysisAbort) {
@@ -1720,12 +1731,12 @@ export default class EventideQuillPlugin extends Plugin {
         this.analysisAbort = new AbortController();
         const myAnalysisAbort = this.analysisAbort;
 
-        this.lintPanel?.analysisChatStartLoading();
+        this.lintPanel?.reviewChatStartLoading();
 
         // Chat context files (reference material added mid-conversation) are
         // injected fresh as system messages on every call, mirroring feedback.
         // They are NOT stored in analysisCurrentMessages so they survive compaction.
-        const chatContextPaths = this.lintPanel?.analysisChatContextFiles() ?? [];
+        const chatContextPaths = this.lintPanel?.reviewChatContextFiles() ?? [];
         const referenceMessages = await readVaultFiles(
             this.app.vault,
             chatContextPaths,
@@ -1741,7 +1752,7 @@ export default class EventideQuillPlugin extends Plugin {
         const hypothetical = [...this.analysisCurrentMessages, { role: 'user' as const, content: message }];
         const conversationTokens = estimateTokens(hypothetical) + injectedTokens;
 
-        this.lintPanel?.analysisSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
+        this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
 
         if (conversationTokens / maxTokens >= compactPct) {
             const sentenceCount = Math.max(1, Math.min(20, this.settings.compactSummarySentences));
@@ -1751,8 +1762,8 @@ export default class EventideQuillPlugin extends Plugin {
                 });
                 if (result) {
                     this.analysisCurrentMessages = result.messages;
-                    this.lintPanel?.analysisAppendChatSystemMessageInPlace(result.summary);
-                    this.lintPanel?.analysisSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
+                    this.lintPanel?.reviewAppendChatSystemMessageInPlace(result.summary);
+                    this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
                 }
             } catch (err: unknown) {
                 if (err instanceof Error && err.name === 'AbortError') return;
@@ -1783,20 +1794,20 @@ export default class EventideQuillPlugin extends Plugin {
             for await (const chunk of stream) {
                 if (chunk.done) {
                     this.analysisCurrentMessages.push({ role: 'assistant', content: fullResponse });
-                    this.lintPanel?.analysisSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
-                    await this.lintPanel?.analysisChatFinished();
+                    this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
+                    await this.lintPanel?.reviewChatFinished();
                 } else {
                     fullResponse += chunk.text;
-                    this.lintPanel?.analysisChatAppendChunk(chunk.text);
+                    this.lintPanel?.reviewChatAppendChunk(chunk.text);
                 }
             }
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') {
-                await this.lintPanel?.analysisChatFinished();
+                await this.lintPanel?.reviewChatFinished();
                 return;
             }
             const msg = err instanceof Error ? err.message : String(err);
-            await this.lintPanel?.analysisChatError(msg);
+            await this.lintPanel?.reviewChatError(msg);
             new Notice('Quill: Analysis chat failed.');
         } finally {
             if (this.analysisAbort === myAnalysisAbort) {
@@ -1854,21 +1865,16 @@ export default class EventideQuillPlugin extends Plugin {
         this.lintPanel?.switchToCoWriterTab();
     }
 
-    /** Open the sidebar and switch to the Feedback tab. */
-    async openFeedbackPanel(): Promise<void> {
+    /** Open the sidebar and switch to the Review tab. Auto-adds the active
+     *  document to the editorial manuscripts list if one is open. */
+    async openReviewPanel(): Promise<void> {
         await this.openLintPanel();
-        this.lintPanel?.switchToFeedbackTab();
-        // Auto-add the active document to manuscripts
+        this.lintPanel?.switchToReviewTab();
+        // Auto-add the active document to manuscripts (used by editorial engine)
         const activeFile = this.app.workspace.getActiveFile();
         if (activeFile && activeFile.extension === 'md') {
-            this.lintPanel?.feedbackPanelAddContextFile(activeFile.path);
+            this.lintPanel?.reviewAddContextFile(activeFile.path);
         }
-    }
-
-    /** Open the sidebar and switch to the Analysis tab. */
-    async openAnalysisPanel(): Promise<void> {
-        await this.openLintPanel();
-        this.lintPanel?.switchToAnalysisTab();
     }
 
     /**
@@ -1896,16 +1902,16 @@ export default class EventideQuillPlugin extends Plugin {
         this.feedbackAbort?.abort();
         this.feedbackAbort = new AbortController();
 
-        // Start loading state in the Feedback tab
-        this.lintPanel?.feedbackStartLoading(personaId);
+        // Start loading state in the Review tab
+        this.lintPanel?.reviewStartLoading('editorial', persona?.name ?? 'Custom');
 
         // Capture the controller for this specific request so we can guard its cleanup.
         const myFeedbackAbort = this.feedbackAbort;
 
-        const feedbackContextPaths = this.lintPanel?.feedbackPanelContextFiles() ?? [];
+        const feedbackContextPaths = this.lintPanel?.reviewContextFiles() ?? [];
         if (feedbackContextPaths.length === 0) {
             new Notice('Quill: Add manuscripts to the feedback tab before requesting analysis.');
-            this.lintPanel?.feedbackError('No manuscripts selected.');
+            this.lintPanel?.reviewError('No manuscripts selected.');
             return;
         }
 
@@ -1932,7 +1938,7 @@ export default class EventideQuillPlugin extends Plugin {
 
         if (manuscriptMessages.length === 0) {
             new Notice('Quill: Could not read any content from the selected manuscripts.');
-            this.lintPanel?.feedbackError('Could not read manuscript content.');
+            this.lintPanel?.reviewError('Could not read manuscript content.');
             return;
         }
 
@@ -1973,17 +1979,17 @@ export default class EventideQuillPlugin extends Plugin {
                     // Push conversation-only tokens to the panel. The panel
                     // adds manuscript and reference file tokens on top so the
                     // indicator updates immediately when files change.
-                    this.lintPanel?.feedbackSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
-                    await this.lintPanel?.feedbackFinished();
+                    this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
+                    await this.lintPanel?.reviewFinished();
                 } else {
                     fullResponse += chunk.text;
-                    this.lintPanel?.feedbackAppendChunk(chunk.text);
+                    this.lintPanel?.reviewAppendChunk(chunk.text);
                 }
             }
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') return;
             const msg = err instanceof Error ? err.message : String(err);
-            this.lintPanel?.feedbackError(msg);
+            this.lintPanel?.reviewError(msg);
             new Notice('Quill: Feedback request failed.');
         } finally {
             // Only clear feedbackAbort if it still matches our controller,
@@ -2022,13 +2028,13 @@ export default class EventideQuillPlugin extends Plugin {
         // Capture the controller for this specific request so we can guard its cleanup.
         const myFeedbackAbort = this.feedbackAbort;
 
-        this.lintPanel?.chatStartLoading();
+        this.lintPanel?.reviewChatStartLoading();
 
         // Manuscripts and reference files are always injected fresh as system
         // messages. They are NOT stored in feedbackCurrentMessages, so they
         // survive compaction and never pollute the conversation history.
-        const manuscriptPaths = this.lintPanel?.feedbackPanelContextFiles() ?? [];
-        const chatContextFilePaths = this.lintPanel?.feedbackChatContextFiles() ?? [];
+        const manuscriptPaths = this.lintPanel?.reviewContextFiles() ?? [];
+        const chatContextFilePaths = this.lintPanel?.reviewChatContextFiles() ?? [];
 
         const manuscriptMessages = await readVaultFiles(this.app.vault, manuscriptPaths, 'Manuscript');
         const referenceMessages = await readVaultFiles(
@@ -2052,7 +2058,7 @@ export default class EventideQuillPlugin extends Plugin {
 
         // Push conversation-only tokens (without new message) to the panel.
         // The panel adds manuscript and reference file tokens on top.
-        this.lintPanel?.feedbackSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
+        this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
 
         // --- AI-powered compaction ---
         // Compact if the total (conversation + files + new message) meets or
@@ -2065,8 +2071,8 @@ export default class EventideQuillPlugin extends Plugin {
                 });
                 if (result) {
                     this.feedbackCurrentMessages = result.messages;
-                    this.lintPanel?.feedbackAppendChatSystemMessageInPlace(result.summary);
-                    this.lintPanel?.feedbackSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
+                    this.lintPanel?.reviewAppendChatSystemMessageInPlace(result.summary);
+                    this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
                 }
             } catch (err: unknown) {
                 if (err instanceof Error && err.name === 'AbortError') return;
@@ -2099,20 +2105,20 @@ export default class EventideQuillPlugin extends Plugin {
                 if (chunk.done) {
                     this.feedbackCurrentMessages.push({ role: 'assistant', content: fullResponse });
                     // Push conversation-only tokens. The panel adds file tokens on top.
-                    this.lintPanel?.feedbackSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
-                    await this.lintPanel?.chatFinished();
+                    this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
+                    await this.lintPanel?.reviewChatFinished();
                 } else {
                     fullResponse += chunk.text;
-                    this.lintPanel?.chatAppendChunk(chunk.text);
+                    this.lintPanel?.reviewChatAppendChunk(chunk.text);
                 }
             }
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') {
-                await this.lintPanel?.chatFinished();
+                await this.lintPanel?.reviewChatFinished();
                 return;
             }
             const msg = err instanceof Error ? err.message : String(err);
-            await this.lintPanel?.chatError(msg);
+            await this.lintPanel?.reviewChatError(msg);
             new Notice('Quill: Chat response failed.');
         } finally {
             // Only clear feedbackAbort if it still matches our controller,
