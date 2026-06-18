@@ -1594,7 +1594,11 @@ export default class EventideQuillPlugin extends Plugin {
         this.lintPanel?.analysisStartLoading(mode, scope);
 
         // Collect deterministic signal from the context engine.
-        const assembly = this.currentAssembly;
+        // Guard against stale context: if the assembly was built for a different
+        // file than the one we're about to analyze, ignore it — the characters /
+        // voice marker / plot threads would belong to the wrong manuscript.
+        const activePath = this.app.workspace.getActiveFile()?.path;
+        const assembly = activePath && this.contextActiveFile === activePath ? this.currentAssembly : null;
         const characters = assembly?.entities.filter((e) => e.type === 'character' && !e.removed) ?? [];
         const plotThreads =
             assembly?.entities.filter((e) => e.type === 'plot-thread' && !e.removed).map((e) => e.name) ?? [];

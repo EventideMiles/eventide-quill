@@ -1,0 +1,34 @@
+// Active document header — shared BEM block.
+//
+// Rendered by AbstractChatPanel.renderDocumentHeader() at the top of any
+// chat panel's create tab to show which document the panel will operate on.
+// Gives the writer visual confirmation before they run a command that reads
+// from the active editor.
+
+@use 'base' as *;
+
+.quill-document {
+    display: flex;
+    align-items: baseline;
+    gap: $space-sm;
+    padding: $space-sm $space-md;
+    margin-bottom: $space-lg;
+    border-radius: $radius-sm;
+    background: var(--background-primary-alt);
+
+    &__name {
+        font-size: var(--font-ui-small);
+        font-weight: 600;
+        color: var(--text-normal);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    &__meta {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        flex-shrink: 0;
+        margin-left: auto;
+    }
+}

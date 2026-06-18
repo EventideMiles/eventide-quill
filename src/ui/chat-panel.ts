@@ -1,4 +1,4 @@
-import { App, Component } from 'obsidian';
+import { App, Component, MarkdownView, TFile } from 'obsidian';
 
 /**
  * A single message in a chat conversation within a chat panel.
@@ -15,6 +15,18 @@ export interface ChatMessage {
  */
 export function normalizeParagraphBreaks(text: string): string {
     return text.replace(/\n{3,}/g, '\n\n');
+}
+
+/** Snapshot of the active markdown document, used by chat panels to gate UI on document state. */
+export interface ActiveDocument {
+    /** The active file (guaranteed non-null when this object is returned). */
+    file: TFile;
+    /** The active MarkdownView (guaranteed non-null when this object is returned). */
+    view: MarkdownView;
+    /** Full text of the document body. */
+    text: string;
+    /** Whitespace-split word count of `text`. */
+    wordCount: number;
 }
 
 /**
@@ -176,5 +188,61 @@ export abstract class AbstractChatPanel {
         this.renderEvents?.unload();
         this.renderEvents = new Component();
         this.containerEl?.empty();
+    }
+
+    // --- Active-document awareness ---
+    //
+    // Chat panels that operate on the active document (co-writer, analysis) need
+    // to: (a) know whether a markdown view is active, (b) render an empty state
+    // when none is, and (c) optionally show which document will be acted on.
+    // These helpers standardize that pattern so every chat panel behaves the
+    // same way when the writer switches between documents (or has none open).
+
+    /**
+     * Get the active markdown document, or null if no markdown view is focused.
+     * Subclasses should call this at the top of `render*Tab()` methods that
+     * depend on a document being open.
+     */
+    protected getActiveDocument(): ActiveDocument | null {
+        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!view || !view.file) return null;
+        const text = view.editor.getValue();
+        const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
+        return { file: view.file, view, text, wordCount };
+    }
+
+    /**
+     * Render an "open a document" empty-state message and return true.
+     * Callers should bail out of further rendering when this returns true.
+     *
+     * Example:
+     * ```
+     * if (this.renderNoDocumentState(scroll, 'analysis')) return;
+     * ```
+     */
+    protected renderNoDocumentState(container: HTMLElement, featureName: string): boolean {
+        container.createEl('p', {
+            cls: 'quill-empty-hint',
+            text: `Open a document to use ${featureName}.`
+        });
+        return true;
+    }
+
+    /**
+     * Render a document info header (file name + word count) into the container.
+     * Gives the writer visual confirmation of which document the panel will
+     * operate on. No-op if `doc` is null.
+     */
+    protected renderDocumentHeader(container: HTMLElement, doc: ActiveDocument | null): void {
+        if (!doc) return;
+        const header = container.createDiv({ cls: 'quill-document' });
+        header.createEl('span', {
+            cls: 'quill-document__name',
+            text: doc.file.basename
+        });
+        header.createEl('span', {
+            cls: 'quill-document__meta',
+            text: `${doc.wordCount.toLocaleString()} words`
+        });
     }
 }

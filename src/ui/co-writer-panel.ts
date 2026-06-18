@@ -563,13 +563,8 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the initialize prompt with a big button. */
     private renderInitializePrompt(container: HTMLElement): void {
-        const activeFile = this.app.workspace.getActiveFile();
-        if (!activeFile) {
-            const prompt = container.createEl('div', { cls: 'quill-cowriter-panel__init' });
-            prompt.createEl('div', {
-                cls: 'quill-cowriter-panel__init-desc',
-                text: 'Open a manuscript to use the co-writer.'
-            });
+        if (!this.getActiveDocument()) {
+            this.renderNoDocumentState(container, 'the co-writer');
             return;
         }
 
