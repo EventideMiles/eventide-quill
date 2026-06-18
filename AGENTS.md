@@ -56,7 +56,7 @@ CI (`.github/workflows/lint.yml`) runs `build` + `lint` on every push and PR acr
 
 Several files are large and intentionally monolithic; match the surrounding pattern rather than refactoring on first touch.
 
-```
+```text
 src/
   main.ts              # Plugin lifecycle (~1.7k lines)
   settings.ts          # Settings schema + UI (~1.4k lines)
