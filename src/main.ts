@@ -1508,11 +1508,17 @@ export default class EventideQuillPlugin extends Plugin {
         lineEnd?: number;
         fileName?: string;
     } | null {
-        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (!view) return null;
+        // Use the same pattern as the co-writer: getActiveFile() for the path
+        // (reliable even when the sidebar has focus), then findEditorView() to
+        // locate the editor by searching all markdown leaves. The naive
+        // getActiveViewOfType(MarkdownView) returns null when the sidebar tab
+        // has stolen focus, which made "Run analysis" fail after clicking in
+        // the panel.
+        const activeFile = this.app.workspace.getActiveFile();
+        const view = findEditorView(this.app, activeFile?.path ?? null);
+        if (!view || !view.file) return null;
         const editor = view.editor;
-        const file = this.app.workspace.getActiveFile();
-        const fileName = file?.name;
+        const fileName = view.file.name;
         const fullText = editor.getValue();
         if (!fullText.trim()) return null;
 
