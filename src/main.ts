@@ -26,7 +26,7 @@ import {
 import { buildFeedbackMessages, getPersonaById, getFeedback } from './ai/feedback';
 import type { ChatMessage } from './ai/provider';
 import { AI_MODE_CONFIGS } from './ai/modes';
-import { CoWriterSession, type CoachPhase, loadAdditionalContext } from './ai/co-writer';
+import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
 import { compactConversation } from './ai/compaction';
 import { estimateTokens } from './utils/tokens';
 import { readVaultFileText } from './utils/vault-files';
@@ -1211,12 +1211,12 @@ export default class EventideQuillPlugin extends Plugin {
      * Send a coach message to the co-writer.
      * The AI analyzes the passage and guides the writer through a structured process.
      */
-    async sendCoWriterCoach(message: string, phase: string): Promise<void> {
+    async sendCoWriterCoach(message: string): Promise<void> {
         const path = this.app.workspace.getActiveFile()?.path;
         if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
         this.wireCoWriterPanel();
-        await this.coWriterSession.sendCoach(this, message, phase as CoachPhase);
+        await this.coWriterSession.sendCoach(this, message);
     }
 
     /**

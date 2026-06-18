@@ -375,8 +375,8 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setNewChatHandler((clearContext: boolean) => {
                 this.plugin.resetCoWriterChat(clearContext);
             });
-            this.coWriterPanel.setCoachMessageHandler((message: string, phase: string) => {
-                void this.plugin.sendCoWriterCoach(message, phase);
+            this.coWriterPanel.setCoachMessageHandler((message: string) => {
+                void this.plugin.sendCoWriterCoach(message);
             });
             this.coWriterPanel.setCoachToOptionsHandler(() => {
                 void this.plugin.coWriterCoachToOptions();

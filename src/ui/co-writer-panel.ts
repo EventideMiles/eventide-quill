@@ -78,7 +78,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onAddContextFile: ((filePath: string) => void) | null = null;
     private onRemoveContextFile: ((filePath: string) => void) | null = null;
     private onRefreshSuggestions: (() => void) | null = null;
-    private onCoachMessage: ((message: string, phase: CoachPhase) => void) | null = null;
+    private onCoachMessage: ((message: string) => void) | null = null;
     private onCoachToOptions: (() => void) | null = null;
     private onEndCoach: (() => void) | null = null;
     private onAcceptPlan: (() => void) | null = null;
@@ -162,8 +162,8 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.onRefreshSuggestions = handler;
     }
 
-    /** Set the handler invoked when the user submits a coach message for the given phase. */
-    setCoachMessageHandler(handler: (message: string, phase: CoachPhase) => void): void {
+    /** Set the handler invoked when the user submits a coach message. */
+    setCoachMessageHandler(handler: (message: string) => void): void {
         this.onCoachMessage = handler;
     }
 
@@ -1014,7 +1014,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             } else if (this.inputMode === 'fulfill') {
                 window.setTimeout(() => this.onRunFulfill?.(text));
             } else if (this.inputMode === 'coach') {
-                this.onCoachMessage?.(text, this.coachPhase);
+                this.onCoachMessage?.(text);
             } else {
                 this.onDiscussMessage?.(text);
             }

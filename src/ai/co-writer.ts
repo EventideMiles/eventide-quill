@@ -882,7 +882,7 @@ export class CoWriterSession {
      * 3. Plan — AI creates a structured plan based on clarified intent
      * 4. Direction — AI provides concrete, actionable direction
      */
-    async sendCoach(plugin: EventideQuillPlugin, message: string, currentPhase: CoachPhase = 'discern'): Promise<void> {
+    async sendCoach(plugin: EventideQuillPlugin, message: string): Promise<void> {
         const chat = plugin.getDefaultChatProvider();
         if (!chat.provider) {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
