@@ -2050,7 +2050,7 @@ button.quill-cowriter-mode-btn:hover {
 }
 
 .quill-cowriter-mode-row.is-active .quill-cowriter-mode-row-label {
-    color: var(--text-on-accent);
+    color: var(--text-normal);
 }
 
 button.quill-cowriter-mode-discuss {

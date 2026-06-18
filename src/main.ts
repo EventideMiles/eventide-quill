@@ -1409,6 +1409,8 @@ export default class EventideQuillPlugin extends Plugin {
             return;
         }
         const text = await readVaultFileText(this.app.vault, path, this.settings.contextMaxCharsPerFile);
+        // Discard stale results if the linked plot map changed during the read.
+        if (path !== this.currentPlotMap) return;
         this.lintPanel?.coWriterSetPlotMapTokens(text ? estimateTokens(text) : 0);
     }
 

@@ -8,7 +8,7 @@ import { ConfirmModal } from './confirm-modal';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
 import { renderChangeBulkBar, renderChangeCard } from './change-card';
 
-type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill';
+export type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill';
 
 /** The co-writer modes, in cycle/picker order, with icon, label, and a one-line descriptor. */
 const COWRITER_MODES: { mode: InputMode; icon: string; label: string; desc: string }[] = [
@@ -617,6 +617,20 @@ export class CoWriterPanel extends AbstractChatPanel {
                 // before the async sweep work blocks the main thread.
                 window.setTimeout(() => this.onRunFulfill?.(''));
             });
+        } else if (this.inputMode === 'discuss') {
+            prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Discuss' });
+            prompt.createEl('div', {
+                cls: 'quill-cowriter-init-desc',
+                text: 'Brainstorm with the AI about your scene. Ask questions, explore ideas, or talk through a stuck passage.'
+            });
+            const startBtn = prompt.createEl('button', {
+                cls: 'quill-cowriter-init-btn mod-cta',
+                text: 'Start discussing'
+            });
+            if (this.optionsLoading) startBtn.disabled = true;
+            this.renderEvents.registerDomEvent(startBtn, 'click', () => {
+                this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-input')?.focus();
+            });
         } else {
             prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Direct' });
             prompt.createEl('div', {
@@ -679,6 +693,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         // Coach mode UI
         if (this.inputMode === 'coach') {
             const coachBar = bottom.createEl('div', { cls: 'quill-cowriter-coach-bar' });
+            const generating = this.optionsLoading || this.draftState === 'generating';
 
             // Phase indicator
             const phaseLabel = coachBar.createEl('span', { cls: 'quill-cowriter-coach-phase' });
@@ -709,7 +724,9 @@ export class CoWriterPanel extends AbstractChatPanel {
                     cls: 'quill-cowriter-coach-options-btn',
                     text: 'Write from coaching'
                 });
+                if (generating) writeBtn.disabled = true;
                 this.renderEvents.registerDomEvent(writeBtn, 'click', () => {
+                    if (this.optionsLoading || this.draftState === 'generating') return;
                     this.onCoachWrite?.();
                 });
 
@@ -720,7 +737,9 @@ export class CoWriterPanel extends AbstractChatPanel {
                         cls: 'quill-cowriter-coach-options-btn',
                         text: 'Generate options'
                     });
+                    if (generating) optionsBtn.disabled = true;
                     this.renderEvents.registerDomEvent(optionsBtn, 'click', () => {
+                        if (this.optionsLoading || this.draftState === 'generating') return;
                         this.onCoachToOptions?.();
                     });
                 }
@@ -831,6 +850,12 @@ export class CoWriterPanel extends AbstractChatPanel {
                 this.scheduleRender();
             };
             this.renderEvents.registerDomEvent(row, 'click', choose);
+            this.renderEvents.registerDomEvent(row, 'keydown', (e: KeyboardEvent) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    choose();
+                }
+            });
         }
     }
 
@@ -1024,7 +1049,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.scheduleRender();
             return;
         }
-        if (e.key === 'Escape' && (this.optionsLoading || this.draftState === 'generating')) {
+        if (e.key === 'Escape' && (this.optionsLoading || this.draftState === 'generating' || this.fulfillActive)) {
             e.preventDefault();
             this.onCancelGeneration?.();
         }

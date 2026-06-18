@@ -1409,16 +1409,15 @@ export class CoWriterSession {
      */
     approveFulfillSection(plugin: EventideQuillPlugin, id: number): void {
         void plugin;
+        const cm = this.getManuscriptCm();
+        if (!cm) return;
         const change = this.fulfillChanges.approve(id);
         if (!change) return;
-        const cm = this.getManuscriptCm();
-        if (cm) {
-            cm.dispatch({
-                changes: change,
-                effects: setDiffEdits.of(toDiffSnapshots(this.fulfillChanges, 'fulfill')),
-                selection: { anchor: change.from + change.insert.length }
-            });
-        }
+        cm.dispatch({
+            changes: change,
+            effects: setDiffEdits.of(toDiffSnapshots(this.fulfillChanges, 'fulfill')),
+            selection: { anchor: change.from + change.insert.length }
+        });
         this.onFulfillUpdate?.();
     }
 
@@ -1434,10 +1433,11 @@ export class CoWriterSession {
     approveAllFulfill(plugin: EventideQuillPlugin): void {
         void plugin;
         const cm = this.getManuscriptCm();
+        if (!cm) return;
         for (const change of this.fulfillChanges.approveAll()) {
-            cm?.dispatch({ changes: change });
+            cm.dispatch({ changes: change });
         }
-        if (cm) pushDiffEdits(cm, toDiffSnapshots(this.fulfillChanges, 'fulfill'));
+        pushDiffEdits(cm, toDiffSnapshots(this.fulfillChanges, 'fulfill'));
         this.onFulfillUpdate?.();
     }
 
@@ -1465,16 +1465,15 @@ export class CoWriterSession {
      */
     approveDirectChange(plugin: EventideQuillPlugin, id: number): void {
         void plugin;
+        const cm = this.getManuscriptCm();
+        if (!cm) return;
         const change = this.directChanges.approve(id);
         if (!change) return;
-        const cm = this.getManuscriptCm();
-        if (cm) {
-            cm.dispatch({
-                changes: change,
-                effects: setDiffEdits.of([]),
-                selection: { anchor: change.from + change.insert.length }
-            });
-        }
+        cm.dispatch({
+            changes: change,
+            effects: setDiffEdits.of([]),
+            selection: { anchor: change.from + change.insert.length }
+        });
         this.onDraftAccepted?.();
     }
 

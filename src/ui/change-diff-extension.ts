@@ -89,15 +89,21 @@ class ChangePreviewWidget extends WidgetType {
         super();
     }
 
+    /** Whether this widget is equivalent to `other` (same owner, id, text, state),
+     *  so CodeMirror can reuse DOM. The owner comparison prevents widgets from
+     *  different surfaces (e.g. 'fulfill' vs 'transform') from being confused. */
     eq(other: ChangePreviewWidget): boolean {
         return (
             this.removedText === other.removedText &&
             this.edit.id === other.edit.id &&
             this.edit.newText === other.edit.newText &&
-            this.edit.state === other.edit.state
+            this.edit.state === other.edit.state &&
+            this.edit.owner === other.edit.owner
         );
     }
 
+    /** Build the widget DOM: red removed box (when present) + green added box
+     *  with inline Approve/Reject controls (only once generation is final). */
     toDOM(): HTMLElement {
         const wrap = window.activeDocument.createElement('div');
         wrap.className = 'quill-diff-group';
@@ -153,6 +159,8 @@ class ChangePreviewWidget extends WidgetType {
         return wrap;
     }
 
+    /** Let CodeMirror forward events to the editor (so keyboard/click still
+     *  reach the underlying editor within the widget range). */
     ignoreEvent(): boolean {
         return false;
     }
@@ -168,6 +176,7 @@ class ChangeDiffPlugin {
         this.decorations = this.build(view);
     }
 
+    /** Rebuild the decoration set when the diff-edits state field changes. */
     update(update: ViewUpdate): void {
         const prev = update.startState.field(diffEditsField);
         const next = update.state.field(diffEditsField);
@@ -176,10 +185,13 @@ class ChangeDiffPlugin {
         }
     }
 
+    /** Tear down the plugin (no external resources to release). */
     destroy(): void {
         // nothing to clean up
     }
 
+    /** Build the decoration set from the current diff-edits snapshots: a red
+     *  range/widget for removed text and a green change-preview widget. */
     private build(view: EditorView): DecorationSet {
         const edits = view.state.field(diffEditsField);
         if (edits.length === 0) return Decoration.none;

@@ -1,6 +1,6 @@
 import { App, Component, MarkdownRenderer } from 'obsidian';
-import type { ProposedEdit } from '../core/change-set';
 import { normalizeParagraphBreaks } from './chat-panel';
+import type { ProposedEdit } from '../core/change-set';
 
 /** Handlers invoked when the user approves/rejects an edit from a change card. */
 export interface ChangeCardHandlers {

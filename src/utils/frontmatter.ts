@@ -19,6 +19,7 @@ export function loadQuillContextData(app: App, file: TFile): QuillContextData {
     const raw: Record<string, unknown> = (cache.frontmatter['quill'] as Record<string, unknown> | undefined) ?? {};
     if (typeof raw !== 'object' || Array.isArray(raw)) return {};
     const plotMapRaw = raw['plotMap'];
+    const plotMapTrimmed = typeof plotMapRaw === 'string' ? plotMapRaw.trim() : '';
     return {
         pinnedEntities: asStringArray(raw['pinnedEntities']),
         removedEntities: asStringArray(raw['removedEntities']),
@@ -26,7 +27,7 @@ export function loadQuillContextData(app: App, file: TFile): QuillContextData {
         addedFiles: asStringArray(raw['addedFiles']),
         pinnedFiles: asStringArray(raw['pinnedFiles']),
         removedFiles: asStringArray(raw['removedFiles']),
-        plotMap: typeof plotMapRaw === 'string' && plotMapRaw.length > 0 ? plotMapRaw : undefined
+        plotMap: plotMapTrimmed.length > 0 ? plotMapTrimmed : undefined
     };
 }
 
@@ -50,10 +51,11 @@ export async function writeQuillContextData(app: App, file: TFile, data: QuillCo
 /** Set or clear the plot map link in a file's frontmatter. Other quill keys are preserved.
  *  Pass null to unlink the plot map. */
 export async function setPlotMap(app: App, file: TFile, plotMap: string | null): Promise<void> {
+    const normalized = plotMap?.trim() ?? '';
     await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
         const quill = getQuillObject(fm);
-        if (plotMap) {
-            quill['plotMap'] = plotMap;
+        if (normalized.length > 0) {
+            quill['plotMap'] = normalized;
         } else {
             delete quill['plotMap'];
         }

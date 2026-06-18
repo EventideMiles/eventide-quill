@@ -1,10 +1,10 @@
 import { Editor, Notice, Platform } from 'obsidian';
 import { EditorView } from '@codemirror/view';
-import type EventideQuillPlugin from '../main';
 import { gatherVaultContext } from '../core/context-engine';
 import { ChatMessage } from './provider';
 import { getSystemPrompt } from './prompts';
 import { clearDiffEdits, pushDiffEdits, toDiffSnapshots } from '../ui/change-diff-extension';
+import type EventideQuillPlugin from '../main';
 
 /** Describes a single transformation action available in the editor context menu. */
 export interface TransformAction {
@@ -132,8 +132,21 @@ export async function applyTransformation(
     const notice = new Notice(processingMsg, 0);
     plugin.transformInProgress = true;
     plugin.transformAbortController = new AbortController();
+    const abortController = plugin.transformAbortController;
 
     try {
+        // Capture the editor and selection range up front, before any awaits,
+        // so the range matches the selection the user initiated the transform
+        // on (it could shift if the user changes selection during async work).
+        const cm = (editor as unknown as { cm: EditorView }).cm;
+        if (!cm) {
+            new Notice('Quill: Could not access editor for streaming.');
+            return;
+        }
+        const sel = cm.state.selection.main;
+        const from = sel.from;
+        const to = sel.to;
+
         // Ensure context is assembled for the correct document.
         // If context is stale or missing, refresh it before proceeding.
         let assembly: ReturnType<typeof plugin.assembleDocumentContext> extends Promise<infer T> ? T : never;
@@ -185,16 +198,6 @@ export async function applyTransformation(
         // Stream the rewrite live into a proposed change. The document is not
         // modified during generation; the selection shows in red and the rewrite
         // streams into the green box so the writer sees progress immediately.
-        const cm = (editor as unknown as { cm: EditorView }).cm;
-        if (!cm) {
-            new Notice('Quill: Could not access editor for streaming.');
-            return;
-        }
-
-        const sel = cm.state.selection.main;
-        const from = sel.from;
-        const to = sel.to;
-
         plugin.transformChangeSet.clear();
         const tEdit = plugin.transformChangeSet.add({
             from,
@@ -211,7 +214,7 @@ export async function applyTransformation(
                 model: defaultChat.modelId,
                 temperature: transformTemperature,
                 maxTokens: transformMaxOutputTokens,
-                signal: plugin.transformAbortController?.signal
+                signal: abortController.signal
             });
             for await (const chunk of stream) {
                 if (!chunk.text) continue;
@@ -219,7 +222,17 @@ export async function applyTransformation(
                 pushDiffEdits(cm, toDiffSnapshots(plugin.transformChangeSet, 'transform'));
             }
         } catch (err: unknown) {
-            if (err instanceof Error && err.name === 'AbortError') return;
+            if (err instanceof Error && err.name === 'AbortError') {
+                // Aborted mid-stream: keep partial prose for review, or clear if empty.
+                if (tEdit.newText.replace(/\s+$/, '').length === 0) {
+                    plugin.transformChangeSet.clear();
+                    clearDiffEdits(cm);
+                } else {
+                    tEdit.state = 'pending';
+                    pushDiffEdits(cm, toDiffSnapshots(plugin.transformChangeSet, 'transform'));
+                }
+                return;
+            }
             const msg = err instanceof Error ? err.message : String(err);
             new Notice(`Quill: Transformation failed \u2014 ${msg}`);
             plugin.transformChangeSet.clear();

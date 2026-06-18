@@ -7,6 +7,7 @@ import { FixWithAiModal } from './fix-with-ai-modal';
 import { renderContextTab } from './context-panel';
 import { FeedbackPanel } from './feedback-panel';
 import { CoWriterPanel } from './co-writer-panel';
+import type { InputMode } from './co-writer-panel';
 import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase } from '../ai/co-writer';
 import type { ProposedEdit } from '../core/change-set';
 import type EventideQuillPlugin from '../main';
@@ -570,13 +571,13 @@ export class QuillSidebarView extends ItemView {
     }
 
     /** Set the coach phase in the co-writer panel. */
-    coWriterSetCoachPhase(phase: string): void {
-        this.coWriterPanel?.setCoachPhase(phase as CoachPhase);
+    coWriterSetCoachPhase(phase: CoachPhase): void {
+        this.coWriterPanel?.setCoachPhase(phase);
     }
 
     /** Set the co-writer panel's active mode (e.g. from the right-click submenu). */
-    coWriterSetMode(mode: string): void {
-        this.coWriterPanel?.setMode(mode as never);
+    coWriterSetMode(mode: InputMode): void {
+        this.coWriterPanel?.setMode(mode);
     }
 
     /** Set whether coach mode is active. */
