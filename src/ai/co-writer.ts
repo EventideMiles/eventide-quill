@@ -49,7 +49,7 @@ function parseStoppingPoint(direction: string): { instruction: string; isExplici
 
     // "stop at next period" or similar natural language (checked before the
     // generic "stop at [marker]" pattern so it takes precedence)
-    const naturalStopMatch = lower.match(/stop\s+at\s+(next\s+(?:period|sentence|paragraph|line))/);
+    const naturalStopMatch = lower.match(/stop\s+at\s+(?:the\s+)?(next\s+(?:period|sentence|paragraph|line))/);
     if (naturalStopMatch?.[1]) {
         return { instruction: `Stop at the next ${naturalStopMatch[1].replace('next ', '')}.`, isExplicit: true };
     }
@@ -726,6 +726,10 @@ export class CoWriterSession {
         if (discussPlotMap) {
             injectedContext.push(discussPlotMap);
         }
+        const discussDirective = buildDirectiveMessage(plugin, proseForContext);
+        if (discussDirective) {
+            injectedContext.push(discussDirective);
+        }
 
         const prompt = getCoWriterDiscussPrompt(proseForContext || '(empty document)', message);
 
@@ -941,6 +945,10 @@ export class CoWriterSession {
         if (coachPlotMap) {
             injectedContext.push(coachPlotMap);
         }
+        const coachDirective = buildDirectiveMessage(plugin, proseForContext);
+        if (coachDirective) {
+            injectedContext.push(coachDirective);
+        }
 
         // Initialize coach session on first call
         if (!this.coachSession || (this.coachSession.phase === 'discern' && message)) {
@@ -1121,12 +1129,16 @@ export class CoWriterSession {
             const reachedPlanOrDirection =
                 this.coachSession?.phase === 'plan' || this.coachSession?.phase === 'direction';
             const willAutoGenerate = reachedPlanOrDirection && !this.coachOptionsGenerated;
+
+            // Unlock before the callback so coachToOptions (which re-locks) is
+            // not immediately unlocked by a deferred unlockEditor call.
+            this.unlockEditor();
+
             if (willAutoGenerate) {
                 this.coachOptionsGenerated = true;
                 this.onCoachDirectionReady?.();
             }
 
-            this.unlockEditor();
             if (!willAutoGenerate) {
                 this.optionsLoading = false;
                 this.onOptionsLoading?.(false);
@@ -1318,18 +1330,24 @@ export class CoWriterSession {
     async fulfillDirectives(plugin: EventideQuillPlugin, globalInstruction?: string): Promise<void> {
         const chat = plugin.getDefaultChatProvider();
         if (!chat.provider) {
+            this.fulfillActive = false;
+            this.onFulfillUpdate?.();
             new Notice('Quill: No AI provider configured. Set one up in settings.');
             return;
         }
         const activeFile = plugin.app.workspace.getActiveFile();
         const filePath = activeFile?.path ?? this.manuscriptPath;
         if (!filePath) {
+            this.fulfillActive = false;
+            this.onFulfillUpdate?.();
             new Notice('Quill: Open a manuscript to run fulfill.');
             return;
         }
         this.manuscriptPath = filePath;
         const markdownView = findEditorView(plugin.app, filePath);
         if (!markdownView) {
+            this.fulfillActive = false;
+            this.onFulfillUpdate?.();
             new Notice('Quill: Open a manuscript editor to run fulfill.');
             return;
         }
@@ -1344,6 +1362,8 @@ export class CoWriterSession {
 
         const cm = (editor as unknown as { cm: EditorView }).cm;
         if (!cm) {
+            this.fulfillActive = false;
+            this.onFulfillUpdate?.();
             new Notice('Quill: Could not access editor for fulfill.');
             return;
         }
@@ -1351,6 +1371,8 @@ export class CoWriterSession {
         const fullText = editor.getValue();
         const ranges = parseAllDirectives(fullText);
         if (ranges.length === 0) {
+            this.fulfillActive = false;
+            this.onFulfillUpdate?.();
             new Notice('Quill: No inline directives found. Add some with the "insert inline directive" command.');
             return;
         }
@@ -1379,8 +1401,18 @@ export class CoWriterSession {
         try {
             for (const range of ranges) {
                 this.abortController = new AbortController();
-                const before = fullText.slice(Math.max(0, range.start - 2000), range.start);
-                const after = fullText.slice(range.end, range.end + 2000);
+                // Re-read the editor each iteration: the user may have edited
+                // during a prior sequential call, which would shift offsets.
+                const currentDoc = editor.getValue();
+                // Validate the directive comment is still at the expected
+                // offset; skip if it was moved, edited, or removed.
+                const currentSlice = currentDoc.slice(range.start, range.end);
+                const directiveMatch = currentSlice.match(/<!--\s*quill:\s*([\s\S]*?)\s*-->/);
+                if (!directiveMatch || (directiveMatch[1] ?? '').trim() !== range.text) {
+                    continue;
+                }
+                const before = currentDoc.slice(Math.max(0, range.start - 2000), range.start);
+                const after = currentDoc.slice(range.end, range.end + 2000);
                 const systemPrompt = getCoWriterGenerationPrompt(
                     this.voiceProfile ?? {
                         sentenceLengthDistribution: 'unknown',
@@ -1708,6 +1740,7 @@ export class CoWriterSession {
             this.onOptionsLoading?.(false);
             return;
         }
+        syncChangeSetPositions(cm, this.directChanges, 'direct');
         pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
 
         const notice = Platform.isMobile
@@ -1731,6 +1764,7 @@ export class CoWriterSession {
                 }
                 if (!chunk.text) continue;
                 applyEdit.newText += sanitizeProse(chunk.text);
+                syncChangeSetPositions(cm, this.directChanges, 'direct');
                 pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
             }
 
@@ -1744,6 +1778,7 @@ export class CoWriterSession {
                 clearDiffEdits(cm, 'direct');
             } else {
                 applyEdit.state = 'pending';
+                syncChangeSetPositions(cm, this.directChanges, 'direct');
                 pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
             }
         } catch (err: unknown) {
@@ -1753,6 +1788,7 @@ export class CoWriterSession {
                     clearDiffEdits(cm, 'direct');
                 } else {
                     applyEdit.state = 'pending';
+                    syncChangeSetPositions(cm, this.directChanges, 'direct');
                     pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
                 }
             } else {
@@ -1924,6 +1960,7 @@ export class CoWriterSession {
             this.onOptionsLoading?.(false);
             return;
         }
+        syncChangeSetPositions(cm, this.directChanges, 'direct');
         pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
 
         const notice = Platform.isMobile
@@ -1949,6 +1986,7 @@ export class CoWriterSession {
                 // Stream into the preview widget (the document is not modified
                 // during generation). Approve commits; Reject discards.
                 directEdit.newText += sanitizeProse(chunk.text);
+                syncChangeSetPositions(cm, this.directChanges, 'direct');
                 pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
             }
 
@@ -1973,6 +2011,7 @@ export class CoWriterSession {
                 clearDiffEdits(cm, 'direct');
             } else {
                 directEdit.state = 'pending';
+                syncChangeSetPositions(cm, this.directChanges, 'direct');
                 pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
             }
         } catch (err: unknown) {
@@ -1983,6 +2022,7 @@ export class CoWriterSession {
                     clearDiffEdits(cm, 'direct');
                 } else {
                     directEdit.state = 'pending';
+                    syncChangeSetPositions(cm, this.directChanges, 'direct');
                     pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
                 }
             } else {

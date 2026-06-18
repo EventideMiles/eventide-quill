@@ -1,12 +1,12 @@
 import { App, MarkdownRenderer, TFile } from 'obsidian';
-import type EventideQuillPlugin from '../main';
-import type { DraftState, CoWriterChatMessage, CoWriterOption, CoachPhase } from '../ai/co-writer';
-import type { ProposedEdit } from '../core/change-set';
 import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { ConfirmModal } from './confirm-modal';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
 import { renderChangeBulkBar, renderChangeCard } from './change-card';
+import type EventideQuillPlugin from '../main';
+import type { DraftState, CoWriterChatMessage, CoWriterOption, CoachPhase } from '../ai/co-writer';
+import type { ProposedEdit } from '../core/change-set';
 
 export type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill';
 
@@ -615,7 +615,8 @@ export class CoWriterPanel extends AbstractChatPanel {
                 this.scheduleRender();
                 // Defer to the next frame so the browser paints the button change
                 // before the async sweep work blocks the main thread.
-                window.setTimeout(() => this.onRunFulfill?.(''));
+                const timeoutId = window.setTimeout(() => this.onRunFulfill?.(''));
+                this.renderEvents.register(() => window.clearTimeout(timeoutId));
             });
         } else if (this.inputMode === 'discuss') {
             prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Discuss' });
@@ -794,12 +795,12 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (this.plotMap) {
             const plotMapPath = this.plotMap;
             const pill = row.createEl('span', { cls: 'quill-cowriter-plotmap-pill' });
-            const nameSpan = pill.createEl('span', {
+            const nameBtn = pill.createEl('button', {
                 cls: 'quill-cowriter-plotmap-name',
                 text: fileNameFromPath(plotMapPath),
                 title: plotMapPath
             });
-            this.renderEvents.registerDomEvent(nameSpan, 'click', () => {
+            this.renderEvents.registerDomEvent(nameBtn, 'click', () => {
                 void this.app.workspace.openLinkText(plotMapPath, '');
             });
             const removeBtn = pill.createEl('button', {
@@ -829,7 +830,6 @@ export class CoWriterPanel extends AbstractChatPanel {
         }
     }
 
-    /** Render the input row with mode toggle, textarea, and send button. */
     /** Render the mode picker: one row per mode (icon, label, descriptor). Shown
      *  above the button row when the mode button is clicked, so the writer can
      *  jump straight to the mode they want instead of cycling. */
@@ -859,6 +859,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         }
     }
 
+    /** Render the input row with mode toggle, textarea, and send button. */
     private renderInputRow(container: HTMLElement): void {
         const generating = this.optionsLoading || this.draftState === 'generating' || this.fulfillActive;
 
@@ -982,8 +983,9 @@ export class CoWriterPanel extends AbstractChatPanel {
         });
         if (this.inputMode === 'fulfill') {
             input.disabled = true;
+        } else {
+            input.value = this.inputValue;
         }
-        input.value = this.inputValue;
 
         // Track value changes for persistence across re-renders
         this.renderEvents.registerDomEvent(input, 'input', () => {
@@ -1012,7 +1014,8 @@ export class CoWriterPanel extends AbstractChatPanel {
             if (this.inputMode === 'direct') {
                 this.onSendMessage?.(text);
             } else if (this.inputMode === 'fulfill') {
-                window.setTimeout(() => this.onRunFulfill?.(text));
+                const timeoutId = window.setTimeout(() => this.onRunFulfill?.(''));
+                this.renderEvents.register(() => window.clearTimeout(timeoutId));
             } else if (this.inputMode === 'coach') {
                 this.onCoachMessage?.(text);
             } else {
