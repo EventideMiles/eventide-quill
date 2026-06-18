@@ -226,7 +226,7 @@ export async function applyTransformation(
                 // Aborted mid-stream: keep partial prose for review, or clear if empty.
                 if (tEdit.newText.replace(/\s+$/, '').length === 0) {
                     plugin.transformChangeSet.clear();
-                    clearDiffEdits(cm);
+                    clearDiffEdits(cm, 'transform');
                 } else {
                     tEdit.state = 'pending';
                     pushDiffEdits(cm, toDiffSnapshots(plugin.transformChangeSet, 'transform'));
@@ -236,7 +236,7 @@ export async function applyTransformation(
             const msg = err instanceof Error ? err.message : String(err);
             new Notice(`Quill: Transformation failed \u2014 ${msg}`);
             plugin.transformChangeSet.clear();
-            clearDiffEdits(cm);
+            clearDiffEdits(cm, 'transform');
             return;
         }
 
@@ -244,7 +244,7 @@ export async function applyTransformation(
         if (tEdit.newText.length === 0) {
             new Notice('Quill: Received empty response from the AI provider.');
             plugin.transformChangeSet.clear();
-            clearDiffEdits(cm);
+            clearDiffEdits(cm, 'transform');
             return;
         }
         tEdit.state = 'pending';

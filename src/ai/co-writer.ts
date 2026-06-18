@@ -22,6 +22,7 @@ import { parseDirectives, parseAllDirectives } from '../utils/directives';
 import { ChangeSet } from '../core/change-set';
 import {
     clearDiffEdits,
+    diffEditsField,
     pushDiffEdits,
     setDiffEdits,
     syncChangeSetPositions,
@@ -89,6 +90,23 @@ function respectsStoppingPoint(content: string, instruction: string): boolean {
         return actualCount === expectedCount;
     }
 
+    // Check for natural stop instructions produced by parseStoppingPoint
+    // (e.g., "Stop at the next period."). Counts the relevant boundary in the
+    // generated content; respected means no more than one boundary unit.
+    const naturalMatch = instruction.match(/Stop at the next (period|sentence|paragraph|line)\b/);
+    if (naturalMatch?.[1]) {
+        switch (naturalMatch[1]) {
+            case 'period':
+                return (content.match(/\./g) ?? []).length <= 1;
+            case 'sentence':
+                return (content.match(/[.!?]/g) ?? []).length <= 1;
+            case 'paragraph':
+                return (content.match(/\n\s*\n/g) ?? []).length === 0;
+            case 'line':
+                return (content.match(/\n/g) ?? []).length === 0;
+        }
+    }
+
     // Check for "stop at" markers
     if (instruction.includes('Stop exactly at')) {
         // Content should end near the specified marker
@@ -121,6 +139,31 @@ function truncateToStoppingPoint(content: string, instruction: string): string {
         const paragraphs = content.split(/\n\s*\n/);
         const truncated = paragraphs.slice(0, expectedCount).join('\n\n');
         return truncated;
+    }
+
+    // Handle natural stop instructions produced by parseStoppingPoint
+    // (e.g., "Stop at the next period."). Cut at the first matching boundary
+    // and include the boundary character(s) where it makes sense.
+    const naturalMatch = instruction.match(/Stop at the next (period|sentence|paragraph|line)\b/);
+    if (naturalMatch?.[1]) {
+        switch (naturalMatch[1]) {
+            case 'period': {
+                const idx = content.search(/\./);
+                return idx >= 0 ? content.slice(0, idx + 1) : content;
+            }
+            case 'sentence': {
+                const idx = content.search(/[.!?]/);
+                return idx >= 0 ? content.slice(0, idx + 1) : content;
+            }
+            case 'paragraph': {
+                const idx = content.search(/\n\s*\n/);
+                return idx >= 0 ? content.slice(0, idx).replace(/\s+$/, '') : content;
+            }
+            case 'line': {
+                const idx = content.search(/\n/);
+                return idx >= 0 ? content.slice(0, idx) : content;
+            }
+        }
     }
 
     // Handle "stop at" markers
@@ -201,6 +244,10 @@ async function loadPlotMapText(plugin: EventideQuillPlugin): Promise<string> {
     const plotMapPath = plugin.currentPlotMap;
     if (!plotMapPath) return '';
     const text = await readVaultFileText(plugin.app.vault, plotMapPath, plugin.settings.contextMaxCharsPerFile);
+    // The user may have unlinked or swapped the plot map during the read.
+    // Drop the result if the active link no longer matches the one we read so
+    // stale text from the old note is never sent as AI context.
+    if (plugin.currentPlotMap !== plotMapPath) return '';
     if (!text) {
         console.warn('Quill: Linked plot map note could not be read:', plotMapPath);
     }
@@ -1321,7 +1368,7 @@ export class CoWriterSession {
 
         this.fulfillChanges.clear();
         this.fulfillActive = true;
-        clearDiffEdits(cm);
+        clearDiffEdits(cm, 'fulfill');
         this.onFulfillUpdate?.();
 
         const notice = new Notice(
@@ -1420,9 +1467,10 @@ export class CoWriterSession {
         syncChangeSetPositions(cm, this.fulfillChanges, 'fulfill');
         const change = this.fulfillChanges.approve(id);
         if (!change) return;
+        const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'fulfill');
         cm.dispatch({
             changes: change,
-            effects: setDiffEdits.of(toDiffSnapshots(this.fulfillChanges, 'fulfill')),
+            effects: setDiffEdits.of([...preserved, ...toDiffSnapshots(this.fulfillChanges, 'fulfill')]),
             selection: { anchor: change.from + change.insert.length }
         });
         this.onFulfillUpdate?.();
@@ -1463,7 +1511,7 @@ export class CoWriterSession {
         this.fulfillChanges.clear();
         this.fulfillActive = false;
         const cm = this.getManuscriptCm();
-        if (cm) clearDiffEdits(cm);
+        if (cm) clearDiffEdits(cm, 'fulfill');
         this.onFulfillUpdate?.();
     }
 
@@ -1479,9 +1527,10 @@ export class CoWriterSession {
         syncChangeSetPositions(cm, this.directChanges, 'direct');
         const change = this.directChanges.approve(id);
         if (!change) return;
+        const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'direct');
         cm.dispatch({
             changes: change,
-            effects: setDiffEdits.of([]),
+            effects: setDiffEdits.of(preserved),
             selection: { anchor: change.from + change.insert.length }
         });
         this.onDraftAccepted?.();
@@ -1493,14 +1542,14 @@ export class CoWriterSession {
         void id;
         this.directChanges.clear();
         const cm = this.getManuscriptCm();
-        if (cm) clearDiffEdits(cm);
+        if (cm) clearDiffEdits(cm, 'direct');
     }
 
     /** Clear Direct change state (e.g., on reset / new chat). */
     clearDirect(): void {
         this.directChanges.clear();
         const cm = this.getManuscriptCm();
-        if (cm) clearDiffEdits(cm);
+        if (cm) clearDiffEdits(cm, 'direct');
     }
 
     /**
@@ -1692,7 +1741,7 @@ export class CoWriterSession {
             if (applyEdit.newText.replace(/\s+$/, '').length === 0) {
                 new Notice('Quill: Received empty response from the AI provider.');
                 this.directChanges.clear();
-                clearDiffEdits(cm);
+                clearDiffEdits(cm, 'direct');
             } else {
                 applyEdit.state = 'pending';
                 pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
@@ -1701,7 +1750,7 @@ export class CoWriterSession {
             if (err instanceof Error && err.name === 'AbortError') {
                 if (applyEdit.newText.replace(/\s+$/, '').length === 0) {
                     this.directChanges.clear();
-                    clearDiffEdits(cm);
+                    clearDiffEdits(cm, 'direct');
                 } else {
                     applyEdit.state = 'pending';
                     pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
@@ -1709,7 +1758,7 @@ export class CoWriterSession {
             } else {
                 new Notice(`Quill: Continuation failed \u2014 ${err instanceof Error ? err.message : String(err)}`);
                 this.directChanges.clear();
-                clearDiffEdits(cm);
+                clearDiffEdits(cm, 'direct');
             }
         } finally {
             notice.hide();
@@ -1757,8 +1806,18 @@ export class CoWriterSession {
         this.app = plugin.app;
         this.currentOptions = [];
 
-        const cursor = editor.getCursor();
         const fullText = editor.getValue();
+        // When direction is empty, the continuation is appended at EOF, so the
+        // generation context must be built from the full document — not from
+        // the (possibly mid-document) cursor position. Move the cursor now and
+        // derive cursorOffset from the insertion point so voice/steering/prose
+        // context all match the eventual edit location.
+        if (!direction) {
+            const endPos = editor.offsetToPos(fullText.length);
+            editor.setCursor(endPos);
+            editor.scrollIntoView({ from: endPos, to: endPos }, true);
+        }
+        const cursor = editor.getCursor();
         const cursorOffset = editor.posToOffset(cursor);
 
         this.chatHistory.push({
@@ -1856,14 +1915,6 @@ export class CoWriterSession {
         // cancelled; flipped to 'pending' below once there is a final result.
         directEdit.state = 'generating';
 
-        if (!direction) {
-            const endPos = editor.offsetToPos(fullText.length);
-            editor.setCursor(endPos);
-            editor.scrollIntoView({ from: endPos, to: endPos }, true);
-            directEdit.from = fullText.length;
-            directEdit.to = fullText.length;
-        }
-
         this.onOptionsLoading?.(true);
         this.onChatUpdate?.();
 
@@ -1919,7 +1970,7 @@ export class CoWriterSession {
             if (directEdit.newText.replace(/\s+$/, '').length === 0) {
                 new Notice('Quill: Received empty response from the AI provider.');
                 this.directChanges.clear();
-                clearDiffEdits(cm);
+                clearDiffEdits(cm, 'direct');
             } else {
                 directEdit.state = 'pending';
                 pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
@@ -1929,7 +1980,7 @@ export class CoWriterSession {
                 // Keep partial prose as a reviewable change; clear only if empty.
                 if (directEdit.newText.replace(/\s+$/, '').length === 0) {
                     this.directChanges.clear();
-                    clearDiffEdits(cm);
+                    clearDiffEdits(cm, 'direct');
                 } else {
                     directEdit.state = 'pending';
                     pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
@@ -1937,7 +1988,7 @@ export class CoWriterSession {
             } else {
                 new Notice(`Quill: Continuation failed \u2014 ${err instanceof Error ? err.message : String(err)}`);
                 this.directChanges.clear();
-                clearDiffEdits(cm);
+                clearDiffEdits(cm, 'direct');
             }
         } finally {
             notice.hide();

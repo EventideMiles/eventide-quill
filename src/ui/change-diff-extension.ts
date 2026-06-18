@@ -259,12 +259,35 @@ export function getChangeDiffExtension(handlers: ChangeDiffHandlers): Extension[
     ];
 }
 
-/** Push a snapshot set to a view (convenience). */
-export function pushDiffEdits(view: EditorView, snapshots: DiffEditSnapshot[]): void {
-    view.dispatch({ effects: setDiffEdits.of(snapshots) });
+/** Push a snapshot set to a view (convenience).
+ *
+ *  Owner-scoped: snapshots already carry an `owner` tag (see {@link DiffEditSnapshot}),
+ *  so this merges rather than replaces — snapshots from other active surfaces
+ *  (e.g., Fulfill while Transform is previewing) are preserved. The owner is
+ *  inferred from the first snapshot; pass an explicit `owner` to override or
+ *  when pushing an empty array (which clears that owner's snapshots). */
+export function pushDiffEdits(view: EditorView, snapshots: DiffEditSnapshot[], owner?: string): void {
+    const targetOwner = owner ?? snapshots[0]?.owner;
+    if (!targetOwner) {
+        view.dispatch({ effects: setDiffEdits.of(snapshots) });
+        return;
+    }
+    const existing = view.state.field(diffEditsField);
+    const preserved = existing.filter((s) => s.owner !== targetOwner);
+    view.dispatch({ effects: setDiffEdits.of([...preserved, ...snapshots]) });
 }
 
-/** Clear the diff in a view. */
-export function clearDiffEdits(view: EditorView): void {
-    view.dispatch({ effects: setDiffEdits.of([]) });
+/** Clear the diff in a view.
+ *
+ *  By default clears every owner's snapshots (legacy behavior). Pass an
+ *  `owner` (e.g., 'fulfill', 'direct', 'transform') to clear only that
+ *  surface's snapshots and preserve snapshots from other active surfaces. */
+export function clearDiffEdits(view: EditorView, owner?: string): void {
+    if (!owner) {
+        view.dispatch({ effects: setDiffEdits.of([]) });
+        return;
+    }
+    const existing = view.state.field(diffEditsField);
+    const preserved = existing.filter((s) => s.owner !== owner);
+    view.dispatch({ effects: setDiffEdits.of(preserved) });
 }

@@ -34,6 +34,7 @@ import { parseDirectives } from './utils/directives';
 import {
     getChangeDiffExtension,
     clearDiffEdits,
+    diffEditsField,
     setDiffEdits,
     syncChangeSetPositions
 } from './ui/change-diff-extension';
@@ -1300,9 +1301,10 @@ export default class EventideQuillPlugin extends Plugin {
         syncChangeSetPositions(cm, this.transformChangeSet, 'transform');
         const change = this.transformChangeSet.approve(id);
         if (!change) return;
+        const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'transform');
         cm.dispatch({
             changes: change,
-            effects: setDiffEdits.of([]),
+            effects: setDiffEdits.of(preserved),
             selection: { anchor: change.from + change.insert.length }
         });
     }
@@ -1312,7 +1314,7 @@ export default class EventideQuillPlugin extends Plugin {
         void id;
         this.transformChangeSet.rejectAll();
         const cm = this.getActiveCm();
-        if (cm) clearDiffEdits(cm);
+        if (cm) clearDiffEdits(cm, 'transform');
     }
 
     /** Cancel the current feedback generation request. */
