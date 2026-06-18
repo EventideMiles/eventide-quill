@@ -37,6 +37,7 @@ export interface EventideQuillSettings {
     customNarrativeVoiceRules: string;
     analysisTemperature: number;
     analysisMaxOutputTokens: number;
+    enableCriticalAnalysis: boolean;
     linterTemperature: number;
     linterMaxOutputTokens: number;
     enableLinterAiFixes: boolean;
@@ -101,6 +102,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     customNarrativeVoiceRules: 'No genre-specific or context-specific rules configured.',
     analysisTemperature: 0.7,
     analysisMaxOutputTokens: 2048,
+    enableCriticalAnalysis: true,
     linterTemperature: 0.3,
     linterMaxOutputTokens: 512,
     enableLinterAiFixes: true,
@@ -141,11 +143,11 @@ class InputModal extends Modal {
 
         const input = contentEl.createEl('input', {
             type: 'text',
-            cls: 'quill-input-modal-input',
+            cls: 'quill-input-modal__input',
             attr: { placeholder: this.placeholder }
         });
 
-        const buttonRow = contentEl.createEl('div', { cls: 'quill-input-modal-actions' });
+        const buttonRow = contentEl.createEl('div', { cls: 'quill-input-modal__actions' });
 
         buttonRow.createEl('button', { text: 'Cancel' }).addEventListener('click', () => this.close());
 
@@ -266,7 +268,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render the tab bar at the top of the settings panel. */
     private renderTabBar(containerEl: HTMLElement): void {
-        const tabBar = containerEl.createEl('div', { cls: 'quill-settings-tab-bar' });
+        const tabBar = containerEl.createEl('div', { cls: 'quill-settings__tab-bar' });
 
         const tabs: { id: 'linter' | 'ai-providers' | 'model-behaviors'; label: string }[] = [
             { id: 'linter', label: 'Linter' },
@@ -276,7 +278,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
         for (const tab of tabs) {
             const btn = tabBar.createEl('button', {
-                cls: `quill-settings-tab${this.activeTab === tab.id ? ' quill-settings-tab-active' : ''}`,
+                cls: `quill-settings__tab${this.activeTab === tab.id ? ' quill-settings__tab--active' : ''}`,
                 text: tab.label,
                 attr: { 'data-tab': tab.id }
             });
@@ -294,7 +296,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         const modelBehaviorsContent = this.containerEl.querySelector(
             '.quill-settings-content-model-behaviors'
         ) as HTMLElement;
-        const tabs = this.containerEl.querySelectorAll('.quill-settings-tab');
+        const tabs = this.containerEl.querySelectorAll('.quill-settings__tab');
 
         if (linterContent) linterContent.style.display = this.activeTab === 'linter' ? 'block' : 'none';
         if (aiContent) aiContent.style.display = this.activeTab === 'ai-providers' ? 'block' : 'none';
@@ -304,9 +306,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         tabs.forEach((tab) => {
             const el = tab as HTMLElement;
             if (el.dataset.tab === this.activeTab) {
-                el.addClass('quill-settings-tab-active');
+                el.addClass('quill-settings__tab--active');
             } else {
-                el.removeClass('quill-settings-tab-active');
+                el.removeClass('quill-settings__tab--active');
             }
         });
     }
@@ -613,7 +615,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         const card = containerEl.createEl('div', { cls: 'quill-provider-card' });
 
         // Provider heading row
-        const headingRow = card.createEl('div', { cls: 'quill-provider-heading' });
+        const headingRow = card.createEl('div', { cls: 'quill-provider-card__heading' });
 
         new Setting(headingRow).setName(provider.name || 'Unnamed provider').addButton((button) =>
             button.setButtonText('Remove').onClick(async () => {
@@ -708,7 +710,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 } else {
                     dropdown.setValue('custom');
                     card.createEl('div', {
-                        cls: 'quill-provider-setting-extra',
+                        cls: 'quill-provider-card__setting-extra',
                         text: `Custom value: ${current}`
                     });
                 }
@@ -757,12 +759,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     /** Render the model list for a provider. */
     private renderModelList(containerEl: HTMLElement, provider: ProviderConfig): void {
         containerEl.createEl('div', {
-            cls: 'quill-provider-models-heading',
+            cls: 'quill-provider-card__models-heading',
             text: 'Models'
         });
 
         for (const [mIdx, model] of provider.models.entries()) {
-            const modelCard = containerEl.createEl('div', { cls: 'quill-provider-model-card' });
+            const modelCard = containerEl.createEl('div', { cls: 'quill-provider-card__model' });
 
             new Setting(modelCard).setName(`Model ${mIdx + 1}`).addDropdown((dropdown) =>
                 dropdown
@@ -832,7 +834,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render test connection and test embeddings buttons. */
     private renderTestButtons(containerEl: HTMLElement, provider: ProviderConfig): void {
-        const testRow = containerEl.createEl('div', { cls: 'quill-provider-test-row' });
+        const testRow = containerEl.createEl('div', { cls: 'quill-provider-card__test-row' });
 
         new Setting(testRow)
             .addButton((button) =>
@@ -969,7 +971,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 });
             });
 
-        const rulesArea = containerEl.createEl('div', { cls: 'quill-narrative-rules-area' });
+        const rulesArea = containerEl.createEl('div', { cls: 'quill-narrative-rules' });
         this.renderNarrativeVoiceRules(containerEl, rulesArea);
 
         new Setting(containerEl)
@@ -1113,6 +1115,16 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(containerEl).setName('Analysis').setHeading();
+
+        new Setting(containerEl)
+            .setName('Critical analysis')
+            .setDesc('Show the analysis tab and the right-click "analyze at Cursor" command. Hidden when off.')
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.enableCriticalAnalysis).onChange((value) => {
+                    this.plugin.settings.enableCriticalAnalysis = value;
+                    void this.plugin.saveSettings();
+                })
+            );
 
         new Setting(containerEl)
             .setName('Analysis temperature')
@@ -1317,6 +1329,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.customNarrativeVoiceRules = DEFAULT_SETTINGS.customNarrativeVoiceRules;
                     this.plugin.settings.analysisTemperature = DEFAULT_SETTINGS.analysisTemperature;
                     this.plugin.settings.analysisMaxOutputTokens = DEFAULT_SETTINGS.analysisMaxOutputTokens;
+                    this.plugin.settings.enableCriticalAnalysis = DEFAULT_SETTINGS.enableCriticalAnalysis;
                     this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
                     this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
                     this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
@@ -1392,6 +1405,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     /** Render the narrative voice rules textarea and wire its change handler. */
     private renderNarrativeVoiceRules(containerEl: HTMLElement, rulesArea: HTMLElement): void {
         const textarea = rulesArea.createEl('textarea', {
+            cls: 'quill-narrative-rules__textarea',
             attr: {
                 rows: '6',
                 placeholder: 'Rules for the custom narrative voice...'

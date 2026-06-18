@@ -340,7 +340,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             last = this.chatHistory[this.chatHistory.length - 1];
         }
         if (!this.containerEl) return;
-        const el = this.containerEl.querySelector('.quill-cowriter-chat-streaming');
+        const el = this.containerEl.querySelector('.quill-cowriter-panel__response-text--streaming');
         if (el) el.setText(last?.content ?? '');
         // Auto-scroll only if the user hasn't scrolled up
         if (!this.userScrolledUp) {
@@ -378,9 +378,11 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (!this.containerEl) return;
 
         // Save scroll positions and textarea focus before destroying DOM
-        const savedThoughtScroll = this.containerEl.querySelector('.quill-cowriter-thought-content')?.scrollTop ?? 0;
+        const savedThoughtScroll =
+            this.containerEl.querySelector('.quill-cowriter-panel__thought-content')?.scrollTop ?? 0;
         const textareaHadFocus =
-            this.containerEl.querySelector('.quill-cowriter-input') === this.containerEl.ownerDocument.activeElement;
+            this.containerEl.querySelector('.quill-cowriter-panel__input') ===
+            this.containerEl.ownerDocument.activeElement;
 
         this.unloadAndClearContainer();
 
@@ -397,7 +399,7 @@ export class CoWriterPanel extends AbstractChatPanel {
 
         // Restore thought section scroll position
         if (savedThoughtScroll > 0) {
-            const newThoughtContent = this.containerEl.querySelector('.quill-cowriter-thought-content');
+            const newThoughtContent = this.containerEl.querySelector('.quill-cowriter-panel__thought-content');
             if (newThoughtContent) {
                 newThoughtContent.scrollTop = savedThoughtScroll;
             }
@@ -405,7 +407,7 @@ export class CoWriterPanel extends AbstractChatPanel {
 
         // Restore textarea focus if the user was typing when generation completed
         if (textareaHadFocus) {
-            const newTextarea = this.containerEl.querySelector<HTMLTextAreaElement>('.quill-cowriter-input');
+            const newTextarea = this.containerEl.querySelector<HTMLTextAreaElement>('.quill-cowriter-panel__input');
             if (newTextarea) {
                 newTextarea.focus();
             }
@@ -414,11 +416,11 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the thought channel section (only during draft generation). */
     private renderThoughtSection(): void {
-        const section = this.containerEl!.createEl('div', { cls: 'quill-cowriter-section' });
+        const section = this.containerEl!.createEl('div', { cls: 'quill-cowriter-panel__section' });
 
-        const toggle = section.createEl('div', { cls: 'quill-cowriter-thought-toggle' });
+        const toggle = section.createEl('div', { cls: 'quill-cowriter-panel__thought-toggle' });
         toggle.createEl('span', {
-            cls: 'quill-cowriter-thought-icon',
+            cls: 'quill-cowriter-panel__thought-icon',
             text: this.thoughtExpanded ? '\u25bc' : '\u25b6'
         });
         toggle.createEl('span', { text: 'AI reasoning' });
@@ -430,7 +432,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             });
 
             if (this.thoughtExpanded) {
-                const content = section.createEl('div', { cls: 'quill-cowriter-thought-content' });
+                const content = section.createEl('div', { cls: 'quill-cowriter-panel__thought-content' });
                 content.setText(this.thoughtContent);
             }
         } else {
@@ -440,7 +442,7 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the scrollable chat area with messages or initialize prompt. */
     private renderChatArea(): void {
-        const scroll = this.containerEl!.createEl('div', { cls: 'quill-sidebar-content-plain' });
+        const scroll = this.containerEl!.createEl('div', { cls: 'quill-sidebar__content-plain' });
 
         if (this.fulfillSections.length > 0) {
             this.renderFulfillSections(scroll);
@@ -450,38 +452,44 @@ export class CoWriterPanel extends AbstractChatPanel {
             for (const msg of this.chatHistory) {
                 if (msg.role === 'user') {
                     const bubble = scroll.createEl('div', {
-                        cls: 'quill-cowriter-chat-bubble quill-cowriter-chat-user'
+                        cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--user'
                     });
                     bubble.setText(msg.content);
                 } else if (msg.role === 'assistant') {
                     const bubble = scroll.createEl('div', {
-                        cls: 'quill-cowriter-chat-bubble quill-cowriter-chat-assistant'
+                        cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--assistant'
                     });
 
                     // Per-message thought/reasoning — start expanded
                     if (msg.thought && this.plugin.settings.enableCoWriterThought) {
-                        const thoughtToggle = bubble.createEl('div', { cls: 'quill-cowriter-message-thought-toggle' });
-                        thoughtToggle.createEl('span', { cls: 'quill-cowriter-thought-icon', text: '\u25bc' });
+                        const thoughtToggle = bubble.createEl('div', {
+                            cls: 'quill-cowriter-panel__message-thought-toggle'
+                        });
+                        thoughtToggle.createEl('span', { cls: 'quill-cowriter-panel__thought-icon', text: '\u25bc' });
                         thoughtToggle.createEl('span', { text: 'AI reasoning' });
                         const thoughtContent = bubble.createEl('div', {
-                            cls: 'quill-cowriter-message-thought-content',
+                            cls: 'quill-cowriter-panel__message-thought-content',
                             text: msg.thought
                         });
                         this.renderEvents.registerDomEvent(thoughtToggle, 'click', () => {
-                            const collapsed = thoughtContent.hasClass('quill-cowriter-thought-collapsed');
+                            const collapsed = thoughtContent.hasClass(
+                                'quill-cowriter-panel__message-thought-content--collapsed'
+                            );
                             if (collapsed) {
-                                thoughtContent.removeClass('quill-cowriter-thought-collapsed');
-                                thoughtToggle.querySelector('.quill-cowriter-thought-icon')!.textContent = '\u25bc';
+                                thoughtContent.removeClass('quill-cowriter-panel__message-thought-content--collapsed');
+                                thoughtToggle.querySelector('.quill-cowriter-panel__thought-icon')!.textContent =
+                                    '\u25bc';
                             } else {
-                                thoughtContent.addClass('quill-cowriter-thought-collapsed');
-                                thoughtToggle.querySelector('.quill-cowriter-thought-icon')!.textContent = '\u25b6';
+                                thoughtContent.addClass('quill-cowriter-panel__message-thought-content--collapsed');
+                                thoughtToggle.querySelector('.quill-cowriter-panel__thought-icon')!.textContent =
+                                    '\u25b6';
                             }
                         });
                     }
 
                     if (msg.options && msg.options.length > 0) {
-                        bubble.createEl('div', { cls: 'quill-cowriter-options-intro', text: msg.content });
-                        const optionsContainer = bubble.createEl('div', { cls: 'quill-cowriter-options' });
+                        bubble.createEl('div', { cls: 'quill-cowriter-panel__options-intro', text: msg.content });
+                        const optionsContainer = bubble.createEl('div', { cls: 'quill-cowriter-panel__options' });
                         for (let i = 0; i < msg.options.length; i++) {
                             this.renderOptionCard(optionsContainer, msg.options[i]!, i);
                         }
@@ -489,9 +497,9 @@ export class CoWriterPanel extends AbstractChatPanel {
                         // Render completed discuss responses as markdown
                         const isStreaming =
                             msg === this.chatHistory[this.chatHistory.length - 1] && this.discussStreaming;
-                        const responseEl = bubble.createEl('div', { cls: 'quill-cowriter-response-text' });
+                        const responseEl = bubble.createEl('div', { cls: 'quill-cowriter-panel__response-text' });
                         if (isStreaming) {
-                            responseEl.addClass('quill-cowriter-chat-streaming');
+                            responseEl.addClass('quill-cowriter-panel__response-text--streaming');
                             responseEl.setText(msg.content || '\u2026');
                         } else {
                             void MarkdownRenderer.render(
@@ -507,7 +515,7 @@ export class CoWriterPanel extends AbstractChatPanel {
                     // Accept button for plan revision
                     if (msg.showAccept) {
                         const acceptBtn = bubble.createEl('button', {
-                            cls: 'quill-cowriter-plan-accept mod-cta',
+                            cls: 'quill-cowriter-panel__plan-accept mod-cta',
                             text: 'Accept plan and generate options'
                         });
                         this.renderEvents.registerDomEvent(acceptBtn, 'click', () => {
@@ -519,7 +527,7 @@ export class CoWriterPanel extends AbstractChatPanel {
 
             if (this.optionsLoading) {
                 const bubble = scroll.createEl('div', {
-                    cls: 'quill-cowriter-chat-bubble quill-cowriter-chat-assistant quill-cowriter-chat-streaming'
+                    cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--assistant quill-cowriter-panel__chat-bubble--streaming'
                 });
                 bubble.setText('Thinking...');
             }
@@ -557,36 +565,36 @@ export class CoWriterPanel extends AbstractChatPanel {
     private renderInitializePrompt(container: HTMLElement): void {
         const activeFile = this.app.workspace.getActiveFile();
         if (!activeFile) {
-            const prompt = container.createEl('div', { cls: 'quill-cowriter-init' });
+            const prompt = container.createEl('div', { cls: 'quill-cowriter-panel__init' });
             prompt.createEl('div', {
-                cls: 'quill-cowriter-init-desc',
+                cls: 'quill-cowriter-panel__init-desc',
                 text: 'Open a manuscript to use the co-writer.'
             });
             return;
         }
 
-        const prompt = container.createEl('div', { cls: 'quill-cowriter-init' });
-        prompt.createEl('div', { cls: 'quill-cowriter-init-icon', text: '\u270e' });
+        const prompt = container.createEl('div', { cls: 'quill-cowriter-panel__init' });
+        prompt.createEl('div', { cls: 'quill-cowriter-panel__init-icon', text: '\u270e' });
 
         if (this.inputMode === 'coach') {
-            prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Coach' });
+            prompt.createEl('div', { cls: 'quill-cowriter-panel__init-heading', text: 'Coach' });
             prompt.createEl('div', {
-                cls: 'quill-cowriter-init-desc',
+                cls: 'quill-cowriter-panel__init-desc',
                 text: 'Describe what you want this scene to do. The coach asks clarifying questions and helps you shape a direction before any prose is written.'
             });
             const startBtn = prompt.createEl('button', {
-                cls: 'quill-cowriter-init-btn mod-cta',
+                cls: 'quill-cowriter-panel__init-btn mod-cta',
                 text: 'Start coaching'
             });
             this.renderEvents.registerDomEvent(startBtn, 'click', () => {
-                this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-input')?.focus();
+                this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-panel__input')?.focus();
             });
             prompt.createEl('div', {
-                cls: 'quill-cowriter-init-sub',
+                cls: 'quill-cowriter-panel__init-sub',
                 text: 'Or, if you\u2019re feeling uninspired, see a few options that might work.'
             });
             const optionsBtn = prompt.createEl('button', {
-                cls: 'quill-cowriter-init-btn quill-cowriter-init-btn-secondary',
+                cls: 'quill-cowriter-panel__init-btn quill-cowriter-panel__init-btn--secondary',
                 text: 'Generate options'
             });
             this.renderEvents.registerDomEvent(optionsBtn, 'click', () => {
@@ -597,13 +605,13 @@ export class CoWriterPanel extends AbstractChatPanel {
                 this.onGenerateOptions?.('');
             });
         } else if (this.inputMode === 'fulfill') {
-            prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Fulfill' });
+            prompt.createEl('div', { cls: 'quill-cowriter-panel__init-heading', text: 'Fulfill' });
             prompt.createEl('div', {
-                cls: 'quill-cowriter-init-desc',
+                cls: 'quill-cowriter-panel__init-desc',
                 text: 'Sweep every `<!-- quill: -->` directive in this document and review each fulfillment as a diff. Add directives first (right-click → Insert inline directive).'
             });
             const runBtn = prompt.createEl('button', {
-                cls: 'quill-cowriter-init-btn mod-cta',
+                cls: 'quill-cowriter-panel__init-btn mod-cta',
                 text: this.fulfillActive ? 'Running sweep\u2026' : 'Run sweep'
             });
             if (this.fulfillActive) runBtn.disabled = true;
@@ -619,27 +627,27 @@ export class CoWriterPanel extends AbstractChatPanel {
                 this.renderEvents.register(() => window.clearTimeout(timeoutId));
             });
         } else if (this.inputMode === 'discuss') {
-            prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Discuss' });
+            prompt.createEl('div', { cls: 'quill-cowriter-panel__init-heading', text: 'Discuss' });
             prompt.createEl('div', {
-                cls: 'quill-cowriter-init-desc',
+                cls: 'quill-cowriter-panel__init-desc',
                 text: 'Brainstorm with the AI about your scene. Ask questions, explore ideas, or talk through a stuck passage.'
             });
             const startBtn = prompt.createEl('button', {
-                cls: 'quill-cowriter-init-btn mod-cta',
+                cls: 'quill-cowriter-panel__init-btn mod-cta',
                 text: 'Start discussing'
             });
             if (this.optionsLoading) startBtn.disabled = true;
             this.renderEvents.registerDomEvent(startBtn, 'click', () => {
-                this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-input')?.focus();
+                this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-panel__input')?.focus();
             });
         } else {
-            prompt.createEl('div', { cls: 'quill-cowriter-init-heading', text: 'Direct' });
+            prompt.createEl('div', { cls: 'quill-cowriter-panel__init-heading', text: 'Direct' });
             prompt.createEl('div', {
-                cls: 'quill-cowriter-init-desc',
+                cls: 'quill-cowriter-panel__init-desc',
                 text: 'Describe what should happen next, then send.'
             });
             const initBtn = prompt.createEl('button', {
-                cls: 'quill-cowriter-init-btn mod-cta',
+                cls: 'quill-cowriter-panel__init-btn mod-cta',
                 text: 'Generate options'
             });
             this.renderEvents.registerDomEvent(initBtn, 'click', () => {
@@ -657,23 +665,23 @@ export class CoWriterPanel extends AbstractChatPanel {
     private renderOptionCard(container: HTMLElement, option: CoWriterOption, index: number): void {
         const expired = !this.currentOptions[index];
         const card = container.createEl('div', {
-            cls: `quill-cowriter-option-card${expired ? ' quill-cowriter-option-expired' : ''}`
+            cls: `quill-cowriter-panel__option-card${expired ? ' quill-cowriter-panel__option-card--expired' : ''}`
         });
-        card.createEl('div', { cls: 'quill-cowriter-option-label', text: option.label });
-        card.createEl('div', { cls: 'quill-cowriter-option-desc', text: option.description });
+        card.createEl('div', { cls: 'quill-cowriter-panel__option-label', text: option.label });
+        card.createEl('div', { cls: 'quill-cowriter-panel__option-desc', text: option.description });
 
         if (expired) {
-            card.createEl('span', { cls: 'quill-cowriter-option-expired-label', text: 'No longer available' });
+            card.createEl('span', { cls: 'quill-cowriter-panel__option-expired-label', text: 'No longer available' });
             return;
         }
 
         const applying = this.optionsLoading;
         const applyBtn = card.createEl('button', {
-            cls: 'quill-cowriter-option-apply mod-cta',
+            cls: 'quill-cowriter-panel__option-apply mod-cta',
             text: applying ? 'Generating\u2026' : 'Apply'
         });
         if (applying) {
-            applyBtn.addClass('quill-cowriter-option-applying');
+            applyBtn.addClass('quill-cowriter-panel__option-apply--applying');
         }
         const idx = index;
         this.renderEvents.registerDomEvent(applyBtn, 'click', () => {
@@ -689,15 +697,15 @@ export class CoWriterPanel extends AbstractChatPanel {
         const activeFile = this.app.workspace.getActiveFile();
         if (!activeFile && this.chatHistory.length === 0) return;
 
-        const bottom = this.containerEl!.createEl('div', { cls: 'quill-cowriter-bottom' });
+        const bottom = this.containerEl!.createEl('div', { cls: 'quill-cowriter-panel__bottom' });
 
         // Coach mode UI
         if (this.inputMode === 'coach') {
-            const coachBar = bottom.createEl('div', { cls: 'quill-cowriter-coach-bar' });
+            const coachBar = bottom.createEl('div', { cls: 'quill-cowriter-panel__coach-bar' });
             const generating = this.optionsLoading || this.draftState === 'generating';
 
             // Phase indicator
-            const phaseLabel = coachBar.createEl('span', { cls: 'quill-cowriter-coach-phase' });
+            const phaseLabel = coachBar.createEl('span', { cls: 'quill-cowriter-panel__coach-phase' });
             const phaseNames: Record<CoachPhase, string> = {
                 discern: 'Phase 1: Analyzing intent...',
                 clarify: 'Phase 2: Clarifying questions...',
@@ -712,7 +720,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             if (this.coachActive) {
                 coachBar.createEl('span', { text: ' ' });
                 const endBtn = coachBar.createEl('button', {
-                    cls: 'quill-cowriter-coach-end-btn',
+                    cls: 'quill-cowriter-panel__coach-end-btn',
                     text: 'End coaching'
                 });
                 this.renderEvents.registerDomEvent(endBtn, 'click', () => {
@@ -722,7 +730,7 @@ export class CoWriterPanel extends AbstractChatPanel {
                 // Write coach button (available at any phase)
                 coachBar.createEl('span', { text: ' ' });
                 const writeBtn = coachBar.createEl('button', {
-                    cls: 'quill-cowriter-coach-options-btn',
+                    cls: 'quill-cowriter-panel__coach-options-btn',
                     text: 'Write from coaching'
                 });
                 if (generating) writeBtn.disabled = true;
@@ -735,7 +743,7 @@ export class CoWriterPanel extends AbstractChatPanel {
                 if (this.coachPhase === 'direction') {
                     coachBar.createEl('span', { text: ' ' });
                     const optionsBtn = coachBar.createEl('button', {
-                        cls: 'quill-cowriter-coach-options-btn',
+                        cls: 'quill-cowriter-panel__coach-options-btn',
                         text: 'Generate options'
                     });
                     if (generating) optionsBtn.disabled = true;
@@ -752,18 +760,18 @@ export class CoWriterPanel extends AbstractChatPanel {
 
         // Directive-active badge (Direct mode only)
         if (this.inputMode === 'direct' && this.directiveActive) {
-            bottom.createEl('div', { cls: 'quill-cowriter-directive-badge', text: 'Directive active' });
+            bottom.createEl('div', { cls: 'quill-cowriter-panel__directive-badge', text: 'Directive active' });
         }
 
         // Context file pills
         const contextFiles = this.getContextFiles();
         if (contextFiles.length > 0) {
-            const ctxRow = bottom.createEl('div', { cls: 'quill-cowriter-ctx-row' });
+            const ctxRow = bottom.createEl('div', { cls: 'quill-cowriter-panel__ctx-row' });
             for (const filePath of contextFiles) {
-                const pill = ctxRow.createEl('span', { cls: 'quill-cowriter-ctx-pill' });
+                const pill = ctxRow.createEl('span', { cls: 'quill-cowriter-panel__ctx-pill' });
                 pill.createEl('span', { text: fileNameFromPath(filePath) });
                 const removeBtn = pill.createEl('button', {
-                    cls: 'quill-cowriter-ctx-remove',
+                    cls: 'quill-cowriter-panel__ctx-remove',
                     text: '\u00d7'
                 });
                 this.renderEvents.registerDomEvent(removeBtn, 'click', () => {
@@ -781,7 +789,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             const vaultContextCount = this.getVaultContextFiles().length;
             const label = this.buildContextLabel(contextFiles.length, vaultContextCount);
             bottom.createEl('div', {
-                cls: 'quill-cowriter-token-indicator',
+                cls: 'quill-cowriter-panel__token-indicator',
                 text: formatTokenIndicatorText(label, totalTokens, this.maxAllowedTokens)
             });
         }
@@ -789,14 +797,14 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the plot map link row: either a link button or a filename pill with unlink. */
     private renderPlotMapRow(container: HTMLElement): void {
-        const row = container.createEl('div', { cls: 'quill-cowriter-plotmap-row' });
-        row.createEl('span', { cls: 'quill-cowriter-plotmap-label', text: 'Plot map' });
+        const row = container.createEl('div', { cls: 'quill-cowriter-panel__plotmap-row' });
+        row.createEl('span', { cls: 'quill-cowriter-panel__plotmap-label', text: 'Plot map' });
 
         if (this.plotMap) {
             const plotMapPath = this.plotMap;
-            const pill = row.createEl('span', { cls: 'quill-cowriter-plotmap-pill' });
+            const pill = row.createEl('span', { cls: 'quill-cowriter-panel__plotmap-pill' });
             const nameBtn = pill.createEl('button', {
-                cls: 'quill-cowriter-plotmap-name',
+                cls: 'quill-cowriter-panel__plotmap-name',
                 text: fileNameFromPath(plotMapPath),
                 title: plotMapPath
             });
@@ -804,7 +812,7 @@ export class CoWriterPanel extends AbstractChatPanel {
                 void this.app.workspace.openLinkText(plotMapPath, '');
             });
             const removeBtn = pill.createEl('button', {
-                cls: 'quill-cowriter-plotmap-remove',
+                cls: 'quill-cowriter-panel__plotmap-remove',
                 text: '\u00d7',
                 title: 'Unlink plot map'
             });
@@ -813,7 +821,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             });
         } else {
             const linkBtn = row.createEl('button', {
-                cls: 'quill-cowriter-plotmap-link',
+                cls: 'quill-cowriter-panel__plotmap-link',
                 text: '+ link',
                 title: 'Link a plot map note for this manuscript'
             });
@@ -834,16 +842,16 @@ export class CoWriterPanel extends AbstractChatPanel {
      *  above the button row when the mode button is clicked, so the writer can
      *  jump straight to the mode they want instead of cycling. */
     private renderModePicker(container: HTMLElement): void {
-        const list = container.createEl('div', { cls: 'quill-cowriter-mode-picker' });
+        const list = container.createEl('div', { cls: 'quill-cowriter-panel__mode-picker' });
         for (const m of COWRITER_MODES) {
             const row = list.createEl('div', {
-                cls: `quill-cowriter-mode-row${this.inputMode === m.mode ? ' is-active' : ''}`,
+                cls: `quill-cowriter-panel__mode-row${this.inputMode === m.mode ? ' is-active' : ''}`,
                 attr: { tabindex: '0', role: 'button' }
             });
-            row.createEl('span', { cls: 'quill-cowriter-mode-row-icon', text: m.icon });
-            const textWrap = row.createEl('div', { cls: 'quill-cowriter-mode-row-text' });
-            textWrap.createEl('div', { cls: 'quill-cowriter-mode-row-label', text: m.label });
-            textWrap.createEl('div', { cls: 'quill-cowriter-mode-row-desc', text: m.desc });
+            row.createEl('span', { cls: 'quill-cowriter-panel__mode-row-icon', text: m.icon });
+            const textWrap = row.createEl('div', { cls: 'quill-cowriter-panel__mode-row-text' });
+            textWrap.createEl('div', { cls: 'quill-cowriter-panel__mode-row-label', text: m.label });
+            textWrap.createEl('div', { cls: 'quill-cowriter-panel__mode-row-desc', text: m.desc });
             const choose = () => {
                 this.inputMode = m.mode;
                 this.modePickerOpen = false;
@@ -869,11 +877,11 @@ export class CoWriterPanel extends AbstractChatPanel {
         }
 
         // Buttons row — mode toggle, add context, refresh, send/stop
-        const btnRow = container.createEl('div', { cls: 'quill-cowriter-btn-row' });
+        const btnRow = container.createEl('div', { cls: 'quill-cowriter-panel__btn-row' });
 
         const currentMode = COWRITER_MODES.find((m) => m.mode === this.inputMode);
         const modeBtn = btnRow.createEl('button', {
-            cls: `quill-cowriter-mode-btn${this.inputMode === 'coach' ? ' quill-cowriter-mode-coach' : this.inputMode === 'discuss' ? ' quill-cowriter-mode-discuss' : this.inputMode === 'fulfill' ? ' quill-cowriter-mode-fulfill' : ''}`,
+            cls: `quill-cowriter-panel__mode-btn${this.inputMode === 'coach' ? ' quill-cowriter-panel__mode-btn--coach' : this.inputMode === 'discuss' ? ' quill-cowriter-panel__mode-btn--discuss' : this.inputMode === 'fulfill' ? ' quill-cowriter-panel__mode-btn--fulfill' : ''}`,
             text: `${currentMode?.icon ?? ''} ${currentMode?.label ?? ''} ${this.modePickerOpen ? '\u25b4' : '\u25be'}`,
             title: 'Pick a co-writer mode'
         });
@@ -885,7 +893,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         });
 
         const addCtxBtn = btnRow.createEl('button', {
-            cls: 'quill-cowriter-ctx-add',
+            cls: 'quill-cowriter-panel__ctx-add',
             text: '\u00b1',
             title: 'Add file to context'
         });
@@ -903,7 +911,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         });
 
         const refreshBtn = btnRow.createEl('button', {
-            cls: 'quill-cowriter-refresh-btn',
+            cls: 'quill-cowriter-panel__refresh-btn',
             text: '\u21bb',
             title: 'Refresh suggestions'
         });
@@ -913,14 +921,14 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.optionsLoading = true;
             refreshBtn.disabled = true;
             actionBtn.setText('Stop');
-            actionBtn.addClass('quill-cowriter-stop-btn');
+            actionBtn.addClass('quill-cowriter-panel__send-btn--stop');
             this.scheduleRender();
             this.onGenerateOptions?.('');
         });
 
         // Compact button
         const compactBtn = btnRow.createEl('button', {
-            cls: 'quill-cowriter-compact-btn',
+            cls: 'quill-cowriter-panel__compact-btn',
             text: '\u00bb\u00bb',
             title: 'Compact conversation'
         });
@@ -931,7 +939,7 @@ export class CoWriterPanel extends AbstractChatPanel {
 
         // New chat button
         const newChatBtn = btnRow.createEl('button', {
-            cls: 'quill-cowriter-new-chat-btn',
+            cls: 'quill-cowriter-panel__new-chat-btn',
             text: '\u2713',
             title: 'New chat'
         });
@@ -955,10 +963,10 @@ export class CoWriterPanel extends AbstractChatPanel {
         });
 
         // Spacer to push send/stop to the right
-        btnRow.createEl('div', { cls: 'quill-cowriter-btn-spacer' });
+        btnRow.createEl('div', { cls: 'quill-cowriter-panel__btn-spacer' });
 
         const actionBtn = btnRow.createEl('button', {
-            cls: `quill-cowriter-send-btn mod-cta${generating ? ' quill-cowriter-stop-btn' : ''}`,
+            cls: `quill-cowriter-panel__send-btn mod-cta${generating ? ' quill-cowriter-panel__send-btn--stop' : ''}`,
             text: generating
                 ? this.inputMode === 'fulfill'
                     ? 'Running\u2026'
@@ -969,9 +977,9 @@ export class CoWriterPanel extends AbstractChatPanel {
         });
 
         // Textarea row — below the buttons, ~10 lines tall
-        const taRow = container.createEl('div', { cls: 'quill-cowriter-ta-row' });
+        const taRow = container.createEl('div', { cls: 'quill-cowriter-panel__ta-row' });
         const input = taRow.createEl('textarea', {
-            cls: 'quill-cowriter-input',
+            cls: 'quill-cowriter-panel__input',
             placeholder:
                 this.inputMode === 'direct'
                     ? 'Describe what should happen next\u2026'
@@ -1008,7 +1016,7 @@ export class CoWriterPanel extends AbstractChatPanel {
                 this.optionsLoading = true;
             }
             actionBtn.setText('Stop');
-            actionBtn.addClass('quill-cowriter-stop-btn');
+            actionBtn.addClass('quill-cowriter-panel__send-btn--stop');
             refreshBtn.disabled = true;
             this.scheduleRender();
             if (this.inputMode === 'direct') {
@@ -1070,7 +1078,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Recompute the context indicator text in-place (without full re-render). */
     private updateTokenIndicator(): void {
         if (!this.containerEl) return;
-        const indicator = this.containerEl.querySelector('.quill-cowriter-token-indicator');
+        const indicator = this.containerEl.querySelector('.quill-cowriter-panel__token-indicator');
         if (!indicator) return;
         if (this.maxAllowedTokens <= 0) return;
         const contextFiles = this.getContextFiles();

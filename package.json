@@ -6,12 +6,14 @@
 	"type": "module",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
-		"build": "prettier --write 'src/**/*.ts' && tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"build": "npm run sass && prettier --write 'src/**/*.ts' && tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"lint": "eslint .",
 		"lint:fix": "eslint . --fix && prettier --write 'src/**/*.ts'",
 		"prettier:check": "prettier --check 'src/**/*.ts'",
-		"prettier:fix": "prettier --write 'src/**/*.ts'"
+		"prettier:fix": "prettier --write 'src/**/*.ts'",
+		"sass": "sass styles/main.scss styles.css --style=expanded --no-source-map",
+		"sass:watch": "sass --watch styles/main.scss styles.css --style=expanded"
 	},
 	"keywords": [],
 	"license": "MIT",
@@ -25,6 +27,7 @@
 		"jiti": "^2.6.1",
 		"obsidian": "latest",
 		"prettier": "^3.8.4",
+		"sass": "^1.101.0",
 		"typescript": "^5.8.3",
 		"typescript-eslint": "^8.59.1"
 	},

@@ -1,0 +1,40 @@
+// Design tokens (SCSS variables).
+//
+// These are static design-system values — substituted at compile time.
+// For theme-dependent values (colors that change between light/dark/community
+// themes), use Obsidian's CSS custom properties via var(--obsidian-token), not
+// SCSS variables. SCSS variables and CSS custom properties coexist cleanly:
+//
+//   .quill-example {
+//     border-radius: $radius-md;                          // compile-time substitution
+//     color: var(--text-normal);                          // runtime theme token
+//     background: var(--background-modifier-hover);       // runtime theme token
+//   }
+//
+// Convention: add new tokens here when a value appears 3+ times across partials.
+
+// ============================================================================
+// Spacing
+// ============================================================================
+$space-xs: 4px;
+$space-sm: 6px;
+$space-md: 8px;
+$space-lg: 12px;
+$space-xl: 16px;
+$space-xxl: 24px;
+
+// ============================================================================
+// Border radii
+// ============================================================================
+$radius-sm: 4px;
+$radius-md: 6px;
+$radius-lg: 8px;
+$radius-pill: 10px;
+$radius-full: 9999px;
+
+// ============================================================================
+// Transitions
+// ============================================================================
+$transition-fast: 0.1s;
+$transition-base: 0.15s ease;
+$transition-slow: 0.25s ease;

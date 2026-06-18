@@ -1,0 +1,170 @@
+// Shared change-review chrome — used by Fulfill, Transform, Direct, and Coach→Write.
+//
+// Two BEM blocks live here:
+//
+//   quill-change-card  — sidebar cards reviewing a single ProposedEdit
+//   quill-change-diff  — inline CodeMirror decorations rendering a proposed
+//                        edit at its target location in the document
+//
+// `quill-change-bulk` is a separate block for the bulk-action bar that
+// appears above the card stack (Approve all / Reject all).
+
+@use 'base' as *;
+
+// =========================================================================
+// Bulk-action bar
+// =========================================================================
+
+.quill-change-bulk {
+    display: flex;
+    align-items: center;
+    gap: $space-sm;
+    padding: $space-xs 0 $space-md 0;
+    border-bottom: 1px solid var(--background-modifier-border);
+    margin-bottom: $space-md;
+
+    &__btn {
+        font-size: var(--font-ui-smaller);
+    }
+}
+
+// =========================================================================
+// Sidebar review card — one per ProposedEdit
+// =========================================================================
+
+.quill-change-card {
+    border: 1px solid var(--background-modifier-border);
+    border-left: 3px solid var(--background-modifier-border);
+    border-radius: $radius-sm;
+    padding: $space-md $space-lg;
+    margin-bottom: 10px;
+
+    // State modifiers — color the left accent.
+    &--pending {
+        border-left-color: var(--color-yellow, var(--interactive-accent));
+    }
+
+    &--approved {
+        border-left-color: var(--color-green);
+        opacity: 0.75;
+    }
+
+    &--rejected {
+        border-left-color: var(--color-red);
+        opacity: 0.6;
+    }
+
+    &__label {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        font-style: italic;
+        margin-bottom: $space-sm;
+    }
+
+    &__removed {
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        text-decoration: line-through;
+        text-decoration-color: rgba(255, 0, 0, 0.45);
+        background: var(--background-modifier-error, rgba(255, 0, 0, 0.1));
+        border-radius: 3px;
+        padding: $space-xs $space-sm;
+        margin-bottom: $space-xs;
+        white-space: pre-wrap;
+    }
+
+    &__added {
+        font-size: var(--font-ui-small);
+        color: var(--text-normal);
+        background: rgba(0, 128, 0, 0.08);
+        border-radius: 3px;
+        padding: $space-xs $space-sm;
+    }
+
+    &__status {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        margin-top: $space-sm;
+    }
+
+    &__btns {
+        margin-top: $space-md;
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+    }
+
+    &__btn {
+        font-size: var(--font-ui-smaller);
+    }
+}
+
+// =========================================================================
+// Inline diff decorations (CodeMirror ViewPlugin + StateField)
+// =========================================================================
+// The ViewPlugin cannot replace ranges that span line breaks, so multi-line
+// removals use a `__removed-mark` (mark decoration) plus a separate green
+// widget below. Single-line removals get the stacked red+green `__group` widget.
+
+.quill-change-diff {
+    &__removed-mark {
+        background: rgba(255, 0, 0, 0.08);
+        text-decoration: line-through;
+        text-decoration-color: rgba(255, 0, 0, 0.45);
+        border-radius: 2px;
+    }
+
+    // Widget holding the red (removed) and green (added) boxes stacked.
+    &__group {
+        display: block;
+        margin: $space-xs 0;
+    }
+
+    // Removed text — soft red glow with a red left accent and faint strikethrough.
+    // Kept subtle so it reads as a tint, not a blast of red.
+    &__removed-box {
+        display: block;
+        background: rgba(255, 0, 0, 0.05);
+        border-left: 3px solid var(--color-red);
+        border-radius: 3px;
+        padding: $space-sm $space-md;
+        margin: 0 0 $space-sm 0;
+        color: var(--text-muted);
+        text-decoration: line-through;
+        text-decoration-color: rgba(255, 0, 0, 0.45);
+        white-space: pre-wrap;
+    }
+
+    &__added {
+        display: block;
+        background: rgba(0, 128, 0, 0.07);
+        border-left: 3px solid var(--color-green);
+        border-radius: 3px;
+        padding: $space-sm $space-md;
+        margin: 0;
+    }
+
+    &__added-prose {
+        font-size: var(--font-ui-small);
+        color: var(--text-normal);
+        white-space: pre-wrap;
+    }
+
+    &__controls {
+        margin-top: $space-sm;
+        display: flex;
+        gap: $space-sm;
+    }
+
+    // Muted "Generating…" hint shown in place of controls while a change streams.
+    &__generating {
+        margin-top: $space-sm;
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        font-style: italic;
+    }
+
+    &__btn {
+        font-size: var(--font-ui-smaller);
+    }
+}

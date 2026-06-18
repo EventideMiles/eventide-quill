@@ -99,7 +99,7 @@ export abstract class AbstractChatPanel {
 
     /** Find the scrollable content container within the panel. */
     protected getScrollContainer(): HTMLElement | null {
-        return this.containerEl?.querySelector('.quill-sidebar-content-plain') ?? null;
+        return this.containerEl?.querySelector('.quill-sidebar__content-plain') ?? null;
     }
 
     /** True when the scroll container is at or near the bottom (within 60px). */

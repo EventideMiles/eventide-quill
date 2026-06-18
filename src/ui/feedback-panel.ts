@@ -1,61 +1,16 @@
-import { App, MarkdownRenderer, Modal, Notice, TFile } from 'obsidian';
+import { App, MarkdownRenderer, Notice, TFile } from 'obsidian';
 import { FEEDBACK_PERSONAS } from '../ai/feedback';
 import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
+import { FilenameModal } from './filename-modal';
+import { ChatContextFiles } from './chat-context-files';
 
 /** Sub-tabs within the Feedback tab. */
 type FeedbackSubtab = 'create' | 'results';
 
 /** State of the results sub-tab. */
 type ResultsState = 'idle' | 'loading' | 'complete' | 'error';
-
-/** Simple modal that prompts for a filename and calls back with the path. */
-class FilenameModal extends Modal {
-    private onChoose: (path: string) => void | Promise<void>;
-    private defaultName: string;
-
-    constructor(app: App, defaultName: string, onChoose: (path: string) => void | Promise<void>) {
-        super(app);
-        this.defaultName = defaultName;
-        this.onChoose = onChoose;
-    }
-
-    onOpen(): void {
-        this.titleEl.setText('Save conversation');
-        const content = this.contentEl.createDiv();
-        content.createEl('label', { text: 'File path:', cls: 'quill-save-label' });
-        const input = content.createEl('input', {
-            type: 'text',
-            cls: 'quill-save-input',
-            value: this.defaultName
-        });
-        input.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                void this.onChoose(input.value.trim() || this.defaultName);
-                this.close();
-            }
-        });
-        const btnRow = content.createDiv({ cls: 'quill-save-btn-row' });
-        const cancelBtn = btnRow.createEl('button', { text: 'Cancel' });
-        cancelBtn.addEventListener('click', () => this.close());
-        const saveBtn = btnRow.createEl('button', { text: 'Save', cls: 'mod-cta' });
-        saveBtn.addEventListener('click', () => {
-            void this.onChoose(input.value.trim() || this.defaultName);
-            this.close();
-        });
-        input.focus();
-        input.select();
-    }
-}
-
-/** Truncate the middle of a filename if it exceeds maxWidth characters. */
-function truncateFileName(name: string, maxWidth: number = 24): string {
-    if (name.length <= maxWidth) return name;
-    const half = Math.floor((maxWidth - 1) / 2);
-    return name.slice(0, half) + '\u2026' + name.slice(name.length - half);
-}
 
 /**
  * Renders the Feedback tab in the Quill sidebar with two sub-tabs:
@@ -90,11 +45,12 @@ export class FeedbackPanel extends AbstractChatPanel {
     private onChatMessage: ((message: string) => void) | null = null;
 
     /** Files added as persistent context for the entire chat conversation. */
-    private chatContextFiles: string[] = [];
-    private chatContextFileTokens: Map<string, number> = new Map();
+    private chatContextFiles: ChatContextFiles;
 
     constructor(app: App) {
         super(app);
+        // Update the token indicator whenever files are added or removed.
+        this.chatContextFiles = new ChatContextFiles(app, 'quill-chat-panel', () => this.updateChatCtxIndicator());
     }
 
     /** Register the callback for when feedback should be generated. */
@@ -203,15 +159,14 @@ export class FeedbackPanel extends AbstractChatPanel {
         this.contextTokenOverride = null;
         this.subtab = 'results';
         // Clear conversation-scoped chat context files for a fresh start.
-        this.chatContextFiles = [];
-        this.chatContextFileTokens.clear();
+        this.chatContextFiles.clear();
         if (this.containerEl) this.render();
     }
 
     appendChunk(text: string): void {
         this.reportText += text;
         if (!this.containerEl) return;
-        const el = this.containerEl.querySelector('.quill-feedback-report');
+        const el = this.containerEl.querySelector('.quill-feedback-panel__report');
         if (el) el.setText(this.reportText);
     }
 
@@ -239,8 +194,7 @@ export class FeedbackPanel extends AbstractChatPanel {
         this.chatLoading = false;
         this.contextTokenOverride = null;
         // Clear conversation-scoped chat context files when resetting results.
-        this.chatContextFiles = [];
-        this.chatContextFileTokens.clear();
+        this.chatContextFiles.clear();
         if (this.containerEl) this.render();
     }
 
@@ -257,8 +211,7 @@ export class FeedbackPanel extends AbstractChatPanel {
         this.chatHistory = [];
         this.chatLoading = false;
         // Clear conversation-scoped chat context files when resetting all state.
-        this.chatContextFiles = [];
-        this.chatContextFileTokens.clear();
+        this.chatContextFiles.clear();
         if (this.containerEl) this.render();
     }
 
@@ -288,13 +241,13 @@ export class FeedbackPanel extends AbstractChatPanel {
      */
     appendChatSystemMessageInPlace(content: string): void {
         this.chatHistory.push({ role: 'system', content });
-        const chatSection = this.containerEl?.querySelector('.quill-feedback-chat-section');
+        const chatSection = this.containerEl?.querySelector('.quill-chat-panel__section');
         if (!chatSection) return;
         const el = chatSection.createDiv({
-            cls: 'quill-feedback-chat-context-head',
+            cls: 'quill-chat-panel__context-head',
             text: content
         });
-        const streaming = chatSection.querySelector('.quill-feedback-chat-streaming');
+        const streaming = chatSection.querySelector('.quill-chat-panel__bubble--streaming');
         if (streaming) {
             chatSection.insertBefore(el, streaming);
         }
@@ -309,89 +262,37 @@ export class FeedbackPanel extends AbstractChatPanel {
 
     /** Get the chat context file paths. */
     getChatContextFiles(): string[] {
-        return [...this.chatContextFiles];
+        return this.chatContextFiles.getFiles();
     }
 
     /** Get the total estimated tokens for chat context files. */
     getChatContextTokens(): number {
-        let total = 0;
-        for (const t of this.chatContextFileTokens.values()) total += t;
-        return total;
+        return this.chatContextFiles.getTotalTokens();
     }
 
     /** Add a file as persistent chat context. */
     async addChatContextFile(filePath: string): Promise<void> {
-        if (this.chatContextFiles.includes(filePath)) return;
-        this.chatContextFiles.push(filePath);
-        try {
-            const file = this.app.vault.getAbstractFileByPath(filePath);
-            if (file instanceof TFile) {
-                const content = await this.app.vault.cachedRead(file);
-                this.chatContextFileTokens.set(filePath, Math.ceil(content.length / 4));
-            }
-        } catch {
-            this.chatContextFileTokens.set(filePath, 0);
-        }
-        this.updateChatCtxUI();
+        await this.chatContextFiles.add(filePath);
     }
 
     /** Remove a file from persistent chat context. */
     removeChatContextFile(filePath: string): void {
-        this.chatContextFiles = this.chatContextFiles.filter((p) => p !== filePath);
-        this.chatContextFileTokens.delete(filePath);
-        this.updateChatCtxUI();
-    }
-
-    /** Update the chat context pills and indicator in-place without a full re-render. */
-    private updateChatCtxUI(): void {
-        const bottomArea = this.containerEl?.querySelector('.quill-feedback-chat-bottom');
-        if (!bottomArea) return;
-
-        // Rebuild context pill bar — insert before the input row so it stays on top
-        const oldCtxBar = bottomArea.querySelector('.quill-feedback-chat-ctx-bar');
-        if (oldCtxBar) oldCtxBar.remove();
-
-        const inputRow = bottomArea.querySelector('.quill-feedback-chat-btn-row');
-
-        if (this.chatContextFiles.length > 0) {
-            const ctxBar = bottomArea.createDiv({ cls: 'quill-feedback-chat-ctx-bar' });
-            for (const filePath of this.chatContextFiles) {
-                const pill = ctxBar.createDiv({ cls: 'quill-feedback-chat-ctx-pill' });
-                const name = truncateFileName(filePath.split('/').pop() ?? filePath);
-                pill.createEl('span', { text: name });
-                const removeBtn = pill.createEl('button', {
-                    cls: 'quill-feedback-chat-ctx-remove',
-                    text: '\u00d7',
-                    title: filePath
-                });
-                removeBtn.addEventListener('click', () => this.removeChatContextFile(filePath));
-            }
-            if (inputRow) {
-                bottomArea.insertBefore(ctxBar, inputRow);
-            }
-        }
-
-        // Update indicator text (counts from last context head forward)
-        const { totalTokens, maxTokens } = this.computeContextTokens();
-        const label = buildFileLabel(this.contextFilePaths.length, this.chatContextFiles.length);
-        const indicator = bottomArea.querySelector('.quill-feedback-chat-ctx-indicator');
-        if (indicator) {
-            indicator.setText(formatTokenIndicatorText(label, totalTokens, maxTokens));
-        }
+        this.chatContextFiles.remove(filePath);
     }
 
     /**
      * Recompute the context indicator text in-place (without full re-render).
      * Tokens are counted from the last context head forward, so users see
-     * the window clear after compaction.
+     * the window clear after compaction. Pills are refreshed by `ChatContextFiles`
+     * itself via its onChange callback (which points here).
      */
     private updateChatCtxIndicator(): void {
-        const bottomArea = this.containerEl?.querySelector('.quill-feedback-chat-bottom');
+        const bottomArea = this.containerEl?.querySelector('.quill-chat-panel__bottom');
         if (!bottomArea) return;
-        const indicator = bottomArea.querySelector('.quill-feedback-chat-ctx-indicator');
+        const indicator = bottomArea.querySelector('.quill-chat-panel__indicator');
         if (!indicator) return;
         const { totalTokens, maxTokens } = this.computeContextTokens();
-        const label = buildFileLabel(this.contextFilePaths.length, this.chatContextFiles.length);
+        const label = buildFileLabel(this.contextFilePaths.length, this.chatContextFiles.fileCount());
         indicator.setText(formatTokenIndicatorText(label, totalTokens, maxTokens));
     }
 
@@ -441,7 +342,7 @@ export class FeedbackPanel extends AbstractChatPanel {
             last = this.chatHistory[this.chatHistory.length - 1];
         }
         if (!this.containerEl) return;
-        const el = this.containerEl.querySelector('.quill-feedback-chat-streaming');
+        const el = this.containerEl.querySelector('.quill-chat-panel__bubble--streaming');
         if (el) el.setText(last?.content ?? '');
         // Auto-scroll only if the user hasn't scrolled up
         if (!this.userScrolledUp) {
@@ -521,14 +422,14 @@ export class FeedbackPanel extends AbstractChatPanel {
 
     private renderSubtabBar(): void {
         if (!this.containerEl) return;
-        const bar = this.containerEl.createDiv({ cls: 'quill-sidebar-subtab-bar' });
+        const bar = this.containerEl.createDiv({ cls: 'quill-sidebar__subtab-bar' });
         const tabs: { id: FeedbackSubtab; label: string }[] = [
             { id: 'create', label: 'Create feedback' },
             { id: 'results', label: 'Results' }
         ];
         for (const tab of tabs) {
             const btn = bar.createEl('button', {
-                cls: `quill-sidebar-subtab${this.subtab === tab.id ? ' quill-sidebar-subtab-active' : ''}`,
+                cls: `quill-sidebar__subtab${this.subtab === tab.id ? ' quill-sidebar__subtab--active' : ''}`,
                 text: tab.label
             });
             btn.addEventListener('click', () => {
@@ -542,63 +443,63 @@ export class FeedbackPanel extends AbstractChatPanel {
 
     private renderCreateTab(): void {
         if (!this.containerEl) return;
-        const scroll = this.containerEl.createDiv({ cls: 'quill-sidebar-content-plain' });
+        const scroll = this.containerEl.createDiv({ cls: 'quill-sidebar__content-plain' });
 
         this.renderManuscriptsSection(scroll);
         this.renderPersonaSection(scroll);
     }
 
     private renderManuscriptsSection(container: HTMLElement): void {
-        const section = container.createDiv({ cls: 'quill-feedback-section' });
-        section.createEl('p', { cls: 'quill-feedback-section-label', text: 'Manuscripts' });
+        const section = container.createDiv({ cls: 'quill-form__section' });
+        section.createEl('p', { cls: 'quill-form__label', text: 'Manuscripts' });
 
         // Budget bar
         if (this.maxAllowedTokens > 0) {
             const pct = this.budgetPercent();
             const over = this.isOverBudget();
-            const budget = section.createDiv({ cls: 'quill-feedback-budget' });
+            const budget = section.createDiv({ cls: 'quill-feedback-panel__budget' });
             budget.createEl('span', {
-                cls: 'quill-feedback-budget-text',
+                cls: 'quill-feedback-panel__budget-text',
                 text: `${this.totalEstimatedTokens()} / ${this.maxAllowedTokens} tokens (system + source + context)`
             });
-            const bar = budget.createDiv({ cls: 'quill-feedback-budget-bar' });
+            const bar = budget.createDiv({ cls: 'quill-feedback-panel__budget-bar' });
             const fill = bar.createDiv({
-                cls: `quill-feedback-budget-fill${over ? ' quill-feedback-budget-over' : ''}`
+                cls: `quill-feedback-panel__budget-fill${over ? ' quill-feedback-panel__budget-fill--over' : ''}`
             });
             fill.style.width = `${Math.min(pct, 100)}%`;
             if (over) {
                 budget.createEl('span', {
-                    cls: 'quill-feedback-budget-warn',
+                    cls: 'quill-feedback-panel__budget-warn',
                     text: `Exceeds provider context limit by ~${this.totalEstimatedTokens() - this.maxAllowedTokens} tokens.`
                 });
             }
         }
 
         // Selected files
-        const list = section.createDiv({ cls: 'quill-feedback-file-list' });
+        const list = section.createDiv({ cls: 'quill-feedback-panel__file-list' });
         if (this.contextFilePaths.length === 0) {
             list.createEl('p', {
                 text: 'Add one or more manuscripts to analyze. Feedback is generated from the content of these files.',
-                cls: 'quill-feedback-hint'
+                cls: 'quill-empty-hint'
             });
         } else {
             for (const filePath of this.contextFilePaths) {
                 const tokens = this.contextFileTokens.get(filePath) ?? 0;
-                const item = list.createDiv({ cls: 'quill-feedback-file-item' });
+                const item = list.createDiv({ cls: 'quill-feedback-panel__file-item' });
                 const name = filePath.split('/').pop() ?? filePath;
-                item.createEl('span', { cls: 'quill-feedback-file-name', text: name });
-                item.createEl('span', { cls: 'quill-feedback-file-tokens', text: `~${tokens} tokens` });
-                const remove = item.createEl('button', { cls: 'quill-feedback-file-remove', text: '\u00d7' });
+                item.createEl('span', { cls: 'quill-feedback-panel__file-name', text: name });
+                item.createEl('span', { cls: 'quill-feedback-panel__file-tokens', text: `~${tokens} tokens` });
+                const remove = item.createEl('button', { cls: 'quill-feedback-panel__file-remove', text: '\u00d7' });
                 remove.addEventListener('click', () => this.removeContextFile(filePath));
             }
         }
 
         const addBtn = section.createEl('button', {
-            cls: 'quill-feedback-file-add',
+            cls: 'quill-feedback-panel__file-add',
             text: '+ add file'
         });
         addBtn.addEventListener('click', () => {
-            const exclude = [...this.contextFilePaths, ...this.chatContextFiles];
+            const exclude = [...this.contextFilePaths, ...this.chatContextFiles.getFiles()];
             new VaultFileSuggestModal(
                 this.app,
                 (file) => {
@@ -611,29 +512,29 @@ export class FeedbackPanel extends AbstractChatPanel {
     }
 
     private renderPersonaSection(container: HTMLElement): void {
-        const section = container.createDiv({ cls: 'quill-feedback-section' });
-        section.createEl('p', { cls: 'quill-feedback-section-label', text: 'Feedback type' });
+        const section = container.createDiv({ cls: 'quill-form__section' });
+        section.createEl('p', { cls: 'quill-form__label', text: 'Feedback type' });
 
-        const personas = container.createDiv({ cls: 'quill-feedback-personas' });
+        const personas = container.createDiv({ cls: 'quill-option-picker' });
 
         for (const persona of FEEDBACK_PERSONAS) {
             const btn = personas.createEl('button', {
-                cls: 'quill-feedback-persona-btn'
+                cls: 'quill-option-picker__option'
             });
-            const name = btn.createEl('span', { cls: 'quill-feedback-persona-name', text: persona.name });
+            const name = btn.createEl('span', { cls: 'quill-option-picker__name', text: persona.name });
             name.title = persona.description;
-            btn.createEl('span', { cls: 'quill-feedback-persona-desc', text: persona.description });
+            btn.createEl('span', { cls: 'quill-option-picker__desc', text: persona.description });
             btn.addEventListener('click', () => {
                 this.triggerFeedback(persona.id);
             });
         }
 
         // Custom feedback
-        section.createEl('hr', { cls: 'quill-feedback-divider' });
-        container.createEl('p', { cls: 'quill-feedback-section-label', text: 'Custom' });
+        section.createEl('hr', { cls: 'quill-form__divider' });
+        container.createEl('p', { cls: 'quill-form__label', text: 'Custom' });
 
         const customArea = container.createEl('textarea', {
-            cls: 'quill-feedback-custom-input',
+            cls: 'quill-form__textarea',
             placeholder: 'Describe what kind of feedback you want...'
         });
         customArea.value = this.customInstruction;
@@ -642,7 +543,7 @@ export class FeedbackPanel extends AbstractChatPanel {
         });
 
         const generateBtn = container.createEl('button', {
-            cls: 'quill-feedback-generate-btn',
+            cls: 'quill-form__submit',
             text: 'Generate feedback'
         });
         generateBtn.addEventListener('click', () => {
@@ -669,30 +570,33 @@ export class FeedbackPanel extends AbstractChatPanel {
 
     private async renderResultsTab(): Promise<void> {
         if (!this.containerEl) return;
-        const scroll = this.containerEl.createDiv({ cls: 'quill-sidebar-content-plain' });
+        const scroll = this.containerEl.createDiv({ cls: 'quill-sidebar__content-plain' });
 
         if (this.resultsState === 'idle') {
             scroll.createEl('p', {
                 text: 'No feedback results yet. Use the create feedback tab to generate a report.',
-                cls: 'quill-feedback-hint'
+                cls: 'quill-empty-hint'
             });
             return;
         }
 
         // Header
-        const header = scroll.createDiv({ cls: 'quill-feedback-header' });
+        const header = scroll.createDiv({ cls: 'quill-feedback-panel__header' });
         const persona = FEEDBACK_PERSONAS.find((p) => p.id === this.currentPersonaId);
         if (persona) {
-            header.createEl('span', { cls: 'quill-feedback-persona', text: persona.name });
+            header.createEl('span', { cls: 'quill-feedback-panel__persona', text: persona.name });
         }
 
         if (this.resultsState === 'loading') {
-            header.createEl('span', { cls: 'quill-feedback-status', text: 'Analyzing...' });
-            const report = scroll.createDiv({ cls: 'quill-feedback-report' });
+            header.createEl('span', { cls: 'quill-feedback-panel__status', text: 'Analyzing...' });
+            const report = scroll.createDiv({ cls: 'quill-feedback-panel__report' });
             report.setText('');
         } else if (this.resultsState === 'complete') {
-            header.createEl('span', { cls: 'quill-feedback-status quill-feedback-status-done', text: 'Done' });
-            const report = scroll.createDiv({ cls: 'quill-feedback-report-rendered' });
+            header.createEl('span', {
+                cls: 'quill-feedback-panel__status quill-feedback-panel__status--done',
+                text: 'Done'
+            });
+            const report = scroll.createDiv({ cls: 'quill-feedback-panel__report-rendered' });
             await MarkdownRenderer.render(
                 this.app,
                 normalizeParagraphBreaks(this.reportText),
@@ -700,25 +604,25 @@ export class FeedbackPanel extends AbstractChatPanel {
                 '',
                 this.renderEvents
             );
-            const controls = scroll.createDiv({ cls: 'quill-feedback-controls' });
+            const controls = scroll.createDiv({ cls: 'quill-feedback-panel__controls' });
             const newBtn = controls.createEl('button', {
-                cls: 'quill-feedback-nav-btn',
+                cls: 'quill-feedback-panel__nav-btn',
                 text: 'New feedback'
             });
             newBtn.addEventListener('click', () => this.resetResults());
 
             // Chat section (scrollable — contains message bubbles)
-            const chatSection = scroll.createDiv({ cls: 'quill-feedback-chat-section' });
+            const chatSection = scroll.createDiv({ cls: 'quill-chat-panel__section' });
             if (this.chatHistory.length > 0) {
                 for (const msg of this.chatHistory) {
                     if (msg.role === 'system') {
                         chatSection.createDiv({
-                            cls: 'quill-feedback-chat-context-head',
+                            cls: 'quill-chat-panel__context-head',
                             text: msg.content
                         });
                     } else {
                         const bubble = chatSection.createDiv({
-                            cls: `quill-feedback-chat-bubble quill-feedback-chat-${msg.role}`
+                            cls: `quill-chat-panel__bubble quill-chat-panel__bubble--${msg.role}`
                         });
                         if (msg.role === 'assistant') {
                             await MarkdownRenderer.render(
@@ -736,16 +640,16 @@ export class FeedbackPanel extends AbstractChatPanel {
             }
             if (this.chatLoading) {
                 chatSection.createDiv({
-                    cls: 'quill-feedback-chat-bubble quill-feedback-chat-assistant quill-feedback-chat-streaming',
+                    cls: 'quill-chat-panel__bubble quill-chat-panel__bubble--assistant quill-chat-panel__bubble--streaming',
                     text: '\u2026'
                 });
             }
         } else if (this.resultsState === 'error') {
-            header.createEl('span', { cls: 'quill-feedback-status', text: 'Failed' });
-            scroll.createEl('p', { cls: 'quill-feedback-error-text', text: this.reportText });
-            const controls = scroll.createDiv({ cls: 'quill-feedback-controls' });
+            header.createEl('span', { cls: 'quill-feedback-panel__status', text: 'Failed' });
+            scroll.createEl('p', { cls: 'quill-feedback-panel__error-text', text: this.reportText });
+            const controls = scroll.createDiv({ cls: 'quill-feedback-panel__controls' });
             const retryBtn = controls.createEl('button', {
-                cls: 'quill-feedback-nav-btn',
+                cls: 'quill-feedback-panel__nav-btn',
                 text: 'Back to create'
             });
             retryBtn.addEventListener('click', () => this.resetResults());
@@ -753,33 +657,17 @@ export class FeedbackPanel extends AbstractChatPanel {
 
         // Chat input — pinned to bottom, outside the scroll container
         if (this.resultsState === 'complete') {
-            const bottomArea = this.containerEl.createDiv({ cls: 'quill-feedback-chat-bottom' });
-
-            // Context file pills
-            if (this.chatContextFiles.length > 0) {
-                const ctxBar = bottomArea.createDiv({ cls: 'quill-feedback-chat-ctx-bar' });
-                for (const filePath of this.chatContextFiles) {
-                    const pill = ctxBar.createDiv({ cls: 'quill-feedback-chat-ctx-pill' });
-                    const name = truncateFileName(filePath.split('/').pop() ?? filePath);
-                    pill.createEl('span', { text: name });
-                    const removeBtn = pill.createEl('button', {
-                        cls: 'quill-feedback-chat-ctx-remove',
-                        text: '\u00d7',
-                        title: filePath
-                    });
-                    removeBtn.addEventListener('click', () => this.removeChatContextFile(filePath));
-                }
-            }
+            const bottomArea = this.containerEl.createDiv({ cls: 'quill-chat-panel__bottom' });
 
             // Buttons row — context add, save, send/stop
-            const btnRow = bottomArea.createDiv({ cls: 'quill-feedback-chat-btn-row' });
+            const btnRow = bottomArea.createDiv({ cls: 'quill-chat-panel__btn-row' });
             const addCtxBtn = btnRow.createEl('button', {
-                cls: 'quill-feedback-chat-ctx-add',
+                cls: 'quill-chat-panel__action-btn',
                 text: '\u00b1', // ± symbol as add-file icon
                 title: 'Add file to context'
             });
             addCtxBtn.addEventListener('click', () => {
-                const exclude = [...this.chatContextFiles, ...this.contextFilePaths];
+                const exclude = [...this.chatContextFiles.getFiles(), ...this.contextFilePaths];
                 new VaultFileSuggestModal(
                     this.app,
                     (file) => {
@@ -789,33 +677,33 @@ export class FeedbackPanel extends AbstractChatPanel {
                 ).open();
             });
             const saveBtn = btnRow.createEl('button', {
-                cls: 'quill-feedback-chat-save',
+                cls: 'quill-chat-panel__action-btn',
                 text: '\ud83d\udcbe', // 💾 floppy disk
                 title: 'Save conversation to file'
             });
             saveBtn.addEventListener('click', () => this.saveConversation());
             const compactBtn = btnRow.createEl('button', {
-                cls: 'quill-feedback-chat-compact',
+                cls: 'quill-chat-panel__action-btn quill-chat-panel__action-btn--compact',
                 text: '\u00bb\u00bb', // »» compact icon
                 title: 'Compact conversation'
             });
             compactBtn.addEventListener('click', () => this.onCompact?.());
             const newChatBtn = btnRow.createEl('button', {
-                cls: 'quill-feedback-chat-new-chat',
+                cls: 'quill-chat-panel__action-btn',
                 text: '\u2713', // ✓ checkmark / new icon
                 title: 'New chat'
             });
             newChatBtn.addEventListener('click', () => this.onNewChat?.(false));
-            btnRow.createEl('div', { cls: 'quill-feedback-chat-btn-spacer' });
+            btnRow.createEl('div', { cls: 'quill-chat-panel__btn-spacer' });
             const actionBtn = btnRow.createEl('button', {
-                cls: `quill-cowriter-send-btn mod-cta${this.chatLoading ? ' quill-cowriter-stop-btn' : ''}`,
+                cls: `quill-cowriter-panel__send-btn mod-cta${this.chatLoading ? ' quill-cowriter-panel__send-btn--stop' : ''}`,
                 text: this.chatLoading ? 'Stop' : 'Send'
             });
 
             // Textarea row — below the buttons, ~10 lines tall
-            const taRow = bottomArea.createDiv({ cls: 'quill-feedback-chat-ta-row' });
+            const taRow = bottomArea.createDiv({ cls: 'quill-chat-panel__ta-row' });
             const input = taRow.createEl('textarea', {
-                cls: 'quill-feedback-chat-input',
+                cls: 'quill-chat-panel__input',
                 placeholder: 'Ask a follow-up about the feedback\u2026'
             });
             const doSend = () => {
@@ -830,17 +718,17 @@ export class FeedbackPanel extends AbstractChatPanel {
 
                 // Immediate DOM updates
                 actionBtn.setText('Stop');
-                actionBtn.addClass('quill-cowriter-stop-btn');
+                actionBtn.addClass('quill-cowriter-panel__send-btn--stop');
 
                 // Add user bubble + streaming assistant bubble directly to DOM
-                const chatSection = this.containerEl?.querySelector('.quill-feedback-chat-section');
+                const chatSection = this.containerEl?.querySelector('.quill-chat-panel__section');
                 if (chatSection) {
                     chatSection.createDiv({
-                        cls: 'quill-feedback-chat-bubble quill-feedback-chat-user',
+                        cls: 'quill-chat-panel__bubble quill-chat-panel__bubble--user',
                         text: text
                     });
                     chatSection.createDiv({
-                        cls: 'quill-feedback-chat-bubble quill-feedback-chat-assistant quill-feedback-chat-streaming',
+                        cls: 'quill-chat-panel__bubble quill-chat-panel__bubble--assistant quill-chat-panel__bubble--streaming',
                         text: '\u2026'
                     });
                 }
@@ -866,13 +754,17 @@ export class FeedbackPanel extends AbstractChatPanel {
             });
 
             // Context indicator — reflects what the AI sees (from last context head)
-            const ctxIndicator = bottomArea.createDiv({ cls: 'quill-feedback-chat-ctx-indicator' });
+            const ctxIndicator = bottomArea.createDiv({ cls: 'quill-chat-panel__indicator' });
             const setIndicatorText = () => {
                 const { totalTokens, maxTokens } = this.computeContextTokens();
-                const label = buildFileLabel(this.contextFilePaths.length, this.chatContextFiles.length);
+                const label = buildFileLabel(this.contextFilePaths.length, this.chatContextFiles.fileCount());
                 ctxIndicator.setText(formatTokenIndicatorText(label, totalTokens, maxTokens));
             };
             setIndicatorText();
+
+            // Attach the chat-context-files pill bar (renders any pre-existing files
+            // above the button row). Must happen after btnRow exists.
+            this.chatContextFiles.attach(bottomArea);
 
             // Scroll listener: if user scrolls up during streaming, stop auto-follow
             const scrollC = this.getScrollContainer();

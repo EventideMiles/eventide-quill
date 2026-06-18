@@ -1,0 +1,61 @@
+// Option picker — shared BEM block.
+//
+// A vertical stack of selectable option cards. Used by:
+//   - FeedbackPanel (personas)
+//   - AnalysisPanel (modes)
+//
+// Each option shows a name and description. Selecting an option adds the
+// `--active` modifier. The picker is the same block in both panels; the only
+// difference is what the options represent.
+
+@use 'base' as *;
+
+.quill-option-picker {
+    display: flex;
+    flex-direction: column;
+    gap: $space-sm;
+    margin-bottom: $space-lg;
+
+    &__option {
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-md;
+        padding: $space-lg !important;
+        background: transparent;
+        text-align: left;
+        font-family: var(--font-interface);
+        font-size: var(--font-ui-small);
+        line-height: 1.4;
+        white-space: normal;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: flex-start;
+        gap: $space-xs;
+        width: 100%;
+        box-sizing: border-box;
+        min-height: unset !important;
+        height: unset !important;
+        transition: background $transition-fast, border-color $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            border-color: var(--interactive-accent);
+        }
+
+        &--active {
+            border-color: var(--interactive-accent);
+            background: var(--background-modifier-hover);
+        }
+    }
+
+    &__name {
+        font-size: var(--font-ui-medium);
+        font-weight: 600;
+        color: var(--text-normal);
+    }
+
+    &__desc {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+    }
+}

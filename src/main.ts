@@ -8,6 +8,7 @@ import { LintResult, FIXABLE_RULES } from './core/linter/types';
 import { FIXES } from './core/linter/fixes';
 import { applyReplacement } from './core/linter/apply-fix';
 import { findEditorView } from './utils/find-editor';
+import { extractScene } from './utils/text-analysis';
 import { AiProvider } from './ai/provider';
 import { createProvider, parseProviderKey } from './ai/provider-registry';
 import { applyTransformation, TRANSFORM_ACTIONS } from './ai/transform';
@@ -24,8 +25,9 @@ import {
     entityFromId
 } from './utils/frontmatter';
 import { buildFeedbackMessages, getPersonaById, getFeedback } from './ai/feedback';
+import { getAnalysis, buildAnalysisMessages, type AnalysisMode, type AnalysisScope } from './ai/analysis';
 import type { ChatMessage } from './ai/provider';
-import { AI_MODE_CONFIGS } from './ai/modes';
+
 import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
 import { compactConversation } from './ai/compaction';
 import { estimateTokens } from './utils/tokens';
@@ -97,6 +99,10 @@ export default class EventideQuillPlugin extends Plugin {
      *  fresh as system messages on every API call so it always survives compaction
      *  and never double-counts in token estimates. */
     private feedbackCurrentMessages: ChatMessage[] = [];
+    /** Abort controller for the current analysis request, if any. */
+    private analysisAbort: AbortController | null = null;
+    /** Full message history for the analysis conversation (system + context heads + chat turns). */
+    private analysisCurrentMessages: ChatMessage[] = [];
     private lintActive = false;
     lintActiveFile: string | null = null;
     /** File path for the currently assembled context. Tracked separately from lintActiveFile. */
@@ -346,6 +352,40 @@ export default class EventideQuillPlugin extends Plugin {
                         });
                 });
 
+                // Analysis submenu: jump straight to a mode
+                if (this.settings.enableCriticalAnalysis) {
+                    menu.addSeparator();
+                    menu.addItem((item) => {
+                        item.setTitle('Quill: Analyze').setIcon('search');
+                        // setSubmenu exists at runtime but isn't in the obsidian type defs.
+                        const sub = (item as unknown as { setSubmenu(): Menu }).setSubmenu();
+                        sub.addItem((s) => {
+                            s.setTitle('Plot logic').onClick(async () => {
+                                await this.openAnalysisPanel();
+                                await this.requestAnalysis('plot-logic', 'auto');
+                            });
+                        });
+                        sub.addItem((s) => {
+                            s.setTitle('Character consistency').onClick(async () => {
+                                await this.openAnalysisPanel();
+                                await this.requestAnalysis('character-consistency', 'auto');
+                            });
+                        });
+                        sub.addItem((s) => {
+                            s.setTitle('Continuity').onClick(async () => {
+                                await this.openAnalysisPanel();
+                                await this.requestAnalysis('continuity', 'auto');
+                            });
+                        });
+                        sub.addItem((s) => {
+                            s.setTitle('Voice drift').onClick(async () => {
+                                await this.openAnalysisPanel();
+                                await this.requestAnalysis('voice-drift', 'auto');
+                            });
+                        });
+                    });
+                }
+
                 // Co-writer submenu: jump straight to a mode
                 menu.addSeparator();
                 menu.addItem((item) => {
@@ -526,6 +566,50 @@ export default class EventideQuillPlugin extends Plugin {
             name: 'Quill: Open co-writer',
             callback: () => {
                 void this.openCoWriterPanel();
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-analysis-open',
+            name: 'Quill: Open critical analysis',
+            callback: () => {
+                void this.openAnalysisPanel();
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-analyze-plot-logic',
+            name: 'Quill: Analyze plot logic',
+            editorCallback: async (editor) => {
+                await this.openAnalysisPanel();
+                await this.requestAnalysis('plot-logic', 'auto');
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-analyze-character-consistency',
+            name: 'Quill: Analyze character consistency',
+            editorCallback: async (editor) => {
+                await this.openAnalysisPanel();
+                await this.requestAnalysis('character-consistency', 'auto');
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-analyze-continuity',
+            name: 'Quill: Analyze continuity',
+            editorCallback: async (editor) => {
+                await this.openAnalysisPanel();
+                await this.requestAnalysis('continuity', 'auto');
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-analyze-voice-drift',
+            name: 'Quill: Analyze voice drift',
+            editorCallback: async (editor) => {
+                await this.openAnalysisPanel();
+                await this.requestAnalysis('voice-drift', 'auto');
             }
         });
 
@@ -1378,6 +1462,314 @@ export default class EventideQuillPlugin extends Plugin {
         }
     }
 
+    // --- Critical Analysis / Continuity Engine (Feature 11) ---
+
+    /** Cancel the current analysis request. */
+    cancelAnalysisGeneration(): void {
+        this.analysisAbort?.abort();
+    }
+
+    /** Reset the analysis conversation and return to the New analysis subtab. */
+    resetAnalysisChat(): void {
+        this.analysisAbort?.abort();
+        this.analysisCurrentMessages = [];
+        this.lintPanel?.analysisResetResults();
+    }
+
+    /** Manually compact the analysis conversation. */
+    async compactAnalysis(): Promise<void> {
+        if (this.analysisCurrentMessages.length <= 1) return;
+
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) return;
+
+        const sentenceCount = Math.max(1, Math.min(20, this.settings.compactSummarySentences));
+
+        try {
+            const result = await compactConversation(chat.provider, this.analysisCurrentMessages, sentenceCount);
+            if (result) {
+                this.analysisCurrentMessages = result.messages;
+                this.lintPanel?.analysisAppendChatSystemMessageInPlace(result.summary);
+            }
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') return;
+            console.warn('Quill: Analysis manual compaction failed.', err);
+        }
+    }
+
+    /**
+     * Resolve the editor + active file + scoped text for an analysis request.
+     * Returns null if no markdown editor is active.
+     */
+    private resolveAnalysisScope(scope: AnalysisScope | 'auto'): {
+        text: string;
+        scope: AnalysisScope;
+        lineStart?: number;
+        lineEnd?: number;
+        fileName?: string;
+    } | null {
+        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!view) return null;
+        const editor = view.editor;
+        const file = this.app.workspace.getActiveFile();
+        const fileName = file?.name;
+        const fullText = editor.getValue();
+        if (!fullText.trim()) return null;
+
+        // Resolve "auto".
+        let resolvedScope: AnalysisScope = scope === 'auto' ? 'scene' : scope;
+        if (scope === 'auto') {
+            const sel = editor.getSelection();
+            resolvedScope = sel && sel.length > 0 ? 'selection' : 'scene';
+        }
+
+        if (resolvedScope === 'selection') {
+            const sel = editor.getSelection();
+            if (!sel) {
+                // Fall back to scene if the user picked selection but has none.
+                resolvedScope = 'scene';
+            } else {
+                const from = editor.getCursor('from');
+                const to = editor.getCursor('to');
+                return {
+                    text: sel,
+                    scope: 'selection',
+                    lineStart: from.line + 1, // 0-based → 1-based
+                    lineEnd: to.line + 1,
+                    fileName
+                };
+            }
+        }
+
+        if (resolvedScope === 'scene') {
+            const offset = editor.posToOffset(editor.getCursor('from'));
+            const scene = extractScene(fullText, offset);
+            return {
+                text: scene.text,
+                scope: 'scene',
+                lineStart: scene.lineStart,
+                lineEnd: scene.lineEnd,
+                fileName
+            };
+        }
+
+        // document
+        const lineCount = fullText.split('\n').length;
+        return {
+            text: fullText,
+            scope: 'document',
+            lineStart: 1,
+            lineEnd: lineCount,
+            fileName
+        };
+    }
+
+    /**
+     * Request critical analysis of the active document with the given mode and scope.
+     * Streams the response into the Results sub-tab.
+     */
+    async requestAnalysis(
+        mode: AnalysisMode,
+        scope: AnalysisScope | 'auto',
+        customInstruction?: string
+    ): Promise<void> {
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: No AI provider configured. Set one up in settings.');
+            return;
+        }
+
+        const resolved = this.resolveAnalysisScope(scope);
+        if (!resolved) {
+            new Notice('Quill: Open a Markdown document with text before running analysis.');
+            this.lintPanel?.analysisError('No active document to analyze.');
+            return;
+        }
+
+        // Cancel any in-flight analysis request.
+        this.analysisAbort?.abort();
+        this.analysisAbort = new AbortController();
+        const myAnalysisAbort = this.analysisAbort;
+
+        this.lintPanel?.analysisStartLoading(mode, scope);
+
+        // Collect deterministic signal from the context engine.
+        const assembly = this.currentAssembly;
+        const characters = assembly?.entities.filter((e) => e.type === 'character' && !e.removed) ?? [];
+        const plotThreads =
+            assembly?.entities.filter((e) => e.type === 'plot-thread' && !e.removed).map((e) => e.name) ?? [];
+        const voiceMarker = assembly?.voice;
+
+        // Vault context — same best-effort extraction as feedback.
+        const contextParts: string[] = [];
+        try {
+            if (assembly && assembly.contextItems.length > 0) {
+                for (const item of assembly.contextItems) {
+                    if (item.excerpt) {
+                        contextParts.push(`--- ${item.filePath} ---`, item.excerpt);
+                    }
+                }
+            }
+        } catch {
+            // Vault context is best-effort.
+        }
+        const vaultContext = contextParts.length > 0 ? contextParts.join('\n\n') : '';
+
+        const initialMessages = buildAnalysisMessages(mode, {
+            text: resolved.text,
+            scope: resolved.scope,
+            lineStart: resolved.lineStart,
+            lineEnd: resolved.lineEnd,
+            fileName: resolved.fileName,
+            vaultContext,
+            voiceMarker,
+            characters,
+            plotThreads,
+            customInstruction
+        });
+        this.analysisCurrentMessages = [...initialMessages];
+
+        try {
+            const stream = getAnalysis(chat.provider, mode, {
+                text: resolved.text,
+                scope: resolved.scope,
+                lineStart: resolved.lineStart,
+                lineEnd: resolved.lineEnd,
+                fileName: resolved.fileName,
+                vaultContext,
+                voiceMarker,
+                characters,
+                plotThreads,
+                model: chat.modelId,
+                signal: this.analysisAbort.signal,
+                customInstruction,
+                existingMessages: initialMessages
+            });
+
+            let fullResponse = '';
+            for await (const chunk of stream) {
+                if (chunk.done) {
+                    this.analysisCurrentMessages.push({ role: 'assistant', content: fullResponse });
+                    this.lintPanel?.analysisSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
+                    await this.lintPanel?.analysisFinished();
+                } else {
+                    fullResponse += chunk.text;
+                    this.lintPanel?.analysisAppendChunk(chunk.text);
+                }
+            }
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') return;
+            const msg = err instanceof Error ? err.message : String(err);
+            this.lintPanel?.analysisError(msg);
+            new Notice('Quill: Analysis request failed.');
+        } finally {
+            if (this.analysisAbort === myAnalysisAbort) {
+                this.analysisAbort = null;
+            }
+        }
+    }
+
+    /**
+     * Send a follow-up chat message in the analysis conversation.
+     * Mirrors sendFeedbackChatMessage: compacts when near the token budget,
+     * appends the user message after any compaction, then streams a reply.
+     */
+    async sendAnalysisChatMessage(message: string): Promise<void> {
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: No AI provider configured.');
+            return;
+        }
+
+        this.analysisAbort?.abort();
+        this.analysisAbort = new AbortController();
+        const myAnalysisAbort = this.analysisAbort;
+
+        this.lintPanel?.analysisChatStartLoading();
+
+        // Chat context files (reference material added mid-conversation) are
+        // injected fresh as system messages on every call, mirroring feedback.
+        // They are NOT stored in analysisCurrentMessages so they survive compaction.
+        const chatContextPaths = this.lintPanel?.analysisChatContextFiles() ?? [];
+        const referenceMessages = await readVaultFiles(
+            this.app.vault,
+            chatContextPaths,
+            'Reference file',
+            this.settings.contextMaxCharsPerFile
+        );
+        const injectedTokens = estimateTokens(referenceMessages);
+
+        const maxTokens = chat.provider.config.maxContextTokens;
+        const compactPct = Math.max(50, Math.min(95, this.settings.contextCompactAtPercent)) / 100;
+
+        // Hypothetical total INCLUDING reference files + new user message.
+        const hypothetical = [...this.analysisCurrentMessages, { role: 'user' as const, content: message }];
+        const conversationTokens = estimateTokens(hypothetical) + injectedTokens;
+
+        this.lintPanel?.analysisSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
+
+        if (conversationTokens / maxTokens >= compactPct) {
+            const sentenceCount = Math.max(1, Math.min(20, this.settings.compactSummarySentences));
+            try {
+                const result = await compactConversation(chat.provider, this.analysisCurrentMessages, sentenceCount, {
+                    signal: this.analysisAbort.signal
+                });
+                if (result) {
+                    this.analysisCurrentMessages = result.messages;
+                    this.lintPanel?.analysisAppendChatSystemMessageInPlace(result.summary);
+                    this.lintPanel?.analysisSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
+                }
+            } catch (err: unknown) {
+                if (err instanceof Error && err.name === 'AbortError') return;
+                console.warn('Quill: Analysis compaction failed, continuing without compaction.', err);
+            }
+        }
+
+        // Append the user message after compaction so it stays below any new context head.
+        this.analysisCurrentMessages.push({ role: 'user', content: message });
+
+        // Build the full API payload: system prompt + injected reference context + conversation.
+        const baseMessages: ChatMessage[] = [
+            this.analysisCurrentMessages[0]!, // system prompt
+            ...referenceMessages,
+            ...this.analysisCurrentMessages.slice(1) // context heads + chat turns
+        ];
+
+        try {
+            const stream = chat.provider.chatCompletion({
+                messages: baseMessages,
+                model: chat.modelId,
+                temperature: this.settings.analysisTemperature,
+                maxTokens: this.settings.analysisMaxOutputTokens,
+                signal: this.analysisAbort.signal
+            });
+
+            let fullResponse = '';
+            for await (const chunk of stream) {
+                if (chunk.done) {
+                    this.analysisCurrentMessages.push({ role: 'assistant', content: fullResponse });
+                    this.lintPanel?.analysisSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
+                    await this.lintPanel?.analysisChatFinished();
+                } else {
+                    fullResponse += chunk.text;
+                    this.lintPanel?.analysisChatAppendChunk(chunk.text);
+                }
+            }
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') {
+                await this.lintPanel?.analysisChatFinished();
+                return;
+            }
+            const msg = err instanceof Error ? err.message : String(err);
+            await this.lintPanel?.analysisChatError(msg);
+            new Notice('Quill: Analysis chat failed.');
+        } finally {
+            if (this.analysisAbort === myAnalysisAbort) {
+                this.analysisAbort = null;
+            }
+        }
+    }
+
     /** Add a context file to the co-writer session. */
     async addCoWriterContextFile(filePath: string): Promise<void> {
         this.coWriterSession.addContextFile(filePath);
@@ -1436,6 +1828,12 @@ export default class EventideQuillPlugin extends Plugin {
         if (activeFile && activeFile.extension === 'md') {
             this.lintPanel?.feedbackPanelAddContextFile(activeFile.path);
         }
+    }
+
+    /** Open the sidebar and switch to the Analysis tab. */
+    async openAnalysisPanel(): Promise<void> {
+        await this.openLintPanel();
+        this.lintPanel?.switchToAnalysisTab();
     }
 
     /**
@@ -1526,6 +1924,8 @@ export default class EventideQuillPlugin extends Plugin {
                 vaultContext,
                 narrativePreset: this.settings.narrativeVoicePreset,
                 model: chat.modelId,
+                temperature: this.settings.analysisTemperature,
+                maxTokens: this.settings.analysisMaxOutputTokens,
                 signal: this.feedbackAbort.signal,
                 customInstruction,
                 existingMessages: apiMessages
@@ -1651,12 +2051,11 @@ export default class EventideQuillPlugin extends Plugin {
         ];
 
         try {
-            const config = AI_MODE_CONFIGS.analysis;
             const stream = chat.provider.chatCompletion({
                 messages: baseMessages,
                 model: chat.modelId,
-                temperature: config.defaultTemperature,
-                maxTokens: config.defaultMaxOutputTokens,
+                temperature: this.settings.analysisTemperature,
+                maxTokens: this.settings.analysisMaxOutputTokens,
                 signal: this.feedbackAbort.signal
             });
 
