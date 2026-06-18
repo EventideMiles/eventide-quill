@@ -115,3 +115,96 @@ export function splitSentences(text: string, abbreviationsPattern: RegExp): Sent
 
     return ranges;
 }
+
+/** A scene extracted from a document, with absolute (1-based) line numbers. */
+export interface SceneRange {
+    /** Scene text (joined lines, no leading/trailing blank-line padding). */
+    text: string;
+    /** 1-based line number where the scene begins in the source document. */
+    lineStart: number;
+    /** 1-based line number where the scene ends in the source document (inclusive). */
+    lineEnd: number;
+}
+
+const SCENE_BREAK_HEADING = /^#{1,6}\s+\S/;
+const SCENE_BREAK_RULE = /^(?:\*\*\*|\*\s\*\s\*|---)\s*$/;
+
+/**
+ * Extract the scene containing the given 0-based character offset.
+ *
+ * A scene is bounded by markdown headings (`^#+\s+\S`) or scene-break markers
+ * (`***`, `* * *`, or `---` on its own line). If the cursor sits on a heading
+ * or scene-break line, that line is treated as the start of the scene. If no
+ * preceding boundary exists, the scene starts at line 1. If no following
+ * boundary exists, the scene runs to the end of the document.
+ *
+ * @param text         Full document text.
+ * @param cursorOffset 0-based character offset of the cursor position.
+ * @returns The scene text plus its 1-based start/end line numbers.
+ */
+export function extractScene(text: string, cursorOffset: number): SceneRange {
+    const lines = text.split('\n');
+    const lastIdx = lines.length - 1;
+
+    // Resolve the 0-based line index containing the cursor.
+    let cursorIdx = 0;
+    let consumed = 0;
+    const clamped = Math.max(0, Math.min(cursorOffset, text.length));
+    for (let i = 0; i < lines.length; i++) {
+        const lineLen = lines[i]!.length;
+        if (clamped <= consumed + lineLen) {
+            cursorIdx = i;
+            break;
+        }
+        consumed += lineLen + 1; // +1 for the '\n'
+        cursorIdx = i;
+    }
+    if (cursorIdx > lastIdx) cursorIdx = Math.max(0, lastIdx);
+
+    // If the cursor line itself is a boundary, the scene starts here.
+    const cursorIsBoundary = SCENE_BREAK_HEADING.test(lines[cursorIdx]!) || SCENE_BREAK_RULE.test(lines[cursorIdx]!);
+
+    // Walk backward for the start boundary.
+    let startIdx = 0;
+    if (!cursorIsBoundary) {
+        for (let i = cursorIdx - 1; i >= 0; i--) {
+            if (SCENE_BREAK_HEADING.test(lines[i]!) || SCENE_BREAK_RULE.test(lines[i]!)) {
+                startIdx = i + 1;
+                break;
+            }
+        }
+    } else {
+        startIdx = cursorIdx;
+    }
+    if (startIdx > lastIdx) startIdx = Math.max(0, lastIdx);
+
+    // Walk forward for the end boundary (exclusive).
+    let endIdxExclusive = lines.length;
+    for (let i = cursorIdx + 1; i < lines.length; i++) {
+        if (SCENE_BREAK_HEADING.test(lines[i]!) || SCENE_BREAK_RULE.test(lines[i]!)) {
+            endIdxExclusive = i;
+            break;
+        }
+    }
+
+    // Trim leading blank lines.
+    while (startIdx < endIdxExclusive && lines[startIdx]!.trim() === '') {
+        startIdx++;
+    }
+    // Trim trailing blank lines.
+    while (endIdxExclusive > startIdx && lines[endIdxExclusive - 1]!.trim() === '') {
+        endIdxExclusive--;
+    }
+
+    // Handle empty-after-trim scene (e.g., cursor between two adjacent headings).
+    if (endIdxExclusive <= startIdx) {
+        endIdxExclusive = Math.min(startIdx + 1, lines.length);
+    }
+
+    const sceneLines = lines.slice(startIdx, endIdxExclusive);
+    return {
+        text: sceneLines.join('\n'),
+        lineStart: startIdx + 1,
+        lineEnd: endIdxExclusive
+    };
+}
