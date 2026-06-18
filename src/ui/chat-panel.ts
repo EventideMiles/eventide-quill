@@ -21,11 +21,7 @@ export function normalizeParagraphBreaks(text: string): string {
 export interface ActiveDocument {
     /** The active file (guaranteed non-null when this object is returned). */
     file: TFile;
-    /** The active MarkdownView (guaranteed non-null when this object is returned). */
-    view: MarkdownView;
-    /** Full text of the document body. */
-    text: string;
-    /** Whitespace-split word count of `text`. */
+    /** Whitespace-split word count, best-effort (0 if the view's editor isn't accessible). */
     wordCount: number;
 }
 
@@ -193,39 +189,58 @@ export abstract class AbstractChatPanel {
     // --- Active-document awareness ---
     //
     // Chat panels that operate on the active document (co-writer, analysis) need
-    // to: (a) know whether a markdown view is active, (b) render an empty state
-    // when none is, and (c) optionally show which document will be acted on.
-    // These helpers standardize that pattern so every chat panel behaves the
-    // same way when the writer switches between documents (or has none open).
+    // to know whether a markdown document is active and render an empty state
+    // when none is. These helpers standardize that pattern.
+    //
+    // IMPORTANT: we use workspace.getActiveFile() (NOT getActiveViewOfType)
+    // because the sidebar steals focus when the writer clicks a tab.
+    // getActiveFile() remembers the active markdown file across focus changes;
+    // getActiveViewOfType(MarkdownView) returns null when the sidebar has focus.
 
     /**
-     * Get the active markdown document, or null if no markdown view is focused.
-     * Subclasses should call this at the top of `render*Tab()` methods that
-     * depend on a document being open.
+     * Get the active markdown document, or null if no file is active.
+     *
+     * Uses `workspace.getActiveFile()` which is reliable even when the sidebar
+     * has stolen focus from the editor. Word count is best-effort via leaf
+     * iteration (0 if the editor view isn't currently rendered).
      */
     protected getActiveDocument(): ActiveDocument | null {
-        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (!view || !view.file) return null;
-        const text = view.editor.getValue();
-        const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
-        return { file: view.file, view, text, wordCount };
+        const file = this.app.workspace.getActiveFile();
+        if (!file) return null;
+
+        let wordCount = 0;
+        for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+            if (leaf.view instanceof MarkdownView && leaf.view.file?.path === file.path) {
+                const text = leaf.view.editor.getValue();
+                wordCount = text.trim().split(/\s+/).filter(Boolean).length;
+                break;
+            }
+        }
+
+        return { file, wordCount };
     }
 
     /**
-     * Render an "open a document" empty-state message and return true.
-     * Callers should bail out of further rendering when this returns true.
+     * Require an active document to proceed. Returns the document if one is
+     * open; otherwise renders an "Open a document to use {featureName}" message
+     * into `container` and returns null.
      *
-     * Example:
+     * Usage:
      * ```
-     * if (this.renderNoDocumentState(scroll, 'analysis')) return;
+     * const doc = this.requireActiveDocument(scroll, 'analysis');
+     * if (!doc) return;
+     * this.renderDocumentHeader(scroll, doc);
+     * // ... safe to render the rest of the tab
      * ```
      */
-    protected renderNoDocumentState(container: HTMLElement, featureName: string): boolean {
+    protected requireActiveDocument(container: HTMLElement, featureName: string): ActiveDocument | null {
+        const doc = this.getActiveDocument();
+        if (doc) return doc;
         container.createEl('p', {
             cls: 'quill-empty-hint',
             text: `Open a document to use ${featureName}.`
         });
-        return true;
+        return null;
     }
 
     /**

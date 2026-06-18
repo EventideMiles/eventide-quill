@@ -280,11 +280,11 @@ export class AnalysisPanel extends AbstractChatPanel {
         if (!this.containerEl) return;
         const scroll = this.containerEl.createDiv({ cls: 'quill-sidebar__content-plain' });
 
-        // Gate on whether a markdown document is active. Without this, the panel
-        // would render the mode/scope pickers but `requestAnalysis` would fail
-        // at the plugin layer with no editor to read from.
-        const doc = this.getActiveDocument();
-        if (this.renderNoDocumentState(scroll, 'analysis')) return;
+        // Gate: bail with empty-state if no document is active. Uses
+        // requireActiveDocument which internally calls getActiveFile() (reliable
+        // even when the sidebar has stolen focus from the editor).
+        const doc = this.requireActiveDocument(scroll, 'analysis');
+        if (!doc) return;
 
         // Show which document will be analyzed so the writer can confirm before
         // they switch tabs or run analysis on the wrong chapter.
