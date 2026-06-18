@@ -36,7 +36,7 @@ export class ReviewPanel extends AbstractChatPanel {
 
     // --- Engine selection ---
     /** Which engine the Create tab is currently configuring. */
-    private engine: ReviewEngine = 'editorial';
+    private engine: ReviewEngine = 'critical';
     /** Which engine produced the current Results. Set by startLoading. Public
      *  so the sidebar's callback closures can dispatch to the right plugin
      *  method (cancelFeedbackGeneration vs cancelAnalysisGeneration, etc.). */
@@ -485,8 +485,8 @@ export class ReviewPanel extends AbstractChatPanel {
         section.createEl('p', { cls: 'quill-form__label', text: 'Review type' });
 
         const engines: { id: ReviewEngine; label: string; desc: string }[] = [
-            { id: 'editorial', label: 'Editor feedback', desc: 'Persona-driven review of selected manuscripts.' },
-            { id: 'critical', label: 'Critical analysis', desc: 'Targeted consistency checks with line refs.' }
+            { id: 'critical', label: 'Critical analysis', desc: 'Targeted consistency checks with line refs.' },
+            { id: 'editorial', label: 'Editor feedback', desc: 'Persona-driven review of selected manuscripts.' }
         ];
 
         const row = container.createDiv({ cls: 'quill-option-picker' });
