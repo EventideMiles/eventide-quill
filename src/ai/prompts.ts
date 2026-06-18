@@ -256,13 +256,20 @@ export function getCoWriterDiscussPrompt(proseBeforeCursor: string, message: str
 /**
  * Build the system prompt for co-writer continuation generation.
  * Injects the voice profile, narrative preset rules, style constraints,
- * optional vault context, and optional inline directives context.
+ * optional vault context, optional plot map reference, and optional active
+ * steering (inline directives and/or accumulated coaching direction).
  */
+export interface ActiveSteering {
+    source: 'inline' | 'coach';
+    text: string;
+}
+
 export function getCoWriterGenerationPrompt(
     voiceProfile: VoiceProfile,
     narrativePreset: NarrativeVoicePreset,
     vaultContext?: string,
-    hasDirectives?: boolean
+    activeSteering?: ActiveSteering[],
+    plotMapText?: string
 ): string {
     const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === narrativePreset) ?? NARRATIVE_VOICE_PRESETS[0];
     if (!def) {
@@ -319,14 +326,27 @@ export function getCoWriterGenerationPrompt(
         );
     }
 
-    if (hasDirectives) {
+    if (plotMapText) {
         parts.push(
             '',
-            '--- Inline directives ---',
-            'The writer has placed inline directives (HTML comments) in the passage above.',
-            'Read the directive(s) immediately preceding the cursor position.',
-            'Follow any instructions in those directives when writing the continuation.',
-            'The directives are invisible in preview mode — write the scene, not the directive.'
+            '--- Plot map (reference) ---',
+            'The writer has linked this note as the canonical outline/reference for the manuscript.',
+            'Use it for continuity and direction. Do NOT write ahead to future beats the writer has',
+            'not reached yet — extend only the current scene.',
+            '',
+            plotMapText
+        );
+    }
+
+    if (activeSteering && activeSteering.length > 0) {
+        const steeringLines = activeSteering.map((s) => `[${s.source}] "${s.text}"`);
+        parts.push(
+            '',
+            '--- Active steering (at cursor) ---',
+            'The writer has given these steering instructions for this continuation:',
+            ...steeringLines,
+            'Follow them when writing. Inline directives remain as HTML comments in the document',
+            '\u2014 write the scene, not the directive.'
         );
     }
 
@@ -334,11 +354,11 @@ export function getCoWriterGenerationPrompt(
 }
 
 /**
- * Build a prompt for the guidance mode.
+ * Build a prompt for the coach mode.
  * The AI analyzes the passage, asks clarifying questions, and produces
  * a structured plan with executable direction.
  */
-export function getCoWriterGuidancePrompt(proseBeforeCursor: string, userIntent?: string): string {
+export function getCoWriterCoachPrompt(proseBeforeCursor: string, userIntent?: string): string {
     const parts: string[] = [
         'The writer is working on a passage of fiction and needs help figuring out what to do next.',
         'They may be stuck, uncertain about direction, or want to explore possibilities before committing.',
@@ -366,7 +386,7 @@ export function getCoWriterGuidancePrompt(proseBeforeCursor: string, userIntent?
         "Start with Phase 1 now. Do not generate all phases at once — wait for the writer's response after each phase.",
         '',
         'Do NOT write prose for the writer. Do NOT generate continuation text.',
-        'Stay in guidance mode — you are helping them think, not writing for them.',
+        'Stay in coach mode — you are helping them think, not writing for them.',
         '',
         ...(userIntent ? [`The writer's stated intent: ${userIntent}`] : []),
         '',
@@ -378,10 +398,10 @@ export function getCoWriterGuidancePrompt(proseBeforeCursor: string, userIntent?
 }
 
 /**
- * Build a follow-up prompt for subsequent guidance phases.
+ * Build a follow-up prompt for subsequent coaching phases.
  * Used after the writer responds to clarifying questions.
  */
-export function getCoWriterGuidanceFollowUp(
+export function getCoWriterCoachFollowUp(
     proseBeforeCursor: string,
     writerResponse: string,
     currentPhase: number,
@@ -418,8 +438,8 @@ export function getCoWriterGuidanceFollowUp(
     }
 
     const parts: string[] = [
-        'The writer has responded to your previous guidance.',
-        'Use their response to advance the guidance process.',
+        'The writer has responded to your previous coaching.',
+        'Use their response to advance the coaching process.',
         ...phaseInstructions,
         '',
         "--- Writer's response ---",
@@ -436,14 +456,14 @@ export function getCoWriterGuidanceFollowUp(
  * Build a prompt for revising an existing plan based on writer feedback.
  * Used when the user provides feedback on a plan or direction.
  */
-export function getCoWriterGuidanceRevision(
+export function getCoWriterCoachRevision(
     proseBeforeCursor: string,
     writerFeedback: string,
     currentPlan: string,
     currentDirection: string
 ): string {
     return [
-        'The writer has reviewed your guidance plan and provided feedback.',
+        'The writer has reviewed your coaching plan and provided feedback.',
         'Revise the plan based on their feedback. Be responsive and specific.',
         '',
         'Respond with:',
@@ -466,36 +486,31 @@ export function getCoWriterGuidanceRevision(
 }
 
 /**
- * Build a prompt for when the writer wants to proceed with a guidance suggestion.
- * Produces continuation options based on the guidance plan.
+ * Build a prompt for when the writer wants to proceed with a coaching suggestion.
+ * Produces a single continuation option based on the coaching plan. The coaching
+ * session already established what should happen next, so the model proposes ONE
+ * option that expresses the whole idea rather than splitting it into alternatives.
  */
-export function getCoWriterGuidanceToOptions(
-    proseBeforeCursor: string,
-    guidanceSummary: string,
-    direction: string
-): string {
+export function getCoWriterCoachToOptions(proseBeforeCursor: string, coachSummary: string, direction: string): string {
     return [
-        'The writer has received guidance and wants to explore continuation options based on that guidance.',
-        'Suggest 3 distinct possible directions the scene could go next.',
+        'The writer has received coaching and wants to continue based on that coaching.',
+        'The coaching session already established what should happen next, so propose ONE clear continuation that expresses the whole idea. Do not split it into alternatives or hedge between multiple paths.',
         '',
-        'The guidance provided:',
-        guidanceSummary,
+        'The coaching provided:',
+        coachSummary,
         '',
-        'For each option, provide:',
+        'For the option, provide:',
         '- A short label (2-4 words)',
-        '- A 1-2 sentence description of what happens and why it fits the guidance',
+        '- A 1-2 sentence description of what happens and why it fits the coaching',
         '',
-        'The options should be:',
-        '- Faithful to the guidance provided',
-        '- Distinct from each other in mood, pacing, or focus',
-        '- Plausible next beats in the scene',
+        'The option should be:',
+        '- Faithful to the coaching provided',
+        '- A plausible next beat in the scene',
         '- True to the characters and situation so far',
         ...(direction ? [`The writer's additional direction: ${direction}`] : []),
         '',
-        'Output your response as a JSON array of exactly 3 objects:',
+        'Output your response as a JSON array of exactly 1 object:',
         '[',
-        '  { "label": "short label", "description": "1-2 sentence description" },',
-        '  { "label": "short label", "description": "1-2 sentence description" },',
         '  { "label": "short label", "description": "1-2 sentence description" }',
         ']',
         '',

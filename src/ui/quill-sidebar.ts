@@ -7,7 +7,9 @@ import { FixWithAiModal } from './fix-with-ai-modal';
 import { renderContextTab } from './context-panel';
 import { FeedbackPanel } from './feedback-panel';
 import { CoWriterPanel } from './co-writer-panel';
-import type { CoWriterChatMessage, CoWriterOption, DraftState, GuidancePhase } from '../ai/co-writer';
+import type { InputMode } from './co-writer-panel';
+import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase } from '../ai/co-writer';
+import type { ProposedEdit } from '../core/change-set';
 import type EventideQuillPlugin from '../main';
 import type { ContextAssembly } from '../core/context-engine/types';
 
@@ -352,16 +354,6 @@ export class QuillSidebarView extends ItemView {
                     new Notice('Quill: Open a manuscript to use the co-writer.');
                 }
             });
-            this.coWriterPanel.setAcceptHandler(() => {
-                this.plugin.acceptCoWriterDraft();
-            });
-            this.coWriterPanel.setRevertHandler(() => {
-                const manuscriptPath = this.plugin.coWriterSession.manuscriptPath;
-                const view = findEditorView(this.app, manuscriptPath);
-                if (view) {
-                    this.plugin.revertCoWriterDraft(view.editor);
-                }
-            });
             this.coWriterPanel.setAddContextFileHandler((filePath: string) => {
                 void this.plugin.addCoWriterContextFile(filePath);
             });
@@ -383,20 +375,41 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setNewChatHandler((clearContext: boolean) => {
                 this.plugin.resetCoWriterChat(clearContext);
             });
-            this.coWriterPanel.setGuidanceMessageHandler((message: string, phase: string) => {
-                void this.plugin.sendCoWriterGuidance(message, phase);
+            this.coWriterPanel.setCoachMessageHandler((message: string) => {
+                void this.plugin.sendCoWriterCoach(message);
             });
-            this.coWriterPanel.setGuidanceToOptionsHandler(() => {
-                void this.plugin.coWriterGuidanceToOptions();
+            this.coWriterPanel.setCoachToOptionsHandler(() => {
+                void this.plugin.coWriterCoachToOptions();
             });
-            this.coWriterPanel.setEndGuidanceHandler(() => {
-                this.plugin.endCoWriterGuidance();
+            this.coWriterPanel.setEndCoachHandler(() => {
+                this.plugin.endCoWriterCoach();
             });
             this.coWriterPanel.setAcceptPlanHandler(() => {
-                void this.plugin.coWriterGuidanceToOptions();
+                void this.plugin.coWriterCoachToOptions();
             });
-            this.coWriterPanel.setGuidanceWriteHandler(() => {
-                void this.plugin.coWriterGuidanceWrite();
+            this.coWriterPanel.setCoachWriteHandler(() => {
+                void this.plugin.coWriterCoachWrite();
+            });
+            this.coWriterPanel.setLinkPlotMapHandler((filePath: string) => {
+                void this.plugin.setPlotMapLink(filePath);
+            });
+            this.coWriterPanel.setClearPlotMapHandler(() => {
+                void this.plugin.clearPlotMapLink();
+            });
+            this.coWriterPanel.setRunFulfillHandler((globalInstruction: string) => {
+                void this.plugin.runCoWriterFulfill(globalInstruction);
+            });
+            this.coWriterPanel.setApproveFulfillSectionHandler((id: number) => {
+                this.plugin.approveCoWriterFulfill(id);
+            });
+            this.coWriterPanel.setRejectFulfillSectionHandler((id: number) => {
+                this.plugin.rejectCoWriterFulfill(id);
+            });
+            this.coWriterPanel.setApproveAllFulfillHandler(() => {
+                this.plugin.approveAllCoWriterFulfill();
+            });
+            this.coWriterPanel.setRejectAllFulfillHandler(() => {
+                this.plugin.rejectAllCoWriterFulfill();
             });
         }
 
@@ -408,9 +421,15 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setChatHistory(session.chatHistory);
             this.coWriterPanel.setCurrentOptions(session.currentOptions);
             this.coWriterPanel.setOptionsLoading(session.optionsLoading);
-            this.coWriterPanel.setGuidancePhase(session.guidanceSession?.phase ?? 'discern');
-            this.coWriterPanel.setGuidanceActive(session.guidanceActive);
+            this.coWriterPanel.setCoachPhase(session.coachSession?.phase ?? 'discern');
+            this.coWriterPanel.setCoachActive(session.coachActive);
+            this.coWriterPanel.setFulfillState(session.fulfillChanges.edits, session.fulfillActive);
         }
+
+        // Sync plot map link from the active manuscript's frontmatter
+        this.plugin.refreshPlotMap();
+        this.coWriterPanel.setPlotMap(this.plugin.currentPlotMap);
+        void this.plugin.updateCoWriterPlotMapTokens();
 
         // Set provider context limit (same pattern as feedback panel init)
         const chat = this.plugin.getDefaultChatProvider();
@@ -526,6 +545,11 @@ export class QuillSidebarView extends ItemView {
         this.coWriterPanel?.setAdditionalContextTokens(tokens);
     }
 
+    /** Set the plot map token estimate for the Co-writer token indicator. */
+    coWriterSetPlotMapTokens(tokens: number): void {
+        this.coWriterPanel?.setPlotMapTokens(tokens);
+    }
+
     /** Start streaming a discuss response. */
     coWriterDiscussStartStreaming(): void {
         this.coWriterPanel?.discussStartStreaming();
@@ -546,14 +570,34 @@ export class QuillSidebarView extends ItemView {
         await this.coWriterPanel?.discussError(message);
     }
 
-    /** Set the guidance phase in the co-writer panel. */
-    coWriterSetGuidancePhase(phase: string): void {
-        this.coWriterPanel?.setGuidancePhase(phase as GuidancePhase);
+    /** Set the coach phase in the co-writer panel. */
+    coWriterSetCoachPhase(phase: CoachPhase): void {
+        this.coWriterPanel?.setCoachPhase(phase);
     }
 
-    /** Set whether guidance mode is active. */
-    coWriterSetGuidanceActive(active: boolean): void {
-        this.coWriterPanel?.setGuidanceActive(active);
+    /** Set the co-writer panel's active mode (e.g. from the right-click submenu). */
+    coWriterSetMode(mode: InputMode): void {
+        this.coWriterPanel?.setMode(mode);
+    }
+
+    /** Set whether coach mode is active. */
+    coWriterSetCoachActive(active: boolean): void {
+        this.coWriterPanel?.setCoachActive(active);
+    }
+
+    /** Set the plot map link path shown in the co-writer panel. */
+    coWriterSetPlotMap(path: string | null): void {
+        this.coWriterPanel?.setPlotMap(path);
+    }
+
+    /** Set whether an inline directive is active at the cursor (Direct-mode badge). */
+    coWriterSetDirectiveActive(active: boolean): void {
+        this.coWriterPanel?.setDirectiveActive(active);
+    }
+
+    /** Push Fulfill-mode sections and active flag to the co-writer panel. */
+    coWriterSetFulfillState(sections: ProposedEdit[], active: boolean): void {
+        this.coWriterPanel?.setFulfillState(sections, active);
     }
 
     /** Get the chat context file paths from the Feedback panel. */

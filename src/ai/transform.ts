@@ -1,9 +1,10 @@
 import { Editor, Notice, Platform } from 'obsidian';
 import { EditorView } from '@codemirror/view';
-import type EventideQuillPlugin from '../main';
 import { gatherVaultContext } from '../core/context-engine';
 import { ChatMessage } from './provider';
 import { getSystemPrompt } from './prompts';
+import { clearDiffEdits, pushDiffEdits, toDiffSnapshots } from '../ui/change-diff-extension';
+import type EventideQuillPlugin from '../main';
 
 /** Describes a single transformation action available in the editor context menu. */
 export interface TransformAction {
@@ -72,7 +73,7 @@ export function getUserPrompt(
         selectedText,
         '',
         '--- Output ---',
-        'Rewrite only the passage above. Output nothing else — no document text, no explanations, no labels.'
+        'Rewrite only the passage above. Your output must be approximately the same length as the passage — do not expand, add new content, or generate surrounding sentences unless the instruction explicitly says to (e.g., "make longer"). Output nothing else — no document text, no explanations, no labels.'
     ].join('\n');
 }
 
@@ -80,7 +81,7 @@ export function getUserPrompt(
 function getInstruction(type: TransformType, toneOrInstruction?: string): string {
     switch (type) {
         case 'improve':
-            return 'Polish the following passage for clarity and flow without changing its intent, voice, or narrative perspective. Keep all character names, setting details, and plot points intact.';
+            return 'Polish the following passage for clarity and flow without changing its intent, voice, or narrative perspective. Keep all character names, setting details, and plot points intact. If only a word or short phrase is selected, improve just that — do not expand the scope or write surrounding sentences.';
         case 'make-longer':
             return 'Make this passage LONGER — at least double its original length. Add sensory detail, internal reflection, setting description, or dialogue. Do NOT condense or shorten anything. Preserve every existing word and expand from there. Stay true to the voice, characters, setting, and narrative perspective.';
         case 'make-shorter':
@@ -130,8 +131,22 @@ export async function applyTransformation(
         : 'Quill: Transforming...';
     const notice = new Notice(processingMsg, 0);
     plugin.transformInProgress = true;
+    plugin.transformAbortController = new AbortController();
+    const abortController = plugin.transformAbortController;
 
     try {
+        // Capture the editor and selection range up front, before any awaits,
+        // so the range matches the selection the user initiated the transform
+        // on (it could shift if the user changes selection during async work).
+        const cm = (editor as unknown as { cm: EditorView }).cm;
+        if (!cm) {
+            new Notice('Quill: Could not access editor for streaming.');
+            return;
+        }
+        const sel = cm.state.selection.main;
+        const from = sel.from;
+        const to = sel.to;
+
         // Ensure context is assembled for the correct document.
         // If context is stale or missing, refresh it before proceeding.
         let assembly: ReturnType<typeof plugin.assembleDocumentContext> extends Promise<infer T> ? T : never;
@@ -149,8 +164,7 @@ export async function applyTransformation(
             ? await gatherVaultContext(plugin.app.vault, fullDocumentText, assembly)
             : '';
 
-        const { narrativeVoicePreset, transformTemperature, transformMaxOutputTokens, transformAppendNewline } =
-            plugin.settings;
+        const { narrativeVoicePreset, transformTemperature, transformMaxOutputTokens } = plugin.settings;
         const systemPrompt = getSystemPrompt('narrative', { vaultContext, narrativePreset: narrativeVoicePreset });
 
         // Budget the context window holistically.
@@ -181,17 +195,18 @@ export async function applyTransformation(
             { role: 'user', content: userPrompt }
         ];
 
-        // Stream into the editor via CodeMirror 6 for real-time character display
-        const cm = (editor as unknown as { cm: EditorView }).cm;
-        if (!cm) {
-            new Notice('Quill: Could not access editor for streaming.');
-            return;
-        }
-
-        const cmSelection = cm.state.selection.main;
-        const anchor = cmSelection.from;
-        let insertedLength = 0;
-        let lastError: Error | null = null;
+        // Stream the rewrite live into a proposed change. The document is not
+        // modified during generation; the selection shows in red and the rewrite
+        // streams into the green box so the writer sees progress immediately.
+        plugin.transformChangeSet.clear();
+        const tEdit = plugin.transformChangeSet.add({
+            from,
+            to,
+            newText: '',
+            label: transformLabel(type, tone)
+        });
+        tEdit.state = 'generating';
+        pushDiffEdits(cm, toDiffSnapshots(plugin.transformChangeSet, 'transform'));
 
         try {
             const stream = provider.chatCompletion({
@@ -199,93 +214,62 @@ export async function applyTransformation(
                 model: defaultChat.modelId,
                 temperature: transformTemperature,
                 maxTokens: transformMaxOutputTokens,
-                signal: undefined
+                signal: abortController.signal
             });
-
             for await (const chunk of stream) {
                 if (!chunk.text) continue;
-
-                const insertAt = anchor + insertedLength;
-                cm.dispatch({
-                    changes: {
-                        from: insertAt,
-                        to: insertedLength === 0 ? cmSelection.to : insertAt,
-                        insert: chunk.text
-                    },
-                    selection: { anchor: insertAt + chunk.text.length }
-                });
-                insertedLength += chunk.text.length;
+                tEdit.newText += chunk.text;
+                pushDiffEdits(cm, toDiffSnapshots(plugin.transformChangeSet, 'transform'));
             }
         } catch (err: unknown) {
-            if (err instanceof Error) {
-                if (err.name === 'AbortError') return;
-                lastError = err;
+            if (err instanceof Error && err.name === 'AbortError') {
+                // Aborted mid-stream: keep partial prose for review, or clear if empty.
+                if (tEdit.newText.replace(/\s+$/, '').length === 0) {
+                    plugin.transformChangeSet.clear();
+                    clearDiffEdits(cm, 'transform');
+                } else {
+                    tEdit.state = 'pending';
+                    pushDiffEdits(cm, toDiffSnapshots(plugin.transformChangeSet, 'transform'));
+                }
+                return;
             }
-        }
-
-        if (lastError) {
-            new Notice(`Quill: Transformation failed — ${lastError.message}`);
+            const msg = err instanceof Error ? err.message : String(err);
+            new Notice(`Quill: Transformation failed \u2014 ${msg}`);
+            plugin.transformChangeSet.clear();
+            clearDiffEdits(cm, 'transform');
             return;
         }
 
-        if (insertedLength === 0) {
+        tEdit.newText = tEdit.newText.replace(/\s+$/, '');
+        if (tEdit.newText.length === 0) {
             new Notice('Quill: Received empty response from the AI provider.');
+            plugin.transformChangeSet.clear();
+            clearDiffEdits(cm, 'transform');
             return;
         }
-
-        // Trim trailing whitespace, then optionally normalize blank lines around
-        // the transformed text based on whether the selection started and/or ended
-        // at a line boundary (e.g. full-line or full-paragraph selections).
-        if (transformAppendNewline) {
-            const docLen = cm.state.doc.length;
-            const startsAtLine = anchor === 0 || cm.state.sliceDoc(anchor - 1, anchor) === '\n';
-            const endsAtLine =
-                anchor + insertedLength >= docLen ||
-                cm.state.sliceDoc(anchor + insertedLength, anchor + insertedLength + 1) === '\n';
-
-            // Trim any trailing whitespace the model may have emitted.
-            const rawInserted = cm.state.sliceDoc(anchor, anchor + insertedLength);
-            const trimmed = rawInserted.replace(/\s+$/, '');
-            const trimDiff = rawInserted.length - trimmed.length;
-            let offset = 0;
-
-            if (trimDiff > 0) {
-                const newEnd = anchor + trimmed.length;
-                cm.dispatch({
-                    changes: { from: newEnd, to: anchor + insertedLength, insert: '' },
-                    selection: { anchor: newEnd }
-                });
-                insertedLength = trimmed.length;
-            }
-
-            // If the selection started at a line boundary, ensure a blank line
-            // above (but not at document start).
-            if (startsAtLine && anchor > 0) {
-                const charBefore = cm.state.sliceDoc(anchor - 1, anchor);
-                const twoBefore = anchor >= 2 ? cm.state.sliceDoc(anchor - 2, anchor) : '';
-                if (charBefore === '\n' && twoBefore !== '\n\n') {
-                    cm.dispatch({
-                        changes: { from: anchor, to: anchor, insert: '\n' },
-                        selection: { anchor: anchor + 1 }
-                    });
-                    offset = 1;
-                }
-            }
-
-            // If the selection ended at a line boundary, ensure a blank line below.
-            if (endsAtLine) {
-                const endPos = anchor + insertedLength + offset;
-                const after = cm.state.sliceDoc(endPos, Math.min(endPos + 2, cm.state.doc.length));
-                if (after !== '\n\n') {
-                    cm.dispatch({
-                        changes: { from: endPos, to: endPos, insert: '\n' },
-                        selection: { anchor: endPos + 1 }
-                    });
-                }
-            }
-        }
+        tEdit.state = 'pending';
+        pushDiffEdits(cm, toDiffSnapshots(plugin.transformChangeSet, 'transform'));
     } finally {
         notice.hide();
         plugin.transformInProgress = false;
+        plugin.transformAbortController = null;
+    }
+}
+
+/** Human label for the change card / diff, derived from the transform type and tone. */
+function transformLabel(type: TransformType, tone?: string): string {
+    switch (type) {
+        case 'improve':
+            return 'Improve writing';
+        case 'make-longer':
+            return 'Make longer';
+        case 'make-shorter':
+            return 'Make shorter';
+        case 'change-tone':
+            return `Change tone: ${tone ?? 'different'}`;
+        case 'custom':
+            return tone ? `Custom: ${tone}` : 'Custom rewrite';
+        default:
+            return 'Rewrite';
     }
 }
