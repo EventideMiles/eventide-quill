@@ -24,14 +24,18 @@ div[class*='quill-settings-content-'].is-hidden {
 .quill-settings {
     &__tab-bar {
         display: flex;
-        border-bottom: 1px solid var(--background-modifier-border);
-        margin-bottom: $space-xl;
         flex-shrink: 0;
         position: sticky;
         top: 0;
         z-index: 100;
         background: var(--background-primary);
-        padding-top: $space-xs;
+        // Padding (not margin) so the opaque background covers the gap
+        // between the tabs and the content below. Margins on sticky
+        // elements create transparent gaps where scrolling content peeks through.
+        padding-top: $space-sm;
+        padding-bottom: $space-md;
+        border-bottom: 1px solid var(--background-modifier-border);
+        box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.08);
     }
 
     &__tab {
@@ -59,10 +63,61 @@ div[class*='quill-settings-content-'].is-hidden {
 
     // --- Welcome tab ---
 
-    &__welcome-desc {
+    &__welcome-hero {
+        text-align: center;
+        padding: $space-xxl 0 $space-xl;
+    }
+
+    &__welcome-title {
+        font-size: var(--font-ui-large);
+        font-weight: 700;
+        color: var(--text-normal);
+    }
+
+    &__welcome-tagline {
         font-size: var(--font-ui-small);
         color: var(--text-muted);
+        margin-top: $space-xs;
+    }
+
+    &__welcome-steps {
         margin-bottom: $space-xl;
+    }
+
+    &__welcome-step {
+        display: flex;
+        gap: $space-md;
+        padding: $space-sm 0;
+        align-items: flex-start;
+    }
+
+    &__welcome-step-num {
+        flex-shrink: 0;
+        width: 24px;
+        height: 24px;
+        line-height: 24px;
+        text-align: center;
+        border-radius: $radius-full;
+        background: var(--interactive-accent);
+        color: var(--text-on-accent);
+        font-size: var(--font-ui-smaller);
+        font-weight: 700;
+    }
+
+    &__welcome-step-body {
+        flex: 1;
+    }
+
+    &__welcome-step-title {
+        font-size: var(--font-ui-small);
+        font-weight: 600;
+        color: var(--text-normal);
+    }
+
+    &__welcome-step-desc {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        margin-top: 2px;
     }
 
     &__welcome-features {
@@ -70,22 +125,33 @@ div[class*='quill-settings-content-'].is-hidden {
     }
 
     &__welcome-feature {
-        padding: $space-xs 0;
-        font-size: var(--font-ui-small);
-        color: var(--text-normal);
-        border-bottom: 1px solid var(--background-modifier-border);
-
-        &:last-child {
-            border-bottom: none;
-        }
+        display: flex;
+        gap: $space-md;
+        padding: $space-sm 0;
+        align-items: baseline;
     }
 
-    &__welcome-hint {
+    &__welcome-feature-icon {
+        flex-shrink: 0;
+        width: 20px;
+        text-align: center;
+        color: var(--text-accent);
         font-size: var(--font-ui-small);
+    }
+
+    &__welcome-feature-text {
+        font-size: var(--font-ui-small);
+        color: var(--text-normal);
+    }
+
+    &__welcome-privacy {
+        font-size: var(--font-ui-smaller);
         color: var(--text-muted);
         padding: $space-md;
         background: var(--background-primary-alt);
         border-radius: $radius-sm;
+        text-align: center;
+        margin-top: $space-xl;
     }
 
     // --- Footer (reserved for future donation / support links) ---
@@ -95,11 +161,14 @@ div[class*='quill-settings-content-'].is-hidden {
         padding: $space-lg $space-md;
         min-height: 60px;
         border-top: 1px solid var(--background-modifier-border);
-        margin-top: $space-xxl;
+        // Padding (not margin) so the opaque background covers the gap
+        // between the content above and the footer. Same sticky gotcha as tab bar.
+        padding-top: $space-lg;
         position: sticky;
         bottom: 0;
         z-index: 100;
         background: var(--background-primary);
+        box-shadow: 0 -4px 12px -4px rgba(0, 0, 0, 0.08);
     }
 }
 

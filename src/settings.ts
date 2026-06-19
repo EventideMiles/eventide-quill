@@ -327,34 +327,89 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         });
     }
 
-    /** Render the welcome tab (placeholder for future onboarding + donation). */
+    /** Render the welcome tab (onboarding + feature overview). */
     private renderWelcomeTab(containerEl: HTMLElement): void {
         const content = containerEl.createEl('div', { cls: 'quill-settings-content-welcome' });
 
-        new Setting(content).setName('Welcome').setHeading();
-        content.createEl('p', {
-            cls: 'quill-settings__welcome-desc',
-            text: 'A feedback-first, novelist-focused writing assistant. Built from scratch. Mobile-ready. Local-model first.'
+        // --- Hero ---
+
+        const hero = content.createEl('div', { cls: 'quill-settings__welcome-hero' });
+        hero.createEl('div', { cls: 'quill-settings__welcome-title', text: 'Eventide quill' });
+        hero.createEl('div', {
+            cls: 'quill-settings__welcome-tagline',
+            text: 'A feedback-first writing assistant for novelists.'
         });
 
-        const features = content.createEl('div', { cls: 'quill-settings__welcome-features' });
-        const items = [
-            'Manuscript dashboard with per-chapter analytics, pacing analysis, and readability tracking',
-            'Prose linter with deterministic rules and AI-powered fixes',
-            'AI feedback engine with developmental editor, line editor, beta reader, and coach personas',
-            'Co-writer with Direct, Discuss, Coach, and Fulfill modes',
-            'Selection transformations (improve, lengthen, shorten, change tone, custom)',
-            'Critical analysis for plot logic, character consistency, continuity, and voice drift',
-            'Context engine that auto-builds working context from your manuscript',
-            'Pluggable providers: Ollama, LM Studio, OpenAI-compatible, and more'
+        // --- Getting started ---
+
+        new Setting(content).setName('Getting started').setHeading();
+
+        const steps = content.createEl('div', { cls: 'quill-settings__welcome-steps' });
+        const stepItems = [
+            {
+                num: '1',
+                title: 'Configure an AI provider',
+                desc: 'Go to the "AI providers" tab and set up Ollama, LM Studio, or an OpenAI-compatible endpoint.'
+            },
+            {
+                num: '2',
+                title: 'Open the sidebar',
+                desc: 'Click the feather icon in the left ribbon to open the Quill sidebar.'
+            },
+            {
+                num: '3',
+                title: 'Configure your manuscript',
+                desc: 'Open the Dashboard tab in the sidebar, click Settings, and pick your manuscript type.'
+            },
+            {
+                num: '4',
+                title: 'Start writing',
+                desc: 'Use the linter, co-writer, feedback engine, and dashboard as you draft.'
+            }
         ];
-        for (const item of items) {
-            features.createEl('div', { cls: 'quill-settings__welcome-feature', text: item });
+        for (const step of stepItems) {
+            const row = steps.createEl('div', { cls: 'quill-settings__welcome-step' });
+            row.createEl('div', { cls: 'quill-settings__welcome-step-num', text: step.num });
+            const body = row.createEl('div', { cls: 'quill-settings__welcome-step-body' });
+            body.createEl('div', { cls: 'quill-settings__welcome-step-title', text: step.title });
+            body.createEl('div', { cls: 'quill-settings__welcome-step-desc', text: step.desc });
         }
 
-        content.createEl('p', {
-            cls: 'quill-settings__welcome-hint',
-            text: 'Configure your AI provider on the "AI providers" tab to get started. Then open the sidebar from the ribbon icon (feather).'
+        // --- Features ---
+
+        new Setting(content).setName('Features').setHeading();
+
+        const features = content.createEl('div', { cls: 'quill-settings__welcome-features' });
+        const featureItems: { icon: string; text: string }[] = [
+            {
+                icon: '\u2630',
+                text: 'Manuscript dashboard with per-chapter analytics, pacing analysis, and readability tracking'
+            },
+            { icon: '\u2713', text: 'Prose linter with deterministic rules and AI-powered batch fixes' },
+            {
+                icon: '\u270E',
+                text: 'AI feedback engine with developmental editor, line editor, beta reader, and coach personas'
+            },
+            { icon: '\u27A4', text: 'Co-writer with Direct, Discuss, Coach, and Fulfill modes' },
+            { icon: '\u21BB', text: 'Selection transformations: improve, lengthen, shorten, change tone, or custom' },
+            {
+                icon: '\u2691',
+                text: 'Critical analysis for plot logic, character consistency, continuity, and voice drift'
+            },
+            { icon: '\u2699', text: 'Context engine that auto-builds working context from your manuscript' },
+            { icon: '\u26A1', text: 'Pluggable providers: Ollama, LM Studio, OpenAI-compatible, and more' }
+        ];
+        for (const item of featureItems) {
+            const row = features.createEl('div', { cls: 'quill-settings__welcome-feature' });
+            row.createEl('span', { cls: 'quill-settings__welcome-feature-icon', text: item.icon });
+            row.createEl('span', { cls: 'quill-settings__welcome-feature-text', text: item.text });
+        }
+
+        // --- Privacy ---
+
+        content.createEl('div', {
+            cls: 'quill-settings__welcome-privacy',
+            text: 'No telemetry. Your manuscript stays yours. All processing is local unless you configure a cloud provider.'
         });
     }
 
