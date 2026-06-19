@@ -34,7 +34,9 @@ export interface ChapterRange {
 
 /** A pacing flag on a uniformly short/long passage. */
 export interface PacingFlag {
-    /** 1-based line where the flagged passage begins. */
+    /** Source file path for navigation. */
+    filePath: string;
+    /** 1-based line where the flagged passage begins (relative to the source text). */
     lineStart: number;
     /** 1-based line where the flagged passage ends (inclusive). */
     lineEnd: number;

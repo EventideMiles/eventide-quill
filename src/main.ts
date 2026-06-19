@@ -2129,6 +2129,29 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
+     * Open a chapter file and scroll the editor to a specific line.
+     *
+     * Used by the dashboard's clickable pacing flags to navigate the writer
+     * to the flagged passage. Opens the file in the active leaf if it isn't
+     * already visible.
+     */
+    async jumpToDashboardLine(filePath: string, line: number): Promise<void> {
+        const file = this.app.vault.getAbstractFileByPath(filePath);
+        if (!(file instanceof TFile)) return;
+
+        let view = findEditorView(this.app, filePath);
+        if (!view) {
+            await this.app.workspace.openLinkText(filePath, '', false);
+            view = findEditorView(this.app, filePath);
+        }
+        if (!view) return;
+
+        const editorLine = Math.max(0, line - 1);
+        view.editor.setCursor({ line: editorLine, ch: 0 });
+        view.editor.scrollIntoView({ from: { line: editorLine, ch: 0 }, to: { line: editorLine, ch: 0 } }, true);
+    }
+
+    /**
      * Resolve the list of markdown files belonging to the active manuscript.
      *
      * Starts with the active file's folder (recursive if `includeSubfolders`),

@@ -1,6 +1,6 @@
 import { Component } from 'obsidian';
 import type EventideQuillPlugin from '../main';
-import type { ManuscriptMetrics, ManuscriptSnapshot, SectionMetrics } from '../core/dashboard/types';
+import type { ChapterMetrics, ManuscriptMetrics, ManuscriptSnapshot, SectionMetrics } from '../core/dashboard/types';
 import { getActiveDocument, renderDocumentHeader } from './document-header';
 
 /** Expand state for chapter rows, keyed by `${filePath}:${lineStart}`. Survives re-renders. */
@@ -73,7 +73,7 @@ export function renderDashboardTab(container: HTMLElement, plugin: EventideQuill
 
     renderSummary(container, metrics, plugin);
     renderChapterList(container, metrics, plugin, component);
-    renderPacingHeatmap(container, metrics);
+    renderPacingHeatmap(container, metrics, plugin, component);
     renderReadability(container, metrics);
     renderCharacterList(container, metrics, plugin, component);
     renderReclassifiedList(container, metrics, plugin, component);
@@ -180,14 +180,20 @@ function renderChapterList(
         if (expanded && chapter.sections.length > 0) {
             const sectionList = row.createEl('div', { cls: 'quill-dashboard-panel__section-list' });
             for (const sm of chapter.sections) {
-                renderSectionRow(sectionList, sm);
+                renderSectionRow(sectionList, sm, chapter, plugin, component);
             }
         }
     }
 }
 
 /** Render a single section (scene) row inside an expanded chapter. */
-function renderSectionRow(container: HTMLElement, section: SectionMetrics): void {
+function renderSectionRow(
+    container: HTMLElement,
+    section: SectionMetrics,
+    chapter: ChapterMetrics,
+    plugin: EventideQuillPlugin,
+    component: Component
+): void {
     const row = container.createEl('div', { cls: 'quill-dashboard-panel__section-row' });
     const title = section.title ?? 'Scene';
     row.createEl('span', { cls: 'quill-dashboard-panel__section-title', text: title });
@@ -196,17 +202,36 @@ function renderSectionRow(container: HTMLElement, section: SectionMetrics): void
         text: `${section.wordCount.toLocaleString()}w \u00B7 ${section.avgSentenceLength}w/sentence \u00B7 ${pct(section.dialogueRatio)} dialogue`
     });
 
-    if (section.pacingFlags.length > 0) {
-        const flagCount = section.pacingFlags.length;
-        row.createEl('span', {
-            cls: 'quill-dashboard-panel__section-flag',
-            text: `${flagCount} pacing flag${flagCount !== 1 ? 's' : ''}`
+    // Clickable pacing flag chips — each shows what the issue is and jumps to it on click.
+    for (const flag of section.pacingFlags) {
+        const isShort = flag.kind === 'uniform-short';
+        const label = isShort ? 'Uniformly short sentences' : 'Uniformly long sentences';
+        const detail = isShort ? 'staccato rhythm, consider varying length' : 'dense passage, consider breaking up';
+        const absLine = section.lineStart + flag.lineStart - 1;
+        const chip = row.createEl('button', {
+            cls: `quill-dashboard-panel__pacing-chip quill-dashboard-panel__pacing-chip--${flag.kind}`,
+            attr: {
+                title: `${label}. Avg ${flag.avgSentenceLength} words/sentence, lines ${absLine}\u2013${section.lineStart + flag.lineEnd - 1}. Click to jump.`
+            }
+        });
+        chip.createEl('span', { cls: 'quill-dashboard-panel__pacing-chip-label', text: label });
+        chip.createEl('span', {
+            cls: 'quill-dashboard-panel__pacing-chip-detail',
+            text: `avg ${flag.avgSentenceLength}w \u00B7 ${detail}`
+        });
+        component.registerDomEvent(chip, 'click', () => {
+            void plugin.jumpToDashboardLine(chapter.filePath, absLine);
         });
     }
 }
 
-/** Render the pacing heatmap (one bar per chapter). */
-function renderPacingHeatmap(container: HTMLElement, metrics: ManuscriptMetrics): void {
+/** Render the pacing heatmap (one bar per chapter) with clickable legend. */
+function renderPacingHeatmap(
+    container: HTMLElement,
+    metrics: ManuscriptMetrics,
+    plugin: EventideQuillPlugin,
+    component: Component
+): void {
     const allFlags = metrics.pacingFlags;
     if (allFlags.length === 0 && metrics.chapters.length === 0) return;
 
@@ -228,10 +253,20 @@ function renderPacingHeatmap(container: HTMLElement, metrics: ManuscriptMetrics)
     if (allFlags.length > 0) {
         const legend = section.createEl('div', { cls: 'quill-dashboard-panel__heatmap-legend' });
         for (const flag of allFlags.slice(0, 10)) {
-            const kind = flag.kind === 'uniform-short' ? 'Uniformly short sentences' : 'Uniformly long sentences';
-            legend.createEl('div', {
-                cls: 'quill-dashboard-panel__heatmap-flag',
-                text: `${kind} (avg ${flag.avgSentenceLength}w, lines ${flag.lineStart}\u2013${flag.lineEnd})`
+            const isShort = flag.kind === 'uniform-short';
+            const label = isShort ? 'Uniformly short sentences' : 'Uniformly long sentences';
+            const detail = isShort ? 'staccato rhythm, consider varying length' : 'dense passage, consider breaking up';
+            const item = legend.createEl('button', {
+                cls: `quill-dashboard-panel__heatmap-flag quill-dashboard-panel__pacing-chip--${flag.kind}`,
+                attr: { title: 'Click to jump to this passage' }
+            });
+            item.createEl('span', { cls: 'quill-dashboard-panel__pacing-chip-label', text: label });
+            item.createEl('span', {
+                cls: 'quill-dashboard-panel__pacing-chip-detail',
+                text: `avg ${flag.avgSentenceLength}w \u00B7 ${detail} \u00B7 line ${flag.lineStart}`
+            });
+            component.registerDomEvent(item, 'click', () => {
+                void plugin.jumpToDashboardLine(flag.filePath, flag.lineStart);
             });
         }
         if (allFlags.length > 10) {

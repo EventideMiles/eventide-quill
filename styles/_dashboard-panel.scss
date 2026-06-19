@@ -208,6 +208,45 @@
         flex-shrink: 0;
     }
 
+    // --- Pacing flag chips (clickable, descriptive) ---
+
+    &__pacing-chip {
+        display: inline-flex;
+        flex-direction: column;
+        gap: 1px;
+        padding: $space-xs $space-sm;
+        border-radius: $radius-sm;
+        border: 1px solid var(--background-modifier-border);
+        background: var(--background-primary-alt);
+        cursor: pointer;
+        text-align: left;
+        transition: background $transition-fast, border-color $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            border-color: var(--background-modifier-border-hover);
+        }
+
+        &--uniform-short {
+            border-left: 3px solid var(--color-yellow, var(--background-modifier-border));
+        }
+
+        &--uniform-long {
+            border-left: 3px solid var(--color-orange, var(--color-red, var(--background-modifier-border)));
+        }
+    }
+
+    &__pacing-chip-label {
+        font-size: var(--font-ui-smaller);
+        font-weight: 600;
+        color: var(--text-normal);
+    }
+
+    &__pacing-chip-detail {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+    }
+
     // --- Pacing heatmap ---
 
     &__heatmap {

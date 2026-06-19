@@ -126,9 +126,10 @@ export function fleschKincaid(text: string): { readingEase: number; gradeLevel: 
  *
  * @param text      Source text to analyze.
  * @param lineTable Line-offset table for the same text (built by `buildLineOffsetTable`).
+ * @param filePath  Source file path (attached to flags for click-to-navigate).
  * @returns Pacing flags in document order.
  */
-export function pacingAnalysis(text: string, lineTable: number[]): PacingFlag[] {
+export function pacingAnalysis(text: string, lineTable: number[], filePath: string): PacingFlag[] {
     if (!text.trim()) return [];
 
     const sentences = splitSentences(text, ABBREVIATIONS_PATTERN);
@@ -170,6 +171,7 @@ export function pacingAnalysis(text: string, lineTable: number[]): PacingFlag[] 
         const firstSentence = sentences[run.startIdx]!;
         const lastSentence = sentences[run.endIdx]!;
         return {
+            filePath,
             lineStart: lineFromOffset(lineTable, firstSentence.start),
             lineEnd: lineFromOffset(lineTable, lastSentence.end),
             kind: run.kind,
@@ -179,7 +181,7 @@ export function pacingAnalysis(text: string, lineTable: number[]): PacingFlag[] 
 }
 
 /** Compute metrics for a single section. */
-function computeSectionMetrics(section: SectionRange): SectionMetrics {
+function computeSectionMetrics(section: SectionRange, filePath: string): SectionMetrics {
     const lineTable = buildLineOffsetTable(section.text);
     const words = countWords(section.text);
     const sentences = splitSentences(section.text, ABBREVIATIONS_PATTERN);
@@ -188,7 +190,7 @@ function computeSectionMetrics(section: SectionRange): SectionMetrics {
     const { mean } = stats(wordCounts);
     const { dialogueRatio } = computeDialogueRatio(section.text);
     const { readingEase } = fleschKincaid(section.text);
-    const flags = pacingAnalysis(section.text, lineTable);
+    const flags = pacingAnalysis(section.text, lineTable, filePath);
 
     return {
         title: section.title,
@@ -318,7 +320,7 @@ export function chapterMetrics(chapter: ChapterRange): ChapterMetrics {
     const { mean, stddev } = stats(wordCounts);
     const { dialogueRatio } = computeDialogueRatio(chapter.text);
     const { readingEase, gradeLevel } = fleschKincaid(chapter.text);
-    const flags = pacingAnalysis(chapter.text, lineTable);
+    const flags = pacingAnalysis(chapter.text, lineTable, chapter.filePath);
 
     return {
         filePath: chapter.filePath,
@@ -335,7 +337,7 @@ export function chapterMetrics(chapter: ChapterRange): ChapterMetrics {
         fleschReadingEase: readingEase,
         fleschKincaidGrade: gradeLevel,
         pacingFlags: flags,
-        sections: chapter.sections.map(computeSectionMetrics)
+        sections: chapter.sections.map((s) => computeSectionMetrics(s, chapter.filePath))
     };
 }
 
@@ -435,7 +437,14 @@ export function manuscriptMetrics(chapters: ChapterRange[], entities: ExtractedE
         weightedDialogue += cm.dialogueRatio * cm.wordCount;
         weightedReadingEase += cm.fleschReadingEase * cm.wordCount;
         weightedGrade += cm.fleschKincaidGrade * cm.wordCount;
-        allFlags.push(...cm.pacingFlags);
+        // Adjust flag lines from chapter-relative to file-absolute for navigation.
+        for (const flag of cm.pacingFlags) {
+            allFlags.push({
+                ...flag,
+                lineStart: cm.lineStart + flag.lineStart - 1,
+                lineEnd: cm.lineStart + flag.lineEnd - 1
+            });
+        }
     }
 
     // Recompute manuscript-wide sentence-length stats by re-splitting each chapter's text.
