@@ -13,28 +13,45 @@
 // Settings tabs
 // =========================================================================
 
-// Content div visibility — must be OUTSIDE .quill-settings because the
-// content divs are direct children of Obsidian's containerEl, not wrapped
-// in a .quill-settings element. The .is-hidden class is toggled by
-// showActiveTab() in settings.ts.
+// Content div visibility — toggled via .is-hidden class by showActiveTab().
 div[class*='quill-settings-content-'].is-hidden {
     display: none;
 }
 
+// =========================================================================
+// Root layout — flex column with fixed header, scrollable middle, fixed footer.
+//
+//   ┌───────────────────────────┐
+//   │ Tab bar (fixed)            │  flex-shrink: 0
+//   ├───────────────────────────┤
+//   │ Scroll area (scrolls)      │  flex: 1, overflow-y: auto
+//   ├───────────────────────────┤
+//   │ Footer (fixed)             │  flex-shrink: 0
+//   └───────────────────────────┘
+//
+// The root fills its parent's height and prevents the parent from scrolling;
+// only the scroll area in the middle scrolls.
+
+.quill-settings-root {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
 .quill-settings {
+    &__scroll-area {
+        flex: 1;
+        overflow-y: auto;
+        min-height: 0; // Critical: allows flex child to shrink and scroll
+    }
+
     &__tab-bar {
         display: flex;
         flex-shrink: 0;
-        position: sticky;
-        top: 0;
-        z-index: 100;
-        background: var(--background-primary);
-        // Padding (not margin) so the opaque background covers the gap
-        // between the tabs and the content below. Margins on sticky
-        // elements create transparent gaps where scrolling content peeks through.
-        padding-top: $space-sm;
-        padding-bottom: $space-md;
         border-bottom: 1px solid var(--background-modifier-border);
+        background: var(--background-primary);
+        padding-top: $space-sm;
         box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.08);
     }
 
@@ -155,18 +172,13 @@ div[class*='quill-settings-content-'].is-hidden {
     }
 
     // --- Footer (reserved for future donation / support links) ---
-    // Sticky at the bottom so it's always visible regardless of scroll position.
+    // Fixed at the bottom via the flex layout — does not scroll with content.
 
     &__footer {
+        flex-shrink: 0;
         padding: $space-lg $space-md;
         min-height: 60px;
         border-top: 1px solid var(--background-modifier-border);
-        // Padding (not margin) so the opaque background covers the gap
-        // between the content above and the footer. Same sticky gotcha as tab bar.
-        padding-top: $space-lg;
-        position: sticky;
-        bottom: 0;
-        z-index: 100;
         background: var(--background-primary);
         box-shadow: 0 -4px 12px -4px rgba(0, 0, 0, 0.08);
     }

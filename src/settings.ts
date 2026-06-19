@@ -268,13 +268,19 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     display(): void {
         const { containerEl } = this;
         containerEl.empty();
+        containerEl.addClass('quill-settings-root');
 
         this.renderTabBar(containerEl);
-        this.renderWelcomeTab(containerEl);
-        this.renderGeneralTab(containerEl);
-        this.renderLinterTab(containerEl);
-        this.renderAiProvidersTab(containerEl);
-        this.renderModelBehaviorsTab(containerEl);
+
+        // All tab content lives inside a scrollable wrapper so that only
+        // the area between the tab bar (header) and the footer scrolls.
+        const scrollArea = containerEl.createDiv({ cls: 'quill-settings__scroll-area' });
+        this.renderWelcomeTab(scrollArea);
+        this.renderGeneralTab(scrollArea);
+        this.renderLinterTab(scrollArea);
+        this.renderAiProvidersTab(scrollArea);
+        this.renderModelBehaviorsTab(scrollArea);
+
         this.renderFooter(containerEl);
 
         this.showActiveTab();
