@@ -37,6 +37,15 @@ import {
 import type { ChatMessage } from './ai/provider';
 
 import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
+import {
+    getManuscriptAnalysis,
+    getManuscriptAnalysisModeById,
+    buildManuscriptAnalysisMessages,
+    type ManuscriptAnalysisMode,
+    type ManuscriptScope
+} from './ai/manuscript-analysis';
+import { chunkManuscript, compressChunks, type CompactionStrategy } from './ai/manuscript-compaction';
+import { EmbeddingCache, hashString, rankBySimilarity } from './ai/embedding-cache';
 import { compactConversation } from './ai/compaction';
 import { estimateTokens } from './utils/tokens';
 import { readVaultFileText } from './utils/vault-files';
@@ -62,6 +71,24 @@ import {
     withFolderLock,
     type ManuscriptFileData
 } from './core/dashboard/manuscript-file';
+
+/**
+ * Whether a vault file path should be excluded from embedding.
+ * Excludes the Obsidian config directory and any hidden directories or files
+ * (segments starting with `.`) — these contain internal state, plugin config,
+ * or other non-content data, not user writing.
+ */
+function isExcludedPath(path: string, configDir: string): boolean {
+    const configFolder = configDir.replace(/^\/+|\/+$/g, '');
+    if (configFolder && (path.startsWith(configFolder + '/') || path.includes('/' + configFolder + '/'))) {
+        return true;
+    }
+    const segments = path.split('/');
+    for (const segment of segments) {
+        if (segment.startsWith('.')) return true;
+    }
+    return false;
+}
 
 /**
  * Enrich entity display names using vault file basenames.
@@ -195,6 +222,14 @@ export default class EventideQuillPlugin extends Plugin {
     private analysisAbort: AbortController | null = null;
     /** Full message history for the analysis conversation (system + context heads + chat turns). */
     private analysisCurrentMessages: ChatMessage[] = [];
+    /** Abort controller for the current manuscript analysis request, if any. */
+    private manuscriptAnalysisAbort: AbortController | null = null;
+    /** Full message history for the manuscript analysis conversation. */
+    private manuscriptAnalysisCurrentMessages: ChatMessage[] = [];
+    /** Debounce timers for per-folder embedding warming. Keyed by folder path. */
+    private embeddingWarmingTimers = new Map<string, number>();
+    /** Folders currently being warmed, to avoid concurrent warming. */
+    private embeddingWarmingActive = new Set<string>();
     lintActive = false;
     lintActiveFile: string | null = null;
     /** File path for the currently assembled context. Tracked separately from lintActiveFile. */
@@ -398,6 +433,18 @@ export default class EventideQuillPlugin extends Plugin {
                     // Auto-snapshot on save if the dashboard setting is enabled.
                     if (this.settings.dashboardAutoSnapshotOnSave && file.extension === 'md') {
                         void this.refreshDashboard();
+                    }
+
+                    // Debounced embedding warming for the file's folder.
+                    if (
+                        this.settings.enableEmbeddingWarming &&
+                        file.extension === 'md' &&
+                        this.getDefaultEmbedProvider()
+                    ) {
+                        const folder = file.parent?.path ?? '';
+                        if (folder && !['', '/'].includes(folder)) {
+                            this.scheduleEmbeddingWarming(folder);
+                        }
                     }
                 }
 
@@ -769,10 +816,23 @@ export default class EventideQuillPlugin extends Plugin {
         });
 
         this.addSettingTab(new EventideQuillSettingTab(this.app, this));
+
+        // Initial embedding cache warming: if an embed provider is configured,
+        // warm any folders that don't have a cache yet. Delayed 10s to let
+        // Obsidian settle after startup. Fire-and-forget.
+        if (this.getDefaultEmbedProvider() && this.settings.enableEmbeddingWarming) {
+            // Raw timer: one-shot startup delay. Cleared on unload.
+            const startupTimer = window.setTimeout(() => {
+                void this.warmAllEmbeddingCaches();
+            }, 10_000);
+            this.registerInterval(startupTimer);
+        }
     }
 
     /** Clean up resources when the plugin is unloaded. */
-    onunload() {}
+    onunload() {
+        this.clearEmbeddingWarmingTimers();
+    }
 
     /** Retrieve the CodeMirror EditorView from an Obsidian Editor instance. */
     private getCmView(editor: Editor): EditorView | undefined {
@@ -2011,6 +2071,686 @@ export default class EventideQuillPlugin extends Plugin {
         }
     }
 
+    // ========================================================================
+    // Manuscript Analysis Engine
+    // ========================================================================
+
+    cancelManuscriptAnalysisGeneration(): void {
+        this.manuscriptAnalysisAbort?.abort();
+    }
+
+    resetManuscriptAnalysisChat(): void {
+        this.manuscriptAnalysisAbort?.abort();
+        this.manuscriptAnalysisCurrentMessages = [];
+        this.lintPanel?.reviewResetResults();
+    }
+
+    async compactManuscriptAnalysis(): Promise<void> {
+        if (this.manuscriptAnalysisCurrentMessages.length <= 1) return;
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) return;
+        const sentenceCount = Math.max(1, Math.min(20, this.settings.compactSummarySentences));
+        try {
+            const result = await compactConversation(
+                chat.provider,
+                this.manuscriptAnalysisCurrentMessages,
+                sentenceCount
+            );
+            if (result) {
+                this.manuscriptAnalysisCurrentMessages = result.messages;
+                this.lintPanel?.reviewAppendChatSystemMessageInPlace(result.summary);
+            }
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') return;
+            console.warn('Quill: Manuscript analysis manual compaction failed.', err);
+        }
+    }
+
+    /**
+     * Request manuscript analysis of the active document with the given mode.
+     * Streams the response into the Results sub-tab. Always refreshes dashboard
+     * metrics for a full-manuscript diagnostic.
+     */
+    async requestManuscriptAnalysis(
+        mode: ManuscriptAnalysisMode,
+        scope: ManuscriptScope,
+        compaction: CompactionStrategy,
+        customInstruction?: string
+    ): Promise<void> {
+        if (!this.settings.enableManuscriptAnalysis) {
+            new Notice('Quill: Manuscript analysis is disabled in settings.');
+            return;
+        }
+
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: No AI provider configured. Set one up in settings.');
+            return;
+        }
+
+        await this.ensureContextInitialized();
+
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== 'md') {
+            new Notice('Quill: Open a Markdown document to run manuscript analysis.');
+            this.lintPanel?.reviewError('No active document.');
+            return;
+        }
+
+        // Cancel any in-flight request.
+        this.manuscriptAnalysisAbort?.abort();
+        this.manuscriptAnalysisAbort = new AbortController();
+        const myAbort = this.manuscriptAnalysisAbort;
+
+        const modeMeta = getManuscriptAnalysisModeById(mode);
+
+        // Resolve all manuscript files (multi-file support).
+        const resolved = await this.resolveManuscriptChapters(activeFile);
+        if (!resolved) return;
+
+        let { chapters, entities, msFile } = resolved;
+
+        // Apply user reclassification overrides.
+        for (const entity of entities) {
+            const newType = msFile.reclassifiedEntities[entity.id];
+            if (newType) entity.type = newType;
+        }
+        const dismissedIds = new Set(msFile.dismissedEntities);
+
+        // --- Scope resolution ---
+        let selectedChapters: ChapterRange[] = chapters;
+        let scopeLabel = 'full manuscript';
+
+        if (scope.kind === 'surrounding') {
+            const idx = this.findCurrentChapterIndex(chapters, activeFile);
+            if (idx === null) {
+                new Notice('Quill: Could not locate the current chapter. Falling back to full manuscript.');
+                selectedChapters = chapters;
+            } else {
+                const count = scope.count;
+                const start = Math.max(0, idx - count);
+                const end = Math.min(chapters.length, idx + count + 1);
+                selectedChapters = chapters.slice(start, end);
+                scopeLabel = `surrounding ${count} chapters (${selectedChapters.length} of ${chapters.length})`;
+            }
+        }
+
+        const scopeMetrics = manuscriptMetrics(selectedChapters, entities, dismissedIds);
+        this.lintPanel?.reviewStartLoading('manuscript', modeMeta?.label ?? mode, scopeLabel);
+
+        // --- Compaction strategy ---
+        let manuscriptText: string;
+        let compactionNote = '';
+        let wasCompacted = false;
+
+        const selectedText = selectedChapters.map((c) => c.text).join('\n\n');
+
+        if (compaction === 'embed') {
+            const embedProvider = this.getDefaultEmbedProvider();
+            if (!embedProvider) {
+                new Notice('Quill: No embed model configured. Sending full text instead.');
+                manuscriptText = selectedText;
+            } else {
+                try {
+                    const embedKey = parseProviderKey(this.settings.aiDefaultEmbedProvider);
+                    const embedModelId = embedKey?.modelId || '';
+                    const chunks = chunkManuscript(selectedText, {
+                        targetTokenSize: Math.floor(this.settings.embeddingChunkTokenSize * 0.85),
+                        overlap: 0.1
+                    });
+
+                    // Attach hashes for cache lookups.
+                    for (const chunk of chunks) {
+                        chunk.hash = hashString(chunk.text);
+                    }
+
+                    // Group chunks by their source folder for cache lookup.
+                    const folderGroups = new Map<string, typeof chunks>();
+                    for (const chapter of selectedChapters) {
+                        const folder = chapter.filePath.includes('/')
+                            ? chapter.filePath.substring(0, chapter.filePath.lastIndexOf('/'))
+                            : '';
+                        if (!folderGroups.has(folder)) {
+                            folderGroups.set(folder, []);
+                        }
+                    }
+                    // Assign chunks to folders based on selected chapters order.
+                    let chunkIdx = 0;
+                    for (const chapter of selectedChapters) {
+                        const folder = chapter.filePath.includes('/')
+                            ? chapter.filePath.substring(0, chapter.filePath.lastIndexOf('/'))
+                            : '';
+                        const group = folderGroups.get(folder);
+                        if (group && chunkIdx < chunks.length) {
+                            const c = chunks[chunkIdx]!;
+                            c.filePath = chapter.filePath;
+                            group.push(c);
+                            chunkIdx++;
+                        }
+                    }
+
+                    // Load caches per folder and ensure embeddings.
+                    const caches: EmbeddingCache[] = [];
+                    for (const [folder, folderChunks] of folderGroups) {
+                        const cache = await EmbeddingCache.load(this.app.vault, folder, embedModelId);
+                        await cache.ensureEmbeddings(embedProvider, folderChunks, embedModelId);
+                        await cache.save(this.app.vault);
+                        caches.push(cache);
+                    }
+
+                    // Embed the query.
+                    const modeDesc = modeMeta?.description ?? mode;
+                    const query = `${modeMeta?.label ?? mode}: ${modeDesc}${customInstruction ? ` — ${customInstruction}` : ''}`;
+                    const queryResult = await embedProvider.embed({ input: query, model: embedModelId });
+                    const queryEmbedding = queryResult.embeddings[0]!;
+
+                    // Rank all chunks by similarity.
+                    const ranked = rankBySimilarity(chunks, queryEmbedding, this.settings.manuscriptAnalysisTopKChunks);
+                    manuscriptText = ranked
+                        .map((c) => {
+                            const prefix = c.chapterTitle ? `[${c.chapterTitle}] ` : '';
+                            return `${prefix}${c.text}`;
+                        })
+                        .join('\n\n');
+                    compactionNote = ` (embedded: ${ranked.length}/${chunks.length} chunks)`;
+                    wasCompacted = true;
+                } catch (err: unknown) {
+                    if (err instanceof Error && err.name === 'AbortError') return;
+                    new Notice('Quill: Embedding failed. Sending full text instead.');
+                    manuscriptText = selectedText;
+                }
+            }
+        } else if (compaction === 'compress') {
+            try {
+                const chunks = chunkManuscript(selectedText, {
+                    targetTokenSize: this.settings.manuscriptAnalysisChunkTokenSize,
+                    overlap: 0.1
+                });
+                manuscriptText = await compressChunks(chat.provider, chunks, {
+                    model: chat.modelId,
+                    signal: this.manuscriptAnalysisAbort.signal
+                });
+                compactionNote = ` (compressed: ${chunks.length} chunks)`;
+                wasCompacted = true;
+            } catch (err: unknown) {
+                if (err instanceof Error && err.name === 'AbortError') return;
+                new Notice('Quill: Compression failed. Sending full text instead.');
+                manuscriptText = selectedText;
+            }
+        } else {
+            manuscriptText = selectedText;
+        }
+
+        // Vault context from context engine (best-effort).
+        const assembly = this.contextActiveFile === activeFile.path ? this.currentAssembly : null;
+        const contextParts: string[] = [];
+        try {
+            if (assembly && assembly.contextItems.length > 0) {
+                for (const item of assembly.contextItems) {
+                    if (item.excerpt) contextParts.push(`--- ${item.filePath} ---`, item.excerpt);
+                }
+            }
+        } catch {
+            // Vault context is best-effort.
+        }
+        const vaultContext = contextParts.length > 0 ? contextParts.join('\n\n') : '';
+
+        // Build the initial system + user messages.
+        const initialMessages = buildManuscriptAnalysisMessages(mode, {
+            mode,
+            metrics: scopeMetrics,
+            manuscriptText,
+            manuscriptName: activeFile.name,
+            vaultContext,
+            customInstruction,
+            temperature: this.settings.manuscriptAnalysisTemperature,
+            maxTokens: this.settings.manuscriptAnalysisMaxOutputTokens,
+            signal: this.manuscriptAnalysisAbort.signal,
+            compacted: wasCompacted
+        });
+        this.manuscriptAnalysisCurrentMessages = [...initialMessages];
+
+        try {
+            const stream = getManuscriptAnalysis(chat.provider, mode, {
+                mode,
+                metrics: scopeMetrics,
+                manuscriptText,
+                manuscriptName: activeFile.name + compactionNote,
+                vaultContext,
+                customInstruction,
+                model: chat.modelId,
+                signal: this.manuscriptAnalysisAbort.signal,
+                temperature: this.settings.manuscriptAnalysisTemperature,
+                maxTokens: this.settings.manuscriptAnalysisMaxOutputTokens,
+                existingMessages: initialMessages,
+                compacted: wasCompacted
+            });
+            let fullResponse = '';
+            for await (const chunk of stream) {
+                if (chunk.done) {
+                    this.manuscriptAnalysisCurrentMessages.push({ role: 'assistant', content: fullResponse });
+                    this.lintPanel?.reviewSetContextTokenEstimate(
+                        estimateTokens(this.manuscriptAnalysisCurrentMessages)
+                    );
+                    await this.lintPanel?.reviewFinished();
+                } else {
+                    fullResponse += chunk.text;
+                    this.lintPanel?.reviewAppendChunk(chunk.text);
+                }
+            }
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') return;
+            const msg = err instanceof Error ? err.message : String(err);
+            this.lintPanel?.reviewError(msg);
+            new Notice('Quill: Manuscript analysis request failed.');
+        } finally {
+            if (this.manuscriptAnalysisAbort === myAbort) {
+                this.manuscriptAnalysisAbort = null;
+            }
+        }
+    }
+
+    /**
+     * Resolve all manuscript chapter files for the active document.
+     * Reads each file, strips frontmatter, splits into chapters, extracts entities.
+     * Returns null (with a Notice) if no chapters are found.
+     */
+    private async resolveManuscriptChapters(activeFile: TFile): Promise<{
+        chapters: ChapterRange[];
+        entities: ExtractedEntity[];
+        msFile: ManuscriptFileData;
+    } | null> {
+        const folder = activeFile.parent?.path ?? '';
+        let msFile: ManuscriptFileData;
+        try {
+            msFile = await loadManuscriptFile(this.app.vault, folder);
+        } catch {
+            msFile = {
+                schemaVersion: 1,
+                chapterOverrides: { add: [], remove: [] },
+                reclassifiedEntities: {},
+                dismissedEntities: [],
+                snapshots: []
+            };
+        }
+        const includeSubfolders = msFile.includeSubfolders ?? DEFAULT_INCLUDE_SUBFOLDERS;
+        const splitByHeading = msFile.splitByHeading ?? DEFAULT_SPLIT_BY_HEADING;
+        const chapterFiles = this.resolveManuscriptFiles(folder, activeFile.path, includeSubfolders, msFile);
+        if (chapterFiles.length === 0) {
+            new Notice('Quill: No manuscript files found for this folder.');
+            this.lintPanel?.reviewError('No manuscript files.');
+            return null;
+        }
+
+        const chapters: ChapterRange[] = [];
+        const fullTextParts: string[] = [];
+        for (const file of chapterFiles) {
+            const raw = await this.app.vault.read(file);
+            const { text: bodyText, strippedLines } = stripFrontmatter(raw);
+            const ranges = listChaptersInFile(bodyText, file.path, file.basename, splitByHeading);
+            for (const range of ranges) {
+                range.lineStart += strippedLines;
+                range.lineEnd += strippedLines;
+            }
+            chapters.push(...ranges);
+            fullTextParts.push(bodyText);
+        }
+
+        if (chapters.length === 0) {
+            new Notice('Quill: No chapters found in manuscript files.');
+            this.lintPanel?.reviewError('No chapters.');
+            return null;
+        }
+
+        const fullText = fullTextParts.join('\n\n');
+        const entities = extractAllEntities(fullText);
+
+        return { chapters, entities, msFile };
+    }
+
+    /**
+     * Find the index of the chapter containing the cursor in the active editor.
+     * Uses the established `findEditorView` + `getActiveFile` pattern so it
+     * works even when the sidebar has focus.
+     */
+    private findCurrentChapterIndex(chapters: ChapterRange[], activeFile: TFile): number | null {
+        const view = findEditorView(this.app, activeFile.path);
+        if (!view) return null;
+
+        const cursorLine = view.editor.getCursor().line + 1; // 0-based → 1-based
+
+        // Filter to only this file's chapters, preserving global order.
+        let globalIdx = -1;
+        for (let i = 0; i < chapters.length; i++) {
+            const ch = chapters[i]!;
+            if (ch.filePath !== activeFile.path) continue;
+            if (cursorLine >= ch.lineStart && cursorLine <= ch.lineEnd) {
+                globalIdx = i;
+                break;
+            }
+        }
+
+        if (globalIdx === -1) {
+            // Cursor might be in frontmatter or outside any chapter heading.
+            // Fall back to the first chapter in the active file.
+            globalIdx = chapters.findIndex((c) => c.filePath === activeFile.path);
+        }
+
+        return globalIdx === -1 ? null : globalIdx;
+    }
+
+    /**
+     * Compute a pre-generation token estimate for the manuscript analysis
+     * given the current mode and scope. Used by the panel to warn the user
+     * before they click Generate.
+     */
+    async getManuscriptTokenEstimate(
+        scope: ManuscriptScope,
+        compaction: CompactionStrategy
+    ): Promise<{ estimated: number; max: number } | null> {
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) return null;
+
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== 'md') return null;
+
+        const resolved = await this.resolveManuscriptChapters(activeFile);
+        if (!resolved) return null;
+
+        let { chapters } = resolved;
+
+        // Apply scope.
+        let selectedText: string;
+        if (scope.kind === 'surrounding') {
+            const idx = this.findCurrentChapterIndex(chapters, activeFile);
+            if (idx === null) {
+                selectedText = chapters.map((c) => c.text).join('\n\n');
+            } else {
+                const count = scope.count;
+                const start = Math.max(0, idx - count);
+                const end = Math.min(chapters.length, idx + count + 1);
+                selectedText = chapters
+                    .slice(start, end)
+                    .map((c) => c.text)
+                    .join('\n\n');
+            }
+        } else {
+            selectedText = chapters.map((c) => c.text).join('\n\n');
+        }
+
+        // Apply compaction estimate.
+        let estimatedTextTokens: number;
+        if (compaction === 'embed') {
+            // Embed compaction: top-K chunks of ~embeddingChunkTokenSize each.
+            estimatedTextTokens = this.settings.manuscriptAnalysisTopKChunks * this.settings.embeddingChunkTokenSize;
+        } else if (compaction === 'compress') {
+            // Compress: each chunk becomes ~150 tokens of summary.
+            const chunkCount = Math.ceil(estimateTokens(selectedText) / this.settings.manuscriptAnalysisChunkTokenSize);
+            estimatedTextTokens = chunkCount * 150;
+        } else {
+            estimatedTextTokens = estimateTokens(selectedText);
+        }
+
+        // Add system prompt + metrics overhead (~500 tokens).
+        const overhead = 500;
+        const estimated = estimatedTextTokens + overhead;
+        const max = chat.provider.config.maxContextTokens ?? 8192;
+
+        return { estimated, max };
+    }
+
+    // ========================================================================
+    // Embedding cache warming
+    // ========================================================================
+
+    /**
+     * Schedule debounced embedding warming for a folder.
+     * Resets the timer on each call so rapid saves don't trigger multiple
+     * warming passes. Uses raw setTimeout with a comment — we need
+     * per-folder independent timers.
+     */
+    scheduleEmbeddingWarming(folder: string): void {
+        const existing = this.embeddingWarmingTimers.get(folder);
+        if (existing !== undefined) window.clearTimeout(existing);
+
+        // Raw timer: per-folder debounce that fires once after the quiet period.
+        // Not registered with the Component lifecycle because timers are
+        // short-lived and cleared on unload via onunload.
+        const delay = Math.max(5, this.settings.embeddingWarmingDebounceSeconds) * 1000;
+        const timer = window.setTimeout(() => {
+            this.embeddingWarmingTimers.delete(folder);
+            void this.warmEmbeddingsForFolder(folder);
+        }, delay);
+        this.embeddingWarmingTimers.set(folder, timer);
+    }
+
+    /**
+     * Warm the embedding cache for a single folder. Reads all markdown files
+     * directly in the folder (not subfolders — those have their own caches),
+     * chunks them, and embeds only chunks whose content hash isn't cached.
+     */
+    async warmEmbeddingsForFolder(folder: string): Promise<void> {
+        if (this.embeddingWarmingActive.has(folder)) return;
+        if (!folder || folder === '/' || folder === '') return;
+
+        const embedProvider = this.getDefaultEmbedProvider();
+        if (!embedProvider) return;
+
+        const embedKey = parseProviderKey(this.settings.aiDefaultEmbedProvider);
+        const modelId = embedKey?.modelId || '';
+        if (!modelId) return;
+
+        this.embeddingWarmingActive.add(folder);
+        try {
+            // Find markdown files directly in this folder (not subfolders).
+            // Exclude .obsidian/ and hidden directories — they contain Obsidian
+            // internal state, not user content.
+            const allMarkdown = this.app.vault.getMarkdownFiles();
+            const folderPrefix = folder + '/';
+            const folderFiles = allMarkdown.filter(
+                (f) =>
+                    f.path.startsWith(folderPrefix) &&
+                    !f.path.substring(folderPrefix.length).includes('/') &&
+                    !isExcludedPath(f.path, this.app.vault.configDir)
+            );
+
+            if (folderFiles.length === 0) return;
+
+            // Read and chunk all files in the folder.
+            const allChunks: Array<{
+                text: string;
+                hash: string;
+                filePath: string;
+                chunkIndex: number;
+                embedding?: number[];
+            }> = [];
+
+            for (const file of folderFiles) {
+                const raw = await this.app.vault.read(file);
+                const { text: bodyText } = stripFrontmatter(raw);
+                if (!bodyText.trim()) continue;
+
+                const chunks = chunkManuscript(bodyText, {
+                    targetTokenSize: Math.floor(this.settings.embeddingChunkTokenSize * 0.85),
+                    overlap: 0.1
+                });
+
+                for (let i = 0; i < chunks.length; i++) {
+                    const c = chunks[i]!;
+                    allChunks.push({
+                        text: c.text,
+                        hash: hashString(c.text),
+                        filePath: file.path,
+                        chunkIndex: i
+                    });
+                }
+            }
+
+            if (allChunks.length === 0) return;
+
+            // Load cache and ensure embeddings (incremental).
+            const cache = await EmbeddingCache.load(this.app.vault, folder, modelId);
+            await cache.ensureEmbeddings(embedProvider, allChunks, modelId);
+            await cache.save(this.app.vault);
+        } catch {
+            // Best-effort warming — failures are non-critical.
+        } finally {
+            this.embeddingWarmingActive.delete(folder);
+        }
+    }
+
+    /**
+     * Warm embedding caches for all non-root folders containing markdown files.
+     * Called after dashboard refresh and available as a manual command.
+     */
+    async warmAllEmbeddingCaches(): Promise<void> {
+        if (!this.getDefaultEmbedProvider()) return;
+        if (!this.settings.enableEmbeddingWarming) return;
+
+        const allMarkdown = this.app.vault.getMarkdownFiles();
+        const folders = new Set<string>();
+        for (const file of allMarkdown) {
+            const path = file.path;
+            if (isExcludedPath(path, this.app.vault.configDir)) continue;
+            const lastSlash = path.lastIndexOf('/');
+            if (lastSlash <= 0) continue;
+            folders.add(path.substring(0, lastSlash));
+        }
+
+        // Warm each folder sequentially to avoid overwhelming the embed API.
+        for (const folder of folders) {
+            await this.warmEmbeddingsForFolder(folder);
+        }
+    }
+
+    /** Cancel all pending embedding warming timers (called on unload). */
+    private clearEmbeddingWarmingTimers(): void {
+        for (const timer of this.embeddingWarmingTimers.values()) {
+            window.clearTimeout(timer);
+        }
+        this.embeddingWarmingTimers.clear();
+    }
+
+    /**
+     * Delete all embedding cache files in the vault. Called when the embed
+     * provider changes, since different models produce different-dimensionality
+     * vectors that can't be mixed.
+     */
+    async invalidateAllEmbeddingCaches(): Promise<void> {
+        const allFiles = this.app.vault.getFiles();
+        const cacheFiles = allFiles.filter((f) => f.name === 'quill-embeddings.json');
+        for (const file of cacheFiles) {
+            try {
+                await this.app.fileManager.trashFile(file);
+            } catch {
+                // Best-effort.
+            }
+        }
+    }
+
+    /**
+     * Send a follow-up chat message in the manuscript analysis conversation.
+     * Mirrors sendAnalysisChatMessage: compacts when near the token budget,
+     * appends the user message, then streams a reply.
+     */
+    async sendManuscriptAnalysisChatMessage(message: string): Promise<void> {
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: No AI provider configured.');
+            return;
+        }
+
+        this.manuscriptAnalysisAbort?.abort();
+        this.manuscriptAnalysisAbort = new AbortController();
+        const myAbort = this.manuscriptAnalysisAbort;
+
+        this.lintPanel?.reviewChatStartLoading();
+
+        // Chat context files are injected fresh as system messages on every call.
+        const chatContextPaths = this.lintPanel?.reviewChatContextFiles() ?? [];
+        const referenceMessages = await readVaultFiles(
+            this.app.vault,
+            chatContextPaths,
+            'Reference file',
+            this.settings.contextMaxCharsPerFile
+        );
+        const injectedTokens = estimateTokens(referenceMessages);
+
+        const maxTokens = chat.provider.config.maxContextTokens;
+        const compactPct = Math.max(50, Math.min(95, this.settings.contextCompactAtPercent)) / 100;
+
+        const hypothetical = [...this.manuscriptAnalysisCurrentMessages, { role: 'user' as const, content: message }];
+        const conversationTokens = estimateTokens(hypothetical) + injectedTokens;
+
+        this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.manuscriptAnalysisCurrentMessages));
+
+        if (conversationTokens / maxTokens >= compactPct) {
+            const sentenceCount = Math.max(1, Math.min(20, this.settings.compactSummarySentences));
+            try {
+                const result = await compactConversation(
+                    chat.provider,
+                    this.manuscriptAnalysisCurrentMessages,
+                    sentenceCount,
+                    { signal: this.manuscriptAnalysisAbort.signal }
+                );
+                if (result) {
+                    this.manuscriptAnalysisCurrentMessages = result.messages;
+                    this.lintPanel?.reviewAppendChatSystemMessageInPlace(result.summary);
+                    this.lintPanel?.reviewSetContextTokenEstimate(
+                        estimateTokens(this.manuscriptAnalysisCurrentMessages)
+                    );
+                }
+            } catch (err: unknown) {
+                if (err instanceof Error && err.name === 'AbortError') return;
+                console.warn('Quill: Manuscript analysis compaction failed, continuing without compaction.', err);
+            }
+        }
+
+        this.manuscriptAnalysisCurrentMessages.push({ role: 'user', content: message });
+
+        const baseMessages: ChatMessage[] = [
+            this.manuscriptAnalysisCurrentMessages[0]!,
+            ...referenceMessages,
+            ...this.manuscriptAnalysisCurrentMessages.slice(1)
+        ];
+
+        try {
+            const stream = chat.provider.chatCompletion({
+                messages: baseMessages,
+                model: chat.modelId,
+                temperature: this.settings.manuscriptAnalysisTemperature,
+                maxTokens: this.settings.manuscriptAnalysisMaxOutputTokens,
+                signal: this.manuscriptAnalysisAbort.signal
+            });
+
+            let fullResponse = '';
+            for await (const chunk of stream) {
+                if (chunk.done) {
+                    this.manuscriptAnalysisCurrentMessages.push({
+                        role: 'assistant',
+                        content: fullResponse
+                    });
+                    this.lintPanel?.reviewSetContextTokenEstimate(
+                        estimateTokens(this.manuscriptAnalysisCurrentMessages)
+                    );
+                    await this.lintPanel?.reviewChatFinished();
+                } else {
+                    fullResponse += chunk.text;
+                    this.lintPanel?.reviewChatAppendChunk(chunk.text);
+                }
+            }
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') return;
+            const msg = err instanceof Error ? err.message : String(err);
+            await this.lintPanel?.reviewChatError(msg);
+            new Notice('Quill: Manuscript analysis chat failed.');
+        } finally {
+            if (this.manuscriptAnalysisAbort === myAbort) {
+                this.manuscriptAnalysisAbort = null;
+            }
+        }
+    }
+
     /**
      * Resolve the editor + active file + scoped text for an analysis request.
      * Returns null if no markdown editor is active.
@@ -2506,6 +3246,11 @@ export default class EventideQuillPlugin extends Plugin {
 
             // Re-render the panel if the Dashboard tab is active.
             this.lintPanel?.refreshDashboardPanel();
+
+            // Fire-and-forget embedding cache warming for the manuscript folder.
+            if (this.settings.enableEmbeddingWarming && folder) {
+                void this.warmEmbeddingsForFolder(folder);
+            }
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             new Notice(`Quill: dashboard refresh failed (${message}).`);

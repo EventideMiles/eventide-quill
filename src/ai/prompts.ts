@@ -1,6 +1,7 @@
 import { type AiMode } from './modes';
 import { type FeedbackPersona } from './feedback';
 import type { AnalysisMode } from './analysis';
+import type { ManuscriptAnalysisMode } from './manuscript-analysis';
 import type { ExtractedEntity, VoiceMarker } from '../core/context-engine/types';
 import { type LintResult, RULE_INFO } from '../core/linter/types';
 import { type NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS, type VoiceProfile } from '../types';
@@ -160,6 +161,11 @@ export function getSystemPrompt(
             return getAnalysisBasePrompt().join('\n');
         case 'linter':
             return getLinterSystemPrompt();
+        case 'manuscript-analysis':
+            // The shared manuscript-analysis base. Mode-specific focus (scene taxonomy,
+            // structural arc, etc.) is layered on by getManuscriptAnalysisModePrompt().
+            // This base alone reads as the "general structural review" prompt.
+            return getManuscriptAnalysisBase();
     }
 }
 
@@ -720,4 +726,158 @@ function getVoiceDriftPrompt(voiceMarker?: VoiceMarker, vaultContext?: string): 
         );
     }
     return withVaultContext(parts, vaultContext);
+}
+
+// =============================================================================
+// Manuscript Analysis Engine (Feature 11b) — 7 mode-specific prompt builders
+// =============================================================================
+
+/**
+ * Build the system prompt for a manuscript analysis mode.
+ * Returns the full mode-specific base prompt without dashboard metrics
+ * (those are injected by the caller in manuscript-analysis.ts).
+ */
+export function getManuscriptAnalysisModePrompt(mode: ManuscriptAnalysisMode, vaultContext?: string): string {
+    const parts = [getManuscriptAnalysisBase()];
+
+    const focus = getManuscriptModeFocus(mode);
+    if (focus) parts.push('', focus);
+
+    if (vaultContext) {
+        parts.push(
+            '',
+            '---',
+            'Reference material from the vault (other chapters, outlines, timelines, character notes):',
+            vaultContext
+        );
+    }
+
+    return parts.join('\n');
+}
+
+/** Shared base for all manuscript analysis modes. */
+function getManuscriptAnalysisBase(): string {
+    return [
+        'You are a structural analyst reading a complete work of fiction. You are a companion to the writer: identifying patterns, imbalances, and opportunities in the manuscript as a narrative system.',
+        '',
+        'Your analysis must:',
+        '- Ground every finding in specific absolute line numbers from the manuscript.',
+        '- Quote the relevant passage or phrase verbatim.',
+        '- Explain the issue in one or two sentences with craft-level vocabulary.',
+        '- Write in flowing explanatory prose, not clinical bullet points. Each finding should feel like a thoughtful editorial observation with a reference.',
+        '- Acknowledge what works well in addition to what could be improved.',
+        '',
+        'Format:',
+        '- Organize your analysis by chapter or section. Use markdown headings (###) for each section.',
+        '- Within each section, write 1-3 paragraphs of analysis. Embed line references naturally: "At line 142, the scene shifts abruptly..."',
+        '- If you find no issues in a given chapter or category, say so explicitly. Do not invent problems.',
+        '- End with a one-paragraph overall assessment summarizing strengths and the most impactful opportunities.'
+    ].join('\n');
+}
+
+/** Return the mode-specific focus paragraph for a manuscript analysis mode. */
+function getManuscriptModeFocus(mode: ManuscriptAnalysisMode): string {
+    switch (mode) {
+        case 'scene-taxonomy':
+            return [
+                'Focus: classify every scene under one of the following narrative functions:',
+                '  Setup, Confrontation, Resolution, Exposition, Reflection, Transition,',
+                '  Inciting Incident, Rising Action, Climax, Falling Action.',
+                '',
+                'For each scene:',
+                '- State its classification and the evidence (content, pacing, emotional register).',
+                '- Flag structural imbalances: too many similar scenes in a row, missing beats',
+                '  for the genre, act imbalances, scenes that overstay their purpose.',
+                '- Note whether the scene advances plot, character, or both.'
+            ].join('\n');
+        case 'structural-arc':
+            return [
+                'Focus: map rising and falling tension across the manuscript using the pacing',
+                'flags from the dashboard as your anchor.',
+                '',
+                'For each chapter:',
+                '- Assess its narrative position and whether the tension level fits.',
+                '- Flag sections that drag (uniformly long sentences at a low-tension moment),',
+                '  rush (uniformly short sentences at a high-tension moment), or stall',
+                '  (repetitive pacing across many consecutive sections).',
+                '- Evaluate whether transitional scenes (travel, passage of time) are',
+                '  appropriately compressed and whether pivotal scenes have room to breathe.'
+            ].join('\n');
+        case 'dialogue-ecosystem':
+            return [
+                'Focus: analyze how dialogue functions across the manuscript.',
+                '',
+                'For each chapter or major scene:',
+                '- Note which characters speak and for how long relative to each other.',
+                '- Flag imbalances: one character dominating conversation, important characters',
+                '  being silent for extended periods, or characters who only appear to deliver exposition.',
+                '- Identify talking-head syndrome: dialogue exchanges without blocking, sensory',
+                '  grounding, or character action between lines.',
+                '- Assess voice distinctiveness: can you tell characters apart by their speech',
+                '  patterns, vocabulary, and rhythm? Flag characters whose dialogue reads the same.',
+                '- Note unusually long monologues and whether they serve or stall the scene.'
+            ].join('\n');
+        case 'character-arc-audit':
+            return [
+                'Focus: evaluate whether each major character has a complete narrative arc.',
+                '',
+                'For each character with substantial presence:',
+                '- Identify their arc stage at each appearance: introduction/establishment,',
+                '  development/complication, crisis/turning point, resolution/transformation.',
+                '- Flag characters who are introduced but never developed.',
+                '- Flag characters who disappear mid-manuscript without resolution.',
+                '- Flag characters who appear only to deliver information (walk-on roles that',
+                '  should be merged or cut).',
+                '- Note which characters have the strongest and weakest arcs.',
+                '- Consider ensemble balance: are secondary characters given enough dimension',
+                "  to support the protagonist's journey?"
+            ].join('\n');
+        case 'exposition-density':
+            return [
+                'Focus: locate passages where the manuscript tells rather than shows, and',
+                'evaluate whether the density is appropriate for the narrative position.',
+                '',
+                'For each flagged passage:',
+                '- Quote the passage and explain why it reads as exposition rather than',
+                '  dramatized scene (abstract summary, information dump, authorial intrusion).',
+                '- Assess appropriateness: early chapters tolerate more setup; late chapters',
+                '  should be lean. Flashbacks and transitions have different rules.',
+                '- Distinguish between necessary exposition (worldbuilding the reader needs)',
+                '  and lazy exposition (telling what a scene could show).',
+                '- Flag passages where the narrative camera pulls back to explain rather than',
+                "  staying in the character's embodied experience."
+            ].join('\n');
+        case 'cliffhanger-audit':
+            return [
+                'Focus: evaluate each chapter ending for narrative momentum.',
+                '',
+                'For each chapter:',
+                '- Identify the final 2-3 lines and assess whether they create a reason to',
+                '  continue reading: unanswered question, raised stakes, emotional hook,',
+                '  turning point, revelation, or imminent consequence.',
+                '- Flag chapters that end with a summary, a character going to sleep, a',
+                '  resolved conversation with nothing new introduced, or any form of',
+                '  narrative settling.',
+                '- Flag chapters that run long past their natural break point.',
+                '- Praise strong endings and explain why they work so the writer can',
+                '  replicate the pattern.'
+            ].join('\n');
+        case 'narrative-distance':
+            return [
+                'Focus: track shifts in narrative intimacy across the manuscript.',
+                '',
+                'For each flagged passage:',
+                '- Identify the established narrative distance (close: character senses and',
+                '  thoughts; medium: scene-level observation; distant: summary or overview).',
+                '- Flag passages where the distance shifts without clear intent: camera pulls',
+                '  back mid-scene, sudden omniscience about other characters, head-hopping',
+                '  within a single scene.',
+                '- Flag POV slippages: thoughts or observations from outside the viewpoint',
+                "  character's knowledge.",
+                '- Assess genre appropriateness: a close-third thriller benefits from sustained',
+                '  intimacy; a multi-POV epic can handle broader shifts with chapter breaks.',
+                '- Distinguish between intentional distance shifts (craft) and unintentional',
+                '  drift (error). Flag as "review" not "fix."'
+            ].join('\n');
+    }
 }

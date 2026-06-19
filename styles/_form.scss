@@ -23,6 +23,13 @@
         letter-spacing: 0.5px;
     }
 
+    &__hint {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        margin-top: $space-sm;
+        line-height: 1.4;
+    }
+
     &__divider {
         border: none;
         border-top: 1px solid var(--background-modifier-border);

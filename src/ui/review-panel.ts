@@ -1,6 +1,12 @@
 import { App, MarkdownRenderer, Notice, TFile } from 'obsidian';
 import { FEEDBACK_PERSONAS } from '../ai/feedback';
 import { ANALYSIS_MODES, type AnalysisMode, type AnalysisScope } from '../ai/analysis';
+import {
+    MANUSCRIPT_ANALYSIS_MODES,
+    type ManuscriptAnalysisMode,
+    type ManuscriptScope
+} from '../ai/manuscript-analysis';
+import type { CompactionStrategy } from '../ai/manuscript-compaction';
 import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
@@ -14,21 +20,21 @@ type ReviewSubtab = 'create' | 'results';
 type ResultsState = 'idle' | 'loading' | 'complete' | 'error';
 
 /** Which review engine the Create tab is configuring. */
-type ReviewEngine = 'editorial' | 'critical';
+type ReviewEngine = 'editorial' | 'critical' | 'manuscript';
 
 /** Scope picker value for the critical engine; `'auto'` defers to the plugin. */
 export type ScopeChoice = AnalysisScope | 'auto';
 
 /**
- * Unified Review panel — merges editorial feedback (persona-driven, multi-file)
- * and critical analysis (mode-driven, selection/scene/document) into a single
- * sidebar tab with an engine picker at the top of the Create sub-tab.
+ * Unified Review panel — merges editorial feedback (persona-driven, multi-file),
+ * critical analysis (mode-driven, selection/scene/document), and manuscript
+ * analysis (full-manuscript structural diagnostics) into a single sidebar tab
+ * with an engine picker at the top of the Create sub-tab.
  *
- * Both engines share the same Results sub-tab (streaming report + follow-up
+ * All engines share the same Results sub-tab (streaming report + follow-up
  * chat + compaction + context files). The plugin keeps separate conversation
- * state per engine (`feedbackCurrentMessages` / `analysisCurrentMessages`);
- * this panel dispatches callbacks based on `activeEngine`, which is set when
- * the writer clicks Generate.
+ * state per engine; this panel dispatches callbacks based on `activeEngine`,
+ * which is set when the writer clicks Generate.
  */
 export class ReviewPanel extends AbstractChatPanel {
     private subtab: ReviewSubtab = 'create';
@@ -51,6 +57,12 @@ export class ReviewPanel extends AbstractChatPanel {
     private currentMode: AnalysisMode | '' = '';
     private currentScope: ScopeChoice = 'auto';
 
+    // --- Manuscript state ---
+    private currentManuscriptMode: ManuscriptAnalysisMode | '' = '';
+    private currentManuscriptScope: ManuscriptScope = { kind: 'full' };
+    private currentCompactionStrategy: CompactionStrategy = 'embed';
+    private manuscriptTokenEstimate: { estimated: number; max: number } | null = null;
+
     // --- Shared state ---
     private reportText = '';
     private customInstruction = '';
@@ -66,6 +78,14 @@ export class ReviewPanel extends AbstractChatPanel {
     private onEditorialGenerate: ((personaId: string, customInstruction?: string) => void) | null = null;
     private onCriticalGenerate: ((mode: AnalysisMode, scope: ScopeChoice, customInstruction?: string) => void) | null =
         null;
+    private onManuscriptGenerate:
+        | ((
+              mode: ManuscriptAnalysisMode,
+              scope: ManuscriptScope,
+              compaction: CompactionStrategy,
+              customInstruction?: string
+          ) => void)
+        | null = null;
     private onChatMessage: ((message: string) => void) | null = null;
 
     constructor(app: App) {
@@ -85,6 +105,38 @@ export class ReviewPanel extends AbstractChatPanel {
         handler: (mode: AnalysisMode, scope: ScopeChoice, customInstruction?: string) => void
     ): void {
         this.onCriticalGenerate = handler;
+    }
+
+    setManuscriptGenerateHandler(
+        handler: (
+            mode: ManuscriptAnalysisMode,
+            scope: ManuscriptScope,
+            compaction: CompactionStrategy,
+            customInstruction?: string
+        ) => void
+    ): void {
+        this.onManuscriptGenerate = handler;
+    }
+
+    /** Update the pre-generation token estimate display for the manuscript engine. */
+    setManuscriptTokenEstimate(estimate: { estimated: number; max: number } | null): void {
+        this.manuscriptTokenEstimate = estimate;
+        if (this.engine === 'manuscript' && this.subtab === 'create' && this.containerEl) this.render();
+    }
+
+    /** Whether the manuscript engine is the currently selected engine on the Create tab. */
+    isManuscriptEngineActive(): boolean {
+        return this.engine === 'manuscript' && this.subtab === 'create';
+    }
+
+    /** Get the current manuscript scope selection. */
+    getManuscriptScope(): ManuscriptScope {
+        return this.currentManuscriptScope;
+    }
+
+    /** Get the current compaction strategy selection. */
+    getManuscriptCompaction(): CompactionStrategy {
+        return this.currentCompactionStrategy;
     }
 
     setChatMessageHandler(handler: (message: string) => void): void {
@@ -467,9 +519,11 @@ export class ReviewPanel extends AbstractChatPanel {
         if (this.engine === 'editorial') {
             this.renderManuscriptsSection(scroll);
             this.renderPersonaSection(scroll);
-        } else {
+        } else if (this.engine === 'critical') {
             this.renderModeSection(scroll);
             this.renderScopeSection(scroll);
+        } else {
+            this.renderManuscriptModeSection(scroll);
         }
 
         // Shared: custom instruction + generate.
@@ -488,9 +542,16 @@ export class ReviewPanel extends AbstractChatPanel {
             this.customInstruction = customArea.value;
         });
 
+        const buttonLabel =
+            this.engine === 'editorial'
+                ? 'Generate feedback'
+                : this.engine === 'critical'
+                  ? 'Run analysis'
+                  : 'Run manuscript analysis';
+
         const generateBtn = scroll.createEl('button', {
             cls: 'quill-form__submit mod-cta',
-            text: this.engine === 'editorial' ? 'Generate feedback' : 'Run analysis'
+            text: buttonLabel
         });
         generateBtn.addEventListener('click', () => this.triggerGenerate());
     }
@@ -501,7 +562,8 @@ export class ReviewPanel extends AbstractChatPanel {
 
         const engines: { id: ReviewEngine; label: string; desc: string }[] = [
             { id: 'critical', label: 'Critical analysis', desc: 'Targeted consistency checks with line refs.' },
-            { id: 'editorial', label: 'Editor feedback', desc: 'Persona-driven review of selected manuscripts.' }
+            { id: 'editorial', label: 'Editor feedback', desc: 'Persona-driven review of selected manuscripts.' },
+            { id: 'manuscript', label: 'Manuscript analysis', desc: 'Full-manuscript structural diagnostics.' }
         ];
 
         const row = container.createDiv({ cls: 'quill-option-picker' });
@@ -641,6 +703,152 @@ export class ReviewPanel extends AbstractChatPanel {
         }
     }
 
+    // --- Manuscript mode section ---
+
+    private renderManuscriptModeSection(container: HTMLElement): void {
+        const section = container.createDiv({ cls: 'quill-form__section' });
+        section.createEl('p', { cls: 'quill-form__label', text: 'Analysis mode' });
+
+        const modes = container.createDiv({ cls: 'quill-option-picker' });
+        for (const mode of MANUSCRIPT_ANALYSIS_MODES) {
+            const btn = modes.createEl('button', { cls: 'quill-option-picker__option' });
+            if (this.currentManuscriptMode === mode.id) btn.addClass('quill-option-picker__option--active');
+            btn.createEl('span', { cls: 'quill-option-picker__name', text: mode.label });
+            btn.createEl('span', { cls: 'quill-option-picker__desc', text: mode.description });
+            btn.addEventListener('click', () => {
+                this.currentManuscriptMode = mode.id;
+                if (this.containerEl) this.render();
+            });
+        }
+
+        this.renderManuscriptScopeSection(container);
+        this.renderManuscriptCompactionSection(container);
+        this.renderManuscriptTokenEstimate(container);
+    }
+
+    private renderManuscriptScopeSection(container: HTMLElement): void {
+        const section = container.createDiv({ cls: 'quill-form__section' });
+        section.createEl('p', { cls: 'quill-form__label', text: 'Scope' });
+
+        const scopeRow = container.createDiv({ cls: 'quill-review-panel__scope-row' });
+        const isFull = this.currentManuscriptScope.kind === 'full';
+
+        const fullBtn = scopeRow.createEl('button', {
+            cls: `quill-review-panel__scope-btn${isFull ? ' quill-review-panel__scope-btn--active' : ''}`,
+            text: 'Full manuscript',
+            title: 'Analyze the entire manuscript (all chapters).'
+        });
+        fullBtn.addEventListener('click', () => {
+            this.currentManuscriptScope = { kind: 'full' };
+            if (this.containerEl) this.render();
+        });
+
+        const surrBtn = scopeRow.createEl('button', {
+            cls: `quill-review-panel__scope-btn${this.currentManuscriptScope.kind === 'surrounding' ? ' quill-review-panel__scope-btn--active' : ''}`,
+            text: 'Surrounding chapters',
+            title: 'Chapter at Cursor plus n chapters before and after.'
+        });
+        surrBtn.addEventListener('click', () => {
+            this.currentManuscriptScope = { kind: 'surrounding', count: 1 };
+            if (this.containerEl) this.render();
+        });
+
+        if (this.currentManuscriptScope.kind === 'surrounding') {
+            const countRow = section.createDiv({ cls: 'quill-review-panel__scope-row' });
+            countRow.createEl('span', { cls: 'quill-form__label', text: 'Chapters before/after:' });
+
+            const count = this.currentManuscriptScope.count;
+            const decBtn = countRow.createEl('button', {
+                cls: 'quill-review-panel__scope-btn',
+                text: '\u2212',
+                title: 'Decrease surrounding chapter count'
+            });
+            decBtn.addEventListener('click', () => {
+                this.currentManuscriptScope = { kind: 'surrounding', count: Math.max(1, count - 1) };
+                if (this.containerEl) this.render();
+            });
+
+            countRow.createEl('span', {
+                cls: 'quill-review-panel__scope-count',
+                text: String(count)
+            });
+
+            const incBtn = countRow.createEl('button', {
+                cls: 'quill-review-panel__scope-btn',
+                text: '+',
+                title: 'Increase surrounding chapter count'
+            });
+            incBtn.addEventListener('click', () => {
+                this.currentManuscriptScope = { kind: 'surrounding', count: Math.min(10, count + 1) };
+                if (this.containerEl) this.render();
+            });
+        }
+    }
+
+    private renderManuscriptCompactionSection(container: HTMLElement): void {
+        const section = container.createDiv({ cls: 'quill-form__section' });
+        section.createEl('p', { cls: 'quill-form__label', text: 'Text compaction' });
+
+        const strategies: { id: CompactionStrategy; label: string; hint: string; recommended?: boolean }[] = [
+            {
+                id: 'embed',
+                label: 'Embed + retrieve',
+                hint: 'Chunk the manuscript, embed each chunk, retrieve the most relevant by similarity.',
+                recommended: true
+            },
+            {
+                id: 'compress',
+                label: 'Compress with AI',
+                hint: 'Use the chat model to summarize each chunk. Slower and less accurate.'
+            },
+            {
+                id: 'full',
+                label: 'Full text',
+                hint: 'Send the raw manuscript text. Best for small manuscripts or large context windows.'
+            }
+        ];
+
+        const row = container.createDiv({ cls: 'quill-review-panel__scope-row' });
+        for (const strat of strategies) {
+            const label = strat.recommended ? `${strat.label} (recommended)` : strat.label;
+            const btn = row.createEl('button', {
+                cls: `quill-review-panel__scope-btn${this.currentCompactionStrategy === strat.id ? ' quill-review-panel__scope-btn--active' : ''}`,
+                text: label,
+                title: strat.hint
+            });
+            btn.addEventListener('click', () => {
+                this.currentCompactionStrategy = strat.id;
+                if (this.containerEl) this.render();
+            });
+        }
+
+        if (this.currentCompactionStrategy === 'compress') {
+            section.createEl('p', {
+                cls: 'quill-form__hint',
+                text: 'Uses your chat model to compress each chunk — less accurate than embedding. Set up an embed model in settings for better results.'
+            });
+        }
+    }
+
+    private renderManuscriptTokenEstimate(container: HTMLElement): void {
+        if (!this.manuscriptTokenEstimate) return;
+        const { estimated, max } = this.manuscriptTokenEstimate;
+        const pct = max > 0 ? (estimated / max) * 100 : 0;
+
+        let cls = 'quill-review-panel__token-estimate';
+        let suffix = '';
+        if (pct > 100) {
+            cls += ' quill-review-panel__token-estimate--over';
+            suffix = ' \u26a0 Exceeds budget \u2014 LLM may trim context or error';
+        } else if (pct > 90) {
+            cls += ' quill-review-panel__token-estimate--warn';
+            suffix = " \u26a0 Approaching model's context window limit";
+        }
+
+        const text = `\u2248 ${estimated.toLocaleString()} / ${max.toLocaleString()} tokens (${Math.round(pct)}% of budget)${suffix}`;
+        container.createEl('p', { cls, text });
+    }
+
     // --- Generate dispatch ---
 
     private triggerGenerate(): void {
@@ -652,8 +860,10 @@ export class ReviewPanel extends AbstractChatPanel {
                 return;
             }
             this.triggerEditorial('custom');
-        } else {
+        } else if (this.engine === 'critical') {
             this.triggerCritical();
+        } else {
+            this.triggerManuscript();
         }
     }
 
@@ -669,6 +879,19 @@ export class ReviewPanel extends AbstractChatPanel {
             return;
         }
         this.onCriticalGenerate?.(this.currentMode, this.currentScope, this.customInstruction || undefined);
+    }
+
+    private triggerManuscript(): void {
+        if (!this.currentManuscriptMode) {
+            new Notice('Quill: Pick a manuscript analysis mode first.');
+            return;
+        }
+        this.onManuscriptGenerate?.(
+            this.currentManuscriptMode,
+            this.currentManuscriptScope,
+            this.currentCompactionStrategy,
+            this.customInstruction || undefined
+        );
     }
 
     // ========================================================================
@@ -860,7 +1083,9 @@ export class ReviewPanel extends AbstractChatPanel {
             const label =
                 this.activeEngine === 'editorial'
                     ? buildFileLabel(this.contextFilePaths.length, this.chatContextFiles.fileCount())
-                    : 'analysis';
+                    : this.activeEngine === 'manuscript'
+                      ? 'manuscript'
+                      : 'analysis';
             ctxIndicator.setText(formatTokenIndicatorText(label, totalTokens, maxTokens));
         };
         setIndicatorText();

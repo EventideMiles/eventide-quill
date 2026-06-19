@@ -430,4 +430,35 @@
         border-radius: 3px;
         background: var(--background-modifier-hover);
     }
+
+    // --- Manuscript analysis engine: scope count + token estimate ---
+
+    &__scope-count {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 2em;
+        font-size: var(--font-ui-smaller);
+        color: var(--text-normal);
+        padding: 0 $space-sm;
+    }
+
+    &__token-estimate {
+        margin: 0 0 $space-md;
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        padding: $space-xs $space-sm;
+        border-radius: $radius-sm;
+        background: var(--background-modifier-hover);
+
+        &--warn {
+            color: rgb(var(--color-yellow-rgb), 1);
+            background: rgba(var(--color-yellow-rgb), 0.12);
+        }
+
+        &--over {
+            color: rgb(var(--color-red-rgb), 1);
+            background: rgba(var(--color-red-rgb), 0.12);
+        }
+    }
 }
