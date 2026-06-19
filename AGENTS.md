@@ -223,6 +223,23 @@ The project does not use `eslint-config-prettier`. The obsidianmd ESLint rules a
 9. **Writer Guidance Layers** — inline directives (`<!-- quill: -->`) + plot map.
 10. **AI Generation Style Constraints** — 18 rules + 6 narrative perspective presets (`NARRATIVE_VOICE_PRESETS`).
 
+## Version management
+
+Before pushing a feature branch to origin for the first time, bump the version in `package.json`, `manifest.json`, and `versions.json` according to these rules:
+
+- **Major** (x.0.0): Only after the 1.0.0 release. For any event requiring a `minAppVersion` update in `manifest.json` (e.g., adopting a new Obsidian API that drops older versions). _Before 1.0.0, major bumps are NOT used — breaking changes use minor instead._
+- **Minor** (0.x.0): New features or feature-complete milestones (e.g., 0.2.0, 0.5.0).
+- **Patch** (0.0.x): Bugfixes when neither major nor minor applies.
+
+When bumping, always update all three files together:
+- `package.json` — `"version"`
+- `manifest.json` — `"version"` (keep `"minAppVersion"` unchanged unless a major bump adds new API requirements)
+- `versions.json` — add `"<new-version>": "<minAppVersion>"` entry
+
+After bumping, run `npm run build` and `npm run lint` to verify.
+
+Releases are cut by pushing an annotated tag matching the new version. The existing `.github/workflows/release.yml` handles the rest.
+
 ## Committing
 
 - **Committing** is allowed at reasonable checkpoints (after a feature lands, a bug is fixed, or a logical unit of work completes). Always build and lint before committing to verify your work.
