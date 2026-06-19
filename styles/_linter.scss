@@ -94,6 +94,25 @@
         font-weight: 600;
         padding: $space-md;
         margin-bottom: $space-xs;
+        display: flex;
+        align-items: center;
+        gap: $space-md;
+    }
+
+    &__fix-all-btn {
+        margin-left: auto;
+        font-size: var(--font-ui-smaller);
+        padding: $space-xs $space-sm;
+        color: var(--text-on-accent);
+        background: var(--interactive-accent);
+        border: none;
+        border-radius: $radius-sm;
+        cursor: pointer;
+        white-space: nowrap;
+
+        &:hover {
+            background: var(--interactive-accent-hover);
+        }
     }
 
     &__empty {
@@ -102,6 +121,22 @@
         text-align: center;
         padding: $space-xxl $space-md;
     }
+
+    &__empty-btn {
+        display: block;
+        margin: $space-md auto 0;
+        font-size: var(--font-ui-small);
+        padding: $space-sm $space-lg;
+        color: var(--text-on-accent);
+        background: var(--interactive-accent);
+        border: none;
+        border-radius: $radius-sm;
+        cursor: pointer;
+
+        &:hover {
+            background: var(--interactive-accent-hover);
+        }
+    }
 }
 
 /* Linter results container */
@@ -109,6 +144,28 @@
     flex: 1;
     overflow-y: auto;
     min-height: 0;
+}
+
+/* Linter pending batch-fix container */
+.quill-linter__pending {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    padding: $space-md;
+}
+
+.quill-linter__pending-list {
+    display: flex;
+    flex-direction: column;
+    gap: $space-md;
+}
+
+.quill-linter__pending-loading {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    font-style: italic;
+    padding: $space-md;
+    text-align: center;
 }
 
 /* Linter details container */

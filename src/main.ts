@@ -4,14 +4,16 @@ import { DEFAULT_SETTINGS, EventideQuillSettings, EventideQuillSettingTab } from
 import { lint } from './core/linter/linter';
 import { getLintExtension, setLintResults, toggleLintActive } from './core/linter/decorations';
 import { QUILL_VIEW_TYPE, QuillSidebarView } from './ui/quill-sidebar';
-import { LintResult, FIXABLE_RULES } from './core/linter/types';
+import { LintResult, FIXABLE_RULES, RULE_INFO } from './core/linter/types';
 import { FIXES } from './core/linter/fixes';
 import { applyReplacement } from './core/linter/apply-fix';
 import { findEditorView } from './utils/find-editor';
-import { extractScene } from './utils/text-analysis';
+import { extractScene, stripFrontmatter } from './utils/text-analysis';
 import { AiProvider } from './ai/provider';
 import { createProvider, parseProviderKey } from './ai/provider-registry';
 import { applyTransformation, TRANSFORM_ACTIONS } from './ai/transform';
+import { DEFAULT_SPLIT_BY_HEADING, DEFAULT_INCLUDE_SUBFOLDERS } from './core/dashboard/presets';
+import { groupFindingsByPassage, buildBatchLinterPrompt, buildPacingFixPrompt, streamBatchFix } from './ai/batch-fix';
 import { ToneSuggestModal, TransformModal } from './ui/transform-modal';
 import { FixWithAiModal } from './ui/fix-with-ai-modal';
 import { ContextCache } from './core/context-engine';
@@ -44,10 +46,94 @@ import {
     clearDiffEdits,
     diffEditsField,
     setDiffEdits,
-    syncChangeSetPositions
+    syncChangeSetPositions,
+    pushDiffEdits,
+    toDiffSnapshots
 } from './ui/change-diff-extension';
 import { ChangeSet } from './core/change-set';
 import { readVaultFiles } from './utils/vault-files';
+import type { ManuscriptMetrics, ManuscriptSnapshot, ChapterRange } from './core/dashboard/types';
+import { listChaptersInFile, manuscriptMetrics } from './core/dashboard/metrics';
+import {
+    loadManuscriptFile,
+    saveManuscriptFile,
+    setEntityReclassification,
+    appendManuscriptSnapshot,
+    withFolderLock,
+    type ManuscriptFileData
+} from './core/dashboard/manuscript-file';
+
+/**
+ * Enrich entity display names using vault file basenames.
+ *
+ * When a vault file's basename contains a richer form of an entity's name
+ * (e.g., the manuscript says "Freddy" but a file is named "Freddy Lupin.md"),
+ * the entity's display name is updated to the richer form and the original
+ * name is kept as an alias for text matching.
+ *
+ * The entity ID is NOT changed — it stays keyed to the extracted name so
+ * that frontmatter reclassification overrides remain stable across
+ * enrichment changes.
+ *
+ * Ambiguity guard: if a word appears in multiple file basenames (e.g.,
+ * "Freddy Lupin.md" and "Freddy Jones.md"), it is not used for enrichment.
+ *
+ * @param entities  Extracted entities (mutated in place).
+ * @param files     All markdown files in the vault.
+ */
+function enrichEntityNamesFromVault(entities: ExtractedEntity[], files: TFile[]): void {
+    // Build word → basename index. A word maps to a basename only when it
+    // appears unambiguously across all file basenames.
+    const wordToBasename = new Map<string, string>();
+    const ambiguous = new Set<string>();
+
+    for (const file of files) {
+        const words = file.basename.split(/\s+/).filter((w) => w.length > 1);
+        for (const word of words) {
+            if (wordToBasename.has(word)) {
+                ambiguous.add(word);
+            } else {
+                wordToBasename.set(word, file.basename);
+            }
+        }
+    }
+    for (const word of ambiguous) {
+        wordToBasename.delete(word);
+    }
+
+    for (const entity of entities) {
+        if (entity.type !== 'character') continue;
+
+        // Check the entity's primary name and all aliases for component words
+        // that map to a richer file basename.
+        const namesToCheck = [entity.name, ...entity.aliases];
+        let bestRichName: string | null = null;
+        let bestWordCount = entity.name.split(/\s+/).length;
+
+        for (const name of namesToCheck) {
+            for (const comp of name.split(/\s+/)) {
+                if (comp.length <= 1) continue;
+                const richName = wordToBasename.get(comp);
+                if (!richName) continue;
+                const richWordCount = richName.split(/\s+/).length;
+                // Only enrich if the file basename is strictly richer.
+                if (richWordCount > bestWordCount) {
+                    bestRichName = richName;
+                    bestWordCount = richWordCount;
+                }
+            }
+        }
+
+        if (bestRichName) {
+            // Keep the old display name as an alias for text matching.
+            if (!entity.aliases.includes(entity.name)) {
+                entity.aliases.push(entity.name);
+            }
+            entity.name = bestRichName;
+            // ID stays unchanged for reclassification stability.
+        }
+    }
+}
 
 /** Generate a content-based fingerprint for a lint result. Uses the flagged
  *  text plus the line it appears on to distinguish multiple instances of the
@@ -109,7 +195,7 @@ export default class EventideQuillPlugin extends Plugin {
     private analysisAbort: AbortController | null = null;
     /** Full message history for the analysis conversation (system + context heads + chat turns). */
     private analysisCurrentMessages: ChatMessage[] = [];
-    private lintActive = false;
+    lintActive = false;
     lintActiveFile: string | null = null;
     /** File path for the currently assembled context. Tracked separately from lintActiveFile. */
     contextActiveFile: string | null = null;
@@ -150,11 +236,24 @@ export default class EventideQuillPlugin extends Plugin {
     coWriterSession: CoWriterSession = new CoWriterSession();
     /** Proposed transform edit awaiting inline review (one at a time). */
     transformChangeSet: ChangeSet = new ChangeSet();
+    /** Proposed batch lint-fix edits awaiting inline review. */
+    lintBatchChangeSet: ChangeSet = new ChangeSet();
+    /** Current dashboard metrics for the active manuscript, or null when not yet computed. */
+    currentDashboardMetrics: ManuscriptMetrics | null = null;
+    /** Historical snapshots for the active manuscript, or null when not yet loaded. */
+    currentDashboardSnapshots: ManuscriptSnapshot[] | null = null;
+    /** Per-manuscript dashboard data loaded from the sidecar file, or null when not yet loaded. */
+    currentManuscriptFileData: ManuscriptFileData | null = null;
+    /** Absolute path to the plugin's data directory (for dashboard snapshot storage). */
+    private pluginDataDir = '';
 
     /** Plugin entry point: register commands, views, extensions, and event handlers. */
     async onload() {
         await this.loadSettings();
         this.rebuildProviders();
+
+        // Resolve the plugin's data directory for dashboard snapshot storage.
+        this.pluginDataDir = `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
 
         this.registerEditorExtension(
             getLintExtension(
@@ -196,11 +295,13 @@ export default class EventideQuillPlugin extends Plugin {
                     if (owner === 'fulfill') this.approveCoWriterFulfill(id);
                     else if (owner === 'transform') this.approveTransformChange(id);
                     else if (owner === 'direct') this.approveDirectChange(id);
+                    else if (owner === 'lint-batch') this.approveLintBatchChange(id);
                 },
                 onReject: (owner: string, id: number) => {
                     if (owner === 'fulfill') this.rejectCoWriterFulfill(id);
                     else if (owner === 'transform') this.rejectTransformChange(id);
                     else if (owner === 'direct') this.rejectDirectChange(id);
+                    else if (owner === 'lint-batch') this.rejectLintBatchChange(id);
                 }
             })
         );
@@ -275,6 +376,17 @@ export default class EventideQuillPlugin extends Plugin {
                 if (this.coWriterSession.manuscriptPath && activeFile?.path !== this.coWriterSession.manuscriptPath) {
                     this.coWriterSession.clearVoiceProfile();
                 }
+
+                // Dashboard: auto-initialize metrics when a manuscript file is
+                // opened and the dashboard tab is active but has no metrics yet.
+                if (
+                    this.lintPanel?.isDashboardActive() &&
+                    !this.currentDashboardMetrics &&
+                    activeFile &&
+                    activeFile.extension === 'md'
+                ) {
+                    void this.refreshDashboard();
+                }
             })
         );
 
@@ -282,6 +394,11 @@ export default class EventideQuillPlugin extends Plugin {
             this.app.vault.on('modify', (file: TAbstractFile) => {
                 if (file instanceof TFile) {
                     this.contextCache.invalidate(file.path);
+
+                    // Auto-snapshot on save if the dashboard setting is enabled.
+                    if (this.settings.dashboardAutoSnapshotOnSave && file.extension === 'md') {
+                        void this.refreshDashboard();
+                    }
                 }
 
                 if (!this.lintActive || !this.settings.lintOnSave || file !== this.app.workspace.getActiveFile())
@@ -304,6 +421,22 @@ export default class EventideQuillPlugin extends Plugin {
                 this.lintPanel?.setResults(results);
             })
         );
+
+        // Periodic dashboard auto-refresh. Uses registerInterval for automatic
+        // teardown on plugin unload. 0 disables the timer entirely.
+        if (this.settings.dashboardAutoRefreshMinutes > 0) {
+            const intervalMs = this.settings.dashboardAutoRefreshMinutes * 60_000;
+            this.registerInterval(
+                window.setInterval(() => {
+                    if (this.lintPanel?.isDashboardActive()) {
+                        const activeFile = this.app.workspace.getActiveFile();
+                        if (activeFile && activeFile.extension === 'md') {
+                            void this.refreshDashboard();
+                        }
+                    }
+                }, intervalMs)
+            );
+        }
 
         this.registerEvent(
             this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor) => {
@@ -576,6 +709,22 @@ export default class EventideQuillPlugin extends Plugin {
         });
 
         this.addCommand({
+            id: 'quill-dashboard-open',
+            name: 'Quill: Open dashboard',
+            callback: () => {
+                void this.openDashboardPanel();
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-dashboard-refresh',
+            name: 'Quill: Refresh dashboard',
+            callback: () => {
+                void this.refreshDashboard();
+            }
+        });
+
+        this.addCommand({
             id: 'quill-analyze-plot-logic',
             name: 'Quill: Analyze plot logic',
             editorCallback: async (editor) => {
@@ -640,7 +789,7 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /** Toggle the prose linter on or off for the active editor, dispatching state to CodeMirror. */
-    private toggleLint(editor: Editor) {
+    toggleLint(editor: Editor) {
         const cm = this.getCmView(editor);
         if (!cm) return;
 
@@ -692,7 +841,10 @@ export default class EventideQuillPlugin extends Plugin {
         const prose = mode === 'all' || mode === 'prose';
         const ai = mode === 'all' || mode === 'ai';
 
-        const rawResults = lint(text, {
+        // Strip frontmatter so the linter doesn't flag YAML properties.
+        const { text: bodyText, strippedLines } = stripFrontmatter(text);
+
+        const rawResults = lint(bodyText, {
             enableLongSentences: prose && this.settings.enableLongSentences,
             maxSentenceWords: this.settings.maxSentenceWords,
             enablePassiveVoice: prose && this.settings.enablePassiveVoice,
@@ -715,10 +867,12 @@ export default class EventideQuillPlugin extends Plugin {
 
         const lines = text.split('\n');
 
-        return rawResults.filter((r) => {
-            const lineText = lines[r.line - 1] ?? '';
-            return !this.dismissedFingerprints.has(lintFingerprint(r, lineText));
-        });
+        return rawResults
+            .map((r) => ({ ...r, line: r.line + strippedLines }))
+            .filter((r) => {
+                const lineText = lines[r.line - 1] ?? '';
+                return !this.dismissedFingerprints.has(lintFingerprint(r, lineText));
+            });
     }
 
     /** Generate a fingerprint for a lint result: rule + column + line content. */
@@ -1380,6 +1534,32 @@ export default class EventideQuillPlugin extends Plugin {
         return (view.editor as unknown as { cm: EditorView }).cm;
     }
 
+    /**
+     * Find the CodeMirror EditorView for a specific file path.
+     *
+     * Uses `findEditorView` which searches all open leaves — works even
+     * when the sidebar has stolen focus (unlike `getActiveCm` which relies
+     * on `getActiveViewOfType(MarkdownView)` and returns null in that case).
+     */
+    private getCmForFile(filePath: string): EditorView | undefined {
+        const view = findEditorView(this.app, filePath);
+        if (!view) return undefined;
+        return (view.editor as unknown as { cm: EditorView }).cm;
+    }
+
+    /**
+     * Find the editor + CodeMirror view for a file path.
+     *
+     * Works even when the sidebar has stolen focus. Returns undefined if no
+     * markdown view is open for the given file.
+     */
+    private getEditorAndCm(filePath: string): { editor: Editor; cm: EditorView } | undefined {
+        const view = findEditorView(this.app, filePath);
+        if (!view) return undefined;
+        const cm = (view.editor as unknown as { cm: EditorView }).cm;
+        return { editor: view.editor, cm };
+    }
+
     /** Approve the pending transform edit: commit the rewrite and clear the diff. */
     approveTransformChange(id: number): void {
         const cm = this.getActiveCm();
@@ -1401,6 +1581,338 @@ export default class EventideQuillPlugin extends Plugin {
         this.transformChangeSet.rejectAll();
         const cm = this.getActiveCm();
         if (cm) clearDiffEdits(cm, 'transform');
+    }
+
+    // --- Batch "Fix all with AI" ---
+
+    /** Whether a batch or single AI fix is currently in progress. UI uses this to disable buttons. */
+    batchFixInProgress = false;
+    /** Which tab initiated the current batch fix — controls where the pending subtab appears. */
+    batchFixSource: 'linter' | 'dashboard' | null = null;
+
+    /**
+     * Fix all lint findings with AI.
+     *
+     * Groups findings by paragraph so that multiple issues on the same passage
+     * (e.g., "long sentence" + "passive voice") are addressed in one rewrite.
+     * Each group produces one `ProposedEdit` in the change-review diff with
+     * per-section Approve/Reject.
+     */
+    async fixAllLinterWithAi(): Promise<void> {
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: no chat model configured.');
+            return;
+        }
+
+        const activePath = this.app.workspace.getActiveFile()?.path;
+        if (!activePath) return;
+        const ec = this.getEditorAndCm(activePath);
+        if (!ec) return;
+        const { editor, cm } = ec;
+
+        const results = this.currentResults;
+        if (results.length === 0) {
+            new Notice('Quill: no lint findings to fix.');
+            return;
+        }
+
+        const editorText = editor.getValue();
+        const groups = groupFindingsByPassage(results, editorText);
+
+        // Clear previous batch.
+        this.lintBatchChangeSet.clear();
+        clearDiffEdits(cm, 'lint-batch');
+
+        this.batchFixInProgress = true;
+        this.batchFixSource = 'linter';
+        this.lintPanel?.switchToPendingTab();
+        new Notice(`Quill: fixing ${groups.length} passage${groups.length !== 1 ? 's' : ''}...`);
+
+        try {
+            for (let i = 0; i < groups.length; i++) {
+                const group = groups[i]!;
+                const { system, user } = buildBatchLinterPrompt(group);
+
+                try {
+                    const response = await streamBatchFix(
+                        chat.provider,
+                        [
+                            { role: 'system', content: system },
+                            { role: 'user', content: user }
+                        ],
+                        {
+                            temperature: this.settings.linterTemperature,
+                            maxTokens: this.settings.linterMaxOutputTokens,
+                            model: chat.modelId
+                        }
+                    );
+
+                    if (response && response !== group.passageText) {
+                        const labels = group.findings.map((f) => RULE_INFO[f.rule]?.name ?? f.rule).join(' + ');
+                        this.lintBatchChangeSet.add({
+                            from: group.passageStart,
+                            to: group.passageEnd,
+                            newText: response,
+                            label: labels,
+                            originalText: group.passageText
+                        });
+                        pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+                        this.lintPanel?.refreshPendingTab();
+                    }
+                } catch (err) {
+                    // Skip this group on error; continue with remaining groups.
+                    const labels = group.findings.map((f) => RULE_INFO[f.rule]?.name ?? f.rule).join(' + ');
+                    console.error(
+                        `Quill: batch linter fix failed for passage ${i + 1}/${groups.length} (${labels})`,
+                        err
+                    );
+                }
+            }
+
+            const count = this.lintBatchChangeSet.edits.length;
+            if (count > 0) {
+                new Notice(`Quill: ${count} fix${count !== 1 ? 'es' : ''} ready for review.`);
+            } else {
+                new Notice('Quill: no fixes generated.');
+            }
+        } finally {
+            this.batchFixInProgress = false;
+            this.lintPanel?.refreshPendingTab();
+        }
+    }
+
+    /**
+     * Fix all pacing flags in the active file with AI.
+     *
+     * Each pacing flag produces one `ProposedEdit` that rewrites the flagged
+     * passage to vary sentence length. Only flags in the currently active
+     * file are processed — switch files and re-run for other chapters.
+     */
+    async fixAllPacingWithAi(): Promise<void> {
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: no chat model configured.');
+            return;
+        }
+
+        const activePath = this.app.workspace.getActiveFile()?.path;
+        if (!activePath) return;
+        const ec = this.getEditorAndCm(activePath);
+        if (!ec) return;
+        const { editor, cm } = ec;
+
+        const metrics = this.currentDashboardMetrics;
+        if (!metrics) return;
+
+        // Filter to pacing flags in the active file.
+        const flags = metrics.pacingFlags.filter((f) => f.filePath === activePath);
+
+        if (flags.length === 0) {
+            new Notice('Quill: no pacing flags in the active file.');
+            return;
+        }
+
+        // Clear previous batch.
+        this.lintBatchChangeSet.clear();
+        clearDiffEdits(cm, 'lint-batch');
+
+        const editorText = editor.getValue();
+        const lines = editorText.split('\n');
+        const lineOffsets: number[] = [0];
+        for (let i = 0; i < lines.length; i++) {
+            lineOffsets.push(lineOffsets[i]! + lines[i]!.length + 1);
+        }
+
+        const totalFlags = metrics.pacingFlags.length;
+        const skipped = totalFlags - flags.length;
+        const scopeNote = skipped > 0 ? ` (${skipped} in other files — switch files to fix those)` : '';
+
+        this.batchFixInProgress = true;
+        this.batchFixSource = 'dashboard';
+        this.lintPanel?.switchToPendingTab();
+        new Notice(`Quill: fixing ${flags.length} pacing flag${flags.length !== 1 ? 's' : ''}${scopeNote}...`);
+
+        try {
+            for (const flag of flags) {
+                const startOffset = lineOffsets[flag.lineStart - 1] ?? 0;
+                const endOffset = (lineOffsets[flag.lineEnd] ?? editorText.length) - 1;
+                const passageText = editorText.slice(startOffset, Math.max(startOffset, endOffset));
+
+                const { system, user } = buildPacingFixPrompt(flag, passageText);
+
+                try {
+                    const response = await streamBatchFix(
+                        chat.provider,
+                        [
+                            { role: 'system', content: system },
+                            { role: 'user', content: user }
+                        ],
+                        {
+                            temperature: this.settings.transformTemperature,
+                            maxTokens: this.settings.transformMaxOutputTokens,
+                            model: chat.modelId
+                        }
+                    );
+
+                    if (response && response !== passageText) {
+                        this.lintBatchChangeSet.add({
+                            from: startOffset,
+                            to: Math.max(startOffset, endOffset),
+                            newText: response,
+                            label: flag.kind === 'uniform-short' ? 'Vary short sentences' : 'Vary long sentences',
+                            originalText: passageText
+                        });
+                        pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+                        this.lintPanel?.refreshPendingTab();
+                    }
+                } catch {
+                    // Skip this flag on error; continue with remaining flags.
+                }
+            }
+
+            const count = this.lintBatchChangeSet.edits.length;
+            if (count > 0) {
+                new Notice(`Quill: ${count} pacing fix${count !== 1 ? 'es' : ''} ready for review.`);
+            } else {
+                new Notice('Quill: no pacing fixes generated.');
+            }
+        } finally {
+            this.batchFixInProgress = false;
+            this.lintPanel?.refreshPendingTab();
+        }
+    }
+
+    /** Approve a single batch-fix edit: commit the rewrite and update the diff. */
+    approveLintBatchChange(id: number): void {
+        const activePath = this.app.workspace.getActiveFile()?.path;
+        if (!activePath) return;
+        const cm = this.getCmForFile(activePath);
+        if (!cm) return;
+        syncChangeSetPositions(cm, this.lintBatchChangeSet, 'lint-batch');
+        const change = this.lintBatchChangeSet.approve(id);
+        if (!change) return;
+        const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'lint-batch');
+        cm.dispatch({
+            changes: change,
+            effects: setDiffEdits.of([...preserved, ...toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch')]),
+            selection: { anchor: change.from + change.insert.length }
+        });
+    }
+
+    /** Reject a single batch-fix edit: leave the original passage. */
+    rejectLintBatchChange(id: number): void {
+        const activePath = this.app.workspace.getActiveFile()?.path;
+        if (!activePath) return;
+        const cm = this.getCmForFile(activePath);
+        if (!cm) return;
+        this.lintBatchChangeSet.reject(id);
+        pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+    }
+
+    /** Approve all pending batch-fix edits in document order. */
+    approveAllLintBatch(): void {
+        const activePath = this.app.workspace.getActiveFile()?.path;
+        if (!activePath) return;
+        const cm = this.getCmForFile(activePath);
+        if (!cm) return;
+        syncChangeSetPositions(cm, this.lintBatchChangeSet, 'lint-batch');
+        for (const change of this.lintBatchChangeSet.approveAll()) {
+            cm.dispatch({ changes: change });
+        }
+        pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+    }
+
+    /** Reject all pending batch-fix edits. */
+    rejectAllLintBatch(): void {
+        const activePath = this.app.workspace.getActiveFile()?.path;
+        if (!activePath) return;
+        const cm = this.getCmForFile(activePath);
+        if (!cm) return;
+        this.lintBatchChangeSet.rejectAll();
+        pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+    }
+
+    /**
+     * Fix a single pacing flag with AI.
+     *
+     * Extracts the flagged passage, builds a pacing-fix prompt, streams the
+     * AI response, and adds a `ProposedEdit` to the change-review diff.
+     * Only works on flags in the currently active file.
+     */
+    async fixSinglePacingFlag(flag: {
+        filePath: string;
+        lineStart: number;
+        lineEnd: number;
+        kind: 'uniform-short' | 'uniform-long';
+        avgSentenceLength: number;
+    }): Promise<void> {
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: no chat model configured.');
+            return;
+        }
+
+        const ec = this.getEditorAndCm(flag.filePath);
+        if (!ec) {
+            new Notice('Quill: open the chapter file containing this flag to fix it.');
+            return;
+        }
+        const { editor, cm } = ec;
+
+        const editorText = editor.getValue();
+        const lines = editorText.split('\n');
+        const lineOffsets: number[] = [0];
+        for (let i = 0; i < lines.length; i++) {
+            lineOffsets.push(lineOffsets[i]! + lines[i]!.length + 1);
+        }
+
+        const startOffset = lineOffsets[flag.lineStart - 1] ?? 0;
+        const endOffset = Math.max(startOffset, (lineOffsets[flag.lineEnd] ?? editorText.length) - 1);
+        const passageText = editorText.slice(startOffset, endOffset);
+
+        const { system, user } = buildPacingFixPrompt(flag, passageText);
+
+        this.batchFixInProgress = true;
+        this.batchFixSource = 'dashboard';
+        this.lintPanel?.switchToPendingTab();
+        new Notice('Quill: generating pacing fix...');
+
+        try {
+            const response = await streamBatchFix(
+                chat.provider,
+                [
+                    { role: 'system', content: system },
+                    { role: 'user', content: user }
+                ],
+                {
+                    temperature: this.settings.transformTemperature,
+                    maxTokens: this.settings.transformMaxOutputTokens,
+                    model: chat.modelId
+                }
+            );
+
+            if (response && response !== passageText) {
+                this.lintBatchChangeSet.add({
+                    from: startOffset,
+                    to: endOffset,
+                    newText: response,
+                    label: flag.kind === 'uniform-short' ? 'Vary short sentences' : 'Vary long sentences',
+                    originalText: passageText
+                });
+                pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+                this.lintPanel?.refreshPendingTab();
+                new Notice('Quill: pacing fix ready for review.');
+            } else {
+                new Notice('Quill: no changes suggested.');
+            }
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            new Notice(`Quill: pacing fix failed (${message}).`);
+        } finally {
+            this.batchFixInProgress = false;
+            this.lintPanel?.refreshPendingTab();
+        }
     }
 
     /** Cancel the current feedback generation request. */
@@ -1888,6 +2400,294 @@ export default class EventideQuillPlugin extends Plugin {
     async openReviewPanel(): Promise<void> {
         await this.openLintPanel();
         this.lintPanel?.switchToReviewTab();
+    }
+
+    /** Open the sidebar and switch to the Dashboard tab. */
+    async openDashboardPanel(): Promise<void> {
+        await this.openLintPanel();
+        this.lintPanel?.switchToDashboardTab();
+    }
+
+    /**
+     * Refresh dashboard metrics for the active manuscript.
+     *
+     * Loads the manuscript sidecar file (`{folder}/quill-data.json`) for
+     * per-manuscript settings, chapter overrides, reclassification, and
+     * snapshot history. Then resolves chapter files, computes metrics,
+     * appends a snapshot, and stores the results on the plugin for the
+     * panel to read.
+     */
+    async refreshDashboard(): Promise<void> {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== 'md') {
+            new Notice('Quill: open a manuscript to refresh the dashboard.');
+            return;
+        }
+
+        const folder = activeFile.parent?.path ?? '';
+
+        // Load per-manuscript data from the sidecar file.
+        const msFile = await loadManuscriptFile(this.app.vault, folder);
+        this.currentManuscriptFileData = msFile;
+
+        // Resolve settings: per-manuscript overrides fall back to preset defaults.
+        const includeSubfolders = msFile.includeSubfolders ?? DEFAULT_INCLUDE_SUBFOLDERS;
+        const splitByHeading = msFile.splitByHeading ?? DEFAULT_SPLIT_BY_HEADING;
+
+        // Resolve chapter files.
+        const chapterFiles = this.resolveManuscriptFiles(folder, activeFile.path, includeSubfolders, msFile);
+        if (chapterFiles.length === 0) {
+            new Notice('Quill: no chapter files found for this manuscript.');
+            return;
+        }
+
+        try {
+            const chapters: ChapterRange[] = [];
+            for (const file of chapterFiles) {
+                const raw = await this.app.vault.read(file);
+                // Strip frontmatter so dashboard metrics ignore YAML properties.
+                const { text: bodyText, strippedLines } = stripFrontmatter(raw);
+                const ranges = listChaptersInFile(bodyText, file.path, file.basename, splitByHeading);
+                // Adjust line numbers back to absolute positions in the file.
+                for (const range of ranges) {
+                    range.lineStart += strippedLines;
+                    range.lineEnd += strippedLines;
+                }
+                chapters.push(...ranges);
+            }
+
+            if (chapters.length === 0) {
+                new Notice('Quill: no chapters found in the manuscript files.');
+                return;
+            }
+
+            // Extract entities from the whole manuscript text.
+            const fullText = chapters.map((c) => c.text).join('\n\n');
+            const entities = extractAllEntities(fullText);
+
+            // Enrich entity names from vault file basenames.
+            enrichEntityNamesFromVault(entities, this.app.vault.getMarkdownFiles());
+
+            // Apply user reclassification overrides from the manuscript file.
+            // Only change entity.type — the ID stays stable so the override
+            // key remains valid across refreshes.
+            for (const entity of entities) {
+                const newType = msFile.reclassifiedEntities[entity.id];
+                if (newType) {
+                    entity.type = newType;
+                }
+            }
+
+            // Compute metrics — pass dismissed IDs so those entities are
+            // excluded from characters/reclassified and listed separately.
+            const dismissedIds = new Set(msFile.dismissedEntities);
+            const metrics = manuscriptMetrics(chapters, entities, dismissedIds);
+            this.currentDashboardMetrics = metrics;
+
+            // Append snapshot to the manuscript file.
+            const snapshot: ManuscriptSnapshot = {
+                takenAt: Date.now(),
+                totalWords: metrics.totalWords,
+                chapterCount: metrics.chapterCount,
+                perChapterWords: metrics.chapters.map((c) => ({
+                    filePath: c.filePath,
+                    title: c.title,
+                    wordCount: c.wordCount
+                }))
+            };
+            const updated = await appendManuscriptSnapshot(
+                this.app.vault,
+                folder,
+                snapshot,
+                this.settings.dashboardMaxSnapshots
+            );
+            this.currentDashboardSnapshots = updated.snapshots;
+            this.currentManuscriptFileData = updated;
+
+            // Re-render the panel if the Dashboard tab is active.
+            this.lintPanel?.refreshDashboardPanel();
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            new Notice(`Quill: dashboard refresh failed (${message}).`);
+        }
+    }
+
+    /**
+     * Reclassify an entity's type and refresh the dashboard.
+     *
+     * Writes the override to the manuscript sidecar file
+     * (`{folder}/quill-data.json`), then re-runs the dashboard refresh so
+     * the entity moves to the correct section. Pass `null` as `newType` to
+     * revert to the extracted type.
+     */
+    async reclassifyDashboardEntity(entityId: string, newType: EntityType | null): Promise<void> {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== 'md') return;
+
+        const folder = activeFile.parent?.path ?? '';
+        await setEntityReclassification(this.app.vault, folder, entityId, newType);
+
+        const namePart = entityId.split(':').slice(1).join(':').replace(/-/g, ' ');
+        if (newType === null) {
+            new Notice(`Quill: reverted "${namePart}" to its original type.`);
+        } else {
+            new Notice(`Quill: reclassified "${namePart}" as ${newType}.`);
+        }
+
+        await this.refreshDashboard();
+    }
+
+    /**
+     * Dismiss an entity entirely from the dashboard.
+     *
+     * The entity ID is added to the manuscript sidecar file's
+     * `dismissedEntities` list and filtered out of all dashboard sections
+     * on the next refresh. The entity is not deleted — it can be restored.
+     */
+    async dismissDashboardEntity(entityId: string): Promise<void> {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== 'md') return;
+
+        const folder = activeFile.parent?.path ?? '';
+        await withFolderLock(folder, async () => {
+            const data = await loadManuscriptFile(this.app.vault, folder);
+            if (!data.dismissedEntities.includes(entityId)) {
+                data.dismissedEntities.push(entityId);
+                await saveManuscriptFile(this.app.vault, folder, data);
+            }
+        });
+
+        const namePart = entityId.split(':').slice(1).join(':').replace(/-/g, ' ');
+        new Notice(`Quill: dismissed "${namePart}".`);
+
+        await this.refreshDashboard();
+    }
+
+    /**
+     * Restore a previously dismissed entity.
+     *
+     * Removes the entity ID from the `dismissedEntities` list in the
+     * manuscript sidecar file. The entity reappears in its natural section
+     * (characters, reclassified, etc.) on the next refresh.
+     */
+    async restoreDashboardEntity(entityId: string): Promise<void> {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== 'md') return;
+
+        const folder = activeFile.parent?.path ?? '';
+        await withFolderLock(folder, async () => {
+            const data = await loadManuscriptFile(this.app.vault, folder);
+            data.dismissedEntities = data.dismissedEntities.filter((id) => id !== entityId);
+            await saveManuscriptFile(this.app.vault, folder, data);
+        });
+
+        const namePart = entityId.split(':').slice(1).join(':').replace(/-/g, ' ');
+        new Notice(`Quill: restored "${namePart}".`);
+
+        await this.refreshDashboard();
+    }
+
+    /**
+     * Update per-manuscript dashboard settings in the sidecar file.
+     *
+     * Loads the current manuscript file, applies the partial updates, saves,
+     * and refreshes the dashboard so the new targets take effect immediately.
+     */
+    async updateManuscriptSettings(updates: Partial<ManuscriptFileData>): Promise<void> {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== 'md') return;
+
+        const folder = activeFile.parent?.path ?? '';
+        const data = await withFolderLock(folder, async () => {
+            const loaded = await loadManuscriptFile(this.app.vault, folder);
+            Object.assign(loaded, updates);
+            await saveManuscriptFile(this.app.vault, folder, loaded);
+            return loaded;
+        });
+        this.currentManuscriptFileData = data;
+
+        // Structural settings change which files are scanned and how chapters
+        // are split — need a full metrics recompute. Target-only changes just
+        // need a re-render (metrics don't depend on targets).
+        const needsRecompute =
+            'splitByHeading' in updates || 'includeSubfolders' in updates || 'chapterOverrides' in updates;
+        if (needsRecompute) {
+            await this.refreshDashboard();
+        } else {
+            this.lintPanel?.refreshDashboardPanel();
+        }
+    }
+
+    /**
+     * Open a chapter file and scroll the editor to a specific line.
+     *
+     * Used by the dashboard's clickable pacing flags to navigate the writer
+     * to the flagged passage. Opens the file in the active leaf if it isn't
+     * already visible.
+     */
+    async jumpToDashboardLine(filePath: string, line: number): Promise<void> {
+        const file = this.app.vault.getAbstractFileByPath(filePath);
+        if (!(file instanceof TFile)) return;
+
+        let view = findEditorView(this.app, filePath);
+        if (!view) {
+            await this.app.workspace.openLinkText(filePath, '', false);
+            view = findEditorView(this.app, filePath);
+        }
+        if (!view) return;
+
+        const editorLine = Math.max(0, line - 1);
+        view.editor.setCursor({ line: editorLine, ch: 0 });
+        view.editor.scrollIntoView({ from: { line: editorLine, ch: 0 }, to: { line: editorLine, ch: 0 } }, true);
+    }
+
+    /**
+     * Resolve the list of markdown files belonging to the active manuscript.
+     *
+     * Starts with the active file's folder (recursive if `includeSubfolders`),
+     * applies chapter overrides from the manuscript sidecar file, and always
+     * includes the active file.
+     */
+    private resolveManuscriptFiles(
+        folder: string,
+        activeFilePath: string,
+        includeSubfolders: boolean,
+        msFile: ManuscriptFileData
+    ): TFile[] {
+        const allMarkdown = this.app.vault.getMarkdownFiles();
+        const addPaths = msFile.chapterOverrides.add;
+        const removeSet = new Set(msFile.chapterOverrides.remove);
+
+        const result: TFile[] = [];
+
+        // Folder scan.
+        const folderPrefix = folder.length > 0 ? folder + '/' : '';
+        for (const file of allMarkdown) {
+            if (removeSet.has(file.path)) continue;
+            const inFolder = includeSubfolders
+                ? file.path.startsWith(folderPrefix) || folder === ''
+                : file.parent?.path === folder;
+            if (inFolder) result.push(file);
+        }
+
+        // Add explicit overrides.
+        for (const addPath of addPaths) {
+            if (removeSet.has(addPath)) continue;
+            const file = this.app.vault.getAbstractFileByPath(addPath);
+            if (file instanceof TFile && file.extension === 'md' && !result.includes(file)) {
+                result.push(file);
+            }
+        }
+
+        // Ensure the active file is always included.
+        const activeFile = this.app.vault.getAbstractFileByPath(activeFilePath);
+        if (activeFile instanceof TFile && !result.includes(activeFile)) {
+            result.push(activeFile);
+        }
+
+        // Sort by path for stable ordering.
+        result.sort((a, b) => a.path.localeCompare(b.path));
+        return result;
     }
 
     /**

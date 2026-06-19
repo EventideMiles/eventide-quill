@@ -3,8 +3,12 @@ import EventideQuillPlugin from './main';
 import { ModelInfo, ProviderConfig, ProviderType } from './ai/provider';
 import { createProvider, generateModelId, generateProviderId } from './ai/provider-registry';
 import { NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS } from './types';
+import type { ReadabilityFormula } from './core/dashboard/types';
 
 export type LinterMode = 'all' | 'prose' | 'ai';
+export type SettingsTab = 'welcome' | 'general' | 'linter' | 'ai-providers' | 'model-behaviors';
+/** Which sidebar tab opens by default. Mirrors the dropdown options in the General settings. */
+export type DefaultTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard';
 
 export interface EventideQuillSettings {
     linterMode: LinterMode;
@@ -55,6 +59,12 @@ export interface EventideQuillSettings {
     enableCoWriterThought: boolean;
     coWriterVoiceMatch: boolean;
     enableInlineDirectives: boolean;
+    enableDashboard: boolean;
+    defaultTab: DefaultTab;
+    dashboardAutoRefreshMinutes: number;
+    dashboardAutoSnapshotOnSave: boolean;
+    dashboardMaxSnapshots: number;
+    readabilityFormula: ReadabilityFormula;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -119,7 +129,13 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     coWriterAppendNewline: true,
     enableCoWriterThought: true,
     coWriterVoiceMatch: true,
-    enableInlineDirectives: true
+    enableInlineDirectives: true,
+    enableDashboard: true,
+    defaultTab: 'dashboard',
+    dashboardAutoRefreshMinutes: 10,
+    dashboardAutoSnapshotOnSave: false,
+    dashboardMaxSnapshots: 100,
+    readabilityFormula: 'reweighted-flesch'
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -246,7 +262,7 @@ class AddProviderModal extends SuggestModal<{ type: ProviderType; label: string;
 
 export class EventideQuillSettingTab extends PluginSettingTab {
     plugin: EventideQuillPlugin;
-    private activeTab: 'linter' | 'ai-providers' | 'model-behaviors' = 'linter';
+    private activeTab: SettingsTab = 'general';
 
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app, plugin);
@@ -257,11 +273,20 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     display(): void {
         const { containerEl } = this;
         containerEl.empty();
+        containerEl.addClass('quill-settings-root');
 
         this.renderTabBar(containerEl);
-        this.renderLinterTab(containerEl);
-        this.renderAiProvidersTab(containerEl);
-        this.renderModelBehaviorsTab(containerEl);
+
+        // All tab content lives inside a scrollable wrapper so that only
+        // the area between the tab bar (header) and the footer scrolls.
+        const scrollArea = containerEl.createDiv({ cls: 'quill-settings__scroll-area' });
+        this.renderWelcomeTab(scrollArea);
+        this.renderGeneralTab(scrollArea);
+        this.renderLinterTab(scrollArea);
+        this.renderAiProvidersTab(scrollArea);
+        this.renderModelBehaviorsTab(scrollArea);
+
+        this.renderFooter(containerEl);
 
         this.showActiveTab();
     }
@@ -270,7 +295,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     private renderTabBar(containerEl: HTMLElement): void {
         const tabBar = containerEl.createEl('div', { cls: 'quill-settings__tab-bar' });
 
-        const tabs: { id: 'linter' | 'ai-providers' | 'model-behaviors'; label: string }[] = [
+        const tabs: { id: SettingsTab; label: string }[] = [
+            { id: 'welcome', label: 'Welcome' },
+            { id: 'general', label: 'General' },
             { id: 'linter', label: 'Linter' },
             { id: 'ai-providers', label: 'AI providers' },
             { id: 'model-behaviors', label: 'Model behaviors' }
@@ -291,17 +318,15 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Toggle visibility of tab content sections. */
     private showActiveTab(): void {
-        const linterContent = this.containerEl.querySelector('.quill-settings-content-linter') as HTMLElement;
-        const aiContent = this.containerEl.querySelector('.quill-settings-content-ai') as HTMLElement;
-        const modelBehaviorsContent = this.containerEl.querySelector(
-            '.quill-settings-content-model-behaviors'
-        ) as HTMLElement;
+        const tabIds: SettingsTab[] = ['welcome', 'general', 'linter', 'ai-providers', 'model-behaviors'];
         const tabs = this.containerEl.querySelectorAll('.quill-settings__tab');
 
-        if (linterContent) linterContent.style.display = this.activeTab === 'linter' ? 'block' : 'none';
-        if (aiContent) aiContent.style.display = this.activeTab === 'ai-providers' ? 'block' : 'none';
-        if (modelBehaviorsContent)
-            modelBehaviorsContent.style.display = this.activeTab === 'model-behaviors' ? 'block' : 'none';
+        for (const id of tabIds) {
+            const content = this.containerEl.querySelector(`.quill-settings-content-${id}`);
+            if (content) {
+                content.toggleClass('is-hidden', this.activeTab !== id);
+            }
+        }
 
         tabs.forEach((tab) => {
             const el = tab as HTMLElement;
@@ -311,6 +336,223 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 el.removeClass('quill-settings__tab--active');
             }
         });
+    }
+
+    /** Render the welcome tab (onboarding + feature overview). */
+    private renderWelcomeTab(containerEl: HTMLElement): void {
+        const content = containerEl.createEl('div', { cls: 'quill-settings-content-welcome' });
+
+        // --- Hero ---
+
+        const hero = content.createEl('div', { cls: 'quill-settings__welcome-hero' });
+        hero.createEl('div', { cls: 'quill-settings__welcome-title', text: 'Eventide quill' });
+        hero.createEl('div', {
+            cls: 'quill-settings__welcome-tagline',
+            text: 'A feedback-first writing assistant for novelists.'
+        });
+
+        // --- Getting started ---
+
+        new Setting(content).setName('Getting started').setHeading();
+
+        const steps = content.createEl('div', { cls: 'quill-settings__welcome-steps' });
+        const stepItems = [
+            {
+                num: '1',
+                title: 'Configure an AI provider',
+                desc: 'Go to the "AI providers" tab and set up Ollama, LM Studio, or an OpenAI-compatible endpoint.'
+            },
+            {
+                num: '2',
+                title: 'Open the sidebar',
+                desc: 'Click the feather icon in the left ribbon to open the Quill sidebar.'
+            },
+            {
+                num: '3',
+                title: 'Configure your manuscript',
+                desc: 'Open the Dashboard tab in the sidebar, click Settings, and pick your manuscript type.'
+            },
+            {
+                num: '4',
+                title: 'Start writing',
+                desc: 'Use the linter, co-writer, feedback engine, and dashboard as you draft.'
+            }
+        ];
+        for (const step of stepItems) {
+            const row = steps.createEl('div', { cls: 'quill-settings__welcome-step' });
+            row.createEl('div', { cls: 'quill-settings__welcome-step-num', text: step.num });
+            const body = row.createEl('div', { cls: 'quill-settings__welcome-step-body' });
+            body.createEl('div', { cls: 'quill-settings__welcome-step-title', text: step.title });
+            body.createEl('div', { cls: 'quill-settings__welcome-step-desc', text: step.desc });
+        }
+
+        // --- Features ---
+
+        new Setting(content).setName('Features').setHeading();
+
+        const features = content.createEl('div', { cls: 'quill-settings__welcome-features' });
+        const featureItems: { icon: string; text: string }[] = [
+            {
+                icon: '\u2630',
+                text: 'Manuscript dashboard with per-chapter analytics, pacing analysis, and readability tracking'
+            },
+            { icon: '\u2713', text: 'Prose linter with deterministic rules and AI-powered batch fixes' },
+            {
+                icon: '\u270E',
+                text: 'AI feedback engine with developmental editor, line editor, beta reader, and coach personas'
+            },
+            { icon: '\u27A4', text: 'Co-writer with Direct, Discuss, Coach, and Fulfill modes' },
+            { icon: '\u21BB', text: 'Selection transformations: improve, lengthen, shorten, change tone, or custom' },
+            {
+                icon: '\u2691',
+                text: 'Critical analysis for plot logic, character consistency, continuity, and voice drift'
+            },
+            { icon: '\u2699', text: 'Context engine that auto-builds working context from your manuscript' },
+            { icon: '\u26A1', text: 'Pluggable providers: Ollama, LM Studio, OpenAI-compatible, and more' }
+        ];
+        for (const item of featureItems) {
+            const row = features.createEl('div', { cls: 'quill-settings__welcome-feature' });
+            row.createEl('span', { cls: 'quill-settings__welcome-feature-icon', text: item.icon });
+            row.createEl('span', { cls: 'quill-settings__welcome-feature-text', text: item.text });
+        }
+
+        // --- Privacy ---
+
+        content.createEl('div', {
+            cls: 'quill-settings__welcome-privacy',
+            text: 'No telemetry. Your manuscript stays yours. All processing is local unless you configure a cloud provider.'
+        });
+    }
+
+    /** Render the general settings tab. */
+    private renderGeneralTab(containerEl: HTMLElement): void {
+        const content = containerEl.createEl('div', { cls: 'quill-settings-content-general' });
+
+        new Setting(content).setName('Sidebar').setHeading();
+
+        new Setting(content)
+            .setName('Default tab')
+            .setDesc('Which sidebar tab opens by default.')
+            .addDropdown((dropdown) => {
+                dropdown.addOption('dashboard', 'Dashboard');
+                dropdown.addOption('linter', 'Linter');
+                dropdown.addOption('context', 'Context');
+                dropdown.addOption('review', 'Review');
+                dropdown.addOption('cowriter', 'Co-writer');
+                dropdown.setValue(this.plugin.settings.defaultTab).onChange(async (value) => {
+                    this.plugin.settings.defaultTab = value as DefaultTab;
+                    await this.plugin.saveSettings();
+                });
+            });
+
+        new Setting(content).setName('Feature toggles').setHeading();
+
+        new Setting(content)
+            .setName('Enable dashboard')
+            .setDesc('Show the dashboard tab in the sidebar with per-manuscript analytics.')
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.enableDashboard).onChange(async (value) => {
+                    this.plugin.settings.enableDashboard = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
+            .setName('Critical analysis')
+            .setDesc('Show the analysis engine in the review tab and the right-click analyze command.')
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.enableCriticalAnalysis).onChange((value) => {
+                    this.plugin.settings.enableCriticalAnalysis = value;
+                    void this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
+            .setName('Readability formula')
+            .setDesc('Which readability formula to display in the dashboard.')
+            .addDropdown((dropdown) => {
+                dropdown.addOption('reweighted-flesch', 'Reweighted flesch');
+                dropdown.addOption('flesch-kincaid', 'Flesch-kincaid');
+                dropdown.addOption('ari', 'Automated readability index');
+                dropdown.addOption('custom-composite', 'Custom composite');
+                dropdown.addOption('dale-chall', 'Dale-chall');
+                dropdown.setValue(this.plugin.settings.readabilityFormula).onChange(async (value) => {
+                    this.plugin.settings.readabilityFormula = value as ReadabilityFormula;
+                    await this.plugin.saveSettings();
+                });
+            });
+
+        new Setting(content).setName('Dashboard').setHeading();
+
+        new Setting(content)
+            .setName('Auto-refresh interval')
+            .setDesc('Refresh the dashboard every n minutes when the tab is active (0 disables).')
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.dashboardAutoRefreshMinutes))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 0 && n <= 60) {
+                            this.plugin.settings.dashboardAutoRefreshMinutes = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.dashboardAutoRefreshMinutes));
+                            new Notice('Value must be between 0 and 60');
+                        }
+                    })
+            );
+
+        new Setting(content)
+            .setName('Auto-snapshot on save')
+            .setDesc('Record a word-count snapshot whenever a chapter file is saved.')
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.dashboardAutoSnapshotOnSave).onChange(async (value) => {
+                    this.plugin.settings.dashboardAutoSnapshotOnSave = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
+            .setName('Max snapshots retained')
+            .setDesc(
+                'Maximum number of historical snapshots to keep per manuscript (10-1000). Oldest are pruned first.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.dashboardMaxSnapshots))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 10 && n <= 1000) {
+                            this.plugin.settings.dashboardMaxSnapshots = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.dashboardMaxSnapshots));
+                            new Notice('Value must be between 10 and 1000');
+                        }
+                    })
+            );
+
+        new Setting(content)
+            .setName('Restore defaults')
+            .setDesc('Reset all general settings to their default values.')
+            .addButton((button) =>
+                button.setButtonText('Restore defaults').onClick(async () => {
+                    this.plugin.settings.defaultTab = DEFAULT_SETTINGS.defaultTab;
+                    this.plugin.settings.enableDashboard = DEFAULT_SETTINGS.enableDashboard;
+                    this.plugin.settings.enableCriticalAnalysis = DEFAULT_SETTINGS.enableCriticalAnalysis;
+                    this.plugin.settings.dashboardAutoRefreshMinutes = DEFAULT_SETTINGS.dashboardAutoRefreshMinutes;
+                    this.plugin.settings.dashboardAutoSnapshotOnSave = DEFAULT_SETTINGS.dashboardAutoSnapshotOnSave;
+                    this.plugin.settings.dashboardMaxSnapshots = DEFAULT_SETTINGS.dashboardMaxSnapshots;
+                    this.plugin.settings.readabilityFormula = DEFAULT_SETTINGS.readabilityFormula;
+                    await this.plugin.saveSettings();
+                    this.display();
+                })
+            );
+    }
+
+    /** Render the footer area (reserved for future donation / support links). */
+    private renderFooter(containerEl: HTMLElement): void {
+        containerEl.createEl('div', { cls: 'quill-settings__footer' });
     }
 
     /** Render the linter configuration section. */
@@ -584,7 +826,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render the AI providers configuration section. */
     private renderAiProvidersTab(containerEl: HTMLElement): void {
-        const content = containerEl.createEl('div', { cls: 'quill-settings-content-ai' });
+        const content = containerEl.createEl('div', { cls: 'quill-settings-content-ai-providers' });
 
         new Setting(content).setName('AI providers').setHeading();
 
@@ -955,7 +1197,23 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render model behavior settings. */
     private renderModelBehaviorsSettings(containerEl: HTMLElement): void {
-        new Setting(containerEl).setName('Selection transformations').setHeading();
+        new Setting(containerEl)
+            .setName('Selection transformations')
+            .setHeading()
+            .addExtraButton((btn) =>
+                btn
+                    .setIcon('rotate-ccw')
+                    .setTooltip('Restore transformation defaults')
+                    .onClick(async () => {
+                        this.plugin.settings.narrativeVoicePreset = DEFAULT_SETTINGS.narrativeVoicePreset;
+                        this.plugin.settings.customNarrativeVoiceRules = DEFAULT_SETTINGS.customNarrativeVoiceRules;
+                        this.plugin.settings.transformTemperature = DEFAULT_SETTINGS.transformTemperature;
+                        this.plugin.settings.transformVaultContext = DEFAULT_SETTINGS.transformVaultContext;
+                        this.plugin.settings.transformMaxOutputTokens = DEFAULT_SETTINGS.transformMaxOutputTokens;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    })
+            );
 
         new Setting(containerEl)
             .setName('Narrative voice')
@@ -1022,7 +1280,25 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     })
             );
 
-        new Setting(containerEl).setName('Co-writer').setHeading();
+        new Setting(containerEl)
+            .setName('Co-writer')
+            .setHeading()
+            .addExtraButton((btn) =>
+                btn
+                    .setIcon('rotate-ccw')
+                    .setTooltip('Restore co-writer defaults')
+                    .onClick(async () => {
+                        this.plugin.settings.coWriterTemperature = DEFAULT_SETTINGS.coWriterTemperature;
+                        this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
+                        this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
+                        this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
+                        this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
+                        this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;
+                        this.plugin.settings.enableInlineDirectives = DEFAULT_SETTINGS.enableInlineDirectives;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    })
+            );
 
         new Setting(containerEl)
             .setName('Temperature')
@@ -1114,16 +1390,19 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 })
             );
 
-        new Setting(containerEl).setName('Analysis').setHeading();
-
         new Setting(containerEl)
-            .setName('Critical analysis')
-            .setDesc('Show the analysis tab and the right-click "analyze at Cursor" command. Hidden when off.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableCriticalAnalysis).onChange((value) => {
-                    this.plugin.settings.enableCriticalAnalysis = value;
-                    void this.plugin.saveSettings();
-                })
+            .setName('Analysis')
+            .setHeading()
+            .addExtraButton((btn) =>
+                btn
+                    .setIcon('rotate-ccw')
+                    .setTooltip('Restore analysis defaults')
+                    .onClick(async () => {
+                        this.plugin.settings.analysisTemperature = DEFAULT_SETTINGS.analysisTemperature;
+                        this.plugin.settings.analysisMaxOutputTokens = DEFAULT_SETTINGS.analysisMaxOutputTokens;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    })
             );
 
         new Setting(containerEl)
@@ -1160,7 +1439,25 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     })
             );
 
-        new Setting(containerEl).setName('Context engine').setHeading();
+        new Setting(containerEl)
+            .setName('Context engine')
+            .setHeading()
+            .addExtraButton((btn) =>
+                btn
+                    .setIcon('rotate-ccw')
+                    .setTooltip('Restore context engine defaults')
+                    .onClick(async () => {
+                        this.plugin.settings.contextTokenBudget = DEFAULT_SETTINGS.contextTokenBudget;
+                        this.plugin.settings.contextCompactAtPercent = DEFAULT_SETTINGS.contextCompactAtPercent;
+                        this.plugin.settings.compactSummarySentences = DEFAULT_SETTINGS.compactSummarySentences;
+                        this.plugin.settings.contextIncludeVaultContext = DEFAULT_SETTINGS.contextIncludeVaultContext;
+                        this.plugin.settings.contextMaxVaultFiles = DEFAULT_SETTINGS.contextMaxVaultFiles;
+                        this.plugin.settings.contextMaxCharsPerFile = DEFAULT_SETTINGS.contextMaxCharsPerFile;
+                        this.plugin.settings.contextAutoScan = DEFAULT_SETTINGS.contextAutoScan;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    })
+            );
 
         new Setting(containerEl)
             .setName('Token budget')
@@ -1271,7 +1568,21 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 })
             );
 
-        new Setting(containerEl).setName('Linter AI').setHeading();
+        new Setting(containerEl)
+            .setName('Linter AI')
+            .setHeading()
+            .addExtraButton((btn) =>
+                btn
+                    .setIcon('rotate-ccw')
+                    .setTooltip('Restore linter AI defaults')
+                    .onClick(async () => {
+                        this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
+                        this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
+                        this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    })
+            );
 
         new Setting(containerEl)
             .setName('Enable AI-powered lint fixes')
@@ -1319,7 +1630,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('Restore defaults')
-            .setDesc('Reset all AI behavior settings to their default values.')
+            .setDesc('Reset every setting on this tab. Use the per-section reset buttons above for targeted resets.')
             .addButton((button) =>
                 button.setButtonText('Restore defaults').onClick(async () => {
                     this.plugin.settings.transformTemperature = DEFAULT_SETTINGS.transformTemperature;
@@ -1329,7 +1640,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.customNarrativeVoiceRules = DEFAULT_SETTINGS.customNarrativeVoiceRules;
                     this.plugin.settings.analysisTemperature = DEFAULT_SETTINGS.analysisTemperature;
                     this.plugin.settings.analysisMaxOutputTokens = DEFAULT_SETTINGS.analysisMaxOutputTokens;
-                    this.plugin.settings.enableCriticalAnalysis = DEFAULT_SETTINGS.enableCriticalAnalysis;
                     this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
                     this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
                     this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;

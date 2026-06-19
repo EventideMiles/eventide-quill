@@ -1,12 +1,14 @@
 import { Component, ItemView, MarkdownView, Notice, WorkspaceLeaf } from 'obsidian';
 import { LintResult, RULE_INFO, FIXABLE_RULES } from '../core/linter/types';
 import { FIXES } from '../core/linter/fixes';
+import { renderChangeCard, renderChangeBulkBar } from './change-card';
 import { applyReplacement } from '../core/linter/apply-fix';
 import { findEditorView } from '../utils/find-editor';
 import { FixWithAiModal } from './fix-with-ai-modal';
 import { renderContextTab } from './context-panel';
 import { ReviewPanel } from './review-panel';
 import { CoWriterPanel } from './co-writer-panel';
+import { renderDashboardTab, renderDashboardSettingsTab } from './dashboard-panel';
 import type { InputMode } from './co-writer-panel';
 import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase } from '../ai/co-writer';
 import type { ProposedEdit } from '../core/change-set';
@@ -15,14 +17,18 @@ import type { ContextAssembly } from '../core/context-engine/types';
 
 export const QUILL_VIEW_TYPE = 'quill-sidebar';
 
-type TopTab = 'linter' | 'context' | 'review' | 'cowriter';
-type LinterSubTab = 'results' | 'details';
+type TopTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard';
+type LinterSubTab = 'results' | 'details' | 'pending';
+
+/** Allow-list of valid TopTab values, used to validate persisted settings. */
+const VALID_TOP_TABS: ReadonlySet<TopTab> = new Set<TopTab>(['linter', 'context', 'review', 'cowriter', 'dashboard']);
 
 export class QuillSidebarView extends ItemView {
     private results: LintResult[] = [];
     private selectedResult: LintResult | null = null;
     private activeTopTab: TopTab = 'linter';
     private activeLinterSubTab: LinterSubTab = 'results';
+    private dashboardSubTab: 'overview' | 'pending' | 'settings' = 'overview';
     private container!: HTMLElement;
     private tabBar!: HTMLElement;
     private content!: HTMLElement;
@@ -41,6 +47,16 @@ export class QuillSidebarView extends ItemView {
     constructor(leaf: WorkspaceLeaf, plugin: EventideQuillPlugin) {
         super(leaf);
         this.plugin = plugin;
+        // Apply the user's preferred default tab, validating the persisted value
+        // against the allow-list rather than trusting it blindly (older saves or
+        // hand-edited data.json may hold invalid strings).
+        const stored = plugin.settings.defaultTab;
+        this.activeTopTab = VALID_TOP_TABS.has(stored) ? stored : 'linter';
+    }
+
+    /** Whether the Dashboard tab is currently active. */
+    isDashboardActive(): boolean {
+        return this.activeTopTab === 'dashboard';
     }
 
     /** Return the unique view type identifier. */
@@ -72,7 +88,8 @@ export class QuillSidebarView extends ItemView {
                 if (
                     this.activeTopTab === 'context' ||
                     this.activeTopTab === 'cowriter' ||
-                    this.activeTopTab === 'review'
+                    this.activeTopTab === 'review' ||
+                    this.activeTopTab === 'dashboard'
                 ) {
                     this.render();
                 }
@@ -222,8 +239,9 @@ export class QuillSidebarView extends ItemView {
         return { lines, flaggedStart, flaggedEnd };
     }
 
-    /** Switch the active top-level tab. */
+    /** Switch the active top-level tab. Clears handled batch edits when leaving the pending view. */
     private switchTopTab(tab: TopTab) {
+        this.clearBatchIfHandled();
         this.activeTopTab = tab;
         if (tab === 'linter') {
             this.activeLinterSubTab = 'results';
@@ -231,10 +249,28 @@ export class QuillSidebarView extends ItemView {
         this.render();
     }
 
-    /** Switch the active linter sub-tab. */
+    /** Switch the active linter sub-tab. Clears handled batch edits when leaving pending. */
     private switchLinterSubTab(tab: LinterSubTab) {
+        if (this.activeLinterSubTab === 'pending' && tab !== 'pending') {
+            this.clearBatchIfHandled();
+        }
         this.activeLinterSubTab = tab;
         this.render();
+    }
+
+    /**
+     * Clear the batch ChangeSet if all edits have been handled (no pending).
+     * Called when the user navigates away from the pending subtab so that
+     * old approved/rejected entries don't persist into the next batch.
+     */
+    private clearBatchIfHandled(): void {
+        if (
+            !this.plugin.batchFixInProgress &&
+            this.plugin.lintBatchChangeSet.edits.length > 0 &&
+            this.plugin.lintBatchChangeSet.pendingCount === 0
+        ) {
+            this.plugin.lintBatchChangeSet.clear();
+        }
     }
 
     /** Tear down event listeners and rebuild the sidebar DOM for the current tab. */
@@ -252,12 +288,25 @@ export class QuillSidebarView extends ItemView {
             this.renderLinterSubTabBar();
             if (this.activeLinterSubTab === 'results') {
                 this.renderResultsTab();
+            } else if (this.activeLinterSubTab === 'pending') {
+                this.renderPendingTab();
             } else {
                 this.renderDetailsTab();
             }
         } else if (this.activeTopTab === 'context') {
             const ctxScroll = this.content.createDiv({ cls: 'quill-context-panel__scroll' });
             renderContextTab(ctxScroll, this.currentAssembly, this.plugin, this.renderEvents);
+        } else if (this.activeTopTab === 'dashboard') {
+            this.renderDashboardSubTabBar();
+            if (this.dashboardSubTab === 'pending') {
+                this.renderPendingTab();
+            } else if (this.dashboardSubTab === 'settings') {
+                const settingsScroll = this.content.createDiv({ cls: 'quill-dashboard-panel__scroll' });
+                renderDashboardSettingsTab(settingsScroll, this.plugin, this.renderEvents);
+            } else {
+                const dashScroll = this.content.createDiv({ cls: 'quill-dashboard-panel__scroll' });
+                renderDashboardTab(dashScroll, this.plugin, this.renderEvents);
+            }
         } else if (this.activeTopTab === 'cowriter') {
             this.renderCoWriterTab();
         } else {
@@ -268,6 +317,7 @@ export class QuillSidebarView extends ItemView {
     /** Render the top-level tab bar. */
     private renderTopTabBar() {
         const tabs: { id: TopTab; label: string }[] = [
+            { id: 'dashboard', label: 'Dashboard' },
             { id: 'linter', label: 'Linter' },
             { id: 'context', label: 'Context' },
             { id: 'review', label: 'Review' },
@@ -283,6 +333,50 @@ export class QuillSidebarView extends ItemView {
         }
     }
 
+    /** Render the dashboard sub-tab bar (Overview | Settings | Pending). */
+    private renderDashboardSubTabBar() {
+        const subTabBar = this.content.createDiv({ cls: 'quill-sidebar__subtab-bar' });
+
+        const tabs: { id: 'overview' | 'pending' | 'settings'; label: string }[] = [
+            { id: 'overview', label: 'Overview' },
+            { id: 'settings', label: 'Settings' }
+        ];
+
+        // Show Pending conditionally.
+        const showPending =
+            this.plugin.batchFixSource === 'dashboard' &&
+            (this.plugin.batchFixInProgress ||
+                this.plugin.lintBatchChangeSet.edits.length > 0 ||
+                this.dashboardSubTab === 'pending');
+
+        if (showPending) {
+            const pendingCount = this.plugin.lintBatchChangeSet.pendingCount;
+            if (this.plugin.batchFixInProgress) {
+                tabs.push({ id: 'pending', label: 'Generating...' });
+            } else if (pendingCount > 0) {
+                tabs.push({ id: 'pending', label: `Pending (${pendingCount})` });
+            } else if (this.dashboardSubTab === 'pending') {
+                tabs.push({ id: 'pending', label: 'Pending' });
+            }
+        } else if (this.dashboardSubTab === 'pending') {
+            this.dashboardSubTab = 'overview';
+        }
+
+        for (const tab of tabs) {
+            const btn = subTabBar.createEl('button', {
+                cls: `quill-sidebar__subtab${this.dashboardSubTab === tab.id ? ' quill-sidebar__subtab--active' : ''}`,
+                text: tab.label
+            });
+            this.renderEvents!.registerDomEvent(btn, 'click', () => {
+                if (this.dashboardSubTab === 'pending' && tab.id !== 'pending') {
+                    this.clearBatchIfHandled();
+                }
+                this.dashboardSubTab = tab.id;
+                this.render();
+            });
+        }
+    }
+
     /** Render the linter sub-tab bar (Results / Details). */
     private renderLinterSubTabBar() {
         const subTabBar = this.content.createDiv({ cls: 'quill-sidebar__subtab-bar' });
@@ -291,6 +385,24 @@ export class QuillSidebarView extends ItemView {
             { id: 'results', label: 'Results' },
             { id: 'details', label: 'Details' }
         ];
+
+        // Show "Pending" subtab when batch fixes are in progress or edits exist.
+        const showPending =
+            this.plugin.batchFixSource === 'linter' &&
+            (this.plugin.batchFixInProgress ||
+                this.plugin.lintBatchChangeSet.edits.length > 0 ||
+                this.activeLinterSubTab === 'pending');
+
+        if (showPending) {
+            const pendingCount = this.plugin.lintBatchChangeSet.pendingCount;
+            if (this.plugin.batchFixInProgress) {
+                tabs.push({ id: 'pending', label: 'Generating...' });
+            } else if (pendingCount > 0) {
+                tabs.push({ id: 'pending', label: `Pending (${pendingCount})` });
+            } else if (this.activeLinterSubTab === 'pending') {
+                tabs.push({ id: 'pending', label: 'Pending' });
+            }
+        }
 
         for (const tab of tabs) {
             const btn = subTabBar.createEl('button', {
@@ -358,6 +470,36 @@ export class QuillSidebarView extends ItemView {
     switchToCoWriterTab(): void {
         this.activeTopTab = 'cowriter';
         this.render();
+    }
+
+    /** Switch to the Dashboard tab. */
+    switchToDashboardTab(): void {
+        this.activeTopTab = 'dashboard';
+        this.render();
+    }
+
+    /** Re-render the Dashboard panel if it's the active tab. */
+    refreshDashboardPanel(): void {
+        if (this.activeTopTab === 'dashboard') {
+            this.render();
+        }
+    }
+
+    /** Re-render the linter results tab if it's active. */
+    refreshResultsTab(): void {
+        if (this.activeTopTab === 'linter' && this.activeLinterSubTab === 'results') {
+            this.render();
+        }
+    }
+
+    /** Re-render the pending subtab if it's active on either the linter or dashboard tab. */
+    refreshPendingTab(): void {
+        if (
+            (this.activeTopTab === 'linter' && this.activeLinterSubTab === 'pending') ||
+            (this.activeTopTab === 'dashboard' && this.dashboardSubTab === 'pending')
+        ) {
+            this.render();
+        }
     }
 
     /** Render the co-writer tab, initializing or re-attaching the CoWriterPanel. */
@@ -655,6 +797,69 @@ export class QuillSidebarView extends ItemView {
         this.coWriterPanel?.setFulfillState(sections, active);
     }
 
+    /** Switch to the pending subtab on whichever tab initiated the batch fix. */
+    switchToPendingTab(): void {
+        if (this.plugin.batchFixSource === 'dashboard') {
+            this.activeTopTab = 'dashboard';
+            this.dashboardSubTab = 'pending';
+        } else {
+            this.activeTopTab = 'linter';
+            this.activeLinterSubTab = 'pending';
+        }
+        this.render();
+    }
+
+    /** Render the pending batch-fix edits as review cards with Accept/Reject. */
+    private renderPendingTab() {
+        const container = this.content.createDiv({ cls: 'quill-linter__pending' });
+        const edits = this.plugin.lintBatchChangeSet.edits;
+
+        // Loading indicator while AI is generating.
+        if (this.plugin.batchFixInProgress) {
+            container.createEl('div', {
+                cls: 'quill-linter__pending-loading',
+                text: 'Generating fixes\u2026'
+            });
+        }
+
+        if (edits.length === 0 && !this.plugin.batchFixInProgress) {
+            container.createEl('p', {
+                text: 'No pending changes.',
+                cls: 'quill-linter__empty'
+            });
+            return;
+        }
+
+        // Bulk action bar (only when there are pending edits).
+        if (this.plugin.lintBatchChangeSet.pendingCount > 0) {
+            renderChangeBulkBar(container, this.plugin.lintBatchChangeSet.pendingCount, this.renderEvents!, {
+                onApproveAll: () => {
+                    this.plugin.approveAllLintBatch();
+                    this.render();
+                },
+                onRejectAll: () => {
+                    this.plugin.rejectAllLintBatch();
+                    this.render();
+                }
+            });
+        }
+
+        // Individual change cards.
+        const scroll = container.createEl('div', { cls: 'quill-linter__pending-list' });
+        for (const edit of edits) {
+            renderChangeCard(scroll, edit, edit.originalText ?? null, this.app, this.renderEvents!, {
+                onApprove: (id: number) => {
+                    this.plugin.approveLintBatchChange(id);
+                    this.render();
+                },
+                onReject: (id: number) => {
+                    this.plugin.rejectLintBatchChange(id);
+                    this.render();
+                }
+            });
+        }
+    }
+
     /** Render the list of lint results with severity badges and location info. */
     private renderResultsTab() {
         const resultsContainer = this.content.createDiv({ cls: 'quill-linter__results' });
@@ -664,6 +869,23 @@ export class QuillSidebarView extends ItemView {
                 text: 'No issues found.',
                 cls: 'quill-linter__empty'
             });
+
+            // Offer to toggle the linter on if it's not active.
+            if (!this.plugin.lintActive) {
+                const toggleBtn = resultsContainer.createEl('button', {
+                    cls: 'quill-linter__empty-btn',
+                    text: 'Toggle prose linter'
+                });
+                this.renderEvents!.registerDomEvent(toggleBtn, 'click', () => {
+                    const activeFile = this.app.workspace.getActiveFile();
+                    if (!activeFile || activeFile.extension !== 'md') return;
+                    const view = findEditorView(this.app, activeFile.path);
+                    if (view) {
+                        this.plugin.toggleLint(view.editor);
+                    }
+                });
+            }
+
             return;
         }
 
@@ -671,6 +893,21 @@ export class QuillSidebarView extends ItemView {
         header.createEl('span', {
             text: `${this.results.length} issue${this.results.length !== 1 ? 's' : ''} found`
         });
+
+        // "Fix all with AI" button — gated on AI fix setting + chat provider + not already processing.
+        if (
+            this.plugin.settings.enableLinterAiFixes &&
+            this.plugin.getDefaultChatProvider().provider &&
+            !this.plugin.batchFixInProgress
+        ) {
+            const fixAllBtn = header.createEl('button', {
+                cls: 'quill-linter__fix-all-btn',
+                text: 'Fix all with AI'
+            });
+            this.renderEvents!.registerDomEvent(fixAllBtn, 'click', () => {
+                void this.plugin.fixAllLinterWithAi();
+            });
+        }
 
         const list = resultsContainer.createEl('ul', { cls: 'quill-linter__list' });
 
