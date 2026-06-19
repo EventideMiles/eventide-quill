@@ -380,29 +380,106 @@ function renderPacingHeatmap(
 /** Render the manuscript-wide readability scores. */
 function renderReadability(container: HTMLElement, metrics: ManuscriptMetrics, plugin: EventideQuillPlugin): void {
     const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
-    section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Readability' });
+    const headingRow = section.createEl('div', { cls: 'quill-dashboard-panel__heading-row' });
+    headingRow.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Readability' });
+    headingRow.createEl('span', {
+        cls: 'quill-dashboard-panel__readability-info',
+        attr: {
+            title: 'Readability scores are rough guides \u2014 they help aim toward your target audience, not pin down an exact grade.'
+        },
+        text: '(?)'
+    });
+
+    const formula = plugin.settings.readabilityFormula;
 
     const grid = section.createEl('div', { cls: 'quill-dashboard-panel__readability-grid' });
 
-    const easeLabel = readabilityEaseLabel(metrics.fleschReadingEase);
-    grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
-        `Reading ease: ${metrics.fleschReadingEase} (${easeLabel})`
-    );
-
     const targetGrade = plugin.currentManuscriptFileData?.targetGradeLevel;
-    const gradeEl = grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' });
-    if (targetGrade !== undefined) {
-        const { status, label } = gradeLevelStatus(metrics.fleschKincaidGrade, targetGrade);
-        const dir = metrics.fleschKincaidGrade > targetGrade ? 'simplify' : 'add complexity';
-        const hint = status === 'good' ? '' : ` \u2014 consider ${dir}`;
-        gradeEl.createEl('span').setText(`Grade level: ${metrics.fleschKincaidGrade} (target: ${targetGrade}) `);
-        gradeEl.createEl('span', {
-            cls: `quill-dashboard-panel__target-status quill-dashboard-panel__target-status--${status}`,
-            text: `${label}${hint}`
-        });
-    } else {
-        gradeEl.setText(`Grade level: ${metrics.fleschKincaidGrade}`);
+
+    switch (formula) {
+        case 'dale-chall': {
+            const label = daleChallLabel(metrics.daleChallRawScore);
+            grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
+                `Dale-Chall: ${metrics.daleChallRawScore} (${label})`
+            );
+            renderGradeTarget(grid, metrics.daleChallGradeLevel, targetGrade);
+            break;
+        }
+        case 'flesch-kincaid': {
+            const easeLabel = readabilityEaseLabel(metrics.fleschReadingEase);
+            grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
+                `Reading ease: ${metrics.fleschReadingEase} (${easeLabel})`
+            );
+            renderGradeTarget(grid, metrics.fleschKincaidGrade, targetGrade);
+            break;
+        }
+        case 'ari': {
+            grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
+                `ARI: ${metrics.ariScore} (${ariLabel(metrics.ariScore)})`
+            );
+            renderGradeTarget(grid, metrics.ariScore, targetGrade);
+            break;
+        }
+        case 'reweighted-flesch': {
+            const label = readabilityEaseLabel(metrics.reweightedFleschReadingEase);
+            grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
+                `Reweighted Flesch: ${metrics.reweightedFleschReadingEase} (${label})`
+            );
+            renderGradeTarget(grid, metrics.reweightedFleschGradeLevel, targetGrade);
+            break;
+        }
+        case 'custom-composite': {
+            grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
+                `Custom composite: ${metrics.customCompositeScore} (${compositeLabel(metrics.customCompositeScore)})`
+            );
+            break;
+        }
     }
+}
+
+/** Render grade-level target comparison line.
+ *  If targetGrade is undefined, just shows the grade level. */
+function renderGradeTarget(grid: HTMLElement, actualGrade: number, targetGrade: number | undefined): void {
+    const gradeEl = grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' });
+    if (targetGrade === undefined) {
+        gradeEl.setText(`Grade level: ${actualGrade}`);
+        return;
+    }
+    const { status, label } = gradeLevelStatus(actualGrade, targetGrade);
+    const dir = actualGrade > targetGrade ? 'simplify' : 'add complexity';
+    const hint = status === 'good' ? '' : ` \u2014 consider ${dir}`;
+    gradeEl.createEl('span').setText(`Grade level: ${actualGrade} (target: ${targetGrade}) `);
+    gradeEl.createEl('span', {
+        cls: `quill-dashboard-panel__target-status quill-dashboard-panel__target-status--${status}`,
+        text: `${label}${hint}`
+    });
+}
+
+/** Map a Dale-Chall raw score to a readability label. */
+function daleChallLabel(score: number): string {
+    if (score >= 60) return 'very easy';
+    if (score >= 50) return 'easy';
+    if (score >= 40) return 'moderate';
+    if (score >= 30) return 'difficult';
+    return 'very difficult';
+}
+
+/** Map a composite score to a label. */
+function compositeLabel(score: number): string {
+    if (score >= 80) return 'very readable';
+    if (score >= 60) return 'readable';
+    if (score >= 40) return 'moderate';
+    if (score >= 20) return 'complex';
+    return 'very complex';
+}
+
+/** Map an ARI score to a readability label. */
+function ariLabel(score: number): string {
+    if (score <= 4) return 'very easy';
+    if (score <= 6) return 'easy';
+    if (score <= 9) return 'average';
+    if (score <= 12) return 'difficult';
+    return 'very difficult';
 }
 
 /** Map a Flesch Reading Ease score to a human-readable label. */

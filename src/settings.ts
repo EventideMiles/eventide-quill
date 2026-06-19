@@ -3,6 +3,7 @@ import EventideQuillPlugin from './main';
 import { ModelInfo, ProviderConfig, ProviderType } from './ai/provider';
 import { createProvider, generateModelId, generateProviderId } from './ai/provider-registry';
 import { NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS } from './types';
+import type { ReadabilityFormula } from './core/dashboard/types';
 
 export type LinterMode = 'all' | 'prose' | 'ai';
 export type SettingsTab = 'welcome' | 'general' | 'linter' | 'ai-providers' | 'model-behaviors';
@@ -61,6 +62,7 @@ export interface EventideQuillSettings {
     dashboardAutoRefreshMinutes: number;
     dashboardAutoSnapshotOnSave: boolean;
     dashboardMaxSnapshots: number;
+    readabilityFormula: ReadabilityFormula;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -130,7 +132,8 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     defaultTab: 'dashboard',
     dashboardAutoRefreshMinutes: 10,
     dashboardAutoSnapshotOnSave: false,
-    dashboardMaxSnapshots: 100
+    dashboardMaxSnapshots: 100,
+    readabilityFormula: 'reweighted-flesch'
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -462,6 +465,21 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 })
             );
 
+        new Setting(content)
+            .setName('Readability formula')
+            .setDesc('Which readability formula to display in the dashboard.')
+            .addDropdown((dropdown) => {
+                dropdown.addOption('reweighted-flesch', 'Reweighted flesch');
+                dropdown.addOption('flesch-kincaid', 'Flesch-kincaid');
+                dropdown.addOption('ari', 'Automated readability index');
+                dropdown.addOption('custom-composite', 'Custom composite');
+                dropdown.addOption('dale-chall', 'Dale-chall');
+                dropdown.setValue(this.plugin.settings.readabilityFormula).onChange(async (value) => {
+                    this.plugin.settings.readabilityFormula = value as ReadabilityFormula;
+                    await this.plugin.saveSettings();
+                });
+            });
+
         new Setting(content).setName('Dashboard').setHeading();
 
         new Setting(content)
@@ -523,6 +541,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.dashboardAutoRefreshMinutes = DEFAULT_SETTINGS.dashboardAutoRefreshMinutes;
                     this.plugin.settings.dashboardAutoSnapshotOnSave = DEFAULT_SETTINGS.dashboardAutoSnapshotOnSave;
                     this.plugin.settings.dashboardMaxSnapshots = DEFAULT_SETTINGS.dashboardMaxSnapshots;
+                    this.plugin.settings.readabilityFormula = DEFAULT_SETTINGS.readabilityFormula;
                     await this.plugin.saveSettings();
                     this.display();
                 })

@@ -46,6 +46,9 @@ export interface PacingFlag {
     avgSentenceLength: number;
 }
 
+/** Which readability formula to display (plugin-level setting). */
+export type ReadabilityFormula = 'dale-chall' | 'flesch-kincaid' | 'ari' | 'reweighted-flesch' | 'custom-composite';
+
 /** Per-section metrics used for pacing analysis and expandable rows. */
 export interface SectionMetrics {
     /** Heading text or null for scene-break/leading sections. */
@@ -64,6 +67,18 @@ export interface SectionMetrics {
     dialogueRatio: number;
     /** Flesch Reading Ease score (0-100, higher = easier). */
     fleschReadingEase: number;
+    /** Dale-Chall raw score (0-100, higher = easier). */
+    daleChallRawScore: number;
+    /** Dale-Chall grade level (4-16, lower = easier). */
+    daleChallGradeLevel: number;
+    /** Reweighted Flesch Reading Ease for fiction (0-100, higher = easier). */
+    reweightedFleschReadingEase: number;
+    /** Reweighted Flesch grade level (0+, lower = easier). */
+    reweightedFleschGradeLevel: number;
+    /** Custom composite score for fiction readability (0-100). */
+    customCompositeScore: number;
+    /** ARI grade level (0+, lower = easier). */
+    ariScore: number;
     /** Pacing flags raised within this section. */
     pacingFlags: PacingFlag[];
 }
@@ -96,6 +111,18 @@ export interface ChapterMetrics {
     fleschReadingEase: number;
     /** Flesch-Kincaid grade level. */
     fleschKincaidGrade: number;
+    /** Dale-Chall raw score (0-100, higher = easier). */
+    daleChallRawScore: number;
+    /** Dale-Chall grade level (4-16, lower = easier). */
+    daleChallGradeLevel: number;
+    /** Reweighted Flesch Reading Ease for fiction (0-100, higher = easier). */
+    reweightedFleschReadingEase: number;
+    /** Reweighted Flesch grade level (0+, lower = easier). */
+    reweightedFleschGradeLevel: number;
+    /** Custom composite score for fiction readability (0-100). */
+    customCompositeScore: number;
+    /** ARI grade level (0+, lower = easier). */
+    ariScore: number;
     /** Pacing flags aggregated from sections. */
     pacingFlags: PacingFlag[];
     /** Per-scene breakdown for expandable rows. */
@@ -168,6 +195,18 @@ export interface ManuscriptMetrics {
     fleschReadingEase: number;
     /** Manuscript-wide Flesch-Kincaid grade level. */
     fleschKincaidGrade: number;
+    /** Manuscript-wide Dale-Chall raw score (0-100, higher = easier). */
+    daleChallRawScore: number;
+    /** Manuscript-wide Dale-Chall grade level (4-16, lower = easier). */
+    daleChallGradeLevel: number;
+    /** Manuscript-wide reweighted Flesch Reading Ease for fiction (0-100, higher = easier). */
+    reweightedFleschReadingEase: number;
+    /** Manuscript-wide reweighted Flesch grade level (0+, lower = easier). */
+    reweightedFleschGradeLevel: number;
+    /** Manuscript-wide custom composite score for fiction readability (0-100). */
+    customCompositeScore: number;
+    /** Manuscript-wide ARI grade level (0+, lower = easier). */
+    ariScore: number;
     /** Per-chapter metrics, in manuscript order. */
     chapters: ChapterMetrics[];
     /** Per-character appearance summaries, sorted by occurrences descending. */

@@ -1,6 +1,7 @@
 import { ExtractedEntity, EntityType } from '../context-engine/types';
 import { computeDialogueRatio } from '../context-engine/voice-analyzer';
 import { countSyllables, splitSentences, listSections, SectionRange } from '../../utils/text-analysis';
+import { daleChall, reweightedFlesch, customComposite, automatedReadabilityIndex } from './readability';
 import {
     ChapterMetrics,
     ChapterRange,
@@ -181,6 +182,37 @@ export function pacingAnalysis(text: string, lineTable: number[], filePath: stri
     });
 }
 
+/** Compute readability metrics for a section. */
+function computeSectionReadability(
+    text: string,
+    sentenceLengthStddev: number,
+    dialogueRatio: number
+): {
+    fleschReadingEase: number;
+    daleChallRawScore: number;
+    daleChallGradeLevel: number;
+    reweightedFleschReadingEase: number;
+    reweightedFleschGradeLevel: number;
+    customCompositeScore: number;
+    ariScore: number;
+} {
+    const { readingEase } = fleschKincaid(text);
+    const dc = daleChall(text);
+    const rf = reweightedFlesch(text);
+    const cc = customComposite(text, sentenceLengthStddev, dialogueRatio);
+    const ari = automatedReadabilityIndex(text);
+
+    return {
+        fleschReadingEase: readingEase,
+        daleChallRawScore: dc.rawScore,
+        daleChallGradeLevel: dc.gradeLevel,
+        reweightedFleschReadingEase: rf.readingEase,
+        reweightedFleschGradeLevel: rf.gradeLevel,
+        customCompositeScore: cc.score,
+        ariScore: ari
+    };
+}
+
 /** Compute metrics for a single section. */
 function computeSectionMetrics(section: SectionRange, filePath: string): SectionMetrics {
     const lineTable = buildLineOffsetTable(section.text);
@@ -188,9 +220,9 @@ function computeSectionMetrics(section: SectionRange, filePath: string): Section
     const sentences = splitSentences(section.text, ABBREVIATIONS_PATTERN);
     const sentenceCount = sentences.length;
     const wordCounts = sentences.map((s) => s.text.split(/\s+/).filter(Boolean).length);
-    const { mean } = stats(wordCounts);
+    const { mean, stddev } = stats(wordCounts);
     const { dialogueRatio } = computeDialogueRatio(section.text);
-    const { readingEase } = fleschKincaid(section.text);
+    const readability = computeSectionReadability(section.text, stddev, dialogueRatio);
     const flags = pacingAnalysis(section.text, lineTable, filePath);
 
     return {
@@ -201,7 +233,13 @@ function computeSectionMetrics(section: SectionRange, filePath: string): Section
         sentenceCount,
         avgSentenceLength: Math.round(mean * 10) / 10,
         dialogueRatio: Math.round(dialogueRatio * 100) / 100,
-        fleschReadingEase: readingEase,
+        fleschReadingEase: readability.fleschReadingEase,
+        daleChallRawScore: readability.daleChallRawScore,
+        daleChallGradeLevel: readability.daleChallGradeLevel,
+        reweightedFleschReadingEase: readability.reweightedFleschReadingEase,
+        reweightedFleschGradeLevel: readability.reweightedFleschGradeLevel,
+        customCompositeScore: readability.customCompositeScore,
+        ariScore: readability.ariScore,
         pacingFlags: flags
     };
 }
@@ -321,6 +359,7 @@ export function chapterMetrics(chapter: ChapterRange): ChapterMetrics {
     const { mean, stddev } = stats(wordCounts);
     const { dialogueRatio } = computeDialogueRatio(chapter.text);
     const { readingEase, gradeLevel } = fleschKincaid(chapter.text);
+    const readability = computeSectionReadability(chapter.text, stddev, dialogueRatio);
     const flags = pacingAnalysis(chapter.text, lineTable, chapter.filePath);
 
     return {
@@ -337,6 +376,12 @@ export function chapterMetrics(chapter: ChapterRange): ChapterMetrics {
         narrationRatio: Math.round((1 - dialogueRatio) * 100) / 100,
         fleschReadingEase: readingEase,
         fleschKincaidGrade: gradeLevel,
+        daleChallRawScore: readability.daleChallRawScore,
+        daleChallGradeLevel: readability.daleChallGradeLevel,
+        reweightedFleschReadingEase: readability.reweightedFleschReadingEase,
+        reweightedFleschGradeLevel: readability.reweightedFleschGradeLevel,
+        customCompositeScore: readability.customCompositeScore,
+        ariScore: readability.ariScore,
         pacingFlags: flags,
         sections: chapter.sections.map((s) => computeSectionMetrics(s, chapter.filePath))
     };
@@ -453,6 +498,12 @@ export function manuscriptMetrics(
     let weightedDialogue = 0;
     let weightedReadingEase = 0;
     let weightedGrade = 0;
+    let weightedDaleChall = 0;
+    let weightedDaleChallGrade = 0;
+    let weightedReweightedRE = 0;
+    let weightedReweightedGrade = 0;
+    let weightedComposite = 0;
+    let weightedAri = 0;
     const allWordCounts: number[] = [];
     const allFlags: PacingFlag[] = [];
 
@@ -463,6 +514,12 @@ export function manuscriptMetrics(
         weightedDialogue += cm.dialogueRatio * cm.wordCount;
         weightedReadingEase += cm.fleschReadingEase * cm.wordCount;
         weightedGrade += cm.fleschKincaidGrade * cm.wordCount;
+        weightedDaleChall += cm.daleChallRawScore * cm.wordCount;
+        weightedDaleChallGrade += cm.daleChallGradeLevel * cm.wordCount;
+        weightedReweightedRE += cm.reweightedFleschReadingEase * cm.wordCount;
+        weightedReweightedGrade += cm.reweightedFleschGradeLevel * cm.wordCount;
+        weightedComposite += cm.customCompositeScore * cm.wordCount;
+        weightedAri += cm.ariScore * cm.wordCount;
         // Adjust flag lines from chapter-relative to file-absolute for navigation.
         for (const flag of cm.pacingFlags) {
             allFlags.push({
@@ -498,6 +555,12 @@ export function manuscriptMetrics(
         narrationRatio: totalWords > 0 ? Math.round((1 - weightedDialogue / totalWords) * 100) / 100 : 1,
         fleschReadingEase: totalWords > 0 ? Math.round((weightedReadingEase / totalWords) * 10) / 10 : 0,
         fleschKincaidGrade: totalWords > 0 ? Math.round((weightedGrade / totalWords) * 10) / 10 : 0,
+        daleChallRawScore: totalWords > 0 ? Math.round((weightedDaleChall / totalWords) * 10) / 10 : 0,
+        daleChallGradeLevel: totalWords > 0 ? Math.round((weightedDaleChallGrade / totalWords) * 10) / 10 : 0,
+        reweightedFleschReadingEase: totalWords > 0 ? Math.round((weightedReweightedRE / totalWords) * 10) / 10 : 0,
+        reweightedFleschGradeLevel: totalWords > 0 ? Math.round((weightedReweightedGrade / totalWords) * 10) / 10 : 0,
+        customCompositeScore: totalWords > 0 ? Math.round((weightedComposite / totalWords) * 10) / 10 : 0,
+        ariScore: totalWords > 0 ? Math.round((weightedAri / totalWords) * 10) / 10 : 0,
         chapters: chapterMetricsList,
         characters,
         reclassified,

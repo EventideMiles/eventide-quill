@@ -6,6 +6,7 @@ export type {
     ManuscriptMetrics,
     ManuscriptSnapshot,
     PacingFlag,
+    ReadabilityFormula,
     ReclassifiedEntity,
     SectionMetrics,
     SectionRange
@@ -20,6 +21,7 @@ export {
     manuscriptMetrics,
     pacingAnalysis
 } from './metrics';
+export { daleChall, reweightedFlesch, customComposite, automatedReadabilityIndex } from './readability';
 export {
     loadManuscriptFile,
     saveManuscriptFile,

@@ -57,6 +57,14 @@
         margin-bottom: $space-md;
     }
 
+    &__readability-info {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        cursor: help;
+        user-select: none;
+        line-height: 1;
+    }
+
     &__fix-all-btn {
         font-size: var(--font-ui-smaller);
         padding: $space-xs $space-sm;
