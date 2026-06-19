@@ -104,6 +104,27 @@ export interface AnalysisOptions {
     existingMessages?: ChatMessage[];
 }
 
+/**
+ * Build a Markdown code fence long enough to safely wrap `text` without being
+ * closed prematurely by any backtick run inside it. Returns a run of backticks
+ * whose length is `max(3, longestRun + 1)`, satisfying CommonMark's rule that
+ * the closing fence be at least as long as the opening fence and longer than
+ * any backtick sequence in the fenced content.
+ */
+function buildCodeFence(text: string): string {
+    let longestRun = 0;
+    let currentRun = 0;
+    for (const ch of text) {
+        if (ch === '`') {
+            currentRun++;
+            if (currentRun > longestRun) longestRun = currentRun;
+        } else {
+            currentRun = 0;
+        }
+    }
+    return '`'.repeat(Math.max(3, longestRun + 1));
+}
+
 /** Build the user instruction for an analysis request. */
 function buildAnalysisUserMessage(options: AnalysisOptions): string {
     const scopeLabel = options.scope;
@@ -115,12 +136,13 @@ function buildAnalysisUserMessage(options: AnalysisOptions): string {
               : '';
     const fileLabel = options.fileName ? ` of "${options.fileName}"` : '';
 
+    const fence = buildCodeFence(options.text);
     const parts = [
         `Analyze the following ${scopeLabel}${fileLabel}.${lineRange} Report findings using absolute line numbers from the manuscript, not offsets into the excerpt.`,
         '',
-        '```',
+        fence,
         options.text,
-        '```'
+        fence
     ];
     if (options.customInstruction) {
         parts.push('', 'Additional instructions from the writer:', options.customInstruction);

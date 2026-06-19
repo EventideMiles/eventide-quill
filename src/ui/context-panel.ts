@@ -267,7 +267,7 @@ function renderTokenBudget(container: HTMLElement, assembly: ContextAssembly): v
     const section = container.createEl('div', { cls: 'quill-context-panel__budget' });
     const used = assembly.totalTokens;
     const budget = assembly.tokenBudget;
-    const pct = Math.round((used / budget) * 100);
+    const pct = budget > 0 ? Math.round((used / budget) * 100) : 0;
 
     section.createEl('div', {
         text: `Token budget: ${used.toLocaleString()} / ${budget.toLocaleString()} (${pct}%)`

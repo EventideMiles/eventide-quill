@@ -647,7 +647,10 @@ export class ReviewPanel extends AbstractChatPanel {
         if (this.engine === 'editorial') {
             // Editorial requires a manuscript. Persona buttons call triggerEditorial
             // directly; the Generate button is only for custom instructions.
-            if (!this.customInstruction.trim()) return;
+            if (!this.customInstruction.trim()) {
+                new Notice('Quill: Enter a custom instruction to generate editorial feedback.');
+                return;
+            }
             this.triggerEditorial('custom');
         } else {
             this.triggerCritical();

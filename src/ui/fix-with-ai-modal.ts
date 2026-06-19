@@ -235,6 +235,15 @@ export class FixWithAiModal extends Modal {
             text: 'Back to default'
         });
         backBtn.addEventListener('click', () => {
+            // If the modal opened in custom-input mode, no default suggestion
+            // was ever fetched. Fetch one now rather than rendering an empty
+            // diff view with no actionable suggestion.
+            if (this.suggestionBackup === null) {
+                this.viewState = 'loading';
+                this.render();
+                void this.fetchSuggestion();
+                return;
+            }
             this.viewState = 'default-result';
             this.suggestion = this.suggestionBackup;
             this.render();
