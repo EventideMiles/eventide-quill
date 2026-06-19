@@ -328,9 +328,11 @@ function extractFromDialogue(
     const lineMap = buildLineOffsetTable(text);
 
     // Pattern 1: "quote", Name said
-    const p1 = new RegExp('"[^"]*"\\s*,?\\s*' + NAME_GROUP_SRC + '\\s+(?:' + DIALOGUE_VERBS + ')\\b', 'gi');
+    // No 'i' flag — [A-Z][a-z]+ must match proper nouns only (case-sensitive).
+    // Dialogue verbs are always lowercase in English prose.
+    const p1 = new RegExp('"[^"]*"\\s*,?\\s*' + NAME_GROUP_SRC + '\\s+(?:' + DIALOGUE_VERBS + ')\\b', 'g');
     // Pattern 2: Name said, "quote"
-    const p2 = new RegExp('\\b' + NAME_GROUP_SRC + '\\s+(?:' + DIALOGUE_VERBS + ')\\s*,?\\s*"[^"]*"', 'gi');
+    const p2 = new RegExp('\\b' + NAME_GROUP_SRC + '\\s+(?:' + DIALOGUE_VERBS + ')\\s*,?\\s*"[^"]*"', 'g');
 
     for (const pattern of [p1, p2]) {
         let m: RegExpExecArray | null;
@@ -382,7 +384,7 @@ function extractFromMidSentence(
             if (!word) continue;
             // Filter stoplist, titles, and suffixes — these should never be
             // standalone character candidates.
-            if (NAME_STOPLIST.has(word)) continue;
+            if (isStoplisted(word)) continue;
             if (TITLES.has(word)) continue;
             if (SUFFIXES.has(word)) continue;
             if (excludeNames?.has(word)) continue;
@@ -403,10 +405,19 @@ function extractFromMidSentence(
     return filtered;
 }
 
+/** Check whether a word is in the stoplist, case-insensitively. Defense-in-depth
+ *  against regex flags that might capture lowercase variants of filtered words. */
+function isStoplisted(word: string): boolean {
+    if (NAME_STOPLIST.has(word)) return true;
+    // Check title-cased version: "he" → "He".
+    const titleCased = word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    return NAME_STOPLIST.has(titleCased);
+}
+
 /** Return true if the first meaningful word of `name` is in the stoplist or is a standalone title. */
 function isStoplistName(name: string): boolean {
     const firstWord = name.split(/[.\s]/)[0];
-    return !firstWord || NAME_STOPLIST.has(firstWord);
+    return !firstWord || isStoplisted(firstWord);
 }
 
 // ── Alias resolution ─────────────────────────────────────────────────────────
@@ -560,8 +571,9 @@ export function extractLocations(text: string, characterNames: Set<string>): Ext
     const candidates = new Map<string, { count: number; lines: Set<number> }>();
 
     // Pass 1: preposition + "the" + capitalized word(s).
+    // No 'i' flag — [A-Z][a-z]+ must match proper nouns only.
     const prepRe =
-        /\b(?:to|into|across|through|toward|from|at|in|near|by|beyond|along|around|past|behind|before|above|below|beneath|under|over|inside|outside|onto|within|upon)\s+the\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\b/gi;
+        /\b(?:to|into|across|through|toward|from|at|in|near|by|beyond|along|around|past|behind|before|above|below|beneath|under|over|inside|outside|onto|within|upon)\s+the\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\b/g;
     let m: RegExpExecArray | null;
 
     while ((m = prepRe.exec(text)) !== null) {
@@ -576,7 +588,7 @@ export function extractLocations(text: string, characterNames: Set<string>): Ext
     while ((m = theRe.exec(text)) !== null) {
         const word = m[1]?.trim();
         if (!word) continue;
-        if (characterNames.has(word) || NAME_STOPLIST.has(word)) continue;
+        if (characterNames.has(word) || isStoplisted(word)) continue;
         addCandidate(candidates, lineMap, word, m.index);
     }
 
