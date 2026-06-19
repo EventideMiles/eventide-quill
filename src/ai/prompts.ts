@@ -1,5 +1,7 @@
 import { type AiMode } from './modes';
 import { type FeedbackPersona } from './feedback';
+import type { AnalysisMode } from './analysis';
+import type { ExtractedEntity, VoiceMarker } from '../core/context-engine/types';
 import { type LintResult, RULE_INFO } from '../core/linter/types';
 import { type NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS, type VoiceProfile } from '../types';
 
@@ -149,6 +151,13 @@ export function getSystemPrompt(
             return getNarrativeSystemPrompt(options?.vaultContext ?? '', options?.narrativePreset ?? 'third-limited');
         case 'analysis':
             return getAnalysisSystemPrompt(options?.persona, options?.vaultContext);
+        case 'critical':
+            // The shared critical-analysis base. Mode-specific focus (plot logic,
+            // character consistency, continuity, voice drift) is layered on top by
+            // getAnalysisModePrompt(); this base alone reads as the "no specific focus"
+            // critical review. Useful for callers that want the critical voice without
+            // pinning a sub-mode.
+            return getAnalysisBasePrompt().join('\n');
         case 'linter':
             return getLinterSystemPrompt();
     }
@@ -565,4 +574,150 @@ export function getLinterUserPrompt(
     }
 
     return parts.join('\n');
+}
+
+/**
+ * Build a critical-analysis system prompt for the given mode.
+ * Each mode focuses on a specific kind of internal-consistency check.
+ * Mode-specific deterministic signal (voice marker, characters, plot threads)
+ * is injected so the AI can ground its analysis.
+ */
+export function getAnalysisModePrompt(
+    mode: AnalysisMode,
+    options?: {
+        voiceMarker?: VoiceMarker;
+        characters?: ExtractedEntity[];
+        plotThreads?: string[];
+        vaultContext?: string;
+    }
+): string {
+    switch (mode) {
+        case 'plot-logic':
+            return getPlotLogicPrompt(options?.vaultContext);
+        case 'character-consistency':
+            return getCharacterConsistencyPrompt(options?.characters, options?.vaultContext);
+        case 'continuity':
+            return getContinuityScanPrompt(options?.plotThreads, options?.vaultContext);
+        case 'voice-drift':
+            return getVoiceDriftPrompt(options?.voiceMarker, options?.vaultContext);
+    }
+}
+
+/** Shared base for all critical-analysis modes. Returned as a line array for extension. */
+function getAnalysisBasePrompt(): string[] {
+    return [
+        'You are a critical reader analyzing a work of fiction for internal consistency. You are a companion to the writer: flagging potential issues for the writer to review. You are not rewriting the prose.',
+        '',
+        'Your report must:',
+        '- Ground every finding in a specific absolute line number from the manuscript. The line numbers must match the manuscript, not be relative to any excerpt.',
+        '- Quote the offending phrase verbatim.',
+        '- Explain the issue in one or two sentences.',
+        '- Not propose rewrites. The writer decides whether and how to address each finding.',
+        '',
+        'Output format:',
+        '- Markdown bullet list, one bullet per finding.',
+        '- Start each bullet with the line number as "L{n}", then the quoted phrase, then your explanation.',
+        '- If you find no issues, say so explicitly. Do not invent problems to fill space.',
+        '- End with a one-paragraph overall assessment.'
+    ];
+}
+
+/** Format an ExtractedEntity list as a character inventory for the prompt. */
+function formatCharacterEntries(characters: ExtractedEntity[]): string {
+    return characters
+        .map((c) => {
+            const aliasStr = c.aliases.length > 0 ? ` (also: ${c.aliases.map((a) => `"${a}"`).join(', ')})` : '';
+            const linesPreview = c.lines
+                .slice(0, 5)
+                .map((n) => `L${n}`)
+                .join(', ');
+            const lineStr =
+                c.lines.length > 0
+                    ? `: appears at ${linesPreview}${c.lines.length > 5 ? `, +${c.lines.length - 5} more` : ''} (${c.occurrences} total)`
+                    : ` (${c.occurrences} total)`;
+            return `- ${c.name}${aliasStr}${lineStr}`;
+        })
+        .join('\n');
+}
+
+/** Append vault context to a prompt's part list, if present. */
+function withVaultContext(parts: string[], vaultContext?: string): string {
+    if (vaultContext) {
+        parts.push(
+            '',
+            '---',
+            'Reference material from the vault (other chapters, outlines, timelines, character notes):',
+            vaultContext
+        );
+    }
+    return parts.join('\n');
+}
+
+function getPlotLogicPrompt(vaultContext?: string): string {
+    const parts = [
+        ...getAnalysisBasePrompt(),
+        '',
+        'Focus on plot logic:',
+        '- Contradictions: facts stated one way and then another.',
+        '- Impossible timelines: events that cannot fit the established chronology.',
+        '- Broken causal chains: effects without established causes, or causes that produce no effect.',
+        '- Logical gaps: characters suddenly knowing things they have no way of knowing yet.'
+    ];
+    return withVaultContext(parts, vaultContext);
+}
+
+function getCharacterConsistencyPrompt(characters?: ExtractedEntity[], vaultContext?: string): string {
+    const parts = [
+        ...getAnalysisBasePrompt(),
+        '',
+        'Focus on character consistency:',
+        "- Whether each character's actions, dialogue, and emotional reactions are consistent with their established behavior elsewhere in the manuscript.",
+        '- Deviations from established behavior. Flag them, but do not assume they are mistakes. The writer may have intended the shift.',
+        '- Characters acting on information they have no way of knowing yet.',
+        '- Characters failing to react to things they should notice given their established traits.'
+    ];
+    if (characters && characters.length > 0) {
+        parts.push('', 'Established characters in this manuscript:', formatCharacterEntries(characters));
+    }
+    return withVaultContext(parts, vaultContext);
+}
+
+function getContinuityScanPrompt(plotThreads?: string[], vaultContext?: string): string {
+    const parts = [
+        ...getAnalysisBasePrompt(),
+        '',
+        'Focus on continuity:',
+        '- Dropped threads: setup that is never paid off.',
+        '- Unresolved setup: a question raised in the text that is left hanging.',
+        '- Undefined references: characters, locations, or objects mentioned as if already introduced, but never actually introduced.',
+        "- Continuity errors with the manuscript's established facts."
+    ];
+    if (plotThreads && plotThreads.length > 0) {
+        parts.push('', 'Known plot threads in this manuscript:', plotThreads.map((p) => `- ${p}`).join('\n'));
+    }
+    return withVaultContext(parts, vaultContext);
+}
+
+function getVoiceDriftPrompt(voiceMarker?: VoiceMarker, vaultContext?: string): string {
+    const parts = [
+        ...getAnalysisBasePrompt(),
+        '',
+        'Focus on voice drift:',
+        '- POV slips: the narrative leaves the established viewpoint character.',
+        '- Tense shifts: the narrative switches between past and present without clear intent.',
+        "- Sentence rhythm divergence: the passage's average sentence length diverges by more than 30% from the baseline.",
+        "- Dialogue/description ratio swings: the passage's ratio diverges sharply from the baseline."
+    ];
+    if (voiceMarker) {
+        parts.push(
+            '',
+            'Established manuscript voice baseline:',
+            `- POV: ${voiceMarker.pov}`,
+            `- Tense: ${voiceMarker.tense}`,
+            `- Average sentence length: ${voiceMarker.avgSentenceLength} words`,
+            `- Dialogue ratio: ${voiceMarker.dialogueRatio}`,
+            `- Description ratio: ${voiceMarker.descriptionRatio}`
+        );
+    }
+    return withVaultContext(parts, vaultContext);
 }

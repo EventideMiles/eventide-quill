@@ -1,0 +1,403 @@
+// Linter panel, in-editor tooltip, details view, and Fix-with-AI modal.
+//
+// Blocks:
+//   quill-linter         — the linter panel (results list + details containers, items, badges).
+//   quill-linter-tooltip — the hover tooltip over a flagged span (CodeMirror tooltip).
+//   quill-linter-details — the details view shown when a writer clicks a lint result.
+//   quill-fix-ai         — the "Fix with AI" modal (separate block; modal chrome, not panel chrome).
+//
+// Used by: decorations.ts (tooltip + mark), quill-sidebar.ts (panel + details view),
+//          fix-with-ai-modal.ts (modal).
+
+@use 'base' as *;
+
+// ============================================================================
+// Block: quill-linter (the panel — containers, list, items, badges)
+// ============================================================================
+.quill-linter {
+    &__list {
+        display: flex;
+        flex-direction: column;
+        gap: $space-xs;
+    }
+
+    &__item {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: $space-sm;
+        padding: $space-md;
+        border-radius: $radius-sm;
+        border-bottom: 1px solid var(--background-modifier-border);
+        cursor: pointer;
+        transition: background $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+        }
+
+        &--info {
+            border-left: 3px solid var(--color-blue);
+
+            .quill-linter__badge {
+                background: var(--color-blue);
+                color: var(--text-on-accent);
+            }
+        }
+
+        &--warning {
+            border-left: 3px solid var(--color-orange);
+
+            .quill-linter__badge {
+                background: var(--color-orange);
+                color: var(--text-on-accent);
+            }
+        }
+
+        &--error {
+            border-left: 3px solid var(--color-red);
+
+            .quill-linter__badge {
+                background: var(--color-red);
+                color: var(--text-on-accent);
+            }
+        }
+    }
+
+    &__rule-name {
+        font-weight: 500;
+    }
+
+    &__message {
+        flex: 1 1 100%;
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        line-height: var(--line-height-normal);
+    }
+
+    &__location {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-faint);
+        margin-left: auto;
+    }
+
+    &__badge {
+        font-size: var(--font-ui-smaller);
+        padding: 1px $space-sm;
+        border-radius: 3px;
+        text-transform: uppercase;
+        font-weight: 600;
+    }
+
+    &__header {
+        font-size: var(--font-ui-small);
+        font-weight: 600;
+        padding: $space-md;
+        margin-bottom: $space-xs;
+    }
+
+    &__empty {
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        text-align: center;
+        padding: $space-xxl $space-md;
+    }
+}
+
+/* Linter results container */
+.quill-linter__results {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+/* Linter details container */
+.quill-linter__details {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+// ============================================================================
+// Block: quill-linter-tooltip (the hover tooltip over a flagged span)
+// ============================================================================
+.quill-linter-tooltip {
+    padding: $space-sm 10px;
+    font-size: var(--font-ui-small);
+    line-height: var(--line-height-normal);
+    max-width: min(320px, calc(100vw - 32px));
+    border-radius: $radius-sm;
+    overflow-wrap: break-word;
+    display: flex;
+    flex-direction: column;
+    gap: $space-sm;
+
+    &__msg {
+        margin-bottom: 0;
+    }
+
+    &__btns {
+        display: flex;
+        flex-wrap: wrap;
+        gap: $space-sm;
+        align-items: center;
+    }
+
+    &__fix-btn,
+    &__ai-fix-btn,
+    &__dismiss-btn {
+        cursor: pointer;
+        border: none;
+        border-radius: $radius-sm;
+        padding: 3px 10px;
+        font-size: var(--font-ui-smaller);
+        font-family: var(--font-interface);
+    }
+
+    &__fix-btn:hover,
+    &__ai-fix-btn:hover {
+        filter: brightness(1.15);
+    }
+}
+
+// ============================================================================
+// Block: quill-linter-details (the details view shown when clicking a result)
+// ============================================================================
+.quill-linter-details {
+    &__header {
+        display: flex;
+        align-items: center;
+        gap: $space-md;
+        margin-bottom: $space-lg;
+    }
+
+    &__back {
+        cursor: pointer;
+        border: none;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: var(--font-ui-small);
+        font-family: var(--font-interface);
+        padding: 2px $space-sm;
+        border-radius: $radius-sm;
+
+        &:hover {
+            color: var(--text-normal);
+            background: var(--background-modifier-hover);
+        }
+    }
+
+    &__rule-name {
+        font-weight: 600;
+        font-size: var(--font-ui-medium);
+        flex: 1;
+    }
+
+    &__description {
+        font-size: var(--font-ui-small);
+        color: var(--text-normal);
+        margin-bottom: $space-lg;
+        line-height: var(--line-height-normal);
+    }
+
+    &__label {
+        font-size: var(--font-ui-small);
+        font-weight: 600;
+        color: var(--text-muted);
+        margin-bottom: $space-xs;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    &__example {
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        margin-bottom: $space-lg;
+        font-style: italic;
+        line-height: var(--line-height-normal);
+    }
+
+    &__location {
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        margin-bottom: $space-xs;
+    }
+
+    &__message {
+        font-size: var(--font-ui-small);
+        color: var(--text-normal);
+        padding: $space-md;
+        background: var(--background-primary-alt);
+        border-radius: $radius-sm;
+        line-height: var(--line-height-normal);
+    }
+
+    &__empty {
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        text-align: center;
+        padding: $space-xxl $space-md;
+    }
+
+    &__fix-btn {
+        cursor: pointer;
+        border: none;
+        border-radius: $radius-sm;
+        padding: $space-sm 14px;
+        font-size: var(--font-ui-small);
+        font-family: var(--font-interface);
+        background: var(--interactive-accent);
+        color: var(--text-on-accent);
+        margin-right: $space-xs;
+        margin-bottom: $space-md;
+        transition: filter $transition-fast;
+        display: inline-block;
+
+        &:hover {
+            filter: brightness(1.15);
+        }
+    }
+
+    &__dismiss-btn {
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-sm 14px;
+        font-size: var(--font-ui-small);
+        font-family: var(--font-interface);
+        background: transparent;
+        color: var(--text-muted);
+        margin-bottom: $space-lg;
+        transition: filter $transition-fast, background $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+    }
+
+    &__context {
+        font-family: var(--font-monospace);
+        font-size: var(--font-ui-small);
+        padding: $space-md;
+        background: var(--background-primary-alt);
+        border-radius: $radius-sm;
+        margin-bottom: $space-lg;
+        line-height: var(--line-height-normal);
+        word-break: break-all;
+    }
+
+    &__context-line {
+        font-family: var(--font-monospace);
+        font-size: var(--font-ui-small);
+        overflow-wrap: break-word;
+    }
+
+    &__context-linenum {
+        color: var(--text-faint);
+        margin-right: $space-xs;
+        user-select: none;
+    }
+
+    &__context-text {
+        overflow-wrap: break-word;
+    }
+
+    &__context-before,
+    &__context-after {
+        overflow-wrap: break-word;
+    }
+
+    &__context-highlight {
+        background: var(--text-highlight-bg);
+        color: var(--text-normal);
+        border-radius: 2px;
+        padding: 0 1px;
+        overflow-wrap: break-word;
+    }
+}
+
+/* Fix with AI modal */
+// ============================================================================
+// Block: quill-fix-ai (the modal)
+// ============================================================================
+.quill-fix-ai {
+    &__label {
+        font-size: var(--font-ui-small);
+        font-weight: 600;
+        color: var(--text-muted);
+        margin: $space-lg 0 $space-xs;
+
+        &:first-child {
+            margin-top: 0;
+        }
+    }
+
+    &__block {
+        font-family: var(--font-monospace);
+        font-size: var(--font-ui-small);
+        padding: $space-md;
+        border-radius: $radius-sm;
+        margin-bottom: $space-md;
+        line-height: var(--line-height-normal);
+        overflow-wrap: break-word;
+    }
+
+    &__removed {
+        background: rgba(var(--color-red-rgb), 0.1);
+        border-left: 3px solid var(--color-red);
+    }
+
+    &__inserted {
+        background: rgba(var(--color-green-rgb), 0.1);
+        border-left: 3px solid var(--color-green);
+    }
+
+    &__context {
+        background: var(--background-primary-alt);
+        border-left: 3px solid var(--background-modifier-border);
+    }
+
+    &__highlight-removed {
+        background: rgba(var(--color-red-rgb), 0.25);
+        color: var(--text-normal);
+        border-radius: 2px;
+        padding: 0 2px;
+        text-decoration: line-through;
+    }
+
+    &__highlight-added {
+        background: rgba(var(--color-green-rgb), 0.25);
+        color: var(--text-normal);
+        border-radius: 2px;
+        padding: 0 2px;
+    }
+
+    &__actions {
+        display: flex;
+        gap: $space-md;
+        justify-content: flex-end;
+        margin-top: $space-xl;
+    }
+
+    &__loading {
+        text-align: center;
+        padding: $space-xxl;
+        color: var(--text-muted);
+    }
+
+    &__rule-desc {
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        margin-bottom: $space-md;
+    }
+
+    &__textarea {
+        width: 100%;
+        min-height: 60px;
+        margin-bottom: $space-md;
+        font-family: var(--font-interface);
+        font-size: var(--font-ui-small);
+        resize: vertical;
+    }
+}

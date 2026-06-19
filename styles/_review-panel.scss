@@ -1,0 +1,433 @@
+/* Deprecated: Add entity modal styles removed */
+
+/* Feedback panel styles */
+@use 'base' as *;
+
+.quill-review-panel {
+    /* Legacy context section (currently unused; kept for future revival) */
+    &__context {
+        border-bottom: 1px solid var(--background-modifier-border);
+        padding-bottom: $space-md;
+        margin-bottom: $space-lg;
+    }
+
+    &__context-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: $space-sm;
+    }
+
+    &__context-label {
+        font-size: var(--font-ui-small);
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    &__context-empty {
+        font-size: var(--font-ui-small);
+        color: var(--text-faint);
+        margin: $space-xs 0;
+    }
+
+    &__context-list {
+        margin-bottom: $space-sm;
+    }
+
+    &__context-item {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        padding: $space-xs $space-sm;
+        border-radius: $radius-sm;
+        font-size: var(--font-ui-small);
+        background: var(--background-primary-alt);
+        margin-bottom: $space-xs;
+    }
+
+    &__context-item-name {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: var(--font-ui-small);
+    }
+
+    &__context-remove-btn {
+        cursor: pointer;
+        border: none;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: var(--font-ui-medium);
+        padding: 0 $space-xs;
+        line-height: 1;
+        border-radius: 3px;
+        flex-shrink: 0;
+
+        &:hover {
+            color: var(--text-normal);
+            background: var(--background-modifier-hover);
+        }
+    }
+
+    &__context-add-btn {
+        cursor: pointer;
+        border: 1px dashed var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-xs 10px;
+        font-size: var(--font-ui-small);
+        font-family: var(--font-interface);
+        background: transparent;
+        color: var(--text-muted);
+        width: 100%;
+        text-align: center;
+        transition: color $transition-base, border-color $transition-base;
+
+        &:hover {
+            color: var(--text-normal);
+            border-color: var(--text-muted);
+        }
+    }
+
+    &__content {
+        flex: 1;
+        overflow-y: auto;
+    }
+
+    &__header {
+        display: flex;
+        align-items: center;
+        gap: $space-md;
+        margin-bottom: $space-lg;
+        font-size: var(--font-ui-small);
+    }
+
+    &__persona {
+        font-weight: 600;
+        color: var(--text-normal);
+    }
+
+    &__status {
+        color: var(--text-muted);
+        font-style: italic;
+
+        &--done {
+            color: var(--color-green);
+            font-style: normal;
+        }
+    }
+
+    &__report {
+        font-size: var(--font-ui-small);
+        line-height: var(--line-height-normal);
+        color: var(--text-normal);
+        padding: $space-md;
+        background: var(--background-primary-alt);
+        border-radius: $radius-sm;
+        margin-bottom: $space-lg;
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+    }
+
+    &__empty-text {
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        text-align: center;
+        padding: $space-xl $space-md;
+    }
+
+    &__commands {
+        list-style: none;
+        padding: 0;
+        margin: $space-md 0;
+
+        li {
+            font-size: var(--font-ui-smaller);
+            color: var(--text-faint);
+            padding: $space-xs $space-md;
+            text-align: center;
+        }
+    }
+
+    &__clear-btn {
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-sm 14px;
+        font-size: var(--font-ui-small);
+        font-family: var(--font-interface);
+        background: transparent;
+        color: var(--text-muted);
+        transition: filter $transition-fast, background $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+    }
+
+    &__error-title {
+        font-weight: 600;
+        color: var(--color-red);
+        margin-bottom: $space-xs;
+    }
+
+    &__error-message {
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        margin-bottom: $space-lg;
+    }
+
+    /* Suggestion card text styles (used inside suggestion cards in this panel) */
+    &__suggestion-title {
+        font-weight: 500;
+    }
+
+    &__suggestion-desc {
+        color: var(--text-muted);
+    }
+
+    &__source-info {
+        display: flex;
+        align-items: center;
+        gap: $space-md;
+        padding: $space-sm $space-md;
+        background: var(--background-primary-alt);
+        border-radius: $radius-sm;
+        margin-bottom: $space-sm;
+        font-size: var(--font-ui-small);
+    }
+
+    &__source-label {
+        font-weight: 600;
+        color: var(--text-normal);
+    }
+
+    &__source-words {
+        color: var(--text-muted);
+        margin-left: auto;
+        white-space: nowrap;
+    }
+
+    &__budget {
+        font-size: var(--font-ui-small);
+        margin-bottom: $space-md;
+    }
+
+    &__budget-text {
+        color: var(--text-muted);
+        display: block;
+        margin-bottom: $space-xs;
+    }
+
+    &__budget-bar {
+        height: 4px;
+        background: var(--background-modifier-border);
+        border-radius: 2px;
+        overflow: hidden;
+        margin-bottom: $space-xs;
+    }
+
+    &__budget-fill {
+        height: 100%;
+        background: var(--interactive-accent);
+        border-radius: 2px;
+        transition: width 0.2s;
+
+        &--over {
+            background: var(--color-red);
+        }
+    }
+
+    &__budget-warn {
+        color: var(--color-red);
+        font-size: var(--font-ui-smaller);
+        display: block;
+    }
+
+    &__file-list {
+        margin-bottom: $space-md;
+    }
+
+    &__file-item {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        padding: $space-xs $space-sm;
+        background: var(--background-primary-alt);
+        border-radius: $radius-sm;
+        margin-bottom: $space-xs;
+        font-size: var(--font-ui-small);
+    }
+
+    &__file-name {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-weight: 500;
+    }
+
+    &__file-tokens {
+        color: var(--text-faint);
+        white-space: nowrap;
+    }
+
+    &__file-remove {
+        cursor: pointer;
+        border: none;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: var(--font-ui-medium);
+        padding: 0 $space-xs;
+        line-height: 1;
+        border-radius: 3px;
+        flex-shrink: 0;
+
+        &:hover {
+            color: var(--text-normal);
+            background: var(--background-modifier-hover);
+        }
+    }
+
+    &__file-add {
+        cursor: pointer;
+        border: 1px dashed var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-xs 10px;
+        font-size: var(--font-ui-small);
+        font-family: var(--font-interface);
+        background: transparent;
+        color: var(--text-muted);
+        width: 100%;
+        text-align: center;
+        transition: color $transition-base, border-color $transition-base;
+
+        &:hover {
+            color: var(--text-normal);
+            border-color: var(--text-muted);
+        }
+    }
+
+    /* Feedback panel Results tab */
+
+    &__report-rendered {
+        font-size: var(--font-ui-small);
+        line-height: var(--line-height-normal);
+        color: var(--text-normal);
+        padding: $space-md;
+        background: var(--background-primary-alt);
+        border-radius: $radius-sm;
+        margin-bottom: $space-lg;
+        overflow-wrap: break-word;
+
+        p {
+            margin: 0 0 0.25em 0;
+
+            &:last-child {
+                margin-bottom: 0;
+            }
+        }
+
+        br {
+            display: none;
+        }
+
+        ul,
+        ol {
+            padding-left: 20px;
+            margin: 0.25em 0;
+        }
+
+        li {
+            margin: 0.1em 0;
+        }
+
+        h1,
+        h2,
+        h3,
+        h4 {
+            margin: 0.4em 0 0.1em;
+            color: var(--text-normal);
+        }
+
+        strong {
+            color: var(--text-normal);
+        }
+
+        em {
+            color: var(--text-muted);
+        }
+    }
+
+    &__controls {
+        display: flex;
+        gap: $space-md;
+    }
+
+    &__nav-btn {
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-sm 14px;
+        font-size: var(--font-ui-small);
+        font-family: var(--font-interface);
+        background: transparent;
+        color: var(--text-muted);
+        transition: background $transition-fast, color $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+    }
+
+    &__error-text {
+        font-size: var(--font-ui-small);
+        color: var(--color-red);
+        padding: $space-md;
+        background: var(--background-primary-alt);
+        border-radius: $radius-sm;
+        margin-bottom: $space-lg;
+        line-height: var(--line-height-normal);
+    }
+
+    // --- Critical analysis engine: scope picker + scope tag ---
+
+    &__scope-row {
+        display: flex;
+        gap: $space-xs;
+        margin-bottom: $space-lg;
+    }
+
+    &__scope-btn {
+        flex: 1;
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-sm $space-md !important;
+        background: var(--background-normal);
+        color: var(--text-muted);
+        font-size: var(--font-ui-smaller);
+        transition: border-color $transition-base, color $transition-base;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+        }
+
+        &--active {
+            border-color: var(--interactive-accent);
+            color: var(--text-normal);
+        }
+    }
+
+    &__scope-tag {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        padding: 2px $space-sm;
+        border-radius: 3px;
+        background: var(--background-modifier-hover);
+    }
+}

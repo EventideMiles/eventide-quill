@@ -1,5 +1,5 @@
 /** The type of AI mode to use for a given interaction. */
-export type AiMode = 'narrative' | 'analysis' | 'linter';
+export type AiMode = 'narrative' | 'analysis' | 'critical' | 'linter';
 
 /** Configuration for an AI mode. */
 export interface AiModeConfig {
@@ -30,6 +30,14 @@ export const AI_MODE_CONFIGS: Record<AiMode, AiModeConfig> = {
             'Editor companion mode — analyzes character arcs, plot structure, pacing, and provides constructive feedback without generating prose.',
         defaultTemperature: 0.7,
         defaultMaxOutputTokens: 2048
+    },
+    critical: {
+        id: 'critical',
+        label: 'Critical',
+        description:
+            'Targeted consistency review — scans selections, scenes, or whole documents for plot-logic gaps, character deviations, continuity errors, and voice drift, citing absolute line numbers.',
+        defaultTemperature: 0.5,
+        defaultMaxOutputTokens: 1536
     },
     linter: {
         id: 'linter',

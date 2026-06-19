@@ -80,6 +80,10 @@ export interface FeedbackOptions {
     narrativePreset?: NarrativeVoicePreset;
     /** Override the default analysis model. */
     model?: string;
+    /** Sampling temperature. Falls back to the analysis mode default when omitted. */
+    temperature?: number;
+    /** Maximum output tokens. Falls back to the analysis mode default when omitted. */
+    maxTokens?: number;
     /** Abort signal to cancel the stream. */
     signal?: AbortSignal;
     /** Custom instruction from the writer, appended to the user message. */
@@ -139,8 +143,8 @@ export async function* getFeedback(
     const stream = provider.chatCompletion({
         messages,
         model: options?.model,
-        temperature: config.defaultTemperature,
-        maxTokens: config.defaultMaxOutputTokens,
+        temperature: options?.temperature ?? config.defaultTemperature,
+        maxTokens: options?.maxTokens ?? config.defaultMaxOutputTokens,
         signal: options?.signal
     });
 
@@ -158,15 +162,16 @@ export async function* continueChat(
     provider: AiProvider,
     messages: ChatMessage[],
     userMessage: string,
-    options?: { signal?: AbortSignal }
+    options?: { model?: string; temperature?: number; maxTokens?: number; signal?: AbortSignal }
 ): AsyncGenerator<ChatChunk> {
     const config = AI_MODE_CONFIGS.analysis;
     const updatedMessages: ChatMessage[] = [...messages, { role: 'user', content: userMessage }];
 
     const stream = provider.chatCompletion({
         messages: updatedMessages,
-        temperature: config.defaultTemperature,
-        maxTokens: config.defaultMaxOutputTokens,
+        model: options?.model,
+        temperature: options?.temperature ?? config.defaultTemperature,
+        maxTokens: options?.maxTokens ?? config.defaultMaxOutputTokens,
         signal: options?.signal
     });
 

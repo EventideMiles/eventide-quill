@@ -18,13 +18,13 @@ export function renderChangeBulkBar(
     if (pendingCount <= 0) return;
     const bulk = container.createEl('div', { cls: 'quill-change-bulk' });
     const approveAllBtn = bulk.createEl('button', {
-        cls: 'quill-change-bulk-btn mod-cta',
+        cls: 'quill-change-bulk__btn mod-cta',
         text: `Approve all (${pendingCount})`
     });
     events.registerDomEvent(approveAllBtn, 'click', () => handlers.onApproveAll?.());
     bulk.createEl('span', { text: ' ' });
     const rejectAllBtn = bulk.createEl('button', {
-        cls: 'quill-change-bulk-btn',
+        cls: 'quill-change-bulk__btn',
         text: 'Reject all'
     });
     events.registerDomEvent(rejectAllBtn, 'click', () => handlers.onRejectAll?.());
@@ -45,21 +45,21 @@ export function renderChangeCard(
     handlers: ChangeCardHandlers
 ): void {
     const card = container.createEl('div', {
-        cls: `quill-change-card quill-change-card-${edit.state}`
+        cls: `quill-change-card quill-change-card--${edit.state}`
     });
     if (edit.label) {
-        card.createEl('div', { cls: 'quill-change-card-label', text: edit.label });
+        card.createEl('div', { cls: 'quill-change-card__label', text: edit.label });
     }
 
     // Removed (red) — only when there is old text to show.
     if (oldText && oldText.length > 0) {
-        const removed = card.createEl('div', { cls: 'quill-change-card-removed' });
+        const removed = card.createEl('div', { cls: 'quill-change-card__removed' });
         removed.setText(oldText);
     }
 
     // Added (green)
     if (edit.newText.length > 0) {
-        const added = card.createEl('div', { cls: 'quill-change-card-added' });
+        const added = card.createEl('div', { cls: 'quill-change-card__added' });
         void MarkdownRenderer.render(app, normalizeParagraphBreaks(edit.newText), added, '', events);
     }
 
@@ -72,19 +72,19 @@ export function renderChangeCard(
                 ? 'Generating\u2026'
                 : '';
     if (statusText) {
-        card.createEl('div', { cls: 'quill-change-card-status', text: statusText });
+        card.createEl('div', { cls: 'quill-change-card__status', text: statusText });
     }
 
     if (edit.state === 'pending') {
-        const btns = card.createEl('div', { cls: 'quill-change-card-btns' });
+        const btns = card.createEl('div', { cls: 'quill-change-card__btns' });
         const approveBtn = btns.createEl('button', {
-            cls: 'quill-change-card-btn mod-cta',
+            cls: 'quill-change-card__btn mod-cta',
             text: 'Approve'
         });
         events.registerDomEvent(approveBtn, 'click', () => handlers.onApprove?.(edit.id));
         btns.createEl('span', { text: ' ' });
         const rejectBtn = btns.createEl('button', {
-            cls: 'quill-change-card-btn',
+            cls: 'quill-change-card__btn',
             text: 'Reject'
         });
         events.registerDomEvent(rejectBtn, 'click', () => handlers.onReject?.(edit.id));

@@ -1,0 +1,758 @@
+/* --- Co-writer panel --- */
+//
+// Block: quill-cowriter-panel. All elements belong to this block.
+// The block itself is implicit — the elements are scoped to the panel by the
+// parent sidebar tab. A couple of rules are emitted by  and
+// ReviewPanel too (the __send-btn base + __send-btn--stop modifier), which
+// is why those classes also appear in those TS files.
+
+@use 'base' as *;
+
+.quill-cowriter-panel {
+    /* Thought channel */
+    &__section {
+        flex-shrink: 0;
+        margin-bottom: $space-md;
+    }
+
+    &__thought-toggle {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        cursor: pointer;
+        padding: $space-xs 0;
+        user-select: none;
+
+        &:hover {
+            color: var(--text-normal);
+        }
+    }
+
+    &__thought-icon {
+        font-size: 10px;
+    }
+
+    &__thought-content {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        padding: $space-md;
+        background: var(--background-primary-alt);
+        border-radius: $radius-sm;
+        margin-top: $space-xs;
+        line-height: var(--line-height-normal);
+        white-space: pre-wrap;
+        max-height: 200px;
+        overflow-y: auto;
+        overflow-wrap: break-word;
+    }
+
+    /* Per-message thought toggle (inside chat bubbles) */
+    &__message-thought-toggle {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        cursor: pointer;
+        padding: 2px 0;
+        margin-bottom: $space-xs;
+        user-select: none;
+
+        &:hover {
+            color: var(--text-normal);
+        }
+    }
+
+    &__message-thought-content {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        padding: $space-sm $space-md;
+        background: var(--background-primary-alt);
+        border-radius: $radius-sm;
+        margin-bottom: $space-md;
+        line-height: var(--line-height-normal);
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+        max-height: 300px;
+        overflow-y: auto;
+
+        &--collapsed {
+            display: none;
+        }
+    }
+
+    /* Chat messages */
+    &__chat-bubble {
+        padding: $space-md $space-lg;
+        margin-bottom: $space-md;
+        border-radius: $radius-md;
+        font-size: var(--font-ui-small);
+        line-height: var(--line-height-normal);
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+
+        &--user {
+            background: var(--interactive-accent);
+            color: var(--text-on-accent);
+            margin-left: 20px;
+        }
+
+        &--assistant {
+            background: var(--background-primary-alt);
+            color: var(--text-normal);
+            margin-right: 20px;
+        }
+
+        &--streaming {
+            opacity: 0.7;
+        }
+    }
+
+    /* Option cards */
+    &__options-intro {
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        margin-bottom: $space-md;
+    }
+
+    &__options {
+        display: flex;
+        flex-direction: column;
+        gap: $space-md;
+    }
+
+    &__option-card {
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-md;
+        padding: 10px $space-lg;
+        transition: border-color $transition-base, background $transition-base;
+
+        &:hover {
+            border-color: var(--interactive-accent);
+            background: rgba(var(--interactive-accent-rgb), 0.03);
+        }
+
+        /* Expired option card (from a previous conversation turn) */
+        &--expired {
+            opacity: 0.5;
+        }
+    }
+
+    &__option-label {
+        font-weight: 600;
+        font-size: var(--font-ui-small);
+        color: var(--text-normal);
+        margin-bottom: $space-xs;
+    }
+
+    &__option-desc {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        margin-bottom: $space-md;
+        line-height: var(--line-height-normal);
+    }
+
+    &__option-apply {
+        cursor: pointer;
+        border: none;
+        border-radius: $radius-sm;
+        padding: $space-xs $space-lg;
+        font-size: var(--font-ui-smaller);
+        font-family: var(--font-interface);
+        background: var(--interactive-accent);
+        color: var(--text-on-accent);
+        transition: opacity $transition-fast;
+
+        &:hover {
+            opacity: 0.85;
+        }
+
+        &--applying {
+            opacity: 0.5;
+            cursor: default;
+            pointer-events: none;
+        }
+    }
+
+    &__option-expired-label {
+        display: block;
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        font-style: italic;
+    }
+
+    /* Discussion response text */
+    &__response-text {
+        font-size: var(--font-ui-small);
+        color: var(--text-normal);
+        line-height: var(--line-height-normal);
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+
+        &--streaming {
+            opacity: 0.7;
+        }
+    }
+
+    /* Bottom pinned area */
+    &__bottom {
+        flex-shrink: 0;
+    }
+
+    /* Draft status bar */
+    &__status-bar {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        padding: $space-sm 0;
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        border-top: 1px solid var(--background-modifier-border);
+        margin-top: $space-xs;
+    }
+
+    &__status-btn {
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: 2px 10px;
+        font-size: var(--font-ui-smaller);
+        font-family: var(--font-interface);
+        background: transparent;
+        color: var(--text-muted);
+        transition: background $transition-fast, color $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+    }
+
+    &__accept-btn {
+        background: var(--interactive-accent);
+        color: var(--text-on-accent);
+        border-color: var(--interactive-accent);
+
+        &:hover {
+            opacity: 0.85;
+        }
+    }
+
+    &__revert-btn {
+        border-color: var(--background-modifier-border);
+    }
+
+    /* Context pills row */
+    &__ctx-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: $space-xs;
+        padding: $space-xs 0;
+    }
+
+    &__ctx-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: $space-xs;
+        font-size: var(--font-ui-smaller);
+        background: var(--background-modifier-hover);
+        border-radius: 3px;
+        padding: 2px $space-sm;
+        max-width: 180px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    &__ctx-remove {
+        cursor: pointer;
+        border: none;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: var(--font-ui-smaller);
+        padding: 0 2px;
+        line-height: 1;
+
+        &:hover {
+            color: var(--text-normal);
+        }
+    }
+
+    &__token-indicator {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        padding: $space-xs 0 2px 0;
+        text-align: center;
+    }
+
+    /* Plot map link row */
+    &__plotmap-row {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        padding: $space-xs 0;
+    }
+
+    &__plotmap-label {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        flex-shrink: 0;
+    }
+
+    &__plotmap-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: $space-xs;
+        font-size: var(--font-ui-smaller);
+        background: var(--background-modifier-hover);
+        border-radius: 3px;
+        padding: 2px $space-sm;
+        max-width: 220px;
+    }
+
+    &__plotmap-name {
+        cursor: pointer;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+
+        &:hover {
+            color: var(--interactive-accent);
+        }
+    }
+
+    &__plotmap-remove {
+        cursor: pointer;
+        border: none;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: var(--font-ui-smaller);
+        padding: 0 2px;
+        line-height: 1;
+
+        &:hover {
+            color: var(--text-normal);
+        }
+    }
+
+    &__plotmap-link {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        border: 1px dashed var(--background-modifier-border-hover);
+        background: transparent;
+        border-radius: 3px;
+        padding: 2px $space-md;
+        cursor: pointer;
+
+        &:hover {
+            color: var(--text-normal);
+            border-color: var(--interactive-accent);
+        }
+    }
+
+    /* Inline-directive badge (Direct mode) */
+    &__directive-badge {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-on-accent);
+        background: var(--interactive-accent);
+        border-radius: 3px;
+        padding: 2px $space-md;
+        align-self: flex-start;
+        margin: 2px 0;
+    }
+
+    /* Buttons row (mode, add ctx, refresh, send) */
+    &__btn-row {
+        display: flex;
+        gap: $space-sm;
+        align-items: center;
+        flex-shrink: 0;
+        padding: $space-xs 0 0 0;
+    }
+
+    &__btn-spacer {
+        flex: 1;
+    }
+
+    /* Textarea row (below buttons) */
+    &__ta-row {
+        flex-shrink: 0;
+        padding: 0 0 $space-xs 0;
+    }
+
+    &__mode-btn {
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-sm 10px;
+        font-size: var(--font-ui-smaller);
+        font-family: var(--font-interface);
+        background: transparent;
+        color: var(--text-muted);
+        height: 36px;
+        line-height: 1.4;
+        transition: background $transition-fast, color $transition-fast, border-color $transition-fast;
+        flex-shrink: 0;
+        box-sizing: border-box;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+
+        &--discuss {
+            border-color: var(--color-green);
+            color: var(--color-green);
+
+            &:hover {
+                background: rgba(var(--color-green-rgb), 0.1);
+            }
+        }
+    }
+
+    /* Mode picker (inline list above the button row) */
+    &__mode-picker {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: $space-xs;
+        margin: $space-xs 0;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        background: var(--background-secondary);
+    }
+
+    &__mode-row {
+        display: flex;
+        align-items: flex-start;
+        gap: $space-md;
+        padding: $space-sm $space-md;
+        border-radius: 3px;
+        cursor: pointer;
+
+        &:hover,
+        &--active {
+            background: var(--background-modifier-hover);
+        }
+    }
+
+    &__mode-row-icon {
+        flex-shrink: 0;
+        color: var(--text-muted);
+        line-height: 1.2;
+    }
+
+    &__mode-row-text {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+    }
+
+    &__mode-row-label {
+        font-size: var(--font-ui-small);
+        color: var(--text-normal);
+    }
+
+    &__mode-row-desc {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+    }
+
+    &__ctx-add {
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-sm 10px;
+        font-size: var(--font-ui-small);
+        font-family: var(--font-interface);
+        background: transparent;
+        color: var(--text-muted);
+        height: 36px;
+        line-height: 1.4;
+        transition: background $transition-fast, color $transition-fast;
+        flex-shrink: 0;
+        box-sizing: border-box;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+    }
+
+    &__input {
+        width: 100%;
+        height: 180px;
+        min-height: 80px;
+        max-height: 300px;
+        resize: vertical;
+        font-size: var(--font-ui-small);
+        font-family: var(--font-interface);
+        line-height: 1.4;
+        padding: $space-sm 10px;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        background: var(--background-primary);
+        color: var(--text-normal);
+        box-sizing: border-box;
+
+        &:focus {
+            border-color: var(--interactive-accent);
+            outline: none;
+        }
+
+        /* Disabled state (Fulfill mode — chat input not used). Force the placeholder
+           visible and grey everything out so it's clearly inactive. */
+        &:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            background: var(--background-secondary);
+
+            &::placeholder {
+                color: var(--text-muted);
+                opacity: 1;
+                -webkit-text-fill-color: var(--text-muted);
+            }
+        }
+    }
+
+    &__send-btn {
+        cursor: pointer;
+        border: 1px solid var(--interactive-accent);
+        border-radius: $radius-sm;
+        padding: $space-sm 14px;
+        font-size: var(--font-ui-small);
+        font-family: var(--font-interface);
+        background: var(--interactive-accent);
+        color: var(--text-on-accent);
+        transition: opacity $transition-fast;
+        flex-shrink: 0;
+        height: 36px;
+        line-height: 1.4;
+        box-sizing: border-box;
+
+        &:hover {
+            opacity: 0.85;
+        }
+
+        // Stop variant — same DOM node, toggled on while a generation is in
+        // flight. Also emitted by  and ReviewPanel.
+        &--stop {
+            background: var(--text-error) !important;
+            border-color: var(--text-error) !important;
+
+            &:hover {
+                opacity: 0.85;
+            }
+        }
+    }
+
+    /* Refresh suggestions button */
+    &__refresh-btn {
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-sm 10px;
+        font-size: var(--font-ui-small);
+        font-family: var(--font-interface);
+        background: transparent;
+        color: var(--text-muted);
+        transition: background $transition-fast, color $transition-fast;
+        height: 36px;
+        line-height: 1.4;
+        box-sizing: border-box;
+        flex-shrink: 0;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+    }
+
+    /* Initialize prompt */
+    &__init {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        padding: 32px $space-xl;
+        gap: $space-lg;
+    }
+
+    &__init-icon {
+        font-size: 32px;
+        opacity: 0.6;
+    }
+
+    &__init-heading {
+        font-size: var(--font-ui-medium);
+        font-weight: 600;
+        color: var(--text-normal);
+    }
+
+    &__init-desc {
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        max-width: 260px;
+        line-height: var(--line-height-normal);
+    }
+
+    &__init-btn {
+        cursor: pointer;
+        border: none;
+        border-radius: $radius-md;
+        padding: 10px 24px;
+        font-size: var(--font-ui-medium);
+        font-family: var(--font-interface);
+        background: var(--interactive-accent);
+        color: var(--text-on-accent);
+        transition: opacity $transition-fast;
+        margin-top: $space-md;
+
+        &:hover {
+            opacity: 0.85;
+        }
+
+        /* Secondary hint + button on the init screen (e.g. Coach's "generate options" escape hatch) */
+        &--secondary {
+            background: transparent;
+            color: var(--text-muted);
+            border: 1px solid var(--background-modifier-border);
+            font-size: var(--font-ui-small);
+            padding: $space-sm $space-xl;
+            margin-top: 0;
+
+            &:hover {
+                opacity: 1;
+                color: var(--text-normal);
+                border-color: var(--background-modifier-border-hover);
+            }
+        }
+    }
+
+    &__init-sub {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-faint, var(--text-muted));
+        max-width: 260px;
+        line-height: var(--line-height-normal);
+        margin-top: $space-xs;
+    }
+
+    /* Coach mode UI */
+    &__coach-bar {
+        display: flex;
+        align-items: center;
+        padding: $space-sm $space-md;
+        font-size: var(--font-smallest);
+        color: var(--text-muted);
+        border-top: 1px solid var(--background-modifier-border);
+        margin-top: $space-xs;
+    }
+
+    &__coach-phase {
+        font-style: italic;
+        color: var(--text-accent);
+        font-weight: 500;
+    }
+
+    &__coach-end-btn {
+        background: var(--background-modifier-form-field);
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: 2px $space-md;
+        font-size: var(--font-smallest);
+        color: var(--text-muted);
+        cursor: pointer;
+        transition: background $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-border);
+            color: var(--text-normal);
+        }
+    }
+
+    &__coach-options-btn {
+        background: var(--interactive-accent);
+        color: var(--text-on-accent);
+        border: none;
+        border-radius: $radius-sm;
+        padding: 2px 10px;
+        font-size: var(--font-smallest);
+        font-weight: 500;
+        cursor: pointer;
+        transition: opacity $transition-fast;
+
+        &:hover {
+            opacity: 0.85;
+        }
+    }
+
+    &__plan-accept {
+        background: var(--interactive-accent);
+        color: var(--text-on-accent);
+        border: none;
+        border-radius: $radius-sm;
+        padding: $space-xs $space-lg;
+        margin-top: 10px;
+        font-size: var(--font-small);
+        font-weight: 500;
+        cursor: pointer;
+        transition: opacity $transition-fast;
+
+        &:hover {
+            opacity: 0.85;
+        }
+    }
+
+    /* Compact button for co-writer panel */
+    &__compact-btn {
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-sm 10px;
+        font-size: var(--font-ui-smaller);
+        font-family: var(--font-interface);
+        background: transparent;
+        color: var(--text-muted);
+        transition: background $transition-fast, color $transition-fast;
+        height: 36px;
+        line-height: 1.4;
+        box-sizing: border-box;
+        flex-shrink: 0;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+    }
+
+    /* Co-writer new chat button (feedback now uses .quill-chat-panel__action-btn
+       from _chat-shared.scss; cowriter keeps its own class for now). */
+    &__new-chat-btn {
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-sm 10px;
+        font-size: var(--font-ui-smaller);
+        font-family: var(--font-interface);
+        background: transparent;
+        color: var(--text-muted);
+        transition: background $transition-fast, color $transition-fast;
+        height: 36px;
+        line-height: 1.4;
+        box-sizing: border-box;
+        flex-shrink: 0;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+    }
+}
+
+// Active mode row emphasizes its label color. Cross-element rule kept outside
+// the block to avoid double-element nesting (&__x &__y would be ambiguous).
+.quill-cowriter-panel__mode-row--active .quill-cowriter-panel__mode-row-label {
+    color: var(--text-normal);
+}

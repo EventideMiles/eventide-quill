@@ -1,0 +1,121 @@
+// Settings UI — plugin settings tab and provider configuration cards.
+//
+// Three BEM blocks:
+//
+//   quill-settings           — top-level settings tabs (Providers / Transform /
+//                              Analysis / Linter / Context / Co-writer)
+//   quill-provider-card      — a single AI provider configuration card
+//   quill-narrative-rules    — narrative voice rules textarea wrapper
+
+@use 'base' as *;
+
+// =========================================================================
+// Settings tabs
+// =========================================================================
+
+.quill-settings {
+    &__tab-bar {
+        display: flex;
+        border-bottom: 1px solid var(--background-modifier-border);
+        margin-bottom: $space-xl;
+        flex-shrink: 0;
+    }
+
+    &__tab {
+        flex: 1;
+        padding: 10px $space-xl;
+        cursor: pointer;
+        border: none;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: var(--font-ui-medium);
+        font-family: var(--font-interface);
+        text-align: center;
+        transition: color $transition-base, border-color $transition-base;
+        border-bottom: 2px solid transparent;
+
+        &:hover {
+            color: var(--text-normal);
+        }
+
+        &--active {
+            color: var(--text-accent);
+            border-bottom-color: var(--text-accent);
+        }
+    }
+}
+
+// =========================================================================
+// Provider configuration card
+// =========================================================================
+
+.quill-provider-card {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: $radius-md;
+    padding: $space-md $space-lg;
+    margin-bottom: $space-xl;
+
+    &__heading {
+        border-bottom: 1px solid var(--background-modifier-border);
+        margin-bottom: $space-md;
+    }
+
+    &__models-heading {
+        font-weight: 600;
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        margin: $space-lg 0 $space-md;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    &__model {
+        border-left: 2px solid var(--background-modifier-border);
+        padding-left: $space-lg;
+        margin-bottom: $space-md;
+    }
+
+    &__test-row {
+        border-top: 1px solid var(--background-modifier-border);
+        margin-top: $space-lg;
+        padding-top: $space-md;
+    }
+
+    &__setting-extra {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        margin-top: $space-xs;
+    }
+}
+
+// =========================================================================
+// Narrative voice rules textarea
+// =========================================================================
+
+.quill-narrative-rules {
+    margin: $space-xs 0 $space-xl 0;
+
+    &__textarea {
+        width: 100%;
+        min-height: 120px;
+        padding: $space-md;
+        border-radius: $radius-sm;
+        font-family: var(--font-monospace);
+        font-size: var(--font-ui-small);
+        line-height: var(--line-height-normal);
+        resize: vertical;
+
+        &:read-only {
+            background: var(--background-primary-alt);
+            color: var(--text-muted);
+            cursor: default;
+            border: 1px solid var(--background-modifier-border);
+        }
+
+        &:not(:read-only) {
+            background: var(--background-primary);
+            color: var(--text-normal);
+            border: 1px solid var(--interactive-accent);
+        }
+    }
+}

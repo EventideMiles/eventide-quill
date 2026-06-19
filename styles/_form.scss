@@ -1,0 +1,72 @@
+// Form chrome — shared BEM block.
+//
+// The "create tab" form pattern used by:
+//   - ReviewPanel (manuscripts + personas + custom instructions + generate)
+//   -  (mode picker + scope picker + custom instructions + generate)
+//
+// Elements appear inside a `.quill-form` block. The option picker itself is
+// a separate block (`.quill-option-picker`) that lives inside a form section.
+
+@use 'base' as *;
+
+.quill-form {
+    &__section {
+        margin-bottom: $space-xl;
+    }
+
+    &__label {
+        font-size: var(--font-ui-small);
+        font-weight: 600;
+        color: var(--text-muted);
+        margin-bottom: $space-md;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    &__divider {
+        border: none;
+        border-top: 1px solid var(--background-modifier-border);
+        margin: $space-lg 0;
+    }
+
+    &__textarea {
+        width: 100%;
+        min-height: 60px;
+        padding: $space-md;
+        margin-bottom: $space-md;
+        font-family: var(--font-interface);
+        font-size: var(--font-ui-small);
+        border-radius: $radius-sm;
+        border: 1px solid var(--background-modifier-border);
+        background: var(--background-primary);
+        color: var(--text-normal);
+        resize: vertical;
+        box-sizing: border-box;
+    }
+
+    &__submit {
+        cursor: pointer;
+        border: none;
+        border-radius: $radius-sm;
+        padding: $space-sm $space-xl;
+        font-size: var(--font-ui-small);
+        font-family: var(--font-interface);
+        background: var(--interactive-accent);
+        color: var(--text-on-accent);
+        width: 100%;
+        text-align: center;
+        transition: filter $transition-fast;
+
+        &:hover {
+            filter: brightness(1.15);
+        }
+    }
+}
+
+// Empty-state hint — the "no results yet" message shown in a results tab
+// before the writer has run anything. Shared by all chat panels.
+.quill-empty-hint {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    padding: $space-xl $space-md;
+}
