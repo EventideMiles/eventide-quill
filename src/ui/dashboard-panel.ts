@@ -8,7 +8,7 @@ const expandedChapters = new Set<string>();
 
 /** Check whether a chat model is configured (gates "Fix with AI" buttons). */
 function hasChatProvider(plugin: EventideQuillPlugin): boolean {
-    return !!plugin.getDefaultChatProvider().provider;
+    return !!plugin.getDefaultChatProvider().provider && !plugin.batchFixInProgress;
 }
 
 /** Format a 0-1 ratio as a percentage string. */

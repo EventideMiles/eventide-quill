@@ -121,6 +121,22 @@
         text-align: center;
         padding: $space-xxl $space-md;
     }
+
+    &__empty-btn {
+        display: block;
+        margin: $space-md auto 0;
+        font-size: var(--font-ui-small);
+        padding: $space-sm $space-lg;
+        color: var(--text-on-accent);
+        background: var(--interactive-accent);
+        border: none;
+        border-radius: $radius-sm;
+        cursor: pointer;
+
+        &:hover {
+            background: var(--interactive-accent-hover);
+        }
+    }
 }
 
 /* Linter results container */

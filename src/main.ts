@@ -193,7 +193,7 @@ export default class EventideQuillPlugin extends Plugin {
     private analysisAbort: AbortController | null = null;
     /** Full message history for the analysis conversation (system + context heads + chat turns). */
     private analysisCurrentMessages: ChatMessage[] = [];
-    private lintActive = false;
+    lintActive = false;
     lintActiveFile: string | null = null;
     /** File path for the currently assembled context. Tracked separately from lintActiveFile. */
     contextActiveFile: string | null = null;
@@ -760,7 +760,7 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /** Toggle the prose linter on or off for the active editor, dispatching state to CodeMirror. */
-    private toggleLint(editor: Editor) {
+    toggleLint(editor: Editor) {
         const cm = this.getCmView(editor);
         if (!cm) return;
 
@@ -1500,6 +1500,32 @@ export default class EventideQuillPlugin extends Plugin {
         return (view.editor as unknown as { cm: EditorView }).cm;
     }
 
+    /**
+     * Find the CodeMirror EditorView for a specific file path.
+     *
+     * Uses `findEditorView` which searches all open leaves — works even
+     * when the sidebar has stolen focus (unlike `getActiveCm` which relies
+     * on `getActiveViewOfType(MarkdownView)` and returns null in that case).
+     */
+    private getCmForFile(filePath: string): EditorView | undefined {
+        const view = findEditorView(this.app, filePath);
+        if (!view) return undefined;
+        return (view.editor as unknown as { cm: EditorView }).cm;
+    }
+
+    /**
+     * Find the editor + CodeMirror view for a file path.
+     *
+     * Works even when the sidebar has stolen focus. Returns undefined if no
+     * markdown view is open for the given file.
+     */
+    private getEditorAndCm(filePath: string): { editor: Editor; cm: EditorView } | undefined {
+        const view = findEditorView(this.app, filePath);
+        if (!view) return undefined;
+        const cm = (view.editor as unknown as { cm: EditorView }).cm;
+        return { editor: view.editor, cm };
+    }
+
     /** Approve the pending transform edit: commit the rewrite and clear the diff. */
     approveTransformChange(id: number): void {
         const cm = this.getActiveCm();
@@ -1525,6 +1551,9 @@ export default class EventideQuillPlugin extends Plugin {
 
     // --- Batch "Fix all with AI" ---
 
+    /** Whether a batch or single AI fix is currently in progress. UI uses this to disable buttons. */
+    batchFixInProgress = false;
+
     /**
      * Fix all lint findings with AI.
      *
@@ -1540,11 +1569,11 @@ export default class EventideQuillPlugin extends Plugin {
             return;
         }
 
-        const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (!markdownView) return;
-        const editor = markdownView.editor;
-        const cm = this.getActiveCm();
-        if (!cm) return;
+        const activePath = this.app.workspace.getActiveFile()?.path;
+        if (!activePath) return;
+        const ec = this.getEditorAndCm(activePath);
+        if (!ec) return;
+        const { editor, cm } = ec;
 
         const results = this.currentResults;
         if (results.length === 0) {
@@ -1559,46 +1588,53 @@ export default class EventideQuillPlugin extends Plugin {
         this.lintBatchChangeSet.clear();
         clearDiffEdits(cm, 'lint-batch');
 
+        this.batchFixInProgress = true;
+        this.lintPanel?.refreshResultsTab();
         new Notice(`Quill: fixing ${groups.length} passage${groups.length !== 1 ? 's' : ''}...`);
 
-        for (let i = 0; i < groups.length; i++) {
-            const group = groups[i]!;
-            const { system, user } = buildBatchLinterPrompt(group);
+        try {
+            for (let i = 0; i < groups.length; i++) {
+                const group = groups[i]!;
+                const { system, user } = buildBatchLinterPrompt(group);
 
-            try {
-                const response = await streamBatchFix(
-                    chat.provider,
-                    [
-                        { role: 'system', content: system },
-                        { role: 'user', content: user }
-                    ],
-                    {
-                        temperature: this.settings.linterTemperature,
-                        maxTokens: this.settings.linterMaxOutputTokens,
-                        model: chat.modelId
+                try {
+                    const response = await streamBatchFix(
+                        chat.provider,
+                        [
+                            { role: 'system', content: system },
+                            { role: 'user', content: user }
+                        ],
+                        {
+                            temperature: this.settings.linterTemperature,
+                            maxTokens: this.settings.linterMaxOutputTokens,
+                            model: chat.modelId
+                        }
+                    );
+
+                    if (response && response !== group.passageText) {
+                        const labels = group.findings.map((f) => RULE_INFO[f.rule]?.name ?? f.rule).join(' + ');
+                        this.lintBatchChangeSet.add({
+                            from: group.passageStart,
+                            to: group.passageEnd,
+                            newText: response,
+                            label: labels
+                        });
+                        pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
                     }
-                );
-
-                if (response && response !== group.passageText) {
-                    const labels = group.findings.map((f) => RULE_INFO[f.rule]?.name ?? f.rule).join(' + ');
-                    this.lintBatchChangeSet.add({
-                        from: group.passageStart,
-                        to: group.passageEnd,
-                        newText: response,
-                        label: labels
-                    });
-                    pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+                } catch {
+                    // Skip this group on error; continue with remaining groups.
                 }
-            } catch {
-                // Skip this group on error; continue with remaining groups.
             }
-        }
 
-        const count = this.lintBatchChangeSet.edits.length;
-        if (count > 0) {
-            new Notice(`Quill: ${count} fix${count !== 1 ? 'es' : ''} ready for review.`);
-        } else {
-            new Notice('Quill: no fixes generated.');
+            const count = this.lintBatchChangeSet.edits.length;
+            if (count > 0) {
+                new Notice(`Quill: ${count} fix${count !== 1 ? 'es' : ''} ready for review.`);
+            } else {
+                new Notice('Quill: no fixes generated.');
+            }
+        } finally {
+            this.batchFixInProgress = false;
+            this.lintPanel?.refreshResultsTab();
         }
     }
 
@@ -1616,17 +1652,16 @@ export default class EventideQuillPlugin extends Plugin {
             return;
         }
 
-        const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (!markdownView) return;
-        const editor = markdownView.editor;
-        const cm = this.getActiveCm();
-        if (!cm) return;
+        const activePath = this.app.workspace.getActiveFile()?.path;
+        if (!activePath) return;
+        const ec = this.getEditorAndCm(activePath);
+        if (!ec) return;
+        const { editor, cm } = ec;
 
         const metrics = this.currentDashboardMetrics;
         if (!metrics) return;
 
         // Filter to pacing flags in the active file.
-        const activePath = this.app.workspace.getActiveFile()?.path ?? '';
         const flags = metrics.pacingFlags.filter((f) => f.filePath === activePath);
 
         if (flags.length === 0) {
@@ -1645,54 +1680,67 @@ export default class EventideQuillPlugin extends Plugin {
             lineOffsets.push(lineOffsets[i]! + lines[i]!.length + 1);
         }
 
-        new Notice(`Quill: fixing ${flags.length} pacing flag${flags.length !== 1 ? 's' : ''}...`);
+        const totalFlags = metrics.pacingFlags.length;
+        const skipped = totalFlags - flags.length;
+        const scopeNote = skipped > 0 ? ` (${skipped} in other files — switch files to fix those)` : '';
 
-        for (const flag of flags) {
-            const startOffset = lineOffsets[flag.lineStart - 1] ?? 0;
-            const endOffset = (lineOffsets[flag.lineEnd] ?? editorText.length) - 1;
-            const passageText = editorText.slice(startOffset, Math.max(startOffset, endOffset));
+        this.batchFixInProgress = true;
+        this.lintPanel?.refreshDashboardPanel();
+        new Notice(`Quill: fixing ${flags.length} pacing flag${flags.length !== 1 ? 's' : ''}${scopeNote}...`);
 
-            const { system, user } = buildPacingFixPrompt(flag, passageText);
+        try {
+            for (const flag of flags) {
+                const startOffset = lineOffsets[flag.lineStart - 1] ?? 0;
+                const endOffset = (lineOffsets[flag.lineEnd] ?? editorText.length) - 1;
+                const passageText = editorText.slice(startOffset, Math.max(startOffset, endOffset));
 
-            try {
-                const response = await streamBatchFix(
-                    chat.provider,
-                    [
-                        { role: 'system', content: system },
-                        { role: 'user', content: user }
-                    ],
-                    {
-                        temperature: this.settings.transformTemperature,
-                        maxTokens: this.settings.transformMaxOutputTokens,
-                        model: chat.modelId
+                const { system, user } = buildPacingFixPrompt(flag, passageText);
+
+                try {
+                    const response = await streamBatchFix(
+                        chat.provider,
+                        [
+                            { role: 'system', content: system },
+                            { role: 'user', content: user }
+                        ],
+                        {
+                            temperature: this.settings.transformTemperature,
+                            maxTokens: this.settings.transformMaxOutputTokens,
+                            model: chat.modelId
+                        }
+                    );
+
+                    if (response && response !== passageText) {
+                        this.lintBatchChangeSet.add({
+                            from: startOffset,
+                            to: Math.max(startOffset, endOffset),
+                            newText: response,
+                            label: flag.kind === 'uniform-short' ? 'Vary short sentences' : 'Vary long sentences'
+                        });
+                        pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
                     }
-                );
-
-                if (response && response !== passageText) {
-                    this.lintBatchChangeSet.add({
-                        from: startOffset,
-                        to: Math.max(startOffset, endOffset),
-                        newText: response,
-                        label: flag.kind === 'uniform-short' ? 'Vary short sentences' : 'Vary long sentences'
-                    });
-                    pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+                } catch {
+                    // Skip this flag on error; continue with remaining flags.
                 }
-            } catch {
-                // Skip this flag on error; continue with remaining flags.
             }
-        }
 
-        const count = this.lintBatchChangeSet.edits.length;
-        if (count > 0) {
-            new Notice(`Quill: ${count} pacing fix${count !== 1 ? 'es' : ''} ready for review.`);
-        } else {
-            new Notice('Quill: no pacing fixes generated.');
+            const count = this.lintBatchChangeSet.edits.length;
+            if (count > 0) {
+                new Notice(`Quill: ${count} pacing fix${count !== 1 ? 'es' : ''} ready for review.`);
+            } else {
+                new Notice('Quill: no pacing fixes generated.');
+            }
+        } finally {
+            this.batchFixInProgress = false;
+            this.lintPanel?.refreshDashboardPanel();
         }
     }
 
     /** Approve a single batch-fix edit: commit the rewrite and update the diff. */
     approveLintBatchChange(id: number): void {
-        const cm = this.getActiveCm();
+        const activePath = this.app.workspace.getActiveFile()?.path;
+        if (!activePath) return;
+        const cm = this.getCmForFile(activePath);
         if (!cm) return;
         syncChangeSetPositions(cm, this.lintBatchChangeSet, 'lint-batch');
         const change = this.lintBatchChangeSet.approve(id);
@@ -1707,7 +1755,9 @@ export default class EventideQuillPlugin extends Plugin {
 
     /** Reject a single batch-fix edit: leave the original passage. */
     rejectLintBatchChange(id: number): void {
-        const cm = this.getActiveCm();
+        const activePath = this.app.workspace.getActiveFile()?.path;
+        if (!activePath) return;
+        const cm = this.getCmForFile(activePath);
         if (!cm) return;
         this.lintBatchChangeSet.reject(id);
         pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
@@ -1733,17 +1783,12 @@ export default class EventideQuillPlugin extends Plugin {
             return;
         }
 
-        const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (!markdownView) return;
-        const editor = markdownView.editor;
-        const cm = this.getActiveCm();
-        if (!cm) return;
-
-        const activePath = this.app.workspace.getActiveFile()?.path ?? '';
-        if (flag.filePath !== activePath) {
+        const ec = this.getEditorAndCm(flag.filePath);
+        if (!ec) {
             new Notice('Quill: open the chapter file containing this flag to fix it.');
             return;
         }
+        const { editor, cm } = ec;
 
         const editorText = editor.getValue();
         const lines = editorText.split('\n');
@@ -1758,6 +1803,8 @@ export default class EventideQuillPlugin extends Plugin {
 
         const { system, user } = buildPacingFixPrompt(flag, passageText);
 
+        this.batchFixInProgress = true;
+        this.lintPanel?.refreshDashboardPanel();
         new Notice('Quill: generating pacing fix...');
 
         try {
@@ -1789,6 +1836,9 @@ export default class EventideQuillPlugin extends Plugin {
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             new Notice(`Quill: pacing fix failed (${message}).`);
+        } finally {
+            this.batchFixInProgress = false;
+            this.lintPanel?.refreshDashboardPanel();
         }
     }
 

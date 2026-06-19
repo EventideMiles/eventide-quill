@@ -379,6 +379,13 @@ export class QuillSidebarView extends ItemView {
         }
     }
 
+    /** Re-render the linter results tab if it's active. */
+    refreshResultsTab(): void {
+        if (this.activeTopTab === 'linter' && this.activeLinterSubTab === 'results') {
+            this.render();
+        }
+    }
+
     /** Render the co-writer tab, initializing or re-attaching the CoWriterPanel. */
     private renderCoWriterTab(): void {
         if (!this.coWriterPanel) {
@@ -683,6 +690,21 @@ export class QuillSidebarView extends ItemView {
                 text: 'No issues found.',
                 cls: 'quill-linter__empty'
             });
+
+            // Offer to toggle the linter on if it's not active.
+            if (!this.plugin.lintActive) {
+                const toggleBtn = resultsContainer.createEl('button', {
+                    cls: 'quill-linter__empty-btn',
+                    text: 'Toggle prose linter'
+                });
+                this.renderEvents!.registerDomEvent(toggleBtn, 'click', () => {
+                    const view = this.getEditorView();
+                    if (view) {
+                        this.plugin.toggleLint(view.editor);
+                    }
+                });
+            }
+
             return;
         }
 
@@ -691,8 +713,12 @@ export class QuillSidebarView extends ItemView {
             text: `${this.results.length} issue${this.results.length !== 1 ? 's' : ''} found`
         });
 
-        // "Fix all with AI" button — gated on AI fix setting + chat provider.
-        if (this.plugin.settings.enableLinterAiFixes && this.plugin.getDefaultChatProvider().provider) {
+        // "Fix all with AI" button — gated on AI fix setting + chat provider + not already processing.
+        if (
+            this.plugin.settings.enableLinterAiFixes &&
+            this.plugin.getDefaultChatProvider().provider &&
+            !this.plugin.batchFixInProgress
+        ) {
             const fixAllBtn = header.createEl('button', {
                 cls: 'quill-linter__fix-all-btn',
                 text: 'Fix all with AI'
