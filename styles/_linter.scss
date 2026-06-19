@@ -94,6 +94,25 @@
         font-weight: 600;
         padding: $space-md;
         margin-bottom: $space-xs;
+        display: flex;
+        align-items: center;
+        gap: $space-md;
+    }
+
+    &__fix-all-btn {
+        margin-left: auto;
+        font-size: var(--font-ui-smaller);
+        padding: $space-xs $space-sm;
+        color: var(--text-on-accent);
+        background: var(--interactive-accent);
+        border: none;
+        border-radius: $radius-sm;
+        cursor: pointer;
+        white-space: nowrap;
+
+        &:hover {
+            background: var(--interactive-accent-hover);
+        }
     }
 
     &__empty {

@@ -691,6 +691,17 @@ export class QuillSidebarView extends ItemView {
             text: `${this.results.length} issue${this.results.length !== 1 ? 's' : ''} found`
         });
 
+        // "Fix all with AI" button — gated on AI fix setting + chat provider.
+        if (this.plugin.settings.enableLinterAiFixes && this.plugin.getDefaultChatProvider().provider) {
+            const fixAllBtn = header.createEl('button', {
+                cls: 'quill-linter__fix-all-btn',
+                text: 'Fix all with AI'
+            });
+            this.renderEvents!.registerDomEvent(fixAllBtn, 'click', () => {
+                void this.plugin.fixAllLinterWithAi();
+            });
+        }
+
         const list = resultsContainer.createEl('ul', { cls: 'quill-linter__list' });
 
         for (const result of this.results) {

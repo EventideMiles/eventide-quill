@@ -6,6 +6,11 @@ import { getActiveDocument, renderDocumentHeader } from './document-header';
 /** Expand state for chapter rows, keyed by `${filePath}:${lineStart}`. Survives re-renders. */
 const expandedChapters = new Set<string>();
 
+/** Check whether a chat model is configured (gates "Fix with AI" buttons). */
+function hasChatProvider(plugin: EventideQuillPlugin): boolean {
+    return !!plugin.getDefaultChatProvider().provider;
+}
+
 /** Format a 0-1 ratio as a percentage string. */
 function pct(ratio: number): string {
     return `${Math.round(ratio * 100)}%`;
@@ -233,6 +238,18 @@ function renderSectionRow(
                 void plugin.jumpToDashboardLine(chapter.filePath, absLine);
             }
         });
+
+        // "Fix with AI" button — only shown when a chat model is configured.
+        if (hasChatProvider(plugin)) {
+            const fixBtn = chip.createEl('button', {
+                cls: 'quill-dashboard-panel__pacing-fix-btn',
+                text: 'Fix with AI'
+            });
+            component.registerDomEvent(fixBtn, 'click', (evt: MouseEvent) => {
+                evt.stopPropagation();
+                void plugin.fixSinglePacingFlag({ ...flag, lineStart: absLine, lineEnd: absEnd });
+            });
+        }
     }
 }
 /** Render the pacing heatmap (one bar per chapter) with clickable legend. */
@@ -246,7 +263,19 @@ function renderPacingHeatmap(
     if (allFlags.length === 0 && metrics.chapters.length === 0) return;
 
     const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
-    section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Pacing' });
+
+    // Heading row with optional "Fix all" button.
+    const headingRow = section.createEl('div', { cls: 'quill-dashboard-panel__heading-row' });
+    headingRow.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Pacing' });
+    if (hasChatProvider(plugin) && allFlags.length > 0) {
+        const fixAllBtn = headingRow.createEl('button', {
+            cls: 'quill-dashboard-panel__fix-all-btn',
+            text: 'Fix all with AI'
+        });
+        component.registerDomEvent(fixAllBtn, 'click', () => {
+            void plugin.fixAllPacingWithAi();
+        });
+    }
 
     const heatmap = section.createEl('div', { cls: 'quill-dashboard-panel__heatmap' });
 
@@ -287,6 +316,18 @@ function renderPacingHeatmap(
                     void plugin.jumpToDashboardLine(flag.filePath, flag.lineStart);
                 }
             });
+
+            // "Fix with AI" button on each legend chip.
+            if (hasChatProvider(plugin)) {
+                const fixBtn = item.createEl('button', {
+                    cls: 'quill-dashboard-panel__pacing-fix-btn',
+                    text: 'Fix with AI'
+                });
+                component.registerDomEvent(fixBtn, 'click', (evt: MouseEvent) => {
+                    evt.stopPropagation();
+                    void plugin.fixSinglePacingFlag(flag);
+                });
+            }
         }
         if (allFlags.length > 10) {
             legend.createEl('div', {

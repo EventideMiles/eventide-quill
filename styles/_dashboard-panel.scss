@@ -50,6 +50,45 @@
         letter-spacing: 0.5px;
     }
 
+    &__heading-row {
+        display: flex;
+        align-items: center;
+        gap: $space-md;
+        margin-bottom: $space-md;
+    }
+
+    &__fix-all-btn {
+        font-size: var(--font-ui-smaller);
+        padding: $space-xs $space-sm;
+        color: var(--text-on-accent);
+        background: var(--interactive-accent);
+        border: none;
+        border-radius: $radius-sm;
+        cursor: pointer;
+        white-space: nowrap;
+
+        &:hover {
+            background: var(--interactive-accent-hover);
+        }
+    }
+
+    &__pacing-fix-btn {
+        display: block;
+        margin-top: $space-xs;
+        padding: $space-xs $space-sm;
+        font-size: var(--font-ui-smaller);
+        color: var(--text-on-accent);
+        background: var(--interactive-accent);
+        border: none;
+        border-radius: $radius-sm;
+        cursor: pointer;
+        width: fit-content;
+
+        &:hover {
+            background: var(--interactive-accent-hover);
+        }
+    }
+
     // --- Manuscript progress bar ---
 
     &__progress-bar {

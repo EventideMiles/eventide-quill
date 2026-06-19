@@ -4,7 +4,7 @@ import { DEFAULT_SETTINGS, EventideQuillSettings, EventideQuillSettingTab } from
 import { lint } from './core/linter/linter';
 import { getLintExtension, setLintResults, toggleLintActive } from './core/linter/decorations';
 import { QUILL_VIEW_TYPE, QuillSidebarView } from './ui/quill-sidebar';
-import { LintResult, FIXABLE_RULES } from './core/linter/types';
+import { LintResult, FIXABLE_RULES, RULE_INFO } from './core/linter/types';
 import { FIXES } from './core/linter/fixes';
 import { applyReplacement } from './core/linter/apply-fix';
 import { findEditorView } from './utils/find-editor';
@@ -12,6 +12,7 @@ import { extractScene } from './utils/text-analysis';
 import { AiProvider } from './ai/provider';
 import { createProvider, parseProviderKey } from './ai/provider-registry';
 import { applyTransformation, TRANSFORM_ACTIONS } from './ai/transform';
+import { groupFindingsByPassage, buildBatchLinterPrompt, buildPacingFixPrompt, streamBatchFix } from './ai/batch-fix';
 import { ToneSuggestModal, TransformModal } from './ui/transform-modal';
 import { FixWithAiModal } from './ui/fix-with-ai-modal';
 import { ContextCache } from './core/context-engine';
@@ -44,7 +45,9 @@ import {
     clearDiffEdits,
     diffEditsField,
     setDiffEdits,
-    syncChangeSetPositions
+    syncChangeSetPositions,
+    pushDiffEdits,
+    toDiffSnapshots
 } from './ui/change-diff-extension';
 import { ChangeSet } from './core/change-set';
 import { readVaultFiles } from './utils/vault-files';
@@ -231,6 +234,8 @@ export default class EventideQuillPlugin extends Plugin {
     coWriterSession: CoWriterSession = new CoWriterSession();
     /** Proposed transform edit awaiting inline review (one at a time). */
     transformChangeSet: ChangeSet = new ChangeSet();
+    /** Proposed batch lint-fix edits awaiting inline review. */
+    lintBatchChangeSet: ChangeSet = new ChangeSet();
     /** Current dashboard metrics for the active manuscript, or null when not yet computed. */
     currentDashboardMetrics: ManuscriptMetrics | null = null;
     /** Historical snapshots for the active manuscript, or null when not yet loaded. */
@@ -288,11 +293,13 @@ export default class EventideQuillPlugin extends Plugin {
                     if (owner === 'fulfill') this.approveCoWriterFulfill(id);
                     else if (owner === 'transform') this.approveTransformChange(id);
                     else if (owner === 'direct') this.approveDirectChange(id);
+                    else if (owner === 'lint-batch') this.approveLintBatchChange(id);
                 },
                 onReject: (owner: string, id: number) => {
                     if (owner === 'fulfill') this.rejectCoWriterFulfill(id);
                     else if (owner === 'transform') this.rejectTransformChange(id);
                     else if (owner === 'direct') this.rejectDirectChange(id);
+                    else if (owner === 'lint-batch') this.rejectLintBatchChange(id);
                 }
             })
         );
@@ -1514,6 +1521,275 @@ export default class EventideQuillPlugin extends Plugin {
         this.transformChangeSet.rejectAll();
         const cm = this.getActiveCm();
         if (cm) clearDiffEdits(cm, 'transform');
+    }
+
+    // --- Batch "Fix all with AI" ---
+
+    /**
+     * Fix all lint findings with AI.
+     *
+     * Groups findings by paragraph so that multiple issues on the same passage
+     * (e.g., "long sentence" + "passive voice") are addressed in one rewrite.
+     * Each group produces one `ProposedEdit` in the change-review diff with
+     * per-section Approve/Reject.
+     */
+    async fixAllLinterWithAi(): Promise<void> {
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: no chat model configured.');
+            return;
+        }
+
+        const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!markdownView) return;
+        const editor = markdownView.editor;
+        const cm = this.getActiveCm();
+        if (!cm) return;
+
+        const results = this.currentResults;
+        if (results.length === 0) {
+            new Notice('Quill: no lint findings to fix.');
+            return;
+        }
+
+        const editorText = editor.getValue();
+        const groups = groupFindingsByPassage(results, editorText);
+
+        // Clear previous batch.
+        this.lintBatchChangeSet.clear();
+        clearDiffEdits(cm, 'lint-batch');
+
+        new Notice(`Quill: fixing ${groups.length} passage${groups.length !== 1 ? 's' : ''}...`);
+
+        for (let i = 0; i < groups.length; i++) {
+            const group = groups[i]!;
+            const { system, user } = buildBatchLinterPrompt(group);
+
+            try {
+                const response = await streamBatchFix(
+                    chat.provider,
+                    [
+                        { role: 'system', content: system },
+                        { role: 'user', content: user }
+                    ],
+                    {
+                        temperature: this.settings.linterTemperature,
+                        maxTokens: this.settings.linterMaxOutputTokens,
+                        model: chat.modelId
+                    }
+                );
+
+                if (response && response !== group.passageText) {
+                    const labels = group.findings.map((f) => RULE_INFO[f.rule]?.name ?? f.rule).join(' + ');
+                    this.lintBatchChangeSet.add({
+                        from: group.passageStart,
+                        to: group.passageEnd,
+                        newText: response,
+                        label: labels
+                    });
+                    pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+                }
+            } catch {
+                // Skip this group on error; continue with remaining groups.
+            }
+        }
+
+        const count = this.lintBatchChangeSet.edits.length;
+        if (count > 0) {
+            new Notice(`Quill: ${count} fix${count !== 1 ? 'es' : ''} ready for review.`);
+        } else {
+            new Notice('Quill: no fixes generated.');
+        }
+    }
+
+    /**
+     * Fix all pacing flags in the active file with AI.
+     *
+     * Each pacing flag produces one `ProposedEdit` that rewrites the flagged
+     * passage to vary sentence length. Only flags in the currently active
+     * file are processed — switch files and re-run for other chapters.
+     */
+    async fixAllPacingWithAi(): Promise<void> {
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: no chat model configured.');
+            return;
+        }
+
+        const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!markdownView) return;
+        const editor = markdownView.editor;
+        const cm = this.getActiveCm();
+        if (!cm) return;
+
+        const metrics = this.currentDashboardMetrics;
+        if (!metrics) return;
+
+        // Filter to pacing flags in the active file.
+        const activePath = this.app.workspace.getActiveFile()?.path ?? '';
+        const flags = metrics.pacingFlags.filter((f) => f.filePath === activePath);
+
+        if (flags.length === 0) {
+            new Notice('Quill: no pacing flags in the active file.');
+            return;
+        }
+
+        // Clear previous batch.
+        this.lintBatchChangeSet.clear();
+        clearDiffEdits(cm, 'lint-batch');
+
+        const editorText = editor.getValue();
+        const lines = editorText.split('\n');
+        const lineOffsets: number[] = [0];
+        for (let i = 0; i < lines.length; i++) {
+            lineOffsets.push(lineOffsets[i]! + lines[i]!.length + 1);
+        }
+
+        new Notice(`Quill: fixing ${flags.length} pacing flag${flags.length !== 1 ? 's' : ''}...`);
+
+        for (const flag of flags) {
+            const startOffset = lineOffsets[flag.lineStart - 1] ?? 0;
+            const endOffset = (lineOffsets[flag.lineEnd] ?? editorText.length) - 1;
+            const passageText = editorText.slice(startOffset, Math.max(startOffset, endOffset));
+
+            const { system, user } = buildPacingFixPrompt(flag, passageText);
+
+            try {
+                const response = await streamBatchFix(
+                    chat.provider,
+                    [
+                        { role: 'system', content: system },
+                        { role: 'user', content: user }
+                    ],
+                    {
+                        temperature: this.settings.transformTemperature,
+                        maxTokens: this.settings.transformMaxOutputTokens,
+                        model: chat.modelId
+                    }
+                );
+
+                if (response && response !== passageText) {
+                    this.lintBatchChangeSet.add({
+                        from: startOffset,
+                        to: Math.max(startOffset, endOffset),
+                        newText: response,
+                        label: flag.kind === 'uniform-short' ? 'Vary short sentences' : 'Vary long sentences'
+                    });
+                    pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+                }
+            } catch {
+                // Skip this flag on error; continue with remaining flags.
+            }
+        }
+
+        const count = this.lintBatchChangeSet.edits.length;
+        if (count > 0) {
+            new Notice(`Quill: ${count} pacing fix${count !== 1 ? 'es' : ''} ready for review.`);
+        } else {
+            new Notice('Quill: no pacing fixes generated.');
+        }
+    }
+
+    /** Approve a single batch-fix edit: commit the rewrite and update the diff. */
+    approveLintBatchChange(id: number): void {
+        const cm = this.getActiveCm();
+        if (!cm) return;
+        syncChangeSetPositions(cm, this.lintBatchChangeSet, 'lint-batch');
+        const change = this.lintBatchChangeSet.approve(id);
+        if (!change) return;
+        const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'lint-batch');
+        cm.dispatch({
+            changes: change,
+            effects: setDiffEdits.of([...preserved, ...toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch')]),
+            selection: { anchor: change.from + change.insert.length }
+        });
+    }
+
+    /** Reject a single batch-fix edit: leave the original passage. */
+    rejectLintBatchChange(id: number): void {
+        const cm = this.getActiveCm();
+        if (!cm) return;
+        this.lintBatchChangeSet.reject(id);
+        pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+    }
+
+    /**
+     * Fix a single pacing flag with AI.
+     *
+     * Extracts the flagged passage, builds a pacing-fix prompt, streams the
+     * AI response, and adds a `ProposedEdit` to the change-review diff.
+     * Only works on flags in the currently active file.
+     */
+    async fixSinglePacingFlag(flag: {
+        filePath: string;
+        lineStart: number;
+        lineEnd: number;
+        kind: 'uniform-short' | 'uniform-long';
+        avgSentenceLength: number;
+    }): Promise<void> {
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: no chat model configured.');
+            return;
+        }
+
+        const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!markdownView) return;
+        const editor = markdownView.editor;
+        const cm = this.getActiveCm();
+        if (!cm) return;
+
+        const activePath = this.app.workspace.getActiveFile()?.path ?? '';
+        if (flag.filePath !== activePath) {
+            new Notice('Quill: open the chapter file containing this flag to fix it.');
+            return;
+        }
+
+        const editorText = editor.getValue();
+        const lines = editorText.split('\n');
+        const lineOffsets: number[] = [0];
+        for (let i = 0; i < lines.length; i++) {
+            lineOffsets.push(lineOffsets[i]! + lines[i]!.length + 1);
+        }
+
+        const startOffset = lineOffsets[flag.lineStart - 1] ?? 0;
+        const endOffset = Math.max(startOffset, (lineOffsets[flag.lineEnd] ?? editorText.length) - 1);
+        const passageText = editorText.slice(startOffset, endOffset);
+
+        const { system, user } = buildPacingFixPrompt(flag, passageText);
+
+        new Notice('Quill: generating pacing fix...');
+
+        try {
+            const response = await streamBatchFix(
+                chat.provider,
+                [
+                    { role: 'system', content: system },
+                    { role: 'user', content: user }
+                ],
+                {
+                    temperature: this.settings.transformTemperature,
+                    maxTokens: this.settings.transformMaxOutputTokens,
+                    model: chat.modelId
+                }
+            );
+
+            if (response && response !== passageText) {
+                this.lintBatchChangeSet.add({
+                    from: startOffset,
+                    to: endOffset,
+                    newText: response,
+                    label: flag.kind === 'uniform-short' ? 'Vary short sentences' : 'Vary long sentences'
+                });
+                pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+                new Notice('Quill: pacing fix ready for review.');
+            } else {
+                new Notice('Quill: no changes suggested.');
+            }
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            new Notice(`Quill: pacing fix failed (${message}).`);
+        }
     }
 
     /** Cancel the current feedback generation request. */
