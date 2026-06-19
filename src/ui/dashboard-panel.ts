@@ -19,6 +19,29 @@ function hasChatProvider(plugin: EventideQuillPlugin): boolean {
     return !!plugin.getDefaultChatProvider().provider && !plugin.batchFixInProgress;
 }
 
+/** Visual status for target comparison. */
+type TargetStatus = 'good' | 'warning' | 'danger';
+
+/** Compute how far a grade level is from its target. */
+function gradeLevelStatus(actual: number, target: number): { status: TargetStatus; label: string } {
+    const diff = actual - target;
+    const abs = Math.abs(diff);
+    if (abs <= 1) return { status: 'good', label: 'on target' };
+    if (abs <= 2) return { status: 'warning', label: diff > 0 ? 'above target' : 'below target' };
+    return {
+        status: 'danger',
+        label: diff > 0 ? 'way above target' : 'way below target'
+    };
+}
+
+/** Compute progress status for a word-count-vs-target ratio. */
+function progressStatus(ratio: number): { status: TargetStatus; label: string } {
+    if (ratio >= 1) return { status: 'good', label: 'target met' };
+    if (ratio >= 0.8) return { status: 'good', label: 'on track' };
+    if (ratio >= 0.5) return { status: 'warning', label: 'behind' };
+    return { status: 'danger', label: 'far behind' };
+}
+
 /** Format a 0-1 ratio as a percentage string. */
 function pct(ratio: number): string {
     return `${Math.round(ratio * 100)}%`;
@@ -100,20 +123,26 @@ function renderSummary(container: HTMLElement, metrics: ManuscriptMetrics, plugi
     section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Manuscript' });
 
     const target = plugin.currentManuscriptFileData?.manuscriptTarget ?? DEFAULT_MANUSCRIPT_TARGET;
-    const progressPct = target > 0 ? clamp((metrics.totalWords / target) * 100, 0, 100) : 0;
+    const ratio = target > 0 ? metrics.totalWords / target : 0;
+    const progressPct = clamp(ratio * 100, 0, 100);
+    const { status: pStatus, label: pLabel } = progressStatus(ratio);
 
     // Progress bar.
     const bar = section.createEl('div', { cls: 'quill-dashboard-panel__progress-bar' });
     bar.createEl('div', {
-        cls: `quill-dashboard-panel__progress-fill${metrics.totalWords >= target ? ' quill-dashboard-panel__progress-fill--over' : ''}`,
+        cls: `quill-dashboard-panel__progress-fill quill-dashboard-panel__progress-fill--${pStatus}`,
         attr: { style: `width: ${progressPct}%` }
+    });
+
+    // Status text below the bar.
+    bar.createEl('div', {
+        cls: `quill-dashboard-panel__progress-label quill-dashboard-panel__target-status--${pStatus}`,
+        text: `${metrics.totalWords.toLocaleString()} / ${target.toLocaleString()} words \u00B7 ${pLabel}`
     });
 
     const grid = section.createEl('div', { cls: 'quill-dashboard-panel__summary-grid' });
 
     const stats: { label: string; value: string }[] = [
-        { label: 'Total words', value: metrics.totalWords.toLocaleString() },
-        { label: 'Target', value: target.toLocaleString() },
         { label: 'Chapters', value: String(metrics.chapterCount) },
         { label: 'Scenes', value: String(metrics.sectionCount) },
         { label: 'Avg sentence', value: `${metrics.avgSentenceLength}w` },
@@ -182,11 +211,13 @@ function renderChapterList(
             text: `${chapter.wordCount.toLocaleString()}w \u00B7 ${pct(chapter.dialogueRatio)} dialogue`
         });
 
-        // Word-count bar vs target.
-        const barWidth = target > 0 ? clamp((chapter.wordCount / target) * 100, 0, 100) : 0;
+        // Word-count bar vs target — colored by progress status.
+        const chapterRatio = target > 0 ? chapter.wordCount / target : 0;
+        const barWidth = clamp(chapterRatio * 100, 0, 100);
+        const { status: cStatus } = progressStatus(chapterRatio);
         const bar = head.createEl('div', { cls: 'quill-dashboard-panel__chapter-bar' });
         bar.createEl('div', {
-            cls: `quill-dashboard-panel__chapter-bar-fill${chapter.wordCount >= target ? ' quill-dashboard-panel__chapter-bar-fill--over' : ''}`,
+            cls: `quill-dashboard-panel__chapter-bar-fill quill-dashboard-panel__chapter-bar-fill--${cStatus}`,
             attr: { style: `width: ${barWidth}%` }
         });
 
@@ -359,10 +390,19 @@ function renderReadability(container: HTMLElement, metrics: ManuscriptMetrics, p
     );
 
     const targetGrade = plugin.currentManuscriptFileData?.targetGradeLevel;
-    const gradeText = targetGrade
-        ? `Grade level: ${metrics.fleschKincaidGrade} (target: ${targetGrade})`
-        : `Grade level: ${metrics.fleschKincaidGrade}`;
-    grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(gradeText);
+    const gradeEl = grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' });
+    if (targetGrade !== undefined) {
+        const { status, label } = gradeLevelStatus(metrics.fleschKincaidGrade, targetGrade);
+        const dir = metrics.fleschKincaidGrade > targetGrade ? 'simplify' : 'add complexity';
+        const hint = status === 'good' ? '' : ` \u2014 consider ${dir}`;
+        gradeEl.createEl('span').setText(`Grade level: ${metrics.fleschKincaidGrade} (target: ${targetGrade}) `);
+        gradeEl.createEl('span', {
+            cls: `quill-dashboard-panel__target-status quill-dashboard-panel__target-status--${status}`,
+            text: `${label}${hint}`
+        });
+    } else {
+        gradeEl.setText(`Grade level: ${metrics.fleschKincaidGrade}`);
+    }
 }
 
 /** Map a Flesch Reading Ease score to a human-readable label. */

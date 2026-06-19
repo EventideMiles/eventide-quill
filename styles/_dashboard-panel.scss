@@ -101,13 +101,25 @@
 
     &__progress-fill {
         height: 100%;
-        background: var(--interactive-accent);
         border-radius: $radius-full;
         transition: width $transition-slow;
 
-        &--over {
+        &--good {
             background: var(--color-green, var(--interactive-accent));
         }
+
+        &--warning {
+            background: var(--color-yellow, var(--interactive-accent));
+        }
+
+        &--danger {
+            background: var(--color-red, var(--interactive-accent));
+        }
+    }
+
+    &__progress-label {
+        font-size: var(--font-ui-smaller);
+        margin-top: $space-xs;
     }
 
     // --- Summary grid ---
@@ -201,12 +213,19 @@
 
     &__chapter-bar-fill {
         height: 100%;
-        background: var(--interactive-accent);
         border-radius: $radius-full;
         transition: width $transition-slow;
 
-        &--over {
+        &--good {
             background: var(--color-green, var(--interactive-accent));
+        }
+
+        &--warning {
+            background: var(--color-yellow, var(--interactive-accent));
+        }
+
+        &--danger {
+            background: var(--color-red, var(--interactive-accent));
         }
     }
 
@@ -372,6 +391,22 @@
 
     &__readability-score {
         padding: $space-xs 0;
+    }
+
+    &__target-status {
+        font-weight: 600;
+
+        &--good {
+            color: var(--color-green, var(--text-muted));
+        }
+
+        &--warning {
+            color: var(--color-yellow, var(--text-muted));
+        }
+
+        &--danger {
+            color: var(--color-red, var(--text-normal));
+        }
     }
 
     // --- Characters ---
