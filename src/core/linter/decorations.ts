@@ -123,7 +123,7 @@ class LintDecorations {
             const color = severityColors[result.severity] || 'var(--color-cyan)';
 
             const mark = Decoration.mark({
-                class: 'quill-lint-rule',
+                class: 'quill-linter__rule',
                 attributes: {
                     style: `text-decoration: underline wavy ${color}; text-underline-offset: 2px;`
                 }
@@ -187,26 +187,26 @@ export function getLintExtension(
                     const resolved = getComputedStyle(view.dom);
 
                     const dom = window.activeDocument.createElement('div');
-                    dom.className = 'quill-lint-tooltip';
+                    dom.className = 'quill-linter-tooltip';
                     dom.style.background = resolved.getPropertyValue('--background-primary');
                     dom.style.color = resolved.getPropertyValue('--text-normal');
                     dom.style.border = '1px solid ' + resolved.getPropertyValue('--background-modifier-border');
                     dom.style.boxShadow = '0 2px 8px ' + resolved.getPropertyValue('--background-modifier-box-shadow');
 
                     const msg = window.activeDocument.createElement('div');
-                    msg.className = 'quill-lint-tooltip-msg';
+                    msg.className = 'quill-linter-tooltip__msg';
                     msg.style.color = resolved.getPropertyValue('--text-muted');
                     msg.textContent = `[${pinned.result.rule}] ${pinned.result.message}`;
                     dom.appendChild(msg);
 
                     const btnRow = window.activeDocument.createElement('div');
-                    btnRow.className = 'quill-lint-tooltip-btns';
+                    btnRow.className = 'quill-linter-tooltip__btns';
                     dom.appendChild(btnRow);
 
                     const fix = FIXES[pinned.result.rule];
                     if (fix) {
                         const btn = window.activeDocument.createElement('button');
-                        btn.className = 'quill-lint-fix-btn';
+                        btn.className = 'quill-linter-tooltip__fix-btn';
                         btn.style.background = resolved.getPropertyValue('--interactive-accent');
                         btn.style.color = resolved.getPropertyValue('--text-on-accent');
                         btn.textContent = fix.description;
@@ -219,7 +219,7 @@ export function getLintExtension(
 
                     if (onAiFix && isAiFixEnabled?.() !== false) {
                         const aiBtn = window.activeDocument.createElement('button');
-                        aiBtn.className = 'quill-lint-ai-fix-btn';
+                        aiBtn.className = 'quill-linter-tooltip__ai-fix-btn';
                         aiBtn.textContent = 'Fix with AI';
                         aiBtn.addEventListener('click', (e: MouseEvent) => {
                             e.stopPropagation();
@@ -233,7 +233,7 @@ export function getLintExtension(
 
                     if (onDismiss) {
                         const dismissBtn = window.activeDocument.createElement('button');
-                        dismissBtn.className = 'quill-lint-dismiss-btn';
+                        dismissBtn.className = 'quill-linter-tooltip__dismiss-btn';
                         dismissBtn.textContent = 'Dismiss';
                         dismissBtn.addEventListener('click', (e: MouseEvent) => {
                             e.stopPropagation();

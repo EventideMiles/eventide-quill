@@ -1,0 +1,22 @@
+// Eventide Quill — sidebar styles
+// Source: styles/main.scss — do not edit styles.css (it is built from this file).
+//
+// Order matters for the cascade. Shared BEM blocks load first (baseline
+// chrome used by multiple panels); panel-specific blocks load after;
+// modals and settings load last (used by everything else).
+
+@use 'base';
+@use 'option-picker';
+@use 'form';
+@use 'chat-shared';
+@use 'active-document';
+
+@use 'sidebar';
+@use 'linter';
+@use 'context-panel';
+@use 'review-panel';
+@use 'cowriter-panel';
+@use 'change-review';
+
+@use 'modals';
+@use 'settings';

@@ -46,7 +46,7 @@ export class ConfirmModal extends Modal {
         const content = this.contentEl.createDiv();
         content.createEl('p', { text: this.message });
 
-        const btnRow = content.createDiv({ cls: 'quill-confirm-btn-row' });
+        const btnRow = content.createDiv({ cls: 'quill-confirm-modal__btn-row' });
         const cancelBtn = btnRow.createEl('button', { text: 'Cancel' });
         cancelBtn.addEventListener('click', () => this.close());
 

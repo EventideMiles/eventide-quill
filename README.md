@@ -15,11 +15,11 @@ It runs locally by default (Ollama) and never sends your manuscript anywhere you
 - **Manuscript Context Engine** — automatically builds working context from your open document. Extracts characters, locations, and plot threads on the fly.
 - **Prose Linter (Novelist Edition)** — catches passive voice, adverb density, repeated sentence starts, telling vs. showing, and dialogue tag overuse. All deterministic, no AI cost.
 - **Manuscript Dashboard** — chapter word counts, pacing analysis, dialogue vs. description ratios, character appearance tracking.
-- **AI Feedback Engine** — developmental editing, scene critique, character consistency, and plot thread review. Selectable feedback personas.
+- **AI Review Engine** — unified editorial feedback (persona-driven, multi-manuscript) and critical analysis (plot logic, character consistency, continuity, voice drift) in a single Review tab with line-referenced findings.
 - **Async Feedback Queue** — drop a chapter at 3 AM, get a structured report when it's ready.
 - **Collaborative Drafting** — writer leads, AI extends. Turn by turn, in your voice and perspective.
 - **Selection Transformations** — rewrite selected passages in place: improve, expand, tighten, or change tone.
-- **Critical Analysis / Continuity Engine** — plot logic checks, character consistency, voice drift detection.
+- **Critical Analysis / Continuity Engine** — part of the Review tab; plot logic checks, character consistency, voice drift detection.
 - **Writer Guidance Layers** — inline directives (`<!-- quill: -->`) and free-form plot map to steer the AI.
 - **AI Generation Style Constraints** — 18 rules + 6 narrative perspective presets keep generated prose on-model.
 

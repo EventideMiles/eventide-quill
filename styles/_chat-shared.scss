@@ -1,0 +1,222 @@
+// Chat panel — shared BEM block.
+//
+// Chat-style sidebar panels (ReviewPanel, ) share the same
+// structure: a scrolling history of message bubbles, plus a pinned bottom
+// area with action buttons, a textarea, and a token indicator. Co-writer
+// has its own panel structure and does NOT use this block.
+//
+// The `.quill-chat-panel__*` classes are emitted by AbstractChatPanel
+// subclasses. The block itself is implicit (there is no wrapping element
+// with class `quill-chat-panel`); the elements are scoped to their containing
+// panel via the parent sidebar tab.
+
+@use 'base' as *;
+
+// =========================================================================
+// Chat history (scrolling message bubbles)
+// =========================================================================
+
+.quill-chat-panel__section {
+    margin-top: 20px;
+    padding-top: $space-xl;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.quill-chat-panel__bubble {
+    padding: $space-md $space-lg;
+    margin-bottom: $space-md;
+    border-radius: $radius-md;
+    font-size: var(--font-ui-small);
+    line-height: var(--line-height-normal);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+
+    &--user {
+        background: var(--interactive-accent);
+        color: var(--text-on-accent);
+        margin-left: 20px;
+    }
+
+    &--assistant {
+        background: var(--background-primary-alt);
+        color: var(--text-normal);
+        margin-right: 20px;
+        white-space: normal;
+
+        // Compact paragraphs rendered by MarkdownRenderer.
+        p {
+            margin: 0 0 0.25em 0;
+
+            &:last-child {
+                margin-bottom: 0;
+            }
+        }
+
+        br {
+            display: none;
+        }
+
+        ul,
+        ol {
+            padding-left: 20px;
+            margin: 0.25em 0;
+        }
+
+        li {
+            margin: 0.1em 0;
+        }
+
+        h1,
+        h2,
+        h3,
+        h4 {
+            margin: 0.4em 0 0.1em;
+            color: var(--text-normal);
+        }
+    }
+
+    &--streaming {
+        opacity: 0.7;
+    }
+}
+
+// Context head — system message shown when compaction summarizes older turns.
+.quill-chat-panel__context-head {
+    text-align: left;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    padding: $space-md $space-lg;
+    margin-bottom: $space-md;
+    border-top: 1px solid var(--background-modifier-border);
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    border-radius: $radius-sm;
+}
+
+// =========================================================================
+// Pinned bottom area (action buttons + textarea + indicator)
+// =========================================================================
+
+.quill-chat-panel__bottom {
+    flex-shrink: 0;
+}
+
+.quill-chat-panel__btn-row {
+    display: flex;
+    gap: $space-sm;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.quill-chat-panel__btn-spacer {
+    flex: 1;
+}
+
+.quill-chat-panel__ta-row {
+    flex-shrink: 0;
+}
+
+// Action button base (used by ± add-file, 💾 save, »» compact, ✓ new-chat).
+// Variants via modifier classes.
+.quill-chat-panel__action-btn {
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: $radius-sm;
+    padding: $space-sm $space-lg;
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    background: transparent;
+    color: var(--text-muted);
+    height: 36px;
+    line-height: 1.4;
+    transition: background $transition-fast, color $transition-fast;
+    flex-shrink: 0;
+    box-sizing: border-box;
+
+    &:hover {
+        background: var(--background-modifier-hover);
+        color: var(--text-normal);
+    }
+
+    &--compact {
+        font-size: var(--font-ui-smaller);
+    }
+}
+
+// Chat textarea — where the writer types follow-up messages.
+.quill-chat-panel__input {
+    width: 100%;
+    height: 180px;
+    min-height: 80px;
+    max-height: 300px;
+    resize: vertical;
+    font-size: var(--font-ui-small);
+    font-family: var(--font-interface);
+    line-height: 1.4;
+    padding: $space-sm $space-lg;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: $radius-sm;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    box-sizing: border-box;
+
+    &:focus {
+        border-color: var(--interactive-accent);
+        outline: none;
+    }
+}
+
+// Token indicator — context-window usage shown below the textarea.
+.quill-chat-panel__indicator {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    padding: $space-xs 0 2px 0;
+    text-align: center;
+}
+
+// =========================================================================
+// Context file pills (reference material added mid-conversation)
+// =========================================================================
+// Rendered by ChatContextFiles class. The pill bar lives inside __bottom,
+// inserted before __btn-row.
+
+.quill-chat-panel__ctx-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: $space-xs;
+    padding: $space-xs 0;
+}
+
+.quill-chat-panel__ctx-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: $space-xs;
+    font-size: var(--font-ui-smaller);
+    background: var(--background-modifier-hover);
+    border-radius: 3px;
+    padding: 2px $space-sm;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    > span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+}
+
+.quill-chat-panel__ctx-remove {
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    padding: 0 2px;
+    line-height: 1;
+
+    &:hover {
+        color: var(--text-normal);
+    }
+}

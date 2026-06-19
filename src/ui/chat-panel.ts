@@ -1,4 +1,4 @@
-import { App, Component } from 'obsidian';
+import { App, Component, MarkdownView, TFile } from 'obsidian';
 
 /**
  * A single message in a chat conversation within a chat panel.
@@ -15,6 +15,14 @@ export interface ChatMessage {
  */
 export function normalizeParagraphBreaks(text: string): string {
     return text.replace(/\n{3,}/g, '\n\n');
+}
+
+/** Snapshot of the active markdown document, used by chat panels to gate UI on document state. */
+export interface ActiveDocument {
+    /** The active file (guaranteed non-null when this object is returned). */
+    file: TFile;
+    /** Whitespace-split word count, best-effort (0 if the view's editor isn't accessible). */
+    wordCount: number;
 }
 
 /**
@@ -99,7 +107,7 @@ export abstract class AbstractChatPanel {
 
     /** Find the scrollable content container within the panel. */
     protected getScrollContainer(): HTMLElement | null {
-        return this.containerEl?.querySelector('.quill-sidebar-content-plain') ?? null;
+        return this.containerEl?.querySelector('.quill-sidebar__content-plain') ?? null;
     }
 
     /** True when the scroll container is at or near the bottom (within 60px). */
@@ -176,5 +184,83 @@ export abstract class AbstractChatPanel {
         this.renderEvents?.unload();
         this.renderEvents = new Component();
         this.containerEl?.empty();
+    }
+
+    // --- Active-document awareness ---
+    //
+    // Chat panels that operate on the active document (co-writer, analysis) need
+    // to know whether a markdown document is active and render an empty state
+    // when none is. These helpers standardize that pattern.
+    //
+    // IMPORTANT: we use workspace.getActiveFile() (NOT getActiveViewOfType)
+    // because the sidebar steals focus when the writer clicks a tab.
+    // getActiveFile() remembers the active markdown file across focus changes;
+    // getActiveViewOfType(MarkdownView) returns null when the sidebar has focus.
+
+    /**
+     * Get the active markdown document, or null if no file is active.
+     *
+     * Uses `workspace.getActiveFile()` which is reliable even when the sidebar
+     * has stolen focus from the editor. Word count is best-effort via leaf
+     * iteration (0 if the editor view isn't currently rendered).
+     */
+    protected getActiveDocument(): ActiveDocument | null {
+        const file = this.app.workspace.getActiveFile();
+        if (!file) return null;
+        // Only markdown files are valid manuscripts for chat panels; ignore
+        // canvases, images, PDFs, etc. so downstream reads don't fail.
+        if (file.extension !== 'md') return null;
+
+        let wordCount = 0;
+        for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+            if (leaf.view instanceof MarkdownView && leaf.view.file?.path === file.path) {
+                const text = leaf.view.editor.getValue();
+                wordCount = text.trim().split(/\s+/).filter(Boolean).length;
+                break;
+            }
+        }
+
+        return { file, wordCount };
+    }
+
+    /**
+     * Require an active document to proceed. Returns the document if one is
+     * open; otherwise renders an "Open a document to use {featureName}" message
+     * into `container` and returns null.
+     *
+     * Usage:
+     * ```
+     * const doc = this.requireActiveDocument(scroll, 'analysis');
+     * if (!doc) return;
+     * this.renderDocumentHeader(scroll, doc);
+     * // ... safe to render the rest of the tab
+     * ```
+     */
+    protected requireActiveDocument(container: HTMLElement, featureName: string): ActiveDocument | null {
+        const doc = this.getActiveDocument();
+        if (doc) return doc;
+        container.createEl('p', {
+            cls: 'quill-empty-hint',
+            text: `Open a document to use ${featureName}.`
+        });
+        return null;
+    }
+
+    /**
+     * Render a document info header (file name + word count) into the container.
+     * Gives the writer visual confirmation of which document the panel will
+     * operate on. No-op if `doc` is null.
+     */
+    protected renderDocumentHeader(container: HTMLElement, doc: ActiveDocument | null): void {
+        if (!doc) return;
+        const header = container.createDiv({ cls: 'quill-document' });
+        header.createEl('span', {
+            cls: 'quill-document__name',
+            text: doc.file.basename
+        });
+        header.createEl('span', {
+            cls: 'quill-document__meta',
+            text: `${doc.wordCount.toLocaleString()} words`
+        });
     }
 }

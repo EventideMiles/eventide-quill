@@ -1,0 +1,76 @@
+// Modal chrome — small prompt-style modals used across the plugin.
+//
+// Three BEM blocks:
+//
+//   quill-input-modal   — text input modal (used by settings: add provider)
+//   quill-save-modal    — filename prompt (FilenameModal, used by chat panels)
+//   quill-confirm-modal — confirmation prompt (ConfirmModal, used by chat panels)
+
+@use 'base' as *;
+
+// =========================================================================
+// Input modal — single text input + action buttons
+// =========================================================================
+
+.quill-input-modal {
+    &__input {
+        width: 100%;
+        margin-bottom: $space-lg;
+    }
+
+    &__actions {
+        display: flex;
+        gap: $space-md;
+        justify-content: flex-end;
+    }
+}
+
+// =========================================================================
+// Save modal — filename prompt for exporting conversations/reports
+// =========================================================================
+
+.quill-save-modal {
+    &__label {
+        display: block;
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        margin-bottom: $space-sm;
+    }
+
+    &__input {
+        width: 100%;
+        padding: $space-sm $space-md;
+        font-size: var(--font-ui-small);
+        font-family: var(--font-interface);
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        background: var(--background-primary);
+        color: var(--text-normal);
+        box-sizing: border-box;
+
+        &:focus {
+            border-color: var(--interactive-accent);
+            outline: none;
+        }
+    }
+
+    &__btn-row {
+        display: flex;
+        justify-content: flex-end;
+        gap: $space-md;
+        margin-top: $space-lg;
+    }
+}
+
+// =========================================================================
+// Confirm modal — message + 1 or 2 action buttons
+// =========================================================================
+
+.quill-confirm-modal {
+    &__btn-row {
+        display: flex;
+        justify-content: flex-end;
+        gap: $space-md;
+        margin-top: $space-xl;
+    }
+}

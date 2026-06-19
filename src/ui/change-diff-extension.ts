@@ -128,22 +128,22 @@ class ChangePreviewWidget extends WidgetType {
      *  with inline Approve/Reject controls (only once generation is final). */
     toDOM(): HTMLElement {
         const wrap = window.activeDocument.createElement('div');
-        wrap.className = 'quill-diff-group';
+        wrap.className = 'quill-change-diff__group';
 
         // Removed (red) — only when there is old text being replaced.
         if (this.removedText.length > 0) {
             const removed = window.activeDocument.createElement('div');
-            removed.className = 'quill-diff-removed-box';
+            removed.className = 'quill-change-diff__removed-box';
             removed.textContent = this.removedText;
             wrap.appendChild(removed);
         }
 
         // Added (green) — the replacement text + controls.
         const added = window.activeDocument.createElement('div');
-        added.className = 'quill-diff-added';
+        added.className = 'quill-change-diff__added';
 
         const prose = window.activeDocument.createElement('div');
-        prose.className = 'quill-diff-added-prose';
+        prose.className = 'quill-change-diff__added-prose';
         prose.textContent = this.edit.newText;
         added.appendChild(prose);
 
@@ -152,16 +152,16 @@ class ChangePreviewWidget extends WidgetType {
         // "Generating\u2026" hint instead so nobody can approve mid-stream.
         if (this.edit.state === 'pending') {
             const controls = window.activeDocument.createElement('div');
-            controls.className = 'quill-diff-controls';
+            controls.className = 'quill-change-diff__controls';
             const approve = window.activeDocument.createElement('button');
-            approve.className = 'mod-cta quill-diff-btn';
+            approve.className = 'mod-cta quill-change-diff__btn';
             approve.textContent = 'Approve';
             approve.addEventListener('click', (e: MouseEvent) => {
                 e.stopPropagation();
                 this.handlers.onApprove?.(this.edit.owner, this.edit.id);
             });
             const reject = window.activeDocument.createElement('button');
-            reject.className = 'quill-diff-btn';
+            reject.className = 'quill-change-diff__btn';
             reject.textContent = 'Reject';
             reject.addEventListener('click', (e: MouseEvent) => {
                 e.stopPropagation();
@@ -172,7 +172,7 @@ class ChangePreviewWidget extends WidgetType {
             added.appendChild(controls);
         } else if (this.edit.state === 'generating') {
             const hint = window.activeDocument.createElement('div');
-            hint.className = 'quill-diff-generating';
+            hint.className = 'quill-change-diff__generating';
             hint.textContent = 'Generating\u2026';
             added.appendChild(hint);
         }
@@ -230,7 +230,9 @@ class ChangeDiffPlugin {
                     // Multi-line: a ViewPlugin cannot create a replace that crosses
                     // line breaks. Mark the removed text (red bg + strikethrough)
                     // and drop the green widget below — both are ViewPlugin-safe.
-                    ranges.push(Decoration.mark({ class: 'quill-diff-removed-mark' }).range(edit.from, edit.to));
+                    ranges.push(
+                        Decoration.mark({ class: 'quill-change-diff__removed-mark' }).range(edit.from, edit.to)
+                    );
                     const widget = new ChangePreviewWidget('', edit, this.handlers);
                     ranges.push(Decoration.widget({ widget, side: 1 }).range(edit.to));
                 } else {

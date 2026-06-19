@@ -1,0 +1,220 @@
+// Context panel — the Context tab in the sidebar.
+//
+// Block: quill-context-panel. All elements belong to this block.
+// Renders: narrative voice summary, entity lists (characters / locations /
+// plot threads), pinned/added vault files, budget bar, action buttons.
+
+@use 'base' as *;
+
+.quill-context-panel {
+    // Scrollable wrapper for the whole tab content.
+    &__scroll {
+        flex: 1;
+        overflow-y: auto;
+        min-height: 0;
+    }
+
+    &__section {
+        margin-bottom: $space-xl;
+    }
+
+    &__section-heading {
+        font-weight: 600;
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        margin-bottom: $space-md;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    &__voice {
+        font-size: var(--font-ui-small);
+        color: var(--text-normal);
+        padding: $space-md;
+        background: var(--background-primary-alt);
+        border-radius: $radius-sm;
+        margin-bottom: $space-lg;
+        line-height: var(--line-height-normal);
+    }
+
+    // --- Entity row (character / location / plot-thread) ---
+
+    &__entity {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: $space-sm;
+        padding: $space-sm $space-md;
+        border-radius: $radius-sm;
+        border-bottom: 1px solid var(--background-modifier-border);
+        cursor: pointer;
+        transition: background $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+        }
+    }
+
+    &__entity-name {
+        font-weight: 500;
+    }
+
+    &__entity-count {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-faint);
+    }
+
+    &__entity-aliases {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+    }
+
+    &__entity-lines {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-faint);
+    }
+
+    // Pin / remove buttons (shared between entity rows and vault item rows).
+    &__pin-btn,
+    &__remove-btn {
+        cursor: pointer;
+        border: none;
+        border-radius: $radius-sm;
+        padding: 2px $space-md;
+        font-size: var(--font-ui-smaller);
+        font-family: var(--font-interface);
+        background: transparent;
+        color: var(--text-muted);
+        flex-shrink: 0;
+
+        &:hover {
+            color: var(--text-normal);
+            background: var(--background-modifier-hover);
+        }
+    }
+
+    // Pinned state modifier (applies to either pin button or entity row).
+    &__pinned {
+        color: var(--text-accent);
+        background: rgba(var(--color-blue-rgb), 0.1);
+    }
+
+    // --- Vault item (pinned or auto-discovered file) ---
+
+    &__item {
+        padding: $space-sm $space-md;
+        border-left: 2px solid var(--background-modifier-border);
+        border-radius: 2px;
+        margin-bottom: $space-sm;
+        font-size: var(--font-ui-small);
+
+        &--pinned {
+            border-left-color: var(--color-blue);
+            background: rgba(var(--color-blue-rgb), 0.05);
+        }
+
+        &--manual {
+            border-left-color: var(--color-green);
+            background: rgba(var(--color-green-rgb), 0.05);
+
+            // When both modifiers apply, manual wins (added files stay green).
+            &.quill-context-panel__item--pinned {
+                border-left-color: var(--color-green);
+            }
+        }
+    }
+
+    &__item-header {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+    }
+
+    &__item-name {
+        font-weight: 600;
+        color: var(--text-normal);
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    &__item-details {
+        display: flex;
+        align-items: center;
+        gap: $space-md;
+        margin-top: 2px;
+        padding-left: 0;
+    }
+
+    &__item-path {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-faint);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+    }
+
+    &__item-matched {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        white-space: normal;
+        overflow-wrap: break-word;
+    }
+
+    // --- Budget bar ---
+
+    &__budget {
+        margin-top: $space-lg;
+        padding: $space-md;
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+    }
+
+    &__budget-bar {
+        height: 4px;
+        background: var(--background-modifier-border);
+        border-radius: 2px;
+        margin-top: $space-xs;
+        overflow: hidden;
+    }
+
+    &__budget-fill {
+        height: 100%;
+        border-radius: 2px;
+        transition: width 0.2s, background 0.2s;
+    }
+
+    // --- Action buttons row (Add file / Rescan / Restore removed) ---
+
+    &__actions {
+        display: flex;
+        gap: $space-md;
+        margin-top: $space-lg;
+    }
+
+    &__action-btn {
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-sm 14px;
+        font-size: var(--font-ui-small);
+        font-family: var(--font-interface);
+        background: transparent;
+        color: var(--text-muted);
+        transition: filter $transition-fast, background $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+    }
+
+    &__empty {
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        text-align: center;
+        padding: $space-xxl $space-md;
+    }
+}
