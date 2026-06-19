@@ -44,6 +44,13 @@ export class QuillSidebarView extends ItemView {
     constructor(leaf: WorkspaceLeaf, plugin: EventideQuillPlugin) {
         super(leaf);
         this.plugin = plugin;
+        // Apply the user's preferred default tab.
+        this.activeTopTab = plugin.settings.defaultTab as TopTab;
+    }
+
+    /** Whether the Dashboard tab is currently active. */
+    isDashboardActive(): boolean {
+        return this.activeTopTab === 'dashboard';
     }
 
     /** Return the unique view type identifier. */
@@ -304,11 +311,11 @@ export class QuillSidebarView extends ItemView {
     /** Render the top-level tab bar. */
     private renderTopTabBar() {
         const tabs: { id: TopTab; label: string }[] = [
+            { id: 'dashboard', label: 'Dashboard' },
             { id: 'linter', label: 'Linter' },
             { id: 'context', label: 'Context' },
             { id: 'review', label: 'Review' },
-            { id: 'cowriter', label: 'Co-writer' },
-            { id: 'dashboard', label: 'Dashboard' }
+            { id: 'cowriter', label: 'Co-writer' }
         ];
 
         for (const tab of tabs) {

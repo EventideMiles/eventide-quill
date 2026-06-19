@@ -56,6 +56,8 @@ export interface EventideQuillSettings {
     coWriterVoiceMatch: boolean;
     enableInlineDirectives: boolean;
     enableDashboard: boolean;
+    defaultTab: string;
+    dashboardAutoRefreshMinutes: number;
     dashboardAutoSnapshotOnSave: boolean;
     dashboardMaxSnapshots: number;
 }
@@ -124,6 +126,8 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     coWriterVoiceMatch: true,
     enableInlineDirectives: true,
     enableDashboard: true,
+    defaultTab: 'dashboard',
+    dashboardAutoRefreshMinutes: 10,
     dashboardAutoSnapshotOnSave: false,
     dashboardMaxSnapshots: 100
 };
@@ -1336,6 +1340,39 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(containerEl)
+            .setName('Default tab')
+            .setDesc('Which sidebar tab opens by default.')
+            .addDropdown((dropdown) => {
+                dropdown.addOption('dashboard', 'Dashboard');
+                dropdown.addOption('linter', 'Linter');
+                dropdown.addOption('context', 'Context');
+                dropdown.addOption('review', 'Review');
+                dropdown.addOption('cowriter', 'Co-writer');
+                dropdown.setValue(this.plugin.settings.defaultTab).onChange(async (value) => {
+                    this.plugin.settings.defaultTab = value;
+                    await this.plugin.saveSettings();
+                });
+            });
+
+        new Setting(containerEl)
+            .setName('Auto-refresh interval')
+            .setDesc('Refresh the dashboard every n minutes when the tab is active (0 disables).')
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.dashboardAutoRefreshMinutes))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 0 && n <= 60) {
+                            this.plugin.settings.dashboardAutoRefreshMinutes = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.dashboardAutoRefreshMinutes));
+                            new Notice('Value must be between 0 and 60');
+                        }
+                    })
+            );
+
+        new Setting(containerEl)
             .setName('Auto-snapshot on save')
             .setDesc('Record a word-count snapshot whenever a chapter file is saved.')
             .addToggle((toggle) =>
@@ -1396,6 +1433,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;
                     this.plugin.settings.enableInlineDirectives = DEFAULT_SETTINGS.enableInlineDirectives;
                     this.plugin.settings.enableDashboard = DEFAULT_SETTINGS.enableDashboard;
+                    this.plugin.settings.defaultTab = DEFAULT_SETTINGS.defaultTab;
+                    this.plugin.settings.dashboardAutoRefreshMinutes = DEFAULT_SETTINGS.dashboardAutoRefreshMinutes;
                     this.plugin.settings.dashboardAutoSnapshotOnSave = DEFAULT_SETTINGS.dashboardAutoSnapshotOnSave;
                     this.plugin.settings.dashboardMaxSnapshots = DEFAULT_SETTINGS.dashboardMaxSnapshots;
                     await this.plugin.saveSettings();

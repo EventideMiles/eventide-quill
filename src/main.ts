@@ -375,6 +375,17 @@ export default class EventideQuillPlugin extends Plugin {
                 if (this.coWriterSession.manuscriptPath && activeFile?.path !== this.coWriterSession.manuscriptPath) {
                     this.coWriterSession.clearVoiceProfile();
                 }
+
+                // Dashboard: auto-initialize metrics when a manuscript file is
+                // opened and the dashboard tab is active but has no metrics yet.
+                if (
+                    this.lintPanel?.isDashboardActive() &&
+                    !this.currentDashboardMetrics &&
+                    activeFile &&
+                    activeFile.extension === 'md'
+                ) {
+                    void this.refreshDashboard();
+                }
             })
         );
 
@@ -409,6 +420,22 @@ export default class EventideQuillPlugin extends Plugin {
                 this.lintPanel?.setResults(results);
             })
         );
+
+        // Periodic dashboard auto-refresh. Uses registerInterval for automatic
+        // teardown on plugin unload. 0 disables the timer entirely.
+        if (this.settings.dashboardAutoRefreshMinutes > 0) {
+            const intervalMs = this.settings.dashboardAutoRefreshMinutes * 60_000;
+            this.registerInterval(
+                window.setInterval(() => {
+                    if (this.lintPanel?.isDashboardActive()) {
+                        const activeFile = this.app.workspace.getActiveFile();
+                        if (activeFile && activeFile.extension === 'md') {
+                            void this.refreshDashboard();
+                        }
+                    }
+                }, intervalMs)
+            );
+        }
 
         this.registerEvent(
             this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor) => {
