@@ -12,6 +12,7 @@ import { extractScene, stripFrontmatter } from './utils/text-analysis';
 import { AiProvider } from './ai/provider';
 import { createProvider, parseProviderKey } from './ai/provider-registry';
 import { applyTransformation, TRANSFORM_ACTIONS } from './ai/transform';
+import { DEFAULT_SPLIT_BY_HEADING, DEFAULT_INCLUDE_SUBFOLDERS } from './core/dashboard/presets';
 import { groupFindingsByPassage, buildBatchLinterPrompt, buildPacingFixPrompt, streamBatchFix } from './ai/batch-fix';
 import { ToneSuggestModal, TransformModal } from './ui/transform-modal';
 import { FixWithAiModal } from './ui/fix-with-ai-modal';
@@ -2396,9 +2397,9 @@ export default class EventideQuillPlugin extends Plugin {
         const msFile = await loadManuscriptFile(this.app.vault, folder);
         this.currentManuscriptFileData = msFile;
 
-        // Resolve settings: per-manuscript overrides fall back to global defaults.
-        const includeSubfolders = msFile.includeSubfolders ?? this.settings.dashboardIncludeSubfolders;
-        const splitByHeading = msFile.splitByHeading ?? this.settings.dashboardSplitByHeading;
+        // Resolve settings: per-manuscript overrides fall back to preset defaults.
+        const includeSubfolders = msFile.includeSubfolders ?? DEFAULT_INCLUDE_SUBFOLDERS;
+        const splitByHeading = msFile.splitByHeading ?? DEFAULT_SPLIT_BY_HEADING;
 
         // Resolve chapter files.
         const chapterFiles = this.resolveManuscriptFiles(folder, activeFile.path, includeSubfolders, msFile);
@@ -2565,7 +2566,16 @@ export default class EventideQuillPlugin extends Plugin {
         await saveManuscriptFile(this.app.vault, folder, data);
         this.currentManuscriptFileData = data;
 
-        this.lintPanel?.refreshDashboardPanel();
+        // Structural settings change which files are scanned and how chapters
+        // are split — need a full metrics recompute. Target-only changes just
+        // need a re-render (metrics don't depend on targets).
+        const needsRecompute =
+            'splitByHeading' in updates || 'includeSubfolders' in updates || 'chapterOverrides' in updates;
+        if (needsRecompute) {
+            await this.refreshDashboard();
+        } else {
+            this.lintPanel?.refreshDashboardPanel();
+        }
     }
 
     /**

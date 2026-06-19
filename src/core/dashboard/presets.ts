@@ -1,3 +1,14 @@
+/**
+ * Default values used when no per-manuscript setting exists.
+ * These match the "Standard novel" preset — the most common manuscript type.
+ * Users configure their actual targets via the Dashboard Settings subtab.
+ */
+export const DEFAULT_WORD_COUNT_TARGET = 4000;
+export const DEFAULT_MANUSCRIPT_TARGET = 90000;
+export const DEFAULT_TARGET_GRADE_LEVEL = 8;
+export const DEFAULT_SPLIT_BY_HEADING = false;
+export const DEFAULT_INCLUDE_SUBFOLDERS = true;
+
 /** A preset configuration for a manuscript type (short story, novel, epic, etc.). */
 export interface ManuscriptPreset {
     /** Unique identifier. */

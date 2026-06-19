@@ -56,12 +56,8 @@ export interface EventideQuillSettings {
     coWriterVoiceMatch: boolean;
     enableInlineDirectives: boolean;
     enableDashboard: boolean;
-    dashboardWordCountTarget: number;
-    dashboardManuscriptTarget: number;
-    dashboardSplitByHeading: boolean;
     dashboardAutoSnapshotOnSave: boolean;
     dashboardMaxSnapshots: number;
-    dashboardIncludeSubfolders: boolean;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -128,12 +124,8 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     coWriterVoiceMatch: true,
     enableInlineDirectives: true,
     enableDashboard: true,
-    dashboardWordCountTarget: 3000,
-    dashboardManuscriptTarget: 80000,
-    dashboardSplitByHeading: false,
     dashboardAutoSnapshotOnSave: false,
-    dashboardMaxSnapshots: 100,
-    dashboardIncludeSubfolders: true
+    dashboardMaxSnapshots: 100
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -1344,64 +1336,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(containerEl)
-            .setName('Chapter word-count target')
-            .setDesc('Target word count per chapter. Used for the progress bars in the chapter list (100-20000).')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.dashboardWordCountTarget))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 100 && n <= 20000) {
-                            this.plugin.settings.dashboardWordCountTarget = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.dashboardWordCountTarget));
-                            new Notice('Value must be between 100 and 20000');
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Manuscript word-count target')
-            .setDesc('Target word count for the whole manuscript (1000-500000).')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.dashboardManuscriptTarget))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1000 && n <= 500000) {
-                            this.plugin.settings.dashboardManuscriptTarget = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.dashboardManuscriptTarget));
-                            new Notice('Value must be between 1000 and 500000');
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Split chapters by heading')
-            .setDesc(
-                'Treat `#` and `##` headings as chapter boundaries within each file. When off, each file is one chapter (use `***` for scene breaks).'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.dashboardSplitByHeading).onChange(async (value) => {
-                    this.plugin.settings.dashboardSplitByHeading = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Include subfolders')
-            .setDesc('Recursively scan subfolders of the active file when resolving manuscript chapters.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.dashboardIncludeSubfolders).onChange(async (value) => {
-                    this.plugin.settings.dashboardIncludeSubfolders = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
             .setName('Auto-snapshot on save')
             .setDesc('Record a word-count snapshot whenever a chapter file is saved.')
             .addToggle((toggle) =>
@@ -1462,12 +1396,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;
                     this.plugin.settings.enableInlineDirectives = DEFAULT_SETTINGS.enableInlineDirectives;
                     this.plugin.settings.enableDashboard = DEFAULT_SETTINGS.enableDashboard;
-                    this.plugin.settings.dashboardWordCountTarget = DEFAULT_SETTINGS.dashboardWordCountTarget;
-                    this.plugin.settings.dashboardManuscriptTarget = DEFAULT_SETTINGS.dashboardManuscriptTarget;
-                    this.plugin.settings.dashboardSplitByHeading = DEFAULT_SETTINGS.dashboardSplitByHeading;
                     this.plugin.settings.dashboardAutoSnapshotOnSave = DEFAULT_SETTINGS.dashboardAutoSnapshotOnSave;
                     this.plugin.settings.dashboardMaxSnapshots = DEFAULT_SETTINGS.dashboardMaxSnapshots;
-                    this.plugin.settings.dashboardIncludeSubfolders = DEFAULT_SETTINGS.dashboardIncludeSubfolders;
                     await this.plugin.saveSettings();
                     this.display();
                 })

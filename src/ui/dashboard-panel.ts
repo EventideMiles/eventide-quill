@@ -1,7 +1,14 @@
 import { Component, Setting } from 'obsidian';
 import type EventideQuillPlugin from '../main';
 import type { ChapterMetrics, ManuscriptMetrics, ManuscriptSnapshot, SectionMetrics } from '../core/dashboard/types';
-import { MANUSCRIPT_PRESETS } from '../core/dashboard/presets';
+import {
+    MANUSCRIPT_PRESETS,
+    DEFAULT_WORD_COUNT_TARGET,
+    DEFAULT_MANUSCRIPT_TARGET,
+    DEFAULT_TARGET_GRADE_LEVEL,
+    DEFAULT_SPLIT_BY_HEADING,
+    DEFAULT_INCLUDE_SUBFOLDERS
+} from '../core/dashboard/presets';
 import { getActiveDocument, renderDocumentHeader } from './document-header';
 
 /** Expand state for chapter rows, keyed by `${filePath}:${lineStart}`. Survives re-renders. */
@@ -92,7 +99,7 @@ function renderSummary(container: HTMLElement, metrics: ManuscriptMetrics, plugi
     const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
     section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Manuscript' });
 
-    const target = plugin.settings.dashboardManuscriptTarget;
+    const target = plugin.currentManuscriptFileData?.manuscriptTarget ?? DEFAULT_MANUSCRIPT_TARGET;
     const progressPct = target > 0 ? clamp((metrics.totalWords / target) * 100, 0, 100) : 0;
 
     // Progress bar.
@@ -130,7 +137,7 @@ function renderChapterList(
     const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
     section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Chapters' });
 
-    const target = plugin.settings.dashboardWordCountTarget;
+    const target = plugin.currentManuscriptFileData?.wordCountTarget ?? DEFAULT_WORD_COUNT_TARGET;
 
     for (let i = 0; i < metrics.chapters.length; i++) {
         const chapter = metrics.chapters[i]!;
@@ -572,14 +579,13 @@ export function renderDashboardSettingsTab(
     container.empty();
 
     const msFile = plugin.currentManuscriptFileData;
-    const s = plugin.settings;
 
-    // Current effective values: per-manuscript overrides fall back to global defaults.
-    const wordCountTarget = msFile?.wordCountTarget ?? s.dashboardWordCountTarget;
-    const manuscriptTarget = msFile?.manuscriptTarget ?? s.dashboardManuscriptTarget;
+    // Current effective values: per-manuscript overrides fall back to preset defaults.
+    const wordCountTarget = msFile?.wordCountTarget ?? DEFAULT_WORD_COUNT_TARGET;
+    const manuscriptTarget = msFile?.manuscriptTarget ?? DEFAULT_MANUSCRIPT_TARGET;
     const targetGradeLevel = msFile?.targetGradeLevel;
-    const splitByHeading = msFile?.splitByHeading ?? s.dashboardSplitByHeading;
-    const includeSubfolders = msFile?.includeSubfolders ?? s.dashboardIncludeSubfolders;
+    const splitByHeading = msFile?.splitByHeading ?? DEFAULT_SPLIT_BY_HEADING;
+    const includeSubfolders = msFile?.includeSubfolders ?? DEFAULT_INCLUDE_SUBFOLDERS;
 
     // --- Manuscript type presets ---
 
@@ -595,7 +601,7 @@ export function renderDashboardSettingsTab(
         const isActive =
             wordCountTarget === preset.wordCountTarget &&
             manuscriptTarget === preset.manuscriptTarget &&
-            (targetGradeLevel ?? s.dashboardManuscriptTarget) === preset.targetGradeLevel;
+            (targetGradeLevel ?? DEFAULT_TARGET_GRADE_LEVEL) === preset.targetGradeLevel;
 
         const card = presetGrid.createEl('div', {
             cls: `quill-dashboard-panel__preset-card${isActive ? ' quill-dashboard-panel__preset-card--active' : ''}`,
