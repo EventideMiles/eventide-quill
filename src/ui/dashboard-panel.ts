@@ -185,7 +185,6 @@ function renderChapterList(
         }
     }
 }
-
 /** Render a single section (scene) row inside an expanded chapter. */
 function renderSectionRow(
     container: HTMLElement,
@@ -194,7 +193,10 @@ function renderSectionRow(
     plugin: EventideQuillPlugin,
     component: Component
 ): void {
-    const row = container.createEl('div', { cls: 'quill-dashboard-panel__section-row' });
+    const wrapper = container.createEl('div', { cls: 'quill-dashboard-panel__section-wrapper' });
+
+    // First line: title + meta.
+    const row = wrapper.createEl('div', { cls: 'quill-dashboard-panel__section-row' });
     const title = section.title ?? 'Scene';
     row.createEl('span', { cls: 'quill-dashboard-panel__section-title', text: title });
     row.createEl('span', {
@@ -202,29 +204,30 @@ function renderSectionRow(
         text: `${section.wordCount.toLocaleString()}w \u00B7 ${section.avgSentenceLength}w/sentence \u00B7 ${pct(section.dialogueRatio)} dialogue`
     });
 
-    // Clickable pacing flag chips — each shows what the issue is and jumps to it on click.
+    // Pacing flags below — each is a multi-line clickable block.
     for (const flag of section.pacingFlags) {
         const isShort = flag.kind === 'uniform-short';
         const label = isShort ? 'Uniformly short sentences' : 'Uniformly long sentences';
-        const detail = isShort ? 'staccato rhythm, consider varying length' : 'dense passage, consider breaking up';
+        const detail = isShort
+            ? 'Staccato rhythm — consider varying sentence length.'
+            : 'Dense passage — consider breaking up.';
         const absLine = section.lineStart + flag.lineStart - 1;
-        const chip = row.createEl('button', {
+        const absEnd = section.lineStart + flag.lineEnd - 1;
+        const chip = wrapper.createEl('button', {
             cls: `quill-dashboard-panel__pacing-chip quill-dashboard-panel__pacing-chip--${flag.kind}`,
-            attr: {
-                title: `${label}. Avg ${flag.avgSentenceLength} words/sentence, lines ${absLine}\u2013${section.lineStart + flag.lineEnd - 1}. Click to jump.`
-            }
+            attr: { title: 'Click to jump to this passage' }
         });
-        chip.createEl('span', { cls: 'quill-dashboard-panel__pacing-chip-label', text: label });
-        chip.createEl('span', {
-            cls: 'quill-dashboard-panel__pacing-chip-detail',
-            text: `avg ${flag.avgSentenceLength}w \u00B7 ${detail}`
+        chip.createEl('div', { cls: 'quill-dashboard-panel__pacing-chip-label', text: label });
+        chip.createEl('div', { cls: 'quill-dashboard-panel__pacing-chip-detail', text: detail });
+        chip.createEl('div', {
+            cls: 'quill-dashboard-panel__pacing-chip-line',
+            text: `Avg ${flag.avgSentenceLength} words/sentence \u00B7 lines ${absLine}\u2013${absEnd}`
         });
         component.registerDomEvent(chip, 'click', () => {
             void plugin.jumpToDashboardLine(chapter.filePath, absLine);
         });
     }
 }
-
 /** Render the pacing heatmap (one bar per chapter) with clickable legend. */
 function renderPacingHeatmap(
     container: HTMLElement,
@@ -255,15 +258,18 @@ function renderPacingHeatmap(
         for (const flag of allFlags.slice(0, 10)) {
             const isShort = flag.kind === 'uniform-short';
             const label = isShort ? 'Uniformly short sentences' : 'Uniformly long sentences';
-            const detail = isShort ? 'staccato rhythm, consider varying length' : 'dense passage, consider breaking up';
+            const detail = isShort
+                ? 'Staccato rhythm — consider varying sentence length.'
+                : 'Dense passage — consider breaking up.';
             const item = legend.createEl('button', {
                 cls: `quill-dashboard-panel__heatmap-flag quill-dashboard-panel__pacing-chip--${flag.kind}`,
                 attr: { title: 'Click to jump to this passage' }
             });
-            item.createEl('span', { cls: 'quill-dashboard-panel__pacing-chip-label', text: label });
-            item.createEl('span', {
-                cls: 'quill-dashboard-panel__pacing-chip-detail',
-                text: `avg ${flag.avgSentenceLength}w \u00B7 ${detail} \u00B7 line ${flag.lineStart}`
+            item.createEl('div', { cls: 'quill-dashboard-panel__pacing-chip-label', text: label });
+            item.createEl('div', { cls: 'quill-dashboard-panel__pacing-chip-detail', text: detail });
+            item.createEl('div', {
+                cls: 'quill-dashboard-panel__pacing-chip-line',
+                text: `Avg ${flag.avgSentenceLength} words/sentence \u00B7 line ${flag.lineStart}`
             });
             component.registerDomEvent(item, 'click', () => {
                 void plugin.jumpToDashboardLine(flag.filePath, flag.lineStart);

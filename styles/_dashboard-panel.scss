@@ -208,13 +208,14 @@
         flex-shrink: 0;
     }
 
-    // --- Pacing flag chips (clickable, descriptive) ---
+    // --- Pacing flag chips (clickable, multi-line, descriptive) ---
 
     &__pacing-chip {
-        display: inline-flex;
+        display: flex;
         flex-direction: column;
-        gap: 1px;
-        padding: $space-xs $space-sm;
+        gap: $space-xs;
+        width: 100%;
+        padding: $space-sm $space-md;
         border-radius: $radius-sm;
         border: 1px solid var(--background-modifier-border);
         background: var(--background-primary-alt);
@@ -237,7 +238,7 @@
     }
 
     &__pacing-chip-label {
-        font-size: var(--font-ui-smaller);
+        font-size: var(--font-ui-small);
         font-weight: 600;
         color: var(--text-normal);
     }
@@ -245,6 +246,20 @@
     &__pacing-chip-detail {
         font-size: var(--font-ui-smaller);
         color: var(--text-muted);
+    }
+
+    &__pacing-chip-line {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-faint, var(--text-muted));
+    }
+
+    &__section-wrapper {
+        padding: $space-xs 0;
+    }
+
+    &__heatmap-flag {
+        width: 100%;
+        text-align: left;
     }
 
     // --- Pacing heatmap ---
