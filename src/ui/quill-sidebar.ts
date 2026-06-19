@@ -348,6 +348,9 @@ export class QuillSidebarView extends ItemView {
                 text: tab.label
             });
             this.renderEvents!.registerDomEvent(btn, 'click', () => {
+                if (this.dashboardSubTab === 'pending' && tab.id !== 'pending') {
+                    this.clearBatchIfHandled();
+                }
                 this.dashboardSubTab = tab.id;
                 this.render();
             });
@@ -465,6 +468,16 @@ export class QuillSidebarView extends ItemView {
     /** Re-render the linter results tab if it's active. */
     refreshResultsTab(): void {
         if (this.activeTopTab === 'linter' && this.activeLinterSubTab === 'results') {
+            this.render();
+        }
+    }
+
+    /** Re-render the pending subtab if it's active on either the linter or dashboard tab. */
+    refreshPendingTab(): void {
+        if (
+            (this.activeTopTab === 'linter' && this.activeLinterSubTab === 'pending') ||
+            (this.activeTopTab === 'dashboard' && this.dashboardSubTab === 'pending')
+        ) {
             this.render();
         }
     }

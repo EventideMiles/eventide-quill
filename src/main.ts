@@ -1629,6 +1629,7 @@ export default class EventideQuillPlugin extends Plugin {
                             originalText: group.passageText
                         });
                         pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+                        this.lintPanel?.refreshPendingTab();
                     }
                 } catch {
                     // Skip this group on error; continue with remaining groups.
@@ -1643,8 +1644,7 @@ export default class EventideQuillPlugin extends Plugin {
             }
         } finally {
             this.batchFixInProgress = false;
-            this.lintPanel?.refreshResultsTab();
-            this.lintPanel?.refreshDashboardPanel();
+            this.lintPanel?.refreshPendingTab();
         }
     }
 
@@ -1730,6 +1730,7 @@ export default class EventideQuillPlugin extends Plugin {
                             originalText: passageText
                         });
                         pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+                        this.lintPanel?.refreshPendingTab();
                     }
                 } catch {
                     // Skip this flag on error; continue with remaining flags.
@@ -1744,8 +1745,7 @@ export default class EventideQuillPlugin extends Plugin {
             }
         } finally {
             this.batchFixInProgress = false;
-            this.lintPanel?.refreshResultsTab();
-            this.lintPanel?.refreshDashboardPanel();
+            this.lintPanel?.refreshPendingTab();
         }
     }
 
@@ -1867,6 +1867,7 @@ export default class EventideQuillPlugin extends Plugin {
                     originalText: passageText
                 });
                 pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+                this.lintPanel?.refreshPendingTab();
                 new Notice('Quill: pacing fix ready for review.');
             } else {
                 new Notice('Quill: no changes suggested.');
@@ -1876,8 +1877,7 @@ export default class EventideQuillPlugin extends Plugin {
             new Notice(`Quill: pacing fix failed (${message}).`);
         } finally {
             this.batchFixInProgress = false;
-            this.lintPanel?.refreshResultsTab();
-            this.lintPanel?.refreshDashboardPanel();
+            this.lintPanel?.refreshPendingTab();
         }
     }
 
