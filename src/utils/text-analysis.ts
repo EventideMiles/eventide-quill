@@ -1,4 +1,25 @@
-/** Shared text analysis utilities used by both the prose linter and context engine. */
+/** Shared text analysis utilities used by the prose linter, context engine, and AI analysis modules. */
+
+/**
+ * Build a Markdown code fence long enough to safely wrap `text` without being
+ * closed prematurely by any backtick run inside it. Returns a run of backticks
+ * whose length is `max(3, longestRun + 1)`, satisfying CommonMark's rule that
+ * the closing fence be at least as long as the opening fence and longer than
+ * any backtick sequence in the fenced content.
+ */
+export function buildCodeFence(text: string): string {
+    let longestRun = 0;
+    let currentRun = 0;
+    for (const ch of text) {
+        if (ch === '`') {
+            currentRun++;
+            if (currentRun > longestRun) longestRun = currentRun;
+        } else {
+            currentRun = 0;
+        }
+    }
+    return '`'.repeat(Math.max(3, longestRun + 1));
+}
 
 /**
  * Strip YAML frontmatter (`---\n...\n---`) from the start of a document.

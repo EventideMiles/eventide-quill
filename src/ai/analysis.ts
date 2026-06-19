@@ -3,6 +3,7 @@ import { getAnalysisModePrompt } from './prompts';
 import { AI_MODE_CONFIGS } from './modes';
 import type { ExtractedEntity, VoiceMarker } from '../core/context-engine/types';
 import type { NarrativeVoicePreset } from '../types';
+import { buildCodeFence } from '../utils/text-analysis';
 
 /** The four critical-analysis modes. */
 export type AnalysisMode = 'plot-logic' | 'character-consistency' | 'continuity' | 'voice-drift';
@@ -102,27 +103,6 @@ export interface AnalysisOptions {
     customInstruction?: string;
     /** Pre-built messages for follow-up turns (caller manages compaction). */
     existingMessages?: ChatMessage[];
-}
-
-/**
- * Build a Markdown code fence long enough to safely wrap `text` without being
- * closed prematurely by any backtick run inside it. Returns a run of backticks
- * whose length is `max(3, longestRun + 1)`, satisfying CommonMark's rule that
- * the closing fence be at least as long as the opening fence and longer than
- * any backtick sequence in the fenced content.
- */
-function buildCodeFence(text: string): string {
-    let longestRun = 0;
-    let currentRun = 0;
-    for (const ch of text) {
-        if (ch === '`') {
-            currentRun++;
-            if (currentRun > longestRun) longestRun = currentRun;
-        } else {
-            currentRun = 0;
-        }
-    }
-    return '`'.repeat(Math.max(3, longestRun + 1));
 }
 
 /** Build the user instruction for an analysis request. */
