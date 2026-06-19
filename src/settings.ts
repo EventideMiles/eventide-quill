@@ -728,7 +728,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render the AI providers configuration section. */
     private renderAiProvidersTab(containerEl: HTMLElement): void {
-        const content = containerEl.createEl('div', { cls: 'quill-settings-content-ai' });
+        const content = containerEl.createEl('div', { cls: 'quill-settings-content-ai-providers' });
 
         new Setting(content).setName('AI providers').setHeading();
 

@@ -21,13 +21,16 @@
         flex-shrink: 0;
         position: sticky;
         top: 0;
-        z-index: 10;
+        z-index: 100;
         background: var(--background-primary);
+        padding-top: $space-xs;
     }
 
     // Tab content visibility — toggled via .is-hidden class (not inline styles).
-    [class*='quill-settings-content-'].is-hidden {
-        display: none;
+    [class*='quill-settings-content-'] {
+        &.is-hidden {
+            display: none;
+        }
     }
 
     &__tab {
@@ -85,12 +88,17 @@
     }
 
     // --- Footer (reserved for future donation / support links) ---
+    // Sticky at the bottom so it's always visible regardless of scroll position.
 
     &__footer {
-        padding: $space-xxl $space-md;
-        min-height: 80px;
+        padding: $space-lg $space-md;
+        min-height: 60px;
         border-top: 1px solid var(--background-modifier-border);
         margin-top: $space-xxl;
+        position: sticky;
+        bottom: 0;
+        z-index: 100;
+        background: var(--background-primary);
     }
 }
 
