@@ -28,5 +28,8 @@ styles.css
 # obsidian
 data.json
 
+# Dashboard snapshot runtime data (pluginDataDir output)
+dashboards/
+
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store

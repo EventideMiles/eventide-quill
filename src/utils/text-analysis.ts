@@ -126,8 +126,12 @@ export interface SceneRange {
     lineEnd: number;
 }
 
-const SCENE_BREAK_HEADING = /^#{1,6}\s+\S/;
-const SCENE_BREAK_RULE = /^(?:\*\*\*|\*\s\*\s\*|---)\s*$/;
+/** Markdown heading (any depth) on its own line. Shared by extractScene and listSections. */
+export const SCENE_BREAK_HEADING = /^#{1,6}\s+\S/;
+/** Scene-break marker on its own line: `***`, `* * *`, or `---`. Shared by extractScene and listSections. */
+export const SCENE_BREAK_RULE = /^(?:\*\*\*|\*\s\*\s\*|---)\s*$/;
+/** Deeper heading (h3-h6) used as a section boundary within a chapter. */
+export const SECTION_HEADING = /^#{3,6}\s+\S/;
 
 /**
  * Extract the scene containing the given 0-based character offset.
@@ -207,4 +211,89 @@ export function extractScene(text: string, cursorOffset: number): SceneRange {
         lineStart: startIdx + 1,
         lineEnd: endIdxExclusive
     };
+}
+
+/** A section (scene) within a document, with absolute 1-based line numbers. */
+export interface SectionRange {
+    /** Heading text if the section starts at a heading, otherwise null. */
+    title: string | null;
+    /** Section text (joined lines, no leading/trailing blank-line padding). */
+    text: string;
+    /** 1-based line number where the section begins in the source document. */
+    lineStart: number;
+    /** 1-based line number where the section ends in the source document (inclusive). */
+    lineEnd: number;
+    /** What kind of boundary created this section. */
+    kind: 'heading' | 'scene-break' | 'leading';
+}
+
+const HEADING_TITLE = /^#{1,6}\s+(.+?)\s*$/;
+
+/**
+ * Split a document into sections (scenes) by boundary lines.
+ *
+ * Boundaries are deeper markdown headings (`###`-`######`) and scene-break
+ * markers (`***`, `* * *`, `---`). Pass `splitOnAllHeadings: true` to also
+ * split on top-level (`#`/`##`) headings — use this when the caller treats
+ * the whole file as one chapter (the default manuscript model).
+ *
+ * Content before the first boundary becomes a `'leading'` section if it has
+ * non-blank content; otherwise it is dropped. Empty sections (e.g., between
+ * two adjacent scene breaks) are skipped. Blank lines at section edges are
+ * trimmed, and `lineStart`/`lineEnd` always reflect the trimmed range.
+ *
+ * @param text     Full document text.
+ * @param options  `splitOnAllHeadings` (default false) — also treat `#`/`##` as boundaries.
+ * @returns Sections in document order. Empty array if `text` is blank.
+ */
+export function listSections(text: string, options: { splitOnAllHeadings?: boolean } = {}): SectionRange[] {
+    const { splitOnAllHeadings = false } = options;
+    if (!text.trim()) return [];
+
+    const lines = text.split('\n');
+    const headingBoundary = splitOnAllHeadings ? SCENE_BREAK_HEADING : SECTION_HEADING;
+
+    type Acc = { title: string | null; kind: SectionRange['kind']; startIdx: number };
+    const sections: Acc[] = [{ title: null, kind: 'leading', startIdx: 0 }];
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!;
+        if (SCENE_BREAK_RULE.test(line)) {
+            sections.push({ title: null, kind: 'scene-break', startIdx: i + 1 });
+        } else if (headingBoundary.test(line)) {
+            const titleMatch = line.match(HEADING_TITLE);
+            sections.push({
+                title: titleMatch ? titleMatch[1]! : null,
+                kind: 'heading',
+                startIdx: i + 1
+            });
+        }
+    }
+
+    const ranges: SectionRange[] = [];
+    for (let s = 0; s < sections.length; s++) {
+        const cur = sections[s]!;
+        const startIdx = cur.startIdx;
+        const endIdxExclusive = s + 1 < sections.length ? sections[s + 1]!.startIdx - 1 : lines.length;
+
+        // Trim leading blank lines.
+        let lo = startIdx;
+        while (lo < endIdxExclusive && lines[lo]!.trim() === '') lo++;
+        // Trim trailing blank lines.
+        let hi = endIdxExclusive;
+        while (hi > lo && lines[hi - 1]!.trim() === '') hi--;
+
+        if (lo >= hi) continue; // skip empty sections
+
+        const sectionLines = lines.slice(lo, hi);
+        ranges.push({
+            title: cur.title,
+            text: sectionLines.join('\n'),
+            lineStart: lo + 1,
+            lineEnd: hi,
+            kind: cur.kind
+        });
+    }
+
+    return ranges;
 }

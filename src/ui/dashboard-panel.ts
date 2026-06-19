@@ -1,0 +1,362 @@
+import { Component } from 'obsidian';
+import type EventideQuillPlugin from '../main';
+import type { ManuscriptMetrics, ManuscriptSnapshotFile, SectionMetrics } from '../core/dashboard/types';
+import { getActiveDocument, renderDocumentHeader } from './document-header';
+
+/** Expand state for chapter rows, keyed by `${filePath}:${lineStart}`. Survives re-renders. */
+const expandedChapters = new Set<string>();
+
+/** Format a 0-1 ratio as a percentage string. */
+function pct(ratio: number): string {
+    return `${Math.round(ratio * 100)}%`;
+}
+
+/** Format an epoch millisecond timestamp as a human-readable relative time. */
+function formatRelativeTime(ms: number): string {
+    const delta = Date.now() - ms;
+    if (delta < 60_000) return 'just now';
+    if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`;
+    if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h ago`;
+    return `${Math.floor(delta / 86_400_000)}d ago`;
+}
+
+/** Clamp a value to a min/max range. */
+function clamp(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value));
+}
+
+/**
+ * Render the Dashboard tab content into `container`.
+ *
+ * Pattern B (free function) — mirrors `renderContextTab`. The container is
+ * a fresh scroll div created by `QuillSidebarView` on each render; the
+ * `component` owns DOM event teardown.
+ */
+export function renderDashboardTab(container: HTMLElement, plugin: EventideQuillPlugin, component: Component): void {
+    container.empty();
+
+    const doc = getActiveDocument(plugin.app);
+    renderDocumentHeader(container, doc);
+
+    if (!doc) {
+        container.createEl('p', {
+            cls: 'quill-empty-hint',
+            text: 'Open a manuscript to view dashboard metrics.'
+        });
+        return;
+    }
+
+    // Refresh button row.
+    const actionBar = container.createEl('div', { cls: 'quill-dashboard-panel__actions' });
+    const refreshBtn = actionBar.createEl('button', {
+        cls: 'quill-dashboard-panel__refresh-btn',
+        text: 'Refresh dashboard'
+    });
+    component.registerDomEvent(refreshBtn, 'click', () => {
+        void plugin.refreshDashboard();
+    });
+
+    const metrics = plugin.currentDashboardMetrics;
+    if (!metrics) {
+        container.createEl('p', {
+            cls: 'quill-dashboard-panel__empty',
+            text: 'No metrics yet. Click "refresh dashboard" to analyze the manuscript.'
+        });
+        return;
+    }
+
+    // Generated-at timestamp.
+    actionBar.createEl('span', {
+        cls: 'quill-dashboard-panel__timestamp',
+        text: `Updated ${formatRelativeTime(metrics.generatedAt)}`
+    });
+
+    renderSummary(container, metrics, plugin);
+    renderChapterList(container, metrics, plugin, component);
+    renderPacingHeatmap(container, metrics);
+    renderReadability(container, metrics);
+    renderCharacterList(container, metrics, plugin, component);
+    renderTrends(container, plugin.currentDashboardSnapshots);
+}
+
+/** Render the top-level manuscript summary grid. */
+function renderSummary(container: HTMLElement, metrics: ManuscriptMetrics, plugin: EventideQuillPlugin): void {
+    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
+    section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Manuscript' });
+
+    const target = plugin.settings.dashboardManuscriptTarget;
+    const progressPct = target > 0 ? clamp((metrics.totalWords / target) * 100, 0, 100) : 0;
+
+    // Progress bar.
+    const bar = section.createEl('div', { cls: 'quill-dashboard-panel__progress-bar' });
+    bar.createEl('div', {
+        cls: `quill-dashboard-panel__progress-fill${metrics.totalWords >= target ? ' quill-dashboard-panel__progress-fill--over' : ''}`,
+        attr: { style: `width: ${progressPct}%` }
+    });
+
+    const grid = section.createEl('div', { cls: 'quill-dashboard-panel__summary-grid' });
+
+    const stats: { label: string; value: string }[] = [
+        { label: 'Total words', value: metrics.totalWords.toLocaleString() },
+        { label: 'Target', value: target.toLocaleString() },
+        { label: 'Chapters', value: String(metrics.chapterCount) },
+        { label: 'Scenes', value: String(metrics.sectionCount) },
+        { label: 'Avg sentence', value: `${metrics.avgSentenceLength}w` },
+        { label: 'Dialogue', value: pct(metrics.dialogueRatio) }
+    ];
+
+    for (const stat of stats) {
+        const cell = grid.createEl('div', { cls: 'quill-dashboard-panel__summary-stat' });
+        cell.createEl('div', { cls: 'quill-dashboard-panel__summary-stat-value', text: stat.value });
+        cell.createEl('div', { cls: 'quill-dashboard-panel__summary-stat-label', text: stat.label });
+    }
+}
+
+/** Render the expandable chapter list. */
+function renderChapterList(
+    container: HTMLElement,
+    metrics: ManuscriptMetrics,
+    plugin: EventideQuillPlugin,
+    component: Component
+): void {
+    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
+    section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Chapters' });
+
+    const target = plugin.settings.dashboardWordCountTarget;
+
+    for (let i = 0; i < metrics.chapters.length; i++) {
+        const chapter = metrics.chapters[i]!;
+        const id = `${chapter.filePath}:${chapter.lineStart}`;
+        const expanded = expandedChapters.has(id);
+
+        const row = section.createEl('div', {
+            cls: `quill-dashboard-panel__chapter${expanded ? ' quill-dashboard-panel__chapter--expanded' : ''}`
+        });
+
+        // Clickable header row.
+        const head = row.createEl('div', {
+            cls: 'quill-dashboard-panel__chapter-head',
+            attr: { role: 'button', tabindex: '0' }
+        });
+        component.registerDomEvent(head, 'click', () => {
+            if (expandedChapters.has(id)) {
+                expandedChapters.delete(id);
+            } else {
+                expandedChapters.add(id);
+            }
+            renderDashboardTab(container.closest('.quill-dashboard-panel__scroll') as HTMLElement, plugin, component);
+        });
+        component.registerDomEvent(head, 'keydown', (evt: KeyboardEvent) => {
+            if (evt.key === 'Enter' || evt.key === ' ') {
+                evt.preventDefault();
+                head.click();
+            }
+        });
+
+        // Chevron.
+        head.createEl('span', {
+            cls: `quill-dashboard-panel__chevron${expanded ? ' quill-dashboard-panel__chevron--open' : ''}`,
+            text: '\u25B8'
+        });
+
+        // Chapter name + line range.
+        const nameWrap = head.createEl('div', { cls: 'quill-dashboard-panel__chapter-name-wrap' });
+        nameWrap.createEl('span', { cls: 'quill-dashboard-panel__chapter-name', text: chapter.title });
+        nameWrap.createEl('span', {
+            cls: 'quill-dashboard-panel__chapter-meta',
+            text: `${chapter.wordCount.toLocaleString()}w \u00B7 ${pct(chapter.dialogueRatio)} dialogue`
+        });
+
+        // Word-count bar vs target.
+        const barWidth = target > 0 ? clamp((chapter.wordCount / target) * 100, 0, 100) : 0;
+        const bar = head.createEl('div', { cls: 'quill-dashboard-panel__chapter-bar' });
+        bar.createEl('div', {
+            cls: `quill-dashboard-panel__chapter-bar-fill${chapter.wordCount >= target ? ' quill-dashboard-panel__chapter-bar-fill--over' : ''}`,
+            attr: { style: `width: ${barWidth}%` }
+        });
+
+        // Expanded section rows.
+        if (expanded && chapter.sections.length > 0) {
+            const sectionList = row.createEl('div', { cls: 'quill-dashboard-panel__section-list' });
+            for (const sm of chapter.sections) {
+                renderSectionRow(sectionList, sm);
+            }
+        }
+    }
+}
+
+/** Render a single section (scene) row inside an expanded chapter. */
+function renderSectionRow(container: HTMLElement, section: SectionMetrics): void {
+    const row = container.createEl('div', { cls: 'quill-dashboard-panel__section-row' });
+    const title = section.title ?? 'Scene';
+    row.createEl('span', { cls: 'quill-dashboard-panel__section-title', text: title });
+    row.createEl('span', {
+        cls: 'quill-dashboard-panel__section-meta',
+        text: `${section.wordCount.toLocaleString()}w \u00B7 ${section.avgSentenceLength}w/sentence \u00B7 ${pct(section.dialogueRatio)} dialogue`
+    });
+
+    if (section.pacingFlags.length > 0) {
+        const flagCount = section.pacingFlags.length;
+        row.createEl('span', {
+            cls: 'quill-dashboard-panel__section-flag',
+            text: `${flagCount} pacing flag${flagCount !== 1 ? 's' : ''}`
+        });
+    }
+}
+
+/** Render the pacing heatmap (one bar per chapter). */
+function renderPacingHeatmap(container: HTMLElement, metrics: ManuscriptMetrics): void {
+    const allFlags = metrics.pacingFlags;
+    if (allFlags.length === 0 && metrics.chapters.length === 0) return;
+
+    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
+    section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Pacing' });
+
+    const heatmap = section.createEl('div', { cls: 'quill-dashboard-panel__heatmap' });
+
+    for (const chapter of metrics.chapters) {
+        const flagCount = chapter.pacingFlags.length;
+        const severity = flagCount === 0 ? 'none' : flagCount <= 2 ? 'low' : 'high';
+        const cell = heatmap.createEl('div', {
+            cls: `quill-dashboard-panel__heatmap-cell quill-dashboard-panel__heatmap-cell--${severity}`,
+            attr: { title: `${chapter.title}: ${flagCount} pacing flag${flagCount !== 1 ? 's' : ''}` }
+        });
+        cell.createEl('span', { cls: 'quill-dashboard-panel__heatmap-label', text: chapter.title });
+    }
+
+    if (allFlags.length > 0) {
+        const legend = section.createEl('div', { cls: 'quill-dashboard-panel__heatmap-legend' });
+        for (const flag of allFlags.slice(0, 10)) {
+            const kind = flag.kind === 'uniform-short' ? 'Uniformly short sentences' : 'Uniformly long sentences';
+            legend.createEl('div', {
+                cls: 'quill-dashboard-panel__heatmap-flag',
+                text: `${kind} (avg ${flag.avgSentenceLength}w, lines ${flag.lineStart}\u2013${flag.lineEnd})`
+            });
+        }
+        if (allFlags.length > 10) {
+            legend.createEl('div', {
+                cls: 'quill-dashboard-panel__heatmap-flag',
+                text: `\u2026and ${allFlags.length - 10} more`
+            });
+        }
+    }
+}
+
+/** Render the manuscript-wide readability scores. */
+function renderReadability(container: HTMLElement, metrics: ManuscriptMetrics): void {
+    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
+    section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Readability' });
+
+    const grid = section.createEl('div', { cls: 'quill-dashboard-panel__readability-grid' });
+
+    const easeLabel = readabilityEaseLabel(metrics.fleschReadingEase);
+    grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
+        `Reading ease: ${metrics.fleschReadingEase} (${easeLabel})`
+    );
+    grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
+        `Grade level: ${metrics.fleschKincaidGrade}`
+    );
+}
+
+/** Map a Flesch Reading Ease score to a human-readable label. */
+function readabilityEaseLabel(score: number): string {
+    if (score >= 90) return 'very easy';
+    if (score >= 70) return 'easy';
+    if (score >= 60) return 'standard';
+    if (score >= 50) return 'fairly difficult';
+    if (score >= 30) return 'difficult';
+    return 'very difficult';
+}
+
+/** Render the character appearance tracker. */
+function renderCharacterList(
+    container: HTMLElement,
+    metrics: ManuscriptMetrics,
+    plugin: EventideQuillPlugin,
+    component: Component
+): void {
+    if (metrics.characters.length === 0) return;
+
+    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
+    section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Characters' });
+
+    for (const character of metrics.characters) {
+        const row = section.createEl('div', { cls: 'quill-dashboard-panel__character-row' });
+        row.createEl('span', { cls: 'quill-dashboard-panel__character-name', text: character.name });
+
+        const meta = row.createEl('span', { cls: 'quill-dashboard-panel__character-meta' });
+        if (character.chaptersSinceLastSeen < 0) {
+            meta.setText(`Present in latest chapter`);
+        } else if (character.chaptersSinceLastSeen === 0) {
+            meta.setText(`${character.occurrences} mentions · absent from all chapters`);
+        } else {
+            meta.setText(
+                `${character.occurrences} mentions · last seen ${character.chaptersSinceLastSeen} chapter${
+                    character.chaptersSinceLastSeen !== 1 ? 's' : ''
+                } ago`
+            );
+        }
+
+        // Reclassify button — cycles entity type to remove misclassified entries.
+        const reclassifyBtn = row.createEl('button', {
+            cls: 'quill-dashboard-panel__reclassify-btn',
+            text: 'Not a character',
+            attr: { title: 'Reclassify this entity' }
+        });
+        component.registerDomEvent(reclassifyBtn, 'click', () => {
+            void plugin.reclassifyDashboardEntity(character.entityId, 'location');
+        });
+    }
+}
+
+/** Render the historical trends sparkline. */
+function renderTrends(container: HTMLElement, snapshots: ManuscriptSnapshotFile | null): void {
+    if (!snapshots || snapshots.snapshots.length < 2) return;
+
+    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
+    section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Word count trend' });
+
+    const points = snapshots.snapshots;
+    const wordCounts = points.map((s) => s.totalWords);
+    const max = Math.max(...wordCounts);
+    const min = Math.min(...wordCounts);
+    const range = max - min || 1;
+
+    const width = 200;
+    const height = 40;
+    const stepX = width / (points.length - 1);
+
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const svg = activeDocument.createElementNS(SVG_NS, 'svg');
+    svg.classList.add('quill-dashboard-panel__trend-chart');
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    section.appendChild(svg);
+
+    const polylinePoints = points
+        .map((s, i) => {
+            const x = i * stepX;
+            const y = height - ((s.totalWords - min) / range) * (height - 4) - 2;
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+        })
+        .join(' ');
+
+    const polyline = activeDocument.createElementNS(SVG_NS, 'polyline');
+    polyline.setAttribute('points', polylinePoints);
+    polyline.setAttribute('fill', 'none');
+    polyline.setAttribute('stroke', 'currentColor');
+    polyline.setAttribute('stroke-width', '1.5');
+    svg.appendChild(polyline);
+
+    // Velocity: words per day between first and last snapshot.
+    const first = points[0]!;
+    const last = points[points.length - 1]!;
+    const daysElapsed = (last.takenAt - first.takenAt) / 86_400_000;
+    if (daysElapsed > 0) {
+        const velocity = Math.round((last.totalWords - first.totalWords) / daysElapsed);
+        section.createEl('div', {
+            cls: 'quill-dashboard-panel__trend-velocity',
+            text: `${velocity.toLocaleString()} words/day over ${points.length} snapshots`
+        });
+    }
+}

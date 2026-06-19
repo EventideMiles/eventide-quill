@@ -10,6 +10,10 @@ export interface QuillContextData {
     removedFiles?: string[];
     /** Path of the manuscript's primary plot map note. Single slot; empty/missing = none. */
     plotMap?: string;
+    /** Dashboard chapter overrides: files to add to or remove from the auto-detected manuscript. */
+    chapters?: { add?: string[]; remove?: string[] };
+    /** Entity type overrides: entity ID → new type. Applied after extraction. */
+    reclassifiedEntities?: Record<string, EntityType>;
 }
 
 /** Read quill context data from a file's frontmatter via the metadata cache. */
@@ -27,7 +31,9 @@ export function loadQuillContextData(app: App, file: TFile): QuillContextData {
         addedFiles: asStringArray(raw['addedFiles']),
         pinnedFiles: asStringArray(raw['pinnedFiles']),
         removedFiles: asStringArray(raw['removedFiles']),
-        plotMap: plotMapTrimmed.length > 0 ? plotMapTrimmed : undefined
+        plotMap: plotMapTrimmed.length > 0 ? plotMapTrimmed : undefined,
+        chapters: parseChapterOverrides(raw['chapters']),
+        reclassifiedEntities: parseReclassifiedEntities(raw['reclassifiedEntities'])
     };
 }
 
@@ -143,4 +149,89 @@ function asStringArray(val: unknown): string[] | undefined {
     if (!Array.isArray(val)) return undefined;
     const result = val.filter((v): v is string => typeof v === 'string');
     return result.length > 0 ? result : undefined;
+}
+
+/** Parse a raw `chapters` value from frontmatter into a structured override. */
+function parseChapterOverrides(val: unknown): { add?: string[]; remove?: string[] } | undefined {
+    if (typeof val !== 'object' || val === null || Array.isArray(val)) return undefined;
+    const obj = val as Record<string, unknown>;
+    const add = asStringArray(obj['add']);
+    const remove = asStringArray(obj['remove']);
+    if (!add && !remove) return undefined;
+    const result: { add?: string[]; remove?: string[] } = {};
+    if (add) result.add = add;
+    if (remove) result.remove = remove;
+    return result;
+}
+
+const VALID_ENTITY_TYPES = new Set(['character', 'location', 'plot-thread', 'theme', 'item']);
+
+/** Parse a raw `reclassifiedEntities` value from frontmatter into an ID → type map. */
+function parseReclassifiedEntities(val: unknown): Record<string, EntityType> | undefined {
+    if (typeof val !== 'object' || val === null || Array.isArray(val)) return undefined;
+    const obj = val as Record<string, unknown>;
+    const result: Record<string, EntityType> = {};
+    let hasAny = false;
+    for (const [id, typeVal] of Object.entries(obj)) {
+        if (typeof typeVal === 'string' && VALID_ENTITY_TYPES.has(typeVal)) {
+            result[id] = typeVal as EntityType;
+            hasAny = true;
+        }
+    }
+    return hasAny ? result : undefined;
+}
+
+/**
+ * Set or clear a single entity's type classification in the active file's frontmatter.
+ * Pass `null` as `newType` to remove the override (revert to extracted type).
+ * Other quill keys are preserved.
+ */
+export async function setEntityReclassification(
+    app: App,
+    file: TFile,
+    entityId: string,
+    newType: EntityType | null
+): Promise<void> {
+    await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+        const quill = getQuillObject(fm);
+        const existing = (quill['reclassifiedEntities'] as Record<string, unknown> | undefined) ?? {};
+        const updated: Record<string, unknown> = { ...existing };
+
+        if (newType === null) {
+            delete updated[entityId];
+        } else {
+            updated[entityId] = newType;
+        }
+
+        if (Object.keys(updated).length > 0) {
+            quill['reclassifiedEntities'] = updated;
+        } else {
+            delete quill['reclassifiedEntities'];
+        }
+
+        commitQuillObject(fm, quill);
+    });
+}
+
+/** Set or clear chapter overrides in a file's frontmatter. Other quill keys are preserved. */
+export async function setChapterOverrides(
+    app: App,
+    file: TFile,
+    add: string[] | null,
+    remove: string[] | null
+): Promise<void> {
+    await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+        const quill = getQuillObject(fm);
+        const hasAdd = Array.isArray(add) && add.length > 0;
+        const hasRemove = Array.isArray(remove) && remove.length > 0;
+        if (!hasAdd && !hasRemove) {
+            delete quill['chapters'];
+        } else {
+            const chapters: Record<string, unknown> = {};
+            if (hasAdd) chapters['add'] = add;
+            if (hasRemove) chapters['remove'] = remove;
+            quill['chapters'] = chapters;
+        }
+        commitQuillObject(fm, quill);
+    });
 }

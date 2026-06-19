@@ -7,6 +7,7 @@ import { FixWithAiModal } from './fix-with-ai-modal';
 import { renderContextTab } from './context-panel';
 import { ReviewPanel } from './review-panel';
 import { CoWriterPanel } from './co-writer-panel';
+import { renderDashboardTab } from './dashboard-panel';
 import type { InputMode } from './co-writer-panel';
 import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase } from '../ai/co-writer';
 import type { ProposedEdit } from '../core/change-set';
@@ -15,7 +16,7 @@ import type { ContextAssembly } from '../core/context-engine/types';
 
 export const QUILL_VIEW_TYPE = 'quill-sidebar';
 
-type TopTab = 'linter' | 'context' | 'review' | 'cowriter';
+type TopTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard';
 type LinterSubTab = 'results' | 'details';
 
 export class QuillSidebarView extends ItemView {
@@ -72,7 +73,8 @@ export class QuillSidebarView extends ItemView {
                 if (
                     this.activeTopTab === 'context' ||
                     this.activeTopTab === 'cowriter' ||
-                    this.activeTopTab === 'review'
+                    this.activeTopTab === 'review' ||
+                    this.activeTopTab === 'dashboard'
                 ) {
                     this.render();
                 }
@@ -258,6 +260,9 @@ export class QuillSidebarView extends ItemView {
         } else if (this.activeTopTab === 'context') {
             const ctxScroll = this.content.createDiv({ cls: 'quill-context-panel__scroll' });
             renderContextTab(ctxScroll, this.currentAssembly, this.plugin, this.renderEvents);
+        } else if (this.activeTopTab === 'dashboard') {
+            const dashScroll = this.content.createDiv({ cls: 'quill-dashboard-panel__scroll' });
+            renderDashboardTab(dashScroll, this.plugin, this.renderEvents);
         } else if (this.activeTopTab === 'cowriter') {
             this.renderCoWriterTab();
         } else {
@@ -271,7 +276,8 @@ export class QuillSidebarView extends ItemView {
             { id: 'linter', label: 'Linter' },
             { id: 'context', label: 'Context' },
             { id: 'review', label: 'Review' },
-            { id: 'cowriter', label: 'Co-writer' }
+            { id: 'cowriter', label: 'Co-writer' },
+            { id: 'dashboard', label: 'Dashboard' }
         ];
 
         for (const tab of tabs) {
@@ -358,6 +364,19 @@ export class QuillSidebarView extends ItemView {
     switchToCoWriterTab(): void {
         this.activeTopTab = 'cowriter';
         this.render();
+    }
+
+    /** Switch to the Dashboard tab. */
+    switchToDashboardTab(): void {
+        this.activeTopTab = 'dashboard';
+        this.render();
+    }
+
+    /** Re-render the Dashboard panel if it's the active tab. */
+    refreshDashboardPanel(): void {
+        if (this.activeTopTab === 'dashboard') {
+            this.render();
+        }
     }
 
     /** Render the co-writer tab, initializing or re-attaching the CoWriterPanel. */

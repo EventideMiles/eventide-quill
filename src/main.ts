@@ -22,6 +22,7 @@ import {
     writeQuillContextData,
     buildQuillContextData,
     setPlotMap,
+    setEntityReclassification,
     entityFromId
 } from './utils/frontmatter';
 import { buildFeedbackMessages, getPersonaById, getFeedback } from './ai/feedback';
@@ -48,6 +49,86 @@ import {
 } from './ui/change-diff-extension';
 import { ChangeSet } from './core/change-set';
 import { readVaultFiles } from './utils/vault-files';
+import type {
+    ManuscriptMetrics,
+    ManuscriptSnapshotFile,
+    ManuscriptSnapshot,
+    ChapterRange
+} from './core/dashboard/types';
+import { listChaptersInFile, manuscriptMetrics } from './core/dashboard/metrics';
+import { manuscriptIdFromFolder, loadSnapshots, appendSnapshot } from './core/dashboard/snapshot-store';
+
+/**
+ * Enrich entity display names using vault file basenames.
+ *
+ * When a vault file's basename contains a richer form of an entity's name
+ * (e.g., the manuscript says "Freddy" but a file is named "Freddy Lupin.md"),
+ * the entity's display name is updated to the richer form and the original
+ * name is kept as an alias for text matching.
+ *
+ * The entity ID is NOT changed — it stays keyed to the extracted name so
+ * that frontmatter reclassification overrides remain stable across
+ * enrichment changes.
+ *
+ * Ambiguity guard: if a word appears in multiple file basenames (e.g.,
+ * "Freddy Lupin.md" and "Freddy Jones.md"), it is not used for enrichment.
+ *
+ * @param entities  Extracted entities (mutated in place).
+ * @param files     All markdown files in the vault.
+ */
+function enrichEntityNamesFromVault(entities: ExtractedEntity[], files: TFile[]): void {
+    // Build word → basename index. A word maps to a basename only when it
+    // appears unambiguously across all file basenames.
+    const wordToBasename = new Map<string, string>();
+    const ambiguous = new Set<string>();
+
+    for (const file of files) {
+        const words = file.basename.split(/\s+/).filter((w) => w.length > 1);
+        for (const word of words) {
+            if (wordToBasename.has(word)) {
+                ambiguous.add(word);
+            } else {
+                wordToBasename.set(word, file.basename);
+            }
+        }
+    }
+    for (const word of ambiguous) {
+        wordToBasename.delete(word);
+    }
+
+    for (const entity of entities) {
+        if (entity.type !== 'character') continue;
+
+        // Check the entity's primary name and all aliases for component words
+        // that map to a richer file basename.
+        const namesToCheck = [entity.name, ...entity.aliases];
+        let bestRichName: string | null = null;
+        let bestWordCount = entity.name.split(/\s+/).length;
+
+        for (const name of namesToCheck) {
+            for (const comp of name.split(/\s+/)) {
+                if (comp.length <= 1) continue;
+                const richName = wordToBasename.get(comp);
+                if (!richName) continue;
+                const richWordCount = richName.split(/\s+/).length;
+                // Only enrich if the file basename is strictly richer.
+                if (richWordCount > bestWordCount) {
+                    bestRichName = richName;
+                    bestWordCount = richWordCount;
+                }
+            }
+        }
+
+        if (bestRichName) {
+            // Keep the old display name as an alias for text matching.
+            if (!entity.aliases.includes(entity.name)) {
+                entity.aliases.push(entity.name);
+            }
+            entity.name = bestRichName;
+            // ID stays unchanged for reclassification stability.
+        }
+    }
+}
 
 /** Generate a content-based fingerprint for a lint result. Uses the flagged
  *  text plus the line it appears on to distinguish multiple instances of the
@@ -150,11 +231,20 @@ export default class EventideQuillPlugin extends Plugin {
     coWriterSession: CoWriterSession = new CoWriterSession();
     /** Proposed transform edit awaiting inline review (one at a time). */
     transformChangeSet: ChangeSet = new ChangeSet();
+    /** Current dashboard metrics for the active manuscript, or null when not yet computed. */
+    currentDashboardMetrics: ManuscriptMetrics | null = null;
+    /** Historical snapshots for the active manuscript, or null when not yet loaded. */
+    currentDashboardSnapshots: ManuscriptSnapshotFile | null = null;
+    /** Absolute path to the plugin's data directory (for dashboard snapshot storage). */
+    private pluginDataDir = '';
 
     /** Plugin entry point: register commands, views, extensions, and event handlers. */
     async onload() {
         await this.loadSettings();
         this.rebuildProviders();
+
+        // Resolve the plugin's data directory for dashboard snapshot storage.
+        this.pluginDataDir = `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
 
         this.registerEditorExtension(
             getLintExtension(
@@ -282,6 +372,11 @@ export default class EventideQuillPlugin extends Plugin {
             this.app.vault.on('modify', (file: TAbstractFile) => {
                 if (file instanceof TFile) {
                     this.contextCache.invalidate(file.path);
+
+                    // Auto-snapshot on save if the dashboard setting is enabled.
+                    if (this.settings.dashboardAutoSnapshotOnSave && file.extension === 'md') {
+                        void this.refreshDashboard();
+                    }
                 }
 
                 if (!this.lintActive || !this.settings.lintOnSave || file !== this.app.workspace.getActiveFile())
@@ -572,6 +667,22 @@ export default class EventideQuillPlugin extends Plugin {
             name: 'Quill: Open co-writer',
             callback: () => {
                 void this.openCoWriterPanel();
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-dashboard-open',
+            name: 'Quill: Open dashboard',
+            callback: () => {
+                void this.openDashboardPanel();
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-dashboard-refresh',
+            name: 'Quill: Refresh dashboard',
+            callback: () => {
+                void this.refreshDashboard();
             }
         });
 
@@ -1888,6 +1999,183 @@ export default class EventideQuillPlugin extends Plugin {
     async openReviewPanel(): Promise<void> {
         await this.openLintPanel();
         this.lintPanel?.switchToReviewTab();
+    }
+
+    /** Open the sidebar and switch to the Dashboard tab. */
+    async openDashboardPanel(): Promise<void> {
+        await this.openLintPanel();
+        this.lintPanel?.switchToDashboardTab();
+    }
+
+    /**
+     * Refresh dashboard metrics for the active manuscript.
+     *
+     * Resolves the manuscript file list (active file's folder + frontmatter
+     * overrides), computes per-chapter metrics, extracts characters, appends
+     * a snapshot, and stores the results on the plugin for the panel to read.
+     */
+    async refreshDashboard(): Promise<void> {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== 'md') {
+            new Notice('Quill: Open a manuscript to refresh the dashboard.');
+            return;
+        }
+
+        const folder = activeFile.parent?.path ?? '';
+        const includeSubfolders = this.settings.dashboardIncludeSubfolders;
+        const splitByHeading = this.settings.dashboardSplitByHeading;
+
+        // Resolve chapter files.
+        const chapterFiles = this.resolveManuscriptFiles(folder, activeFile.path, includeSubfolders);
+        if (chapterFiles.length === 0) {
+            new Notice('Quill: No chapter files found for this manuscript.');
+            return;
+        }
+
+        try {
+            const chapters: ChapterRange[] = [];
+            for (const file of chapterFiles) {
+                const text = await this.app.vault.read(file);
+                const ranges = listChaptersInFile(text, file.path, file.basename, splitByHeading);
+                chapters.push(...ranges);
+            }
+
+            if (chapters.length === 0) {
+                new Notice('Quill: No chapters found in the manuscript files.');
+                return;
+            }
+
+            // Extract entities from the whole manuscript text.
+            const fullText = chapters.map((c) => c.text).join('\n\n');
+            const entities = extractAllEntities(fullText);
+
+            // Enrich entity names from vault file basenames.
+            // E.g., if the manuscript only says "Freddy" but a vault file is
+            // named "Freddy Lupin.md", use "Freddy Lupin" as the display name.
+            enrichEntityNamesFromVault(entities, this.app.vault.getMarkdownFiles());
+
+            // Apply user reclassification overrides from frontmatter.
+            const activeTFile = this.app.vault.getAbstractFileByPath(activeFile.path);
+            if (activeTFile instanceof TFile) {
+                const ctxData = loadQuillContextData(this.app, activeTFile);
+                if (ctxData.reclassifiedEntities) {
+                    for (const entity of entities) {
+                        const newType = ctxData.reclassifiedEntities[entity.id];
+                        if (newType) {
+                            entity.type = newType;
+                            // Update the ID prefix to match the new type.
+                            const namePart = entity.id.split(':').slice(1).join(':');
+                            entity.id = `${newType}:${namePart}`;
+                        }
+                    }
+                }
+            }
+
+            // Compute metrics.
+            const metrics = manuscriptMetrics(chapters, entities);
+            this.currentDashboardMetrics = metrics;
+
+            // Append snapshot and load snapshot history.
+            const manuscriptId = manuscriptIdFromFolder(folder);
+            const snapshot: ManuscriptSnapshot = {
+                takenAt: Date.now(),
+                totalWords: metrics.totalWords,
+                chapterCount: metrics.chapterCount,
+                perChapterWords: metrics.chapters.map((c) => ({
+                    filePath: c.filePath,
+                    title: c.title,
+                    wordCount: c.wordCount
+                }))
+            };
+            await appendSnapshot(
+                this.app.vault,
+                this.pluginDataDir,
+                manuscriptId,
+                folder,
+                snapshot,
+                this.settings.dashboardMaxSnapshots
+            );
+            this.currentDashboardSnapshots = await loadSnapshots(this.app.vault, this.pluginDataDir, manuscriptId);
+
+            // Re-render the panel if the Dashboard tab is active.
+            this.lintPanel?.refreshDashboardPanel();
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            new Notice(`Quill: Dashboard refresh failed (${message}).`);
+        }
+    }
+
+    /**
+     * Reclassify an entity's type and refresh the dashboard.
+     *
+     * Writes the override to the active file's frontmatter under
+     * `quill.reclassifiedEntities`, then re-runs the dashboard refresh so
+     * the entity moves to the correct section.
+     */
+    async reclassifyDashboardEntity(entityId: string, newType: EntityType): Promise<void> {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== 'md') return;
+
+        await setEntityReclassification(this.app, activeFile, entityId, newType);
+
+        // Extract the display name from the entity ID for the notice.
+        const namePart = entityId.split(':').slice(1).join(':').replace(/-/g, ' ');
+        new Notice(`Quill: reclassified "${namePart}" as ${newType}.`);
+
+        await this.refreshDashboard();
+    }
+
+    /**
+     * Resolve the list of markdown files belonging to the active manuscript.
+     *
+     * Starts with the active file's folder (recursive if `includeSubfolders`),
+     * applies frontmatter `quill.chapters.add` and `quill.chapters.remove`
+     * overrides, and always includes the active file.
+     */
+    private resolveManuscriptFiles(folder: string, activeFilePath: string, includeSubfolders: boolean): TFile[] {
+        const allMarkdown = this.app.vault.getMarkdownFiles();
+
+        // Load frontmatter overrides from the active file.
+        const activeTFile = this.app.vault.getAbstractFileByPath(activeFilePath);
+        let addPaths: string[] = [];
+        let removePaths: string[] = [];
+        if (activeTFile instanceof TFile) {
+            const ctxData = loadQuillContextData(this.app, activeTFile);
+            addPaths = ctxData.chapters?.add ?? [];
+            removePaths = ctxData.chapters?.remove ?? [];
+        }
+
+        const removeSet = new Set(removePaths);
+        const result: TFile[] = [];
+
+        // Folder scan.
+        const folderPrefix = folder.length > 0 ? folder + '/' : '';
+        for (const file of allMarkdown) {
+            if (removeSet.has(file.path)) continue;
+            const inFolder = includeSubfolders
+                ? file.path.startsWith(folderPrefix) || folder === ''
+                : file.parent?.path === folder;
+            if (inFolder) result.push(file);
+        }
+
+        // Add explicit overrides.
+        for (const addPath of addPaths) {
+            if (removeSet.has(addPath)) continue;
+            const file = this.app.vault.getAbstractFileByPath(addPath);
+            if (file instanceof TFile && file.extension === 'md' && !result.includes(file)) {
+                result.push(file);
+            }
+        }
+
+        // Ensure the active file is always included.
+        const activeFile = this.app.vault.getAbstractFileByPath(activeFilePath);
+        if (activeFile instanceof TFile && !result.includes(activeFile)) {
+            result.push(activeFile);
+        }
+
+        // Sort by path for stable ordering.
+        result.sort((a, b) => a.path.localeCompare(b.path));
+        return result;
     }
 
     /**

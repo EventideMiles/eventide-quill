@@ -1,0 +1,331 @@
+// Dashboard panel — the Dashboard tab in the sidebar.
+//
+// Block: quill-dashboard-panel. All elements belong to this block.
+// Renders: manuscript summary (word count vs target), expandable chapter list
+// with per-scene metrics, pacing heatmap, readability scores, character
+// appearances, and historical word-count trend sparkline.
+
+@use 'base' as *;
+
+.quill-dashboard-panel {
+    // Scrollable wrapper for the whole tab content.
+    &__scroll {
+        flex: 1;
+        overflow-y: auto;
+        min-height: 0;
+    }
+
+    &__actions {
+        display: flex;
+        align-items: center;
+        gap: $space-md;
+        margin-bottom: $space-lg;
+    }
+
+    &__refresh-btn {
+        // Uses Obsidian's button styling.
+    }
+
+    &__timestamp {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+    }
+
+    &__empty {
+        text-align: center;
+        color: var(--text-muted);
+        padding: $space-xxl $space-md;
+    }
+
+    &__section {
+        margin-bottom: $space-xl;
+    }
+
+    &__section-heading {
+        font-weight: 600;
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        margin-bottom: $space-md;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    // --- Manuscript progress bar ---
+
+    &__progress-bar {
+        height: 6px;
+        background: var(--background-modifier-border);
+        border-radius: $radius-full;
+        overflow: hidden;
+        margin-bottom: $space-lg;
+    }
+
+    &__progress-fill {
+        height: 100%;
+        background: var(--interactive-accent);
+        border-radius: $radius-full;
+        transition: width $transition-slow;
+
+        &--over {
+            background: var(--color-green, var(--interactive-accent));
+        }
+    }
+
+    // --- Summary grid ---
+
+    &__summary-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: $space-md;
+    }
+
+    &__summary-stat {
+        text-align: center;
+        padding: $space-sm $space-xs;
+    }
+
+    &__summary-stat-value {
+        font-size: var(--font-ui-small);
+        font-weight: 600;
+        color: var(--text-normal);
+    }
+
+    &__summary-stat-label {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        margin-top: $space-xs;
+    }
+
+    // --- Chapter list ---
+
+    &__chapter {
+        border-bottom: 1px solid var(--background-modifier-border);
+        transition: background $transition-fast;
+
+        &--expanded {
+            background: var(--background-primary-alt);
+        }
+    }
+
+    &__chapter-head {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        padding: $space-sm $space-md;
+        cursor: pointer;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+        }
+    }
+
+    &__chevron {
+        flex-shrink: 0;
+        color: var(--text-muted);
+        font-size: var(--font-ui-small);
+        transition: transform $transition-base;
+
+        &--open {
+            transform: rotate(90deg);
+        }
+    }
+
+    &__chapter-name-wrap {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+    }
+
+    &__chapter-name {
+        font-size: var(--font-ui-small);
+        color: var(--text-normal);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    &__chapter-meta {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+    }
+
+    &__chapter-bar {
+        flex-shrink: 0;
+        width: 60px;
+        height: 4px;
+        background: var(--background-modifier-border);
+        border-radius: $radius-full;
+        overflow: hidden;
+    }
+
+    &__chapter-bar-fill {
+        height: 100%;
+        background: var(--interactive-accent);
+        border-radius: $radius-full;
+        transition: width $transition-slow;
+
+        &--over {
+            background: var(--color-green, var(--interactive-accent));
+        }
+    }
+
+    // --- Section rows (inside expanded chapter) ---
+
+    &__section-list {
+        padding: 0 $space-md $space-sm;
+    }
+
+    &__section-row {
+        display: flex;
+        align-items: baseline;
+        gap: $space-sm;
+        padding: $space-xs 0;
+        font-size: var(--font-ui-smaller);
+        border-top: 1px solid var(--background-modifier-border);
+
+        &:first-child {
+            border-top: none;
+        }
+    }
+
+    &__section-title {
+        color: var(--text-normal);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    &__section-meta {
+        color: var(--text-muted);
+        flex-shrink: 0;
+        margin-left: auto;
+    }
+
+    &__section-flag {
+        color: var(--text-warning, var(--text-muted));
+        flex-shrink: 0;
+    }
+
+    // --- Pacing heatmap ---
+
+    &__heatmap {
+        display: flex;
+        flex-wrap: wrap;
+        gap: $space-xs;
+        margin-bottom: $space-md;
+    }
+
+    &__heatmap-cell {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: $space-xs $space-sm;
+        border-radius: $radius-sm;
+        font-size: var(--font-ui-smaller);
+        max-width: 80px;
+
+        &--none {
+            background: var(--color-green, var(--background-modifier-border));
+            color: var(--text-on-accent, var(--text-normal));
+        }
+
+        &--low {
+            background: var(--color-yellow, var(--background-modifier-border));
+            color: var(--text-on-accent, var(--text-normal));
+        }
+
+        &--high {
+            background: var(--color-red, var(--background-modifier-border));
+            color: var(--text-on-accent, var(--text-normal));
+        }
+    }
+
+    &__heatmap-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    &__heatmap-legend {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        line-height: var(--line-height-tight);
+    }
+
+    &__heatmap-flag {
+        padding: $space-xs 0;
+    }
+
+    // --- Readability ---
+
+    &__readability-grid {
+        display: flex;
+        flex-direction: column;
+        gap: $space-xs;
+        font-size: var(--font-ui-small);
+        color: var(--text-normal);
+    }
+
+    &__readability-score {
+        padding: $space-xs 0;
+    }
+
+    // --- Characters ---
+
+    &__character-row {
+        display: flex;
+        align-items: baseline;
+        gap: $space-md;
+        padding: $space-xs 0;
+        border-bottom: 1px solid var(--background-modifier-border);
+
+        &:last-child {
+            border-bottom: none;
+        }
+    }
+
+    &__character-name {
+        font-size: var(--font-ui-small);
+        font-weight: 600;
+        color: var(--text-normal);
+        flex-shrink: 0;
+    }
+
+    &__character-meta {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+    }
+
+    &__reclassify-btn {
+        margin-left: auto;
+        flex-shrink: 0;
+        font-size: var(--font-ui-smaller);
+        padding: $space-xs $space-sm;
+        color: var(--text-muted);
+        background: transparent;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        cursor: pointer;
+
+        &:hover {
+            color: var(--text-normal);
+            background: var(--background-modifier-hover);
+        }
+    }
+
+    // --- Trend sparkline ---
+
+    &__trend-chart {
+        width: 100%;
+        height: 40px;
+        color: var(--interactive-accent);
+        margin-bottom: $space-sm;
+    }
+
+    &__trend-velocity {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+    }
+}
