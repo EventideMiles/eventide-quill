@@ -65,10 +65,11 @@
         font-size: var(--font-ui-small);
         color: var(--text-muted);
         text-decoration: line-through;
-        text-decoration-color: rgba(var(--color-red-rgb), 0.45);
-        background: var(--background-modifier-error, rgba(var(--color-red-rgb), 0.1));
+        text-decoration-color: rgba(var(--color-red-rgb), 0.4);
+        background: rgba(var(--color-red-rgb), 0.05);
+        border-left: 3px solid var(--color-red);
         border-radius: 3px;
-        padding: $space-xs $space-sm;
+        padding: $space-sm $space-md;
         margin-bottom: $space-xs;
         white-space: pre-wrap;
     }

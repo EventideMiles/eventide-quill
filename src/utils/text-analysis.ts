@@ -1,5 +1,37 @@
 /** Shared text analysis utilities used by both the prose linter and context engine. */
 
+/**
+ * Strip YAML frontmatter (`---\n...\n---`) from the start of a document.
+ *
+ * Returns the body text (without frontmatter) and the number of leading
+ * lines consumed, so callers can adjust line numbers back to absolute
+ * positions in the original document.
+ *
+ * If no frontmatter is present, returns the original text and 0.
+ */
+export function stripFrontmatter(text: string): { text: string; strippedLines: number } {
+    if (!text.startsWith('---\n') && text !== '---') {
+        return { text, strippedLines: 0 };
+    }
+
+    const lines = text.split('\n');
+    // Find the closing --- delimiter (must be on its own line, not the first).
+    let closeIdx = -1;
+    for (let i = 1; i < lines.length; i++) {
+        if (lines[i] === '---') {
+            closeIdx = i;
+            break;
+        }
+    }
+    if (closeIdx < 0) return { text, strippedLines: 0 };
+
+    const bodyStartIdx = closeIdx + 1;
+    return {
+        text: lines.slice(bodyStartIdx).join('\n'),
+        strippedLines: bodyStartIdx
+    };
+}
+
 export interface Position {
     line: number;
     column: number;

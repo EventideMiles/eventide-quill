@@ -8,7 +8,7 @@ import { LintResult, FIXABLE_RULES, RULE_INFO } from './core/linter/types';
 import { FIXES } from './core/linter/fixes';
 import { applyReplacement } from './core/linter/apply-fix';
 import { findEditorView } from './utils/find-editor';
-import { extractScene } from './utils/text-analysis';
+import { extractScene, stripFrontmatter } from './utils/text-analysis';
 import { AiProvider } from './ai/provider';
 import { createProvider, parseProviderKey } from './ai/provider-registry';
 import { applyTransformation, TRANSFORM_ACTIONS } from './ai/transform';
@@ -812,7 +812,10 @@ export default class EventideQuillPlugin extends Plugin {
         const prose = mode === 'all' || mode === 'prose';
         const ai = mode === 'all' || mode === 'ai';
 
-        const rawResults = lint(text, {
+        // Strip frontmatter so the linter doesn't flag YAML properties.
+        const { text: bodyText, strippedLines } = stripFrontmatter(text);
+
+        const rawResults = lint(bodyText, {
             enableLongSentences: prose && this.settings.enableLongSentences,
             maxSentenceWords: this.settings.maxSentenceWords,
             enablePassiveVoice: prose && this.settings.enablePassiveVoice,
@@ -835,10 +838,12 @@ export default class EventideQuillPlugin extends Plugin {
 
         const lines = text.split('\n');
 
-        return rawResults.filter((r) => {
-            const lineText = lines[r.line - 1] ?? '';
-            return !this.dismissedFingerprints.has(lintFingerprint(r, lineText));
-        });
+        return rawResults
+            .map((r) => ({ ...r, line: r.line + strippedLines }))
+            .filter((r) => {
+                const lineText = lines[r.line - 1] ?? '';
+                return !this.dismissedFingerprints.has(lintFingerprint(r, lineText));
+            });
     }
 
     /** Generate a fingerprint for a lint result: rule + column + line content. */
@@ -1553,6 +1558,8 @@ export default class EventideQuillPlugin extends Plugin {
 
     /** Whether a batch or single AI fix is currently in progress. UI uses this to disable buttons. */
     batchFixInProgress = false;
+    /** Which tab initiated the current batch fix — controls where the pending subtab appears. */
+    batchFixSource: 'linter' | 'dashboard' | null = null;
 
     /**
      * Fix all lint findings with AI.
@@ -1589,7 +1596,8 @@ export default class EventideQuillPlugin extends Plugin {
         clearDiffEdits(cm, 'lint-batch');
 
         this.batchFixInProgress = true;
-        this.lintPanel?.refreshResultsTab();
+        this.batchFixSource = 'linter';
+        this.lintPanel?.switchToPendingTab();
         new Notice(`Quill: fixing ${groups.length} passage${groups.length !== 1 ? 's' : ''}...`);
 
         try {
@@ -1635,11 +1643,8 @@ export default class EventideQuillPlugin extends Plugin {
             }
         } finally {
             this.batchFixInProgress = false;
-            if (this.lintBatchChangeSet.hasPending) {
-                this.lintPanel?.switchToPendingTab();
-            } else {
-                this.lintPanel?.refreshResultsTab();
-            }
+            this.lintPanel?.refreshResultsTab();
+            this.lintPanel?.refreshDashboardPanel();
         }
     }
 
@@ -1690,7 +1695,8 @@ export default class EventideQuillPlugin extends Plugin {
         const scopeNote = skipped > 0 ? ` (${skipped} in other files — switch files to fix those)` : '';
 
         this.batchFixInProgress = true;
-        this.lintPanel?.refreshDashboardPanel();
+        this.batchFixSource = 'dashboard';
+        this.lintPanel?.switchToPendingTab();
         new Notice(`Quill: fixing ${flags.length} pacing flag${flags.length !== 1 ? 's' : ''}${scopeNote}...`);
 
         try {
@@ -1738,11 +1744,8 @@ export default class EventideQuillPlugin extends Plugin {
             }
         } finally {
             this.batchFixInProgress = false;
-            if (this.lintBatchChangeSet.hasPending) {
-                this.lintPanel?.switchToPendingTab();
-            } else {
-                this.lintPanel?.refreshDashboardPanel();
-            }
+            this.lintPanel?.refreshResultsTab();
+            this.lintPanel?.refreshDashboardPanel();
         }
     }
 
@@ -1837,7 +1840,8 @@ export default class EventideQuillPlugin extends Plugin {
         const { system, user } = buildPacingFixPrompt(flag, passageText);
 
         this.batchFixInProgress = true;
-        this.lintPanel?.refreshDashboardPanel();
+        this.batchFixSource = 'dashboard';
+        this.lintPanel?.switchToPendingTab();
         new Notice('Quill: generating pacing fix...');
 
         try {
@@ -1872,11 +1876,8 @@ export default class EventideQuillPlugin extends Plugin {
             new Notice(`Quill: pacing fix failed (${message}).`);
         } finally {
             this.batchFixInProgress = false;
-            if (this.lintBatchChangeSet.hasPending) {
-                this.lintPanel?.switchToPendingTab();
-            } else {
-                this.lintPanel?.refreshDashboardPanel();
-            }
+            this.lintPanel?.refreshResultsTab();
+            this.lintPanel?.refreshDashboardPanel();
         }
     }
 
@@ -2409,8 +2410,15 @@ export default class EventideQuillPlugin extends Plugin {
         try {
             const chapters: ChapterRange[] = [];
             for (const file of chapterFiles) {
-                const text = await this.app.vault.read(file);
-                const ranges = listChaptersInFile(text, file.path, file.basename, splitByHeading);
+                const raw = await this.app.vault.read(file);
+                // Strip frontmatter so dashboard metrics ignore YAML properties.
+                const { text: bodyText, strippedLines } = stripFrontmatter(raw);
+                const ranges = listChaptersInFile(bodyText, file.path, file.basename, splitByHeading);
+                // Adjust line numbers back to absolute positions in the file.
+                for (const range of ranges) {
+                    range.lineStart += strippedLines;
+                    range.lineEnd += strippedLines;
+                }
                 chapters.push(...ranges);
             }
 

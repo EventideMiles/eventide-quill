@@ -25,6 +25,7 @@ export class QuillSidebarView extends ItemView {
     private selectedResult: LintResult | null = null;
     private activeTopTab: TopTab = 'linter';
     private activeLinterSubTab: LinterSubTab = 'results';
+    private dashboardSubTab: 'overview' | 'pending' = 'overview';
     private container!: HTMLElement;
     private tabBar!: HTMLElement;
     private content!: HTMLElement;
@@ -225,8 +226,9 @@ export class QuillSidebarView extends ItemView {
         return { lines, flaggedStart, flaggedEnd };
     }
 
-    /** Switch the active top-level tab. */
+    /** Switch the active top-level tab. Clears handled batch edits when leaving the pending view. */
     private switchTopTab(tab: TopTab) {
+        this.clearBatchIfHandled();
         this.activeTopTab = tab;
         if (tab === 'linter') {
             this.activeLinterSubTab = 'results';
@@ -234,10 +236,28 @@ export class QuillSidebarView extends ItemView {
         this.render();
     }
 
-    /** Switch the active linter sub-tab. */
+    /** Switch the active linter sub-tab. Clears handled batch edits when leaving pending. */
     private switchLinterSubTab(tab: LinterSubTab) {
+        if (this.activeLinterSubTab === 'pending' && tab !== 'pending') {
+            this.clearBatchIfHandled();
+        }
         this.activeLinterSubTab = tab;
         this.render();
+    }
+
+    /**
+     * Clear the batch ChangeSet if all edits have been handled (no pending).
+     * Called when the user navigates away from the pending subtab so that
+     * old approved/rejected entries don't persist into the next batch.
+     */
+    private clearBatchIfHandled(): void {
+        if (
+            !this.plugin.batchFixInProgress &&
+            this.plugin.lintBatchChangeSet.edits.length > 0 &&
+            this.plugin.lintBatchChangeSet.pendingCount === 0
+        ) {
+            this.plugin.lintBatchChangeSet.clear();
+        }
     }
 
     /** Tear down event listeners and rebuild the sidebar DOM for the current tab. */
@@ -264,8 +284,13 @@ export class QuillSidebarView extends ItemView {
             const ctxScroll = this.content.createDiv({ cls: 'quill-context-panel__scroll' });
             renderContextTab(ctxScroll, this.currentAssembly, this.plugin, this.renderEvents);
         } else if (this.activeTopTab === 'dashboard') {
-            const dashScroll = this.content.createDiv({ cls: 'quill-dashboard-panel__scroll' });
-            renderDashboardTab(dashScroll, this.plugin, this.renderEvents);
+            this.renderDashboardSubTabBar();
+            if (this.dashboardSubTab === 'pending') {
+                this.renderPendingTab();
+            } else {
+                const dashScroll = this.content.createDiv({ cls: 'quill-dashboard-panel__scroll' });
+                renderDashboardTab(dashScroll, this.plugin, this.renderEvents);
+            }
         } else if (this.activeTopTab === 'cowriter') {
             this.renderCoWriterTab();
         } else {
@@ -292,6 +317,43 @@ export class QuillSidebarView extends ItemView {
         }
     }
 
+    /** Render the dashboard sub-tab bar (Overview | Pending). */
+    private renderDashboardSubTabBar() {
+        const showPending =
+            this.plugin.batchFixSource === 'dashboard' &&
+            (this.plugin.batchFixInProgress ||
+                this.plugin.lintBatchChangeSet.edits.length > 0 ||
+                this.dashboardSubTab === 'pending');
+
+        if (!showPending) {
+            this.dashboardSubTab = 'overview';
+            return;
+        }
+
+        const subTabBar = this.content.createDiv({ cls: 'quill-sidebar__subtab-bar' });
+        const pendingCount = this.plugin.lintBatchChangeSet.pendingCount;
+        const tabs: { id: 'overview' | 'pending'; label: string }[] = [{ id: 'overview', label: 'Overview' }];
+        if (pendingCount > 0 || this.plugin.batchFixInProgress) {
+            tabs.push({
+                id: 'pending',
+                label: this.plugin.batchFixInProgress ? 'Generating...' : `Pending (${pendingCount})`
+            });
+        } else if (this.dashboardSubTab === 'pending') {
+            tabs.push({ id: 'pending', label: 'Pending' });
+        }
+
+        for (const tab of tabs) {
+            const btn = subTabBar.createEl('button', {
+                cls: `quill-sidebar__subtab${this.dashboardSubTab === tab.id ? ' quill-sidebar__subtab--active' : ''}`,
+                text: tab.label
+            });
+            this.renderEvents!.registerDomEvent(btn, 'click', () => {
+                this.dashboardSubTab = tab.id;
+                this.render();
+            });
+        }
+    }
+
     /** Render the linter sub-tab bar (Results / Details). */
     private renderLinterSubTabBar() {
         const subTabBar = this.content.createDiv({ cls: 'quill-sidebar__subtab-bar' });
@@ -301,10 +363,22 @@ export class QuillSidebarView extends ItemView {
             { id: 'details', label: 'Details' }
         ];
 
-        // Show "Pending" subtab only when there are pending batch-fix edits.
-        const pendingCount = this.plugin.lintBatchChangeSet.pendingCount;
-        if (pendingCount > 0) {
-            tabs.push({ id: 'pending', label: `Pending (${pendingCount})` });
+        // Show "Pending" subtab when batch fixes are in progress or edits exist.
+        const showPending =
+            this.plugin.batchFixSource === 'linter' &&
+            (this.plugin.batchFixInProgress ||
+                this.plugin.lintBatchChangeSet.edits.length > 0 ||
+                this.activeLinterSubTab === 'pending');
+
+        if (showPending) {
+            const pendingCount = this.plugin.lintBatchChangeSet.pendingCount;
+            if (this.plugin.batchFixInProgress) {
+                tabs.push({ id: 'pending', label: 'Generating...' });
+            } else if (pendingCount > 0) {
+                tabs.push({ id: 'pending', label: `Pending (${pendingCount})` });
+            } else if (this.activeLinterSubTab === 'pending') {
+                tabs.push({ id: 'pending', label: 'Pending' });
+            }
         }
 
         for (const tab of tabs) {
@@ -690,10 +764,15 @@ export class QuillSidebarView extends ItemView {
         this.coWriterPanel?.setFulfillState(sections, active);
     }
 
-    /** Switch to the linter's Pending subtab (called after batch fixes complete). */
+    /** Switch to the pending subtab on whichever tab initiated the batch fix. */
     switchToPendingTab(): void {
-        this.activeTopTab = 'linter';
-        this.activeLinterSubTab = 'pending';
+        if (this.plugin.batchFixSource === 'dashboard') {
+            this.activeTopTab = 'dashboard';
+            this.dashboardSubTab = 'pending';
+        } else {
+            this.activeTopTab = 'linter';
+            this.activeLinterSubTab = 'pending';
+        }
         this.render();
     }
 
@@ -702,7 +781,15 @@ export class QuillSidebarView extends ItemView {
         const container = this.content.createDiv({ cls: 'quill-linter__pending' });
         const edits = this.plugin.lintBatchChangeSet.edits;
 
-        if (edits.length === 0) {
+        // Loading indicator while AI is generating.
+        if (this.plugin.batchFixInProgress) {
+            container.createEl('div', {
+                cls: 'quill-linter__pending-loading',
+                text: 'Generating fixes\u2026'
+            });
+        }
+
+        if (edits.length === 0 && !this.plugin.batchFixInProgress) {
             container.createEl('p', {
                 text: 'No pending changes.',
                 cls: 'quill-linter__empty'
@@ -710,17 +797,19 @@ export class QuillSidebarView extends ItemView {
             return;
         }
 
-        // Bulk action bar.
-        renderChangeBulkBar(container, this.plugin.lintBatchChangeSet.pendingCount, this.renderEvents!, {
-            onApproveAll: () => {
-                this.plugin.approveAllLintBatch();
-                this.render();
-            },
-            onRejectAll: () => {
-                this.plugin.rejectAllLintBatch();
-                this.render();
-            }
-        });
+        // Bulk action bar (only when there are pending edits).
+        if (this.plugin.lintBatchChangeSet.pendingCount > 0) {
+            renderChangeBulkBar(container, this.plugin.lintBatchChangeSet.pendingCount, this.renderEvents!, {
+                onApproveAll: () => {
+                    this.plugin.approveAllLintBatch();
+                    this.render();
+                },
+                onRejectAll: () => {
+                    this.plugin.rejectAllLintBatch();
+                    this.render();
+                }
+            });
+        }
 
         // Individual change cards.
         const scroll = container.createEl('div', { cls: 'quill-linter__pending-list' });

@@ -160,6 +160,14 @@
     gap: $space-md;
 }
 
+.quill-linter__pending-loading {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    font-style: italic;
+    padding: $space-md;
+    text-align: center;
+}
+
 /* Linter details container */
 .quill-linter__details {
     flex: 1;
