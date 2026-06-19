@@ -101,11 +101,23 @@ export function renderDashboardTab(container: HTMLElement, plugin: EventideQuill
         return;
     }
 
-    // Generated-at timestamp.
-    actionBar.createEl('span', {
+    // Generated-at timestamp — re-written every 60s so it ages between refreshes.
+    // Uses isConnected guard to self-clean on re-render (the chapter expand/collapse
+    // path calls renderDashboardTab with the same component, so registerInterval alone
+    // would accumulate duplicates). The interval is also registered on the component so
+    // full unload (tab switch, view detach) cleans up properly.
+    const tsEl = actionBar.createEl('span', {
         cls: 'quill-dashboard-panel__timestamp',
         text: `Updated ${formatRelativeTime(metrics.generatedAt)}`
     });
+    const tickId = window.setInterval(() => {
+        if (!tsEl.isConnected) {
+            window.clearInterval(tickId);
+            return;
+        }
+        tsEl.textContent = `Updated ${formatRelativeTime(metrics.generatedAt)}`;
+    }, 60_000);
+    component.registerInterval(tickId);
 
     renderSummary(container, metrics, plugin);
     renderChapterList(container, metrics, plugin, component);
