@@ -34,6 +34,8 @@ export interface ProposedEdit {
     /** Human label for the review card (e.g., the directive text, or "Make shorter"). */
     label: string;
     state: ProposedEditState;
+    /** The original text being replaced, for review-card rendering. */
+    originalText?: string;
 }
 
 /** A CodeMirror change spec sufficient for `EditorView.dispatch({ changes })`. */

@@ -1,9 +1,9 @@
 // Active document header — shared BEM block.
 //
-// Rendered by AbstractChatPanel.renderDocumentHeader() at the top of any
-// chat panel's create tab to show which document the panel will operate on.
-// Gives the writer visual confirmation before they run a command that reads
-// from the active editor.
+// Rendered by renderDocumentHeader() in src/ui/document-header.ts at the top
+// of any panel that operates on the active document (chat panels, dashboard)
+// to show which document the panel will operate on. Gives the writer visual
+// confirmation before they run a command that reads from the active editor.
 
 @use 'base' as *;
 

@@ -92,7 +92,7 @@ function computeAvgSentenceLength(text: string): number {
 }
 
 /** Compute the ratio of dialogue (quoted text) and description in the given text. */
-function computeDialogueRatio(text: string): { dialogueRatio: number; descriptionRatio: number } {
+export function computeDialogueRatio(text: string): { dialogueRatio: number; descriptionRatio: number } {
     let inQuotes = false;
     let quotedChars = 0;
     let whitespaceChars = 0;

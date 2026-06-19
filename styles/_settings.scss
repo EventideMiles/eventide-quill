@@ -13,12 +13,46 @@
 // Settings tabs
 // =========================================================================
 
+// Content div visibility — toggled via .is-hidden class by showActiveTab().
+div[class*='quill-settings-content-'].is-hidden {
+    display: none;
+}
+
+// =========================================================================
+// Root layout — flex column with fixed header, scrollable middle, fixed footer.
+//
+//   ┌───────────────────────────┐
+//   │ Tab bar (fixed)            │  flex-shrink: 0
+//   ├───────────────────────────┤
+//   │ Scroll area (scrolls)      │  flex: 1, overflow-y: auto
+//   ├───────────────────────────┤
+//   │ Footer (fixed)             │  flex-shrink: 0
+//   └───────────────────────────┘
+//
+// The root fills its parent's height and prevents the parent from scrolling;
+// only the scroll area in the middle scrolls.
+
+.quill-settings-root {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
 .quill-settings {
+    &__scroll-area {
+        flex: 1;
+        overflow-y: auto;
+        min-height: 0; // Critical: allows flex child to shrink and scroll
+    }
+
     &__tab-bar {
         display: flex;
-        border-bottom: 1px solid var(--background-modifier-border);
-        margin-bottom: $space-xl;
         flex-shrink: 0;
+        border-bottom: 1px solid var(--background-modifier-border);
+        background: var(--background-primary);
+        padding-top: $space-sm;
+        box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.08);
     }
 
     &__tab {
@@ -42,6 +76,111 @@
             color: var(--text-accent);
             border-bottom-color: var(--text-accent);
         }
+    }
+
+    // --- Welcome tab ---
+
+    &__welcome-hero {
+        text-align: center;
+        padding: $space-xxl 0 $space-xl;
+    }
+
+    &__welcome-title {
+        font-size: var(--font-ui-large);
+        font-weight: 700;
+        color: var(--text-normal);
+    }
+
+    &__welcome-tagline {
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        margin-top: $space-xs;
+    }
+
+    &__welcome-steps {
+        margin-bottom: $space-xl;
+    }
+
+    &__welcome-step {
+        display: flex;
+        gap: $space-md;
+        padding: $space-sm 0;
+        align-items: flex-start;
+    }
+
+    &__welcome-step-num {
+        flex-shrink: 0;
+        width: 24px;
+        height: 24px;
+        line-height: 24px;
+        text-align: center;
+        border-radius: $radius-full;
+        background: var(--interactive-accent);
+        color: var(--text-on-accent);
+        font-size: var(--font-ui-smaller);
+        font-weight: 700;
+    }
+
+    &__welcome-step-body {
+        flex: 1;
+    }
+
+    &__welcome-step-title {
+        font-size: var(--font-ui-small);
+        font-weight: 600;
+        color: var(--text-normal);
+    }
+
+    &__welcome-step-desc {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        margin-top: 2px;
+    }
+
+    &__welcome-features {
+        margin-bottom: $space-xl;
+    }
+
+    &__welcome-feature {
+        display: flex;
+        gap: $space-md;
+        padding: $space-sm 0;
+        align-items: baseline;
+    }
+
+    &__welcome-feature-icon {
+        flex-shrink: 0;
+        width: 20px;
+        text-align: center;
+        color: var(--text-accent);
+        font-size: var(--font-ui-small);
+    }
+
+    &__welcome-feature-text {
+        font-size: var(--font-ui-small);
+        color: var(--text-normal);
+    }
+
+    &__welcome-privacy {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        padding: $space-md;
+        background: var(--background-primary-alt);
+        border-radius: $radius-sm;
+        text-align: center;
+        margin-top: $space-xl;
+    }
+
+    // --- Footer (reserved for future donation / support links) ---
+    // Fixed at the bottom via the flex layout — does not scroll with content.
+
+    &__footer {
+        flex-shrink: 0;
+        padding: $space-lg $space-md;
+        min-height: 60px;
+        border-top: 1px solid var(--background-modifier-border);
+        background: var(--background-primary);
+        box-shadow: 0 -4px 12px -4px rgba(0, 0, 0, 0.08);
     }
 }
 
