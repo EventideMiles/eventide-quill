@@ -1,5 +1,5 @@
 import { App, Component } from 'obsidian';
-import { ActiveDocument, getActiveDocument, renderDocumentHeader } from './document-header';
+import { type ActiveDocument, getActiveDocument, renderDocumentHeader } from './document-header';
 
 // Re-export ActiveDocument so existing importers (`import { ActiveDocument } from './chat-panel'`) keep working.
 export type { ActiveDocument };

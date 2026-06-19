@@ -10,11 +10,14 @@
  * If no frontmatter is present, returns the original text and 0.
  */
 export function stripFrontmatter(text: string): { text: string; strippedLines: number } {
-    if (!text.startsWith('---\n') && text !== '---') {
+    // Normalize CRLF (and lone CR) to LF so the delimiter checks below work
+    // regardless of the file's original line-ending style.
+    const normalized = text.replace(/\r\n?/g, '\n');
+    if (!normalized.startsWith('---\n') && normalized !== '---') {
         return { text, strippedLines: 0 };
     }
 
-    const lines = text.split('\n');
+    const lines = normalized.split('\n');
     // Find the closing --- delimiter (must be on its own line, not the first).
     let closeIdx = -1;
     for (let i = 1; i < lines.length; i++) {

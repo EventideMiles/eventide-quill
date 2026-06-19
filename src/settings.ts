@@ -7,6 +7,8 @@ import type { ReadabilityFormula } from './core/dashboard/types';
 
 export type LinterMode = 'all' | 'prose' | 'ai';
 export type SettingsTab = 'welcome' | 'general' | 'linter' | 'ai-providers' | 'model-behaviors';
+/** Which sidebar tab opens by default. Mirrors the dropdown options in the General settings. */
+export type DefaultTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard';
 
 export interface EventideQuillSettings {
     linterMode: LinterMode;
@@ -58,7 +60,7 @@ export interface EventideQuillSettings {
     coWriterVoiceMatch: boolean;
     enableInlineDirectives: boolean;
     enableDashboard: boolean;
-    defaultTab: string;
+    defaultTab: DefaultTab;
     dashboardAutoRefreshMinutes: number;
     dashboardAutoSnapshotOnSave: boolean;
     dashboardMaxSnapshots: number;
@@ -438,7 +440,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 dropdown.addOption('review', 'Review');
                 dropdown.addOption('cowriter', 'Co-writer');
                 dropdown.setValue(this.plugin.settings.defaultTab).onChange(async (value) => {
-                    this.plugin.settings.defaultTab = value;
+                    this.plugin.settings.defaultTab = value as DefaultTab;
                     await this.plugin.saveSettings();
                 });
             });

@@ -27,6 +27,7 @@ export {
     saveManuscriptFile,
     setEntityReclassification,
     appendManuscriptSnapshot,
-    manuscriptDataPath
+    manuscriptDataPath,
+    withFolderLock
 } from './manuscript-file';
 export type { ManuscriptFileData } from './manuscript-file';

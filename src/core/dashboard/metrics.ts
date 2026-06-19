@@ -1,8 +1,9 @@
-import { ExtractedEntity, EntityType } from '../context-engine/types';
+import type { ExtractedEntity, EntityType } from '../context-engine/types';
 import { computeDialogueRatio } from '../context-engine/voice-analyzer';
-import { countSyllables, splitSentences, listSections, SectionRange } from '../../utils/text-analysis';
+import { countSyllables, splitSentences, listSections } from '../../utils/text-analysis';
+import type { SectionRange } from '../../utils/text-analysis';
 import { daleChall, reweightedFlesch, customComposite, automatedReadabilityIndex } from './readability';
-import {
+import type {
     ChapterMetrics,
     ChapterRange,
     CharacterAppearance,
@@ -223,7 +224,13 @@ function computeSectionMetrics(section: SectionRange, filePath: string): Section
     const { mean, stddev } = stats(wordCounts);
     const { dialogueRatio } = computeDialogueRatio(section.text);
     const readability = computeSectionReadability(section.text, stddev, dialogueRatio);
-    const flags = pacingAnalysis(section.text, lineTable, filePath);
+    // Pacing flags are computed from section-relative line numbers; shift them
+    // to file-absolute coordinates so they line up with lineStart/lineEnd below.
+    const sectionFlags = pacingAnalysis(section.text, lineTable, filePath).map((flag) => ({
+        ...flag,
+        lineStart: section.lineStart + flag.lineStart - 1,
+        lineEnd: section.lineStart + flag.lineEnd - 1
+    }));
 
     return {
         title: section.title,
@@ -240,7 +247,7 @@ function computeSectionMetrics(section: SectionRange, filePath: string): Section
         reweightedFleschGradeLevel: readability.reweightedFleschGradeLevel,
         customCompositeScore: readability.customCompositeScore,
         ariScore: readability.ariScore,
-        pacingFlags: flags
+        pacingFlags: sectionFlags
     };
 }
 

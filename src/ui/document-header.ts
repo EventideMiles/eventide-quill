@@ -1,4 +1,5 @@
-import { App, MarkdownView, TFile } from 'obsidian';
+import { App, MarkdownView } from 'obsidian';
+import type { TFile } from 'obsidian';
 
 /** Snapshot of the active markdown document, used by panels to gate UI on document state. */
 export interface ActiveDocument {

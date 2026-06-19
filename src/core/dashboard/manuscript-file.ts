@@ -94,6 +94,34 @@ export async function loadManuscriptFile(vault: Vault, folder: string): Promise<
 }
 
 /**
+ * Per-folder write-lock chain.
+ *
+ * Serializes the load-mutate-save cycle on the manuscript data file so
+ * concurrent async operations targeting the same folder cannot overwrite
+ * each other's changes. Each queued operation awaits the previous one
+ * before running. Rejections on the internal chain are swallowed so a
+ * single failure does not stall subsequent operations on that folder.
+ */
+const folderLocks = new Map<string, Promise<unknown>>();
+
+/**
+ * Run an async mutation while holding the per-folder write lock.
+ *
+ * `fn` is awaited only after any prior operation on the same `folder`
+ * completes (success or failure). The returned promise propagates `fn`'s
+ * own result or rejection to the caller.
+ */
+export function withFolderLock<T>(folder: string, fn: () => Promise<T>): Promise<T> {
+    const prev = folderLocks.get(folder) ?? Promise.resolve();
+    const next = prev.catch(() => {}).then(fn);
+    folderLocks.set(
+        folder,
+        next.catch(() => {})
+    );
+    return next;
+}
+
+/**
  * Save the manuscript data file for a given folder.
  *
  * Creates parent directories lazily. Errors emit a Notice rather than
@@ -133,14 +161,16 @@ export async function setEntityReclassification(
     entityId: string,
     newType: EntityType | null
 ): Promise<ManuscriptFileData> {
-    const data = await loadManuscriptFile(vault, folder);
-    if (newType === null) {
-        delete data.reclassifiedEntities[entityId];
-    } else {
-        data.reclassifiedEntities[entityId] = newType;
-    }
-    await saveManuscriptFile(vault, folder, data);
-    return data;
+    return withFolderLock(folder, async () => {
+        const data = await loadManuscriptFile(vault, folder);
+        if (newType === null) {
+            delete data.reclassifiedEntities[entityId];
+        } else {
+            data.reclassifiedEntities[entityId] = newType;
+        }
+        await saveManuscriptFile(vault, folder, data);
+        return data;
+    });
 }
 
 /**
@@ -153,11 +183,16 @@ export async function appendManuscriptSnapshot(
     snapshot: ManuscriptSnapshot,
     maxSnapshots: number
 ): Promise<ManuscriptFileData> {
-    const data = await loadManuscriptFile(vault, folder);
-    data.snapshots.push(snapshot);
-    while (data.snapshots.length > maxSnapshots) {
-        data.snapshots.shift();
-    }
-    await saveManuscriptFile(vault, folder, data);
-    return data;
+    return withFolderLock(folder, async () => {
+        const data = await loadManuscriptFile(vault, folder);
+        data.snapshots.push(snapshot);
+        // Guard against invalid (negative) limits, which would otherwise loop
+        // forever since array length can never drop below zero.
+        const limit = Math.max(0, maxSnapshots);
+        while (data.snapshots.length > limit) {
+            data.snapshots.shift();
+        }
+        await saveManuscriptFile(vault, folder, data);
+        return data;
+    });
 }

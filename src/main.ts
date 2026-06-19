@@ -59,6 +59,7 @@ import {
     saveManuscriptFile,
     setEntityReclassification,
     appendManuscriptSnapshot,
+    withFolderLock,
     type ManuscriptFileData
 } from './core/dashboard/manuscript-file';
 
@@ -1659,8 +1660,13 @@ export default class EventideQuillPlugin extends Plugin {
                         pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
                         this.lintPanel?.refreshPendingTab();
                     }
-                } catch {
+                } catch (err) {
                     // Skip this group on error; continue with remaining groups.
+                    const labels = group.findings.map((f) => RULE_INFO[f.rule]?.name ?? f.rule).join(' + ');
+                    console.error(
+                        `Quill: batch linter fix failed for passage ${i + 1}/${groups.length} (${labels})`,
+                        err
+                    );
                 }
             }
 
@@ -2543,11 +2549,13 @@ export default class EventideQuillPlugin extends Plugin {
         if (!activeFile || activeFile.extension !== 'md') return;
 
         const folder = activeFile.parent?.path ?? '';
-        const data = await loadManuscriptFile(this.app.vault, folder);
-        if (!data.dismissedEntities.includes(entityId)) {
-            data.dismissedEntities.push(entityId);
-            await saveManuscriptFile(this.app.vault, folder, data);
-        }
+        await withFolderLock(folder, async () => {
+            const data = await loadManuscriptFile(this.app.vault, folder);
+            if (!data.dismissedEntities.includes(entityId)) {
+                data.dismissedEntities.push(entityId);
+                await saveManuscriptFile(this.app.vault, folder, data);
+            }
+        });
 
         const namePart = entityId.split(':').slice(1).join(':').replace(/-/g, ' ');
         new Notice(`Quill: dismissed "${namePart}".`);
@@ -2567,9 +2575,11 @@ export default class EventideQuillPlugin extends Plugin {
         if (!activeFile || activeFile.extension !== 'md') return;
 
         const folder = activeFile.parent?.path ?? '';
-        const data = await loadManuscriptFile(this.app.vault, folder);
-        data.dismissedEntities = data.dismissedEntities.filter((id) => id !== entityId);
-        await saveManuscriptFile(this.app.vault, folder, data);
+        await withFolderLock(folder, async () => {
+            const data = await loadManuscriptFile(this.app.vault, folder);
+            data.dismissedEntities = data.dismissedEntities.filter((id) => id !== entityId);
+            await saveManuscriptFile(this.app.vault, folder, data);
+        });
 
         const namePart = entityId.split(':').slice(1).join(':').replace(/-/g, ' ');
         new Notice(`Quill: restored "${namePart}".`);
@@ -2588,9 +2598,12 @@ export default class EventideQuillPlugin extends Plugin {
         if (!activeFile || activeFile.extension !== 'md') return;
 
         const folder = activeFile.parent?.path ?? '';
-        const data = await loadManuscriptFile(this.app.vault, folder);
-        Object.assign(data, updates);
-        await saveManuscriptFile(this.app.vault, folder, data);
+        const data = await withFolderLock(folder, async () => {
+            const loaded = await loadManuscriptFile(this.app.vault, folder);
+            Object.assign(loaded, updates);
+            await saveManuscriptFile(this.app.vault, folder, loaded);
+            return loaded;
+        });
         this.currentManuscriptFileData = data;
 
         // Structural settings change which files are scanned and how chapters

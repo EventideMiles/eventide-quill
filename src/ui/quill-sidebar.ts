@@ -20,6 +20,9 @@ export const QUILL_VIEW_TYPE = 'quill-sidebar';
 type TopTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard';
 type LinterSubTab = 'results' | 'details' | 'pending';
 
+/** Allow-list of valid TopTab values, used to validate persisted settings. */
+const VALID_TOP_TABS: ReadonlySet<TopTab> = new Set<TopTab>(['linter', 'context', 'review', 'cowriter', 'dashboard']);
+
 export class QuillSidebarView extends ItemView {
     private results: LintResult[] = [];
     private selectedResult: LintResult | null = null;
@@ -44,8 +47,11 @@ export class QuillSidebarView extends ItemView {
     constructor(leaf: WorkspaceLeaf, plugin: EventideQuillPlugin) {
         super(leaf);
         this.plugin = plugin;
-        // Apply the user's preferred default tab.
-        this.activeTopTab = plugin.settings.defaultTab as TopTab;
+        // Apply the user's preferred default tab, validating the persisted value
+        // against the allow-list rather than trusting it blindly (older saves or
+        // hand-edited data.json may hold invalid strings).
+        const stored = plugin.settings.defaultTab;
+        this.activeTopTab = VALID_TOP_TABS.has(stored) ? stored : 'linter';
     }
 
     /** Whether the Dashboard tab is currently active. */

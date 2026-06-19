@@ -146,8 +146,9 @@ function renderSummary(container: HTMLElement, metrics: ManuscriptMetrics, plugi
         attr: { style: `width: ${progressPct}%` }
     });
 
-    // Status text below the bar.
-    bar.createEl('div', {
+    // Status text below the bar — a sibling, not a child, so the bar's
+    // `overflow: hidden` + 6px height can't clip it.
+    section.createEl('div', {
         cls: `quill-dashboard-panel__progress-label quill-dashboard-panel__target-status--${pStatus}`,
         text: `${metrics.totalWords.toLocaleString()} / ${target.toLocaleString()} words \u00B7 ${pLabel}`
     });
@@ -268,8 +269,9 @@ function renderSectionRow(
         const detail = isShort
             ? 'Staccato rhythm — consider varying sentence length.'
             : 'Dense passage — consider breaking up.';
-        const absLine = section.lineStart + flag.lineStart - 1;
-        const absEnd = section.lineStart + flag.lineEnd - 1;
+        // Flags are already in file-absolute coordinates (normalized by computeSectionMetrics).
+        const absLine = flag.lineStart;
+        const absEnd = flag.lineEnd;
         const chip = wrapper.createEl('div', {
             cls: `quill-dashboard-panel__pacing-chip quill-dashboard-panel__pacing-chip--${flag.kind}`,
             attr: { role: 'button', tabindex: '0', title: 'Click to jump to this passage' }
@@ -284,6 +286,8 @@ function renderSectionRow(
             void plugin.jumpToDashboardLine(chapter.filePath, absLine);
         });
         component.registerDomEvent(chip, 'keydown', (evt: KeyboardEvent) => {
+            // Ignore key events originating from nested controls (e.g. the "Fix with AI" button).
+            if (evt.target !== chip) return;
             if (evt.key === 'Enter' || evt.key === ' ') {
                 evt.preventDefault();
                 void plugin.jumpToDashboardLine(chapter.filePath, absLine);
@@ -362,6 +366,8 @@ function renderPacingHeatmap(
                 void plugin.jumpToDashboardLine(flag.filePath, flag.lineStart);
             });
             component.registerDomEvent(item, 'keydown', (evt: KeyboardEvent) => {
+                // Ignore key events originating from nested controls (e.g. the "Fix with AI" button).
+                if (evt.target !== item) return;
                 if (evt.key === 'Enter' || evt.key === ' ') {
                     evt.preventDefault();
                     void plugin.jumpToDashboardLine(flag.filePath, flag.lineStart);
