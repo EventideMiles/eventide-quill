@@ -16,6 +16,8 @@ export interface ManuscriptFileData {
     wordCountTarget?: number;
     /** Per-manuscript total word count target (overrides global setting). */
     manuscriptTarget?: number;
+    /** Target Flesch-Kincaid grade level for the readability display. */
+    targetGradeLevel?: number;
     /** Split chapters by #/## headings within files (overrides global setting). */
     splitByHeading?: boolean;
     /** Recursively scan subfolders for chapter files (overrides global setting). */
@@ -70,6 +72,7 @@ export async function loadManuscriptFile(vault: Vault, folder: string): Promise<
             schemaVersion: parsed.schemaVersion ?? SCHEMA_VERSION,
             wordCountTarget: parsed.wordCountTarget,
             manuscriptTarget: parsed.manuscriptTarget,
+            targetGradeLevel: parsed.targetGradeLevel,
             splitByHeading: parsed.splitByHeading,
             includeSubfolders: parsed.includeSubfolders,
             chapterOverrides: {

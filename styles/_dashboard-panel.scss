@@ -505,4 +505,54 @@
         font-size: var(--font-ui-smaller);
         color: var(--text-muted);
     }
+
+    // --- Settings subtab ---
+
+    &__settings-hint {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        margin-bottom: $space-md;
+    }
+
+    &__preset-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: $space-sm;
+    }
+
+    &__preset-card {
+        padding: $space-sm $space-md;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        cursor: pointer;
+        transition: background $transition-fast, border-color $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            border-color: var(--background-modifier-border-hover);
+        }
+
+        &--active {
+            border-color: var(--interactive-accent);
+            background: var(--background-primary-alt);
+        }
+    }
+
+    &__preset-label {
+        font-size: var(--font-ui-small);
+        font-weight: 600;
+        color: var(--text-normal);
+    }
+
+    &__preset-desc {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        margin-top: 2px;
+    }
+
+    &__preset-detail {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-faint, var(--text-muted));
+        margin-top: 2px;
+    }
 }

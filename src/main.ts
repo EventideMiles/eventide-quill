@@ -2550,6 +2550,25 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
+     * Update per-manuscript dashboard settings in the sidecar file.
+     *
+     * Loads the current manuscript file, applies the partial updates, saves,
+     * and refreshes the dashboard so the new targets take effect immediately.
+     */
+    async updateManuscriptSettings(updates: Partial<ManuscriptFileData>): Promise<void> {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== 'md') return;
+
+        const folder = activeFile.parent?.path ?? '';
+        const data = await loadManuscriptFile(this.app.vault, folder);
+        Object.assign(data, updates);
+        await saveManuscriptFile(this.app.vault, folder, data);
+        this.currentManuscriptFileData = data;
+
+        this.lintPanel?.refreshDashboardPanel();
+    }
+
+    /**
      * Open a chapter file and scroll the editor to a specific line.
      *
      * Used by the dashboard's clickable pacing flags to navigate the writer

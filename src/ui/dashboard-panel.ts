@@ -1,6 +1,7 @@
-import { Component } from 'obsidian';
+import { Component, Setting } from 'obsidian';
 import type EventideQuillPlugin from '../main';
 import type { ChapterMetrics, ManuscriptMetrics, ManuscriptSnapshot, SectionMetrics } from '../core/dashboard/types';
+import { MANUSCRIPT_PRESETS } from '../core/dashboard/presets';
 import { getActiveDocument, renderDocumentHeader } from './document-header';
 
 /** Expand state for chapter rows, keyed by `${filePath}:${lineStart}`. Survives re-renders. */
@@ -79,7 +80,7 @@ export function renderDashboardTab(container: HTMLElement, plugin: EventideQuill
     renderSummary(container, metrics, plugin);
     renderChapterList(container, metrics, plugin, component);
     renderPacingHeatmap(container, metrics, plugin, component);
-    renderReadability(container, metrics);
+    renderReadability(container, metrics, plugin);
     renderCharacterList(container, metrics, plugin, component);
     renderReclassifiedList(container, metrics, plugin, component);
     renderDismissedList(container, metrics, plugin, component);
@@ -339,7 +340,7 @@ function renderPacingHeatmap(
 }
 
 /** Render the manuscript-wide readability scores. */
-function renderReadability(container: HTMLElement, metrics: ManuscriptMetrics): void {
+function renderReadability(container: HTMLElement, metrics: ManuscriptMetrics, plugin: EventideQuillPlugin): void {
     const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
     section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Readability' });
 
@@ -349,9 +350,12 @@ function renderReadability(container: HTMLElement, metrics: ManuscriptMetrics): 
     grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
         `Reading ease: ${metrics.fleschReadingEase} (${easeLabel})`
     );
-    grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
-        `Grade level: ${metrics.fleschKincaidGrade}`
-    );
+
+    const targetGrade = plugin.currentManuscriptFileData?.targetGradeLevel;
+    const gradeText = targetGrade
+        ? `Grade level: ${metrics.fleschKincaidGrade} (target: ${targetGrade})`
+        : `Grade level: ${metrics.fleschKincaidGrade}`;
+    grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(gradeText);
 }
 
 /** Map a Flesch Reading Ease score to a human-readable label. */
@@ -548,4 +552,156 @@ function renderTrends(container: HTMLElement, snapshots: ManuscriptSnapshot[] | 
             text: `${velocity.toLocaleString()} words/day over ${points.length} snapshots`
         });
     }
+}
+
+// ── Settings subtab ───────────────────────────────────────────────────────────
+
+/**
+ * Render the Dashboard settings subtab.
+ *
+ * Shows preset manuscript-type buttons (short story, novel, epic, etc.)
+ * that load typical defaults, followed by individually editable target
+ * fields and toggle options. Values are per-manuscript — stored in the
+ * sidecar `quill-data.json` and override global plugin settings.
+ */
+export function renderDashboardSettingsTab(
+    container: HTMLElement,
+    plugin: EventideQuillPlugin,
+    component: Component
+): void {
+    container.empty();
+
+    const msFile = plugin.currentManuscriptFileData;
+    const s = plugin.settings;
+
+    // Current effective values: per-manuscript overrides fall back to global defaults.
+    const wordCountTarget = msFile?.wordCountTarget ?? s.dashboardWordCountTarget;
+    const manuscriptTarget = msFile?.manuscriptTarget ?? s.dashboardManuscriptTarget;
+    const targetGradeLevel = msFile?.targetGradeLevel;
+    const splitByHeading = msFile?.splitByHeading ?? s.dashboardSplitByHeading;
+    const includeSubfolders = msFile?.includeSubfolders ?? s.dashboardIncludeSubfolders;
+
+    // --- Manuscript type presets ---
+
+    const presetSection = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
+    presetSection.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Manuscript type' });
+    presetSection.createEl('p', {
+        cls: 'quill-dashboard-panel__settings-hint',
+        text: 'Click a preset to load typical defaults, then fine-tune below.'
+    });
+
+    const presetGrid = presetSection.createEl('div', { cls: 'quill-dashboard-panel__preset-grid' });
+    for (const preset of MANUSCRIPT_PRESETS) {
+        const isActive =
+            wordCountTarget === preset.wordCountTarget &&
+            manuscriptTarget === preset.manuscriptTarget &&
+            (targetGradeLevel ?? s.dashboardManuscriptTarget) === preset.targetGradeLevel;
+
+        const card = presetGrid.createEl('div', {
+            cls: `quill-dashboard-panel__preset-card${isActive ? ' quill-dashboard-panel__preset-card--active' : ''}`,
+            attr: { role: 'button', tabindex: '0' }
+        });
+        card.createEl('div', { cls: 'quill-dashboard-panel__preset-label', text: preset.label });
+        card.createEl('div', { cls: 'quill-dashboard-panel__preset-desc', text: preset.description });
+        card.createEl('div', {
+            cls: 'quill-dashboard-panel__preset-detail',
+            text: `${preset.wordCountTarget.toLocaleString()}w/chapter \u00B7 grade ${preset.targetGradeLevel}`
+        });
+
+        component.registerDomEvent(card, 'click', () => {
+            void plugin.updateManuscriptSettings({
+                wordCountTarget: preset.wordCountTarget,
+                manuscriptTarget: preset.manuscriptTarget,
+                targetGradeLevel: preset.targetGradeLevel
+            });
+        });
+        component.registerDomEvent(card, 'keydown', (evt: KeyboardEvent) => {
+            if (evt.key === 'Enter' || evt.key === ' ') {
+                evt.preventDefault();
+                void plugin.updateManuscriptSettings({
+                    wordCountTarget: preset.wordCountTarget,
+                    manuscriptTarget: preset.manuscriptTarget,
+                    targetGradeLevel: preset.targetGradeLevel
+                });
+            }
+        });
+    }
+
+    // --- Targets ---
+
+    const targetSection = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
+    targetSection.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Targets' });
+
+    new Setting(targetSection)
+        .setName('Chapter word count target')
+        .setDesc('Target words per chapter. Used for the progress bars in the chapter list.')
+        .addText((text) =>
+            text.setValue(String(wordCountTarget)).inputEl.addEventListener('blur', () => {
+                const n = parseInt(text.inputEl.value, 10);
+                if (!isNaN(n) && n >= 100 && n <= 20000) {
+                    void plugin.updateManuscriptSettings({ wordCountTarget: n });
+                } else {
+                    text.setValue(String(wordCountTarget));
+                }
+            })
+        );
+
+    new Setting(targetSection)
+        .setName('Manuscript word count target')
+        .setDesc('Total target for the whole manuscript.')
+        .addText((text) =>
+            text.setValue(String(manuscriptTarget)).inputEl.addEventListener('blur', () => {
+                const n = parseInt(text.inputEl.value, 10);
+                if (!isNaN(n) && n >= 1000 && n <= 500000) {
+                    void plugin.updateManuscriptSettings({ manuscriptTarget: n });
+                } else {
+                    text.setValue(String(manuscriptTarget));
+                }
+            })
+        );
+
+    new Setting(targetSection)
+        .setName('Target grade level')
+        .setDesc('Target flesch-kincaid grade level for the readability display. Leave empty to ignore.')
+        .addText((text) =>
+            text
+                .setPlaceholder('None')
+                .setValue(targetGradeLevel !== undefined ? String(targetGradeLevel) : '')
+                .inputEl.addEventListener('blur', () => {
+                    const raw = text.inputEl.value.trim();
+                    if (raw === '') {
+                        void plugin.updateManuscriptSettings({ targetGradeLevel: undefined });
+                    } else {
+                        const n = parseInt(raw, 10);
+                        if (!isNaN(n) && n >= 1 && n <= 20) {
+                            void plugin.updateManuscriptSettings({ targetGradeLevel: n });
+                        } else {
+                            text.setValue(targetGradeLevel !== undefined ? String(targetGradeLevel) : '');
+                        }
+                    }
+                })
+        );
+
+    // --- Options ---
+
+    const optionsSection = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
+    optionsSection.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Options' });
+
+    new Setting(optionsSection)
+        .setName('Split chapters by heading')
+        .setDesc('Treat # and ## headings as chapter boundaries within each file. When off, each file is one chapter.')
+        .addToggle((toggle) =>
+            toggle.setValue(splitByHeading).onChange(async (value) => {
+                await plugin.updateManuscriptSettings({ splitByHeading: value });
+            })
+        );
+
+    new Setting(optionsSection)
+        .setName('Include subfolders')
+        .setDesc('Recursively scan subfolders of the active file when resolving manuscript chapters.')
+        .addToggle((toggle) =>
+            toggle.setValue(includeSubfolders).onChange(async (value) => {
+                await plugin.updateManuscriptSettings({ includeSubfolders: value });
+            })
+        );
 }

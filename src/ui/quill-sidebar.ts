@@ -8,7 +8,7 @@ import { FixWithAiModal } from './fix-with-ai-modal';
 import { renderContextTab } from './context-panel';
 import { ReviewPanel } from './review-panel';
 import { CoWriterPanel } from './co-writer-panel';
-import { renderDashboardTab } from './dashboard-panel';
+import { renderDashboardTab, renderDashboardSettingsTab } from './dashboard-panel';
 import type { InputMode } from './co-writer-panel';
 import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase } from '../ai/co-writer';
 import type { ProposedEdit } from '../core/change-set';
@@ -25,7 +25,7 @@ export class QuillSidebarView extends ItemView {
     private selectedResult: LintResult | null = null;
     private activeTopTab: TopTab = 'linter';
     private activeLinterSubTab: LinterSubTab = 'results';
-    private dashboardSubTab: 'overview' | 'pending' = 'overview';
+    private dashboardSubTab: 'overview' | 'pending' | 'settings' = 'overview';
     private container!: HTMLElement;
     private tabBar!: HTMLElement;
     private content!: HTMLElement;
@@ -287,6 +287,9 @@ export class QuillSidebarView extends ItemView {
             this.renderDashboardSubTabBar();
             if (this.dashboardSubTab === 'pending') {
                 this.renderPendingTab();
+            } else if (this.dashboardSubTab === 'settings') {
+                const settingsScroll = this.content.createDiv({ cls: 'quill-dashboard-panel__scroll' });
+                renderDashboardSettingsTab(settingsScroll, this.plugin, this.renderEvents);
             } else {
                 const dashScroll = this.content.createDiv({ cls: 'quill-dashboard-panel__scroll' });
                 renderDashboardTab(dashScroll, this.plugin, this.renderEvents);
@@ -317,29 +320,33 @@ export class QuillSidebarView extends ItemView {
         }
     }
 
-    /** Render the dashboard sub-tab bar (Overview | Pending). */
+    /** Render the dashboard sub-tab bar (Overview | Settings | Pending). */
     private renderDashboardSubTabBar() {
+        const subTabBar = this.content.createDiv({ cls: 'quill-sidebar__subtab-bar' });
+
+        const tabs: { id: 'overview' | 'pending' | 'settings'; label: string }[] = [
+            { id: 'overview', label: 'Overview' },
+            { id: 'settings', label: 'Settings' }
+        ];
+
+        // Show Pending conditionally.
         const showPending =
             this.plugin.batchFixSource === 'dashboard' &&
             (this.plugin.batchFixInProgress ||
                 this.plugin.lintBatchChangeSet.edits.length > 0 ||
                 this.dashboardSubTab === 'pending');
 
-        if (!showPending) {
-            this.dashboardSubTab = 'overview';
-            return;
-        }
-
-        const subTabBar = this.content.createDiv({ cls: 'quill-sidebar__subtab-bar' });
-        const pendingCount = this.plugin.lintBatchChangeSet.pendingCount;
-        const tabs: { id: 'overview' | 'pending'; label: string }[] = [{ id: 'overview', label: 'Overview' }];
-        if (pendingCount > 0 || this.plugin.batchFixInProgress) {
-            tabs.push({
-                id: 'pending',
-                label: this.plugin.batchFixInProgress ? 'Generating...' : `Pending (${pendingCount})`
-            });
+        if (showPending) {
+            const pendingCount = this.plugin.lintBatchChangeSet.pendingCount;
+            if (this.plugin.batchFixInProgress) {
+                tabs.push({ id: 'pending', label: 'Generating...' });
+            } else if (pendingCount > 0) {
+                tabs.push({ id: 'pending', label: `Pending (${pendingCount})` });
+            } else if (this.dashboardSubTab === 'pending') {
+                tabs.push({ id: 'pending', label: 'Pending' });
+            }
         } else if (this.dashboardSubTab === 'pending') {
-            tabs.push({ id: 'pending', label: 'Pending' });
+            this.dashboardSubTab = 'overview';
         }
 
         for (const tab of tabs) {
