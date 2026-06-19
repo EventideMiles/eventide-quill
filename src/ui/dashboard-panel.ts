@@ -262,7 +262,7 @@ function renderPacingHeatmap(
                 ? 'Staccato rhythm — consider varying sentence length.'
                 : 'Dense passage — consider breaking up.';
             const item = legend.createEl('button', {
-                cls: `quill-dashboard-panel__heatmap-flag quill-dashboard-panel__pacing-chip--${flag.kind}`,
+                cls: `quill-dashboard-panel__pacing-chip quill-dashboard-panel__heatmap-flag quill-dashboard-panel__pacing-chip--${flag.kind}`,
                 attr: { title: 'Click to jump to this passage' }
             });
             item.createEl('div', { cls: 'quill-dashboard-panel__pacing-chip-label', text: label });

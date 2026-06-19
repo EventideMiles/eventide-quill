@@ -211,16 +211,17 @@
     // --- Pacing flag chips (clickable, multi-line, descriptive) ---
 
     &__pacing-chip {
-        display: flex;
-        flex-direction: column;
-        gap: $space-xs;
+        display: block;
         width: 100%;
+        margin-top: $space-sm;
         padding: $space-sm $space-md;
         border-radius: $radius-sm;
         border: 1px solid var(--background-modifier-border);
+        border-left: 3px solid var(--background-modifier-border);
         background: var(--background-primary-alt);
         cursor: pointer;
         text-align: left;
+        line-height: var(--line-height-tight);
         transition: background $transition-fast, border-color $transition-fast;
 
         &:hover {
@@ -229,36 +230,44 @@
         }
 
         &--uniform-short {
-            border-left: 3px solid var(--color-yellow, var(--background-modifier-border));
+            border-left-color: var(--color-yellow, var(--background-modifier-border));
         }
 
         &--uniform-long {
-            border-left: 3px solid var(--color-orange, var(--color-red, var(--background-modifier-border)));
+            border-left-color: var(--color-orange, var(--color-red, var(--background-modifier-border)));
         }
     }
 
     &__pacing-chip-label {
+        display: block;
         font-size: var(--font-ui-small);
         font-weight: 600;
         color: var(--text-normal);
+        margin-bottom: 2px;
     }
 
     &__pacing-chip-detail {
+        display: block;
         font-size: var(--font-ui-smaller);
         color: var(--text-muted);
     }
 
     &__pacing-chip-line {
+        display: block;
         font-size: var(--font-ui-smaller);
         color: var(--text-faint, var(--text-muted));
+        margin-top: 2px;
     }
 
     &__section-wrapper {
+        display: block;
         padding: $space-xs 0;
     }
 
     &__heatmap-flag {
+        display: block;
         width: 100%;
+        margin-top: $space-sm;
         text-align: left;
     }
 
