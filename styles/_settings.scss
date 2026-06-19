@@ -19,6 +19,15 @@
         border-bottom: 1px solid var(--background-modifier-border);
         margin-bottom: $space-xl;
         flex-shrink: 0;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: var(--background-primary);
+    }
+
+    // Tab content visibility — toggled via .is-hidden class (not inline styles).
+    [class*='quill-settings-content-'].is-hidden {
+        display: none;
     }
 
     &__tab {
@@ -42,6 +51,46 @@
             color: var(--text-accent);
             border-bottom-color: var(--text-accent);
         }
+    }
+
+    // --- Welcome tab ---
+
+    &__welcome-desc {
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        margin-bottom: $space-xl;
+    }
+
+    &__welcome-features {
+        margin-bottom: $space-xl;
+    }
+
+    &__welcome-feature {
+        padding: $space-xs 0;
+        font-size: var(--font-ui-small);
+        color: var(--text-normal);
+        border-bottom: 1px solid var(--background-modifier-border);
+
+        &:last-child {
+            border-bottom: none;
+        }
+    }
+
+    &__welcome-hint {
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        padding: $space-md;
+        background: var(--background-primary-alt);
+        border-radius: $radius-sm;
+    }
+
+    // --- Footer (reserved for future donation / support links) ---
+
+    &__footer {
+        padding: $space-xxl $space-md;
+        min-height: 80px;
+        border-top: 1px solid var(--background-modifier-border);
+        margin-top: $space-xxl;
     }
 }
 
