@@ -213,9 +213,9 @@ function renderSectionRow(
             : 'Dense passage — consider breaking up.';
         const absLine = section.lineStart + flag.lineStart - 1;
         const absEnd = section.lineStart + flag.lineEnd - 1;
-        const chip = wrapper.createEl('button', {
+        const chip = wrapper.createEl('div', {
             cls: `quill-dashboard-panel__pacing-chip quill-dashboard-panel__pacing-chip--${flag.kind}`,
-            attr: { title: 'Click to jump to this passage' }
+            attr: { role: 'button', tabindex: '0', title: 'Click to jump to this passage' }
         });
         chip.createEl('div', { cls: 'quill-dashboard-panel__pacing-chip-label', text: label });
         chip.createEl('div', { cls: 'quill-dashboard-panel__pacing-chip-detail', text: detail });
@@ -225,6 +225,12 @@ function renderSectionRow(
         });
         component.registerDomEvent(chip, 'click', () => {
             void plugin.jumpToDashboardLine(chapter.filePath, absLine);
+        });
+        component.registerDomEvent(chip, 'keydown', (evt: KeyboardEvent) => {
+            if (evt.key === 'Enter' || evt.key === ' ') {
+                evt.preventDefault();
+                void plugin.jumpToDashboardLine(chapter.filePath, absLine);
+            }
         });
     }
 }
@@ -261,9 +267,9 @@ function renderPacingHeatmap(
             const detail = isShort
                 ? 'Staccato rhythm — consider varying sentence length.'
                 : 'Dense passage — consider breaking up.';
-            const item = legend.createEl('button', {
+            const item = legend.createEl('div', {
                 cls: `quill-dashboard-panel__pacing-chip quill-dashboard-panel__heatmap-flag quill-dashboard-panel__pacing-chip--${flag.kind}`,
-                attr: { title: 'Click to jump to this passage' }
+                attr: { role: 'button', tabindex: '0', title: 'Click to jump to this passage' }
             });
             item.createEl('div', { cls: 'quill-dashboard-panel__pacing-chip-label', text: label });
             item.createEl('div', { cls: 'quill-dashboard-panel__pacing-chip-detail', text: detail });
@@ -273,6 +279,12 @@ function renderPacingHeatmap(
             });
             component.registerDomEvent(item, 'click', () => {
                 void plugin.jumpToDashboardLine(flag.filePath, flag.lineStart);
+            });
+            component.registerDomEvent(item, 'keydown', (evt: KeyboardEvent) => {
+                if (evt.key === 'Enter' || evt.key === ' ') {
+                    evt.preventDefault();
+                    void plugin.jumpToDashboardLine(flag.filePath, flag.lineStart);
+                }
             });
         }
         if (allFlags.length > 10) {
