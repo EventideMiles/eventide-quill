@@ -146,6 +146,20 @@
     min-height: 0;
 }
 
+/* Linter pending batch-fix container */
+.quill-linter__pending {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    padding: $space-md;
+}
+
+.quill-linter__pending-list {
+    display: flex;
+    flex-direction: column;
+    gap: $space-md;
+}
+
 /* Linter details container */
 .quill-linter__details {
     flex: 1;

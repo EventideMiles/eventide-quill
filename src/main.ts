@@ -1617,7 +1617,8 @@ export default class EventideQuillPlugin extends Plugin {
                             from: group.passageStart,
                             to: group.passageEnd,
                             newText: response,
-                            label: labels
+                            label: labels,
+                            originalText: group.passageText
                         });
                         pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
                     }
@@ -1634,7 +1635,11 @@ export default class EventideQuillPlugin extends Plugin {
             }
         } finally {
             this.batchFixInProgress = false;
-            this.lintPanel?.refreshResultsTab();
+            if (this.lintBatchChangeSet.hasPending) {
+                this.lintPanel?.switchToPendingTab();
+            } else {
+                this.lintPanel?.refreshResultsTab();
+            }
         }
     }
 
@@ -1715,7 +1720,8 @@ export default class EventideQuillPlugin extends Plugin {
                             from: startOffset,
                             to: Math.max(startOffset, endOffset),
                             newText: response,
-                            label: flag.kind === 'uniform-short' ? 'Vary short sentences' : 'Vary long sentences'
+                            label: flag.kind === 'uniform-short' ? 'Vary short sentences' : 'Vary long sentences',
+                            originalText: passageText
                         });
                         pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
                     }
@@ -1732,7 +1738,11 @@ export default class EventideQuillPlugin extends Plugin {
             }
         } finally {
             this.batchFixInProgress = false;
-            this.lintPanel?.refreshDashboardPanel();
+            if (this.lintBatchChangeSet.hasPending) {
+                this.lintPanel?.switchToPendingTab();
+            } else {
+                this.lintPanel?.refreshDashboardPanel();
+            }
         }
     }
 
@@ -1760,6 +1770,29 @@ export default class EventideQuillPlugin extends Plugin {
         const cm = this.getCmForFile(activePath);
         if (!cm) return;
         this.lintBatchChangeSet.reject(id);
+        pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+    }
+
+    /** Approve all pending batch-fix edits in document order. */
+    approveAllLintBatch(): void {
+        const activePath = this.app.workspace.getActiveFile()?.path;
+        if (!activePath) return;
+        const cm = this.getCmForFile(activePath);
+        if (!cm) return;
+        syncChangeSetPositions(cm, this.lintBatchChangeSet, 'lint-batch');
+        for (const change of this.lintBatchChangeSet.approveAll()) {
+            cm.dispatch({ changes: change });
+        }
+        pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+    }
+
+    /** Reject all pending batch-fix edits. */
+    rejectAllLintBatch(): void {
+        const activePath = this.app.workspace.getActiveFile()?.path;
+        if (!activePath) return;
+        const cm = this.getCmForFile(activePath);
+        if (!cm) return;
+        this.lintBatchChangeSet.rejectAll();
         pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
     }
 
@@ -1826,7 +1859,8 @@ export default class EventideQuillPlugin extends Plugin {
                     from: startOffset,
                     to: endOffset,
                     newText: response,
-                    label: flag.kind === 'uniform-short' ? 'Vary short sentences' : 'Vary long sentences'
+                    label: flag.kind === 'uniform-short' ? 'Vary short sentences' : 'Vary long sentences',
+                    originalText: passageText
                 });
                 pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
                 new Notice('Quill: pacing fix ready for review.');
@@ -1838,7 +1872,11 @@ export default class EventideQuillPlugin extends Plugin {
             new Notice(`Quill: pacing fix failed (${message}).`);
         } finally {
             this.batchFixInProgress = false;
-            this.lintPanel?.refreshDashboardPanel();
+            if (this.lintBatchChangeSet.hasPending) {
+                this.lintPanel?.switchToPendingTab();
+            } else {
+                this.lintPanel?.refreshDashboardPanel();
+            }
         }
     }
 

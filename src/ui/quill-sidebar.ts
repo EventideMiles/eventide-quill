@@ -1,6 +1,7 @@
 import { Component, ItemView, MarkdownView, Notice, WorkspaceLeaf } from 'obsidian';
 import { LintResult, RULE_INFO, FIXABLE_RULES } from '../core/linter/types';
 import { FIXES } from '../core/linter/fixes';
+import { renderChangeCard, renderChangeBulkBar } from './change-card';
 import { applyReplacement } from '../core/linter/apply-fix';
 import { findEditorView } from '../utils/find-editor';
 import { FixWithAiModal } from './fix-with-ai-modal';
@@ -17,7 +18,7 @@ import type { ContextAssembly } from '../core/context-engine/types';
 export const QUILL_VIEW_TYPE = 'quill-sidebar';
 
 type TopTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard';
-type LinterSubTab = 'results' | 'details';
+type LinterSubTab = 'results' | 'details' | 'pending';
 
 export class QuillSidebarView extends ItemView {
     private results: LintResult[] = [];
@@ -254,6 +255,8 @@ export class QuillSidebarView extends ItemView {
             this.renderLinterSubTabBar();
             if (this.activeLinterSubTab === 'results') {
                 this.renderResultsTab();
+            } else if (this.activeLinterSubTab === 'pending') {
+                this.renderPendingTab();
             } else {
                 this.renderDetailsTab();
             }
@@ -297,6 +300,12 @@ export class QuillSidebarView extends ItemView {
             { id: 'results', label: 'Results' },
             { id: 'details', label: 'Details' }
         ];
+
+        // Show "Pending" subtab only when there are pending batch-fix edits.
+        const pendingCount = this.plugin.lintBatchChangeSet.pendingCount;
+        if (pendingCount > 0) {
+            tabs.push({ id: 'pending', label: `Pending (${pendingCount})` });
+        }
 
         for (const tab of tabs) {
             const btn = subTabBar.createEl('button', {
@@ -679,6 +688,54 @@ export class QuillSidebarView extends ItemView {
     /** Push Fulfill-mode sections and active flag to the co-writer panel. */
     coWriterSetFulfillState(sections: ProposedEdit[], active: boolean): void {
         this.coWriterPanel?.setFulfillState(sections, active);
+    }
+
+    /** Switch to the linter's Pending subtab (called after batch fixes complete). */
+    switchToPendingTab(): void {
+        this.activeTopTab = 'linter';
+        this.activeLinterSubTab = 'pending';
+        this.render();
+    }
+
+    /** Render the pending batch-fix edits as review cards with Accept/Reject. */
+    private renderPendingTab() {
+        const container = this.content.createDiv({ cls: 'quill-linter__pending' });
+        const edits = this.plugin.lintBatchChangeSet.edits;
+
+        if (edits.length === 0) {
+            container.createEl('p', {
+                text: 'No pending changes.',
+                cls: 'quill-linter__empty'
+            });
+            return;
+        }
+
+        // Bulk action bar.
+        renderChangeBulkBar(container, this.plugin.lintBatchChangeSet.pendingCount, this.renderEvents!, {
+            onApproveAll: () => {
+                this.plugin.approveAllLintBatch();
+                this.render();
+            },
+            onRejectAll: () => {
+                this.plugin.rejectAllLintBatch();
+                this.render();
+            }
+        });
+
+        // Individual change cards.
+        const scroll = container.createEl('div', { cls: 'quill-linter__pending-list' });
+        for (const edit of edits) {
+            renderChangeCard(scroll, edit, edit.originalText ?? null, this.app, this.renderEvents!, {
+                onApprove: (id: number) => {
+                    this.plugin.approveLintBatchChange(id);
+                    this.render();
+                },
+                onReject: (id: number) => {
+                    this.plugin.rejectLintBatchChange(id);
+                    this.render();
+                }
+            });
+        }
     }
 
     /** Render the list of lint results with severity badges and location info. */
