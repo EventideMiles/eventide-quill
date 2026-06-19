@@ -315,6 +315,58 @@
         }
     }
 
+    // --- Other entities (reclassified) ---
+
+    &__reclassified-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: $space-sm;
+        padding: $space-xs 0;
+        border-bottom: 1px solid var(--background-modifier-border);
+
+        &:last-child {
+            border-bottom: none;
+        }
+    }
+
+    &__type-btns {
+        display: flex;
+        gap: $space-xs;
+        margin-left: auto;
+        flex-wrap: wrap;
+    }
+
+    &__type-btn {
+        font-size: var(--font-ui-smaller);
+        padding: $space-xs $space-sm;
+        color: var(--text-muted);
+        background: transparent;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        cursor: pointer;
+
+        &:hover {
+            color: var(--text-normal);
+            background: var(--background-modifier-hover);
+        }
+
+        &--active {
+            color: var(--text-normal);
+            background: var(--background-modifier-active-hover);
+            border-color: var(--background-modifier-border-hover);
+            cursor: default;
+        }
+
+        &--revert {
+            color: var(--text-muted);
+
+            &:hover {
+                color: var(--text-normal);
+            }
+        }
+    }
+
     // --- Trend sparkline ---
 
     &__trend-chart {

@@ -1,3 +1,5 @@
+import type { EntityType } from '../context-engine/types';
+
 /** A section (scene) within a chapter. */
 export interface SectionRange {
     /** Heading text when the boundary was a heading, otherwise null. */
@@ -114,6 +116,20 @@ export interface CharacterAppearance {
     chaptersSinceLastSeen: number;
 }
 
+/** An entity whose type was reclassified by the user. */
+export interface ReclassifiedEntity {
+    /** Entity ID (`type:normalized-name` from extraction). */
+    entityId: string;
+    /** Display name. */
+    name: string;
+    /** The type the extractor originally assigned. */
+    originalType: EntityType;
+    /** The user-assigned type. */
+    currentType: EntityType;
+    /** Total occurrences across the manuscript. */
+    occurrences: number;
+}
+
 /** Aggregated metrics for an entire manuscript. */
 export interface ManuscriptMetrics {
     /** Epoch milliseconds when the metrics were computed. */
@@ -142,6 +158,8 @@ export interface ManuscriptMetrics {
     chapters: ChapterMetrics[];
     /** Per-character appearance summaries, sorted by occurrences descending. */
     characters: CharacterAppearance[];
+    /** Entities the user reclassified away from their extracted type. */
+    reclassified: ReclassifiedEntity[];
     /** Pacing flags aggregated across the manuscript. */
     pacingFlags: PacingFlag[];
 }
@@ -156,14 +174,4 @@ export interface ManuscriptSnapshot {
     chapterCount: number;
     /** Per-chapter word counts at snapshot time. */
     perChapterWords: { filePath: string; title: string; wordCount: number }[];
-}
-
-/** Shape of the JSON file at pluginDataDir/dashboards/<id>.json. */
-export interface ManuscriptSnapshotFile {
-    /** Slugified folder path identifying this manuscript. */
-    manuscriptId: string;
-    /** Folder path the manuscript was resolved from. */
-    folder: string;
-    /** Chronological snapshots, oldest first, capped at dashboardMaxSnapshots. */
-    snapshots: ManuscriptSnapshot[];
 }

@@ -1,4 +1,4 @@
-import { ExtractedEntity } from '../context-engine/types';
+import { ExtractedEntity, EntityType } from '../context-engine/types';
 import { computeDialogueRatio } from '../context-engine/voice-analyzer';
 import { countSyllables, splitSentences, listSections, SectionRange } from '../../utils/text-analysis';
 import {
@@ -7,6 +7,7 @@ import {
     CharacterAppearance,
     ManuscriptMetrics,
     PacingFlag,
+    ReclassifiedEntity,
     SectionMetrics
 } from './types';
 
@@ -386,6 +387,34 @@ function buildNameMatcher(name: string): RegExp {
     return new RegExp(`\\b${escaped}\\b`, 'i');
 }
 
+const VALID_ENTITY_TYPES: EntityType[] = ['character', 'location', 'plot-thread', 'theme', 'item'];
+
+/** Extract the original entity type from its ID prefix (`character:freddy` → `character`). */
+function originalTypeFromId(entityId: string): EntityType | null {
+    const colonIdx = entityId.indexOf(':');
+    if (colonIdx <= 0) return null;
+    const prefix = entityId.slice(0, colonIdx);
+    return VALID_ENTITY_TYPES.includes(prefix as EntityType) ? (prefix as EntityType) : null;
+}
+
+/** Detect entities whose type was overridden by comparing the ID prefix with the current type. */
+function collectReclassified(entities: ExtractedEntity[]): ReclassifiedEntity[] {
+    const result: ReclassifiedEntity[] = [];
+    for (const entity of entities) {
+        const originalType = originalTypeFromId(entity.id);
+        if (originalType && originalType !== entity.type) {
+            result.push({
+                entityId: entity.id,
+                name: entity.name,
+                originalType,
+                currentType: entity.type,
+                occurrences: entity.occurrences
+            });
+        }
+    }
+    return result;
+}
+
 /** Aggregate per-chapter metrics into a full manuscript snapshot. */
 export function manuscriptMetrics(chapters: ChapterRange[], entities: ExtractedEntity[]): ManuscriptMetrics {
     const chapterMetricsList = chapters.map(chapterMetrics);
@@ -419,6 +448,7 @@ export function manuscriptMetrics(chapters: ChapterRange[], entities: ExtractedE
     const { mean: avgSentenceLength, stddev: sentenceLengthStddev } = stats(allWordCounts);
 
     const characters = characterAppearances(chapters, entities);
+    const reclassified = collectReclassified(entities);
 
     return {
         generatedAt: Date.now(),
@@ -434,6 +464,7 @@ export function manuscriptMetrics(chapters: ChapterRange[], entities: ExtractedE
         fleschKincaidGrade: totalWords > 0 ? Math.round((weightedGrade / totalWords) * 10) / 10 : 0,
         chapters: chapterMetricsList,
         characters,
+        reclassified,
         pacingFlags: allFlags
     };
 }

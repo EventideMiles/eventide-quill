@@ -22,7 +22,6 @@ import {
     writeQuillContextData,
     buildQuillContextData,
     setPlotMap,
-    setEntityReclassification,
     entityFromId
 } from './utils/frontmatter';
 import { buildFeedbackMessages, getPersonaById, getFeedback } from './ai/feedback';
@@ -49,14 +48,14 @@ import {
 } from './ui/change-diff-extension';
 import { ChangeSet } from './core/change-set';
 import { readVaultFiles } from './utils/vault-files';
-import type {
-    ManuscriptMetrics,
-    ManuscriptSnapshotFile,
-    ManuscriptSnapshot,
-    ChapterRange
-} from './core/dashboard/types';
+import type { ManuscriptMetrics, ManuscriptSnapshot, ChapterRange } from './core/dashboard/types';
 import { listChaptersInFile, manuscriptMetrics } from './core/dashboard/metrics';
-import { manuscriptIdFromFolder, loadSnapshots, appendSnapshot } from './core/dashboard/snapshot-store';
+import {
+    loadManuscriptFile,
+    setEntityReclassification,
+    appendManuscriptSnapshot,
+    type ManuscriptFileData
+} from './core/dashboard/manuscript-file';
 
 /**
  * Enrich entity display names using vault file basenames.
@@ -234,7 +233,9 @@ export default class EventideQuillPlugin extends Plugin {
     /** Current dashboard metrics for the active manuscript, or null when not yet computed. */
     currentDashboardMetrics: ManuscriptMetrics | null = null;
     /** Historical snapshots for the active manuscript, or null when not yet loaded. */
-    currentDashboardSnapshots: ManuscriptSnapshotFile | null = null;
+    currentDashboardSnapshots: ManuscriptSnapshot[] | null = null;
+    /** Per-manuscript dashboard data loaded from the sidecar file, or null when not yet loaded. */
+    currentManuscriptFileData: ManuscriptFileData | null = null;
     /** Absolute path to the plugin's data directory (for dashboard snapshot storage). */
     private pluginDataDir = '';
 
@@ -2010,25 +2011,33 @@ export default class EventideQuillPlugin extends Plugin {
     /**
      * Refresh dashboard metrics for the active manuscript.
      *
-     * Resolves the manuscript file list (active file's folder + frontmatter
-     * overrides), computes per-chapter metrics, extracts characters, appends
-     * a snapshot, and stores the results on the plugin for the panel to read.
+     * Loads the manuscript sidecar file (`{folder}/quill-data.json`) for
+     * per-manuscript settings, chapter overrides, reclassification, and
+     * snapshot history. Then resolves chapter files, computes metrics,
+     * appends a snapshot, and stores the results on the plugin for the
+     * panel to read.
      */
     async refreshDashboard(): Promise<void> {
         const activeFile = this.app.workspace.getActiveFile();
         if (!activeFile || activeFile.extension !== 'md') {
-            new Notice('Quill: Open a manuscript to refresh the dashboard.');
+            new Notice('Quill: open a manuscript to refresh the dashboard.');
             return;
         }
 
         const folder = activeFile.parent?.path ?? '';
-        const includeSubfolders = this.settings.dashboardIncludeSubfolders;
-        const splitByHeading = this.settings.dashboardSplitByHeading;
+
+        // Load per-manuscript data from the sidecar file.
+        const msFile = await loadManuscriptFile(this.app.vault, folder);
+        this.currentManuscriptFileData = msFile;
+
+        // Resolve settings: per-manuscript overrides fall back to global defaults.
+        const includeSubfolders = msFile.includeSubfolders ?? this.settings.dashboardIncludeSubfolders;
+        const splitByHeading = msFile.splitByHeading ?? this.settings.dashboardSplitByHeading;
 
         // Resolve chapter files.
-        const chapterFiles = this.resolveManuscriptFiles(folder, activeFile.path, includeSubfolders);
+        const chapterFiles = this.resolveManuscriptFiles(folder, activeFile.path, includeSubfolders, msFile);
         if (chapterFiles.length === 0) {
-            new Notice('Quill: No chapter files found for this manuscript.');
+            new Notice('Quill: no chapter files found for this manuscript.');
             return;
         }
 
@@ -2041,7 +2050,7 @@ export default class EventideQuillPlugin extends Plugin {
             }
 
             if (chapters.length === 0) {
-                new Notice('Quill: No chapters found in the manuscript files.');
+                new Notice('Quill: no chapters found in the manuscript files.');
                 return;
             }
 
@@ -2050,24 +2059,15 @@ export default class EventideQuillPlugin extends Plugin {
             const entities = extractAllEntities(fullText);
 
             // Enrich entity names from vault file basenames.
-            // E.g., if the manuscript only says "Freddy" but a vault file is
-            // named "Freddy Lupin.md", use "Freddy Lupin" as the display name.
             enrichEntityNamesFromVault(entities, this.app.vault.getMarkdownFiles());
 
-            // Apply user reclassification overrides from frontmatter.
-            const activeTFile = this.app.vault.getAbstractFileByPath(activeFile.path);
-            if (activeTFile instanceof TFile) {
-                const ctxData = loadQuillContextData(this.app, activeTFile);
-                if (ctxData.reclassifiedEntities) {
-                    for (const entity of entities) {
-                        const newType = ctxData.reclassifiedEntities[entity.id];
-                        if (newType) {
-                            entity.type = newType;
-                            // Update the ID prefix to match the new type.
-                            const namePart = entity.id.split(':').slice(1).join(':');
-                            entity.id = `${newType}:${namePart}`;
-                        }
-                    }
+            // Apply user reclassification overrides from the manuscript file.
+            // Only change entity.type — the ID stays stable so the override
+            // key remains valid across refreshes.
+            for (const entity of entities) {
+                const newType = msFile.reclassifiedEntities[entity.id];
+                if (newType) {
+                    entity.type = newType;
                 }
             }
 
@@ -2075,8 +2075,7 @@ export default class EventideQuillPlugin extends Plugin {
             const metrics = manuscriptMetrics(chapters, entities);
             this.currentDashboardMetrics = metrics;
 
-            // Append snapshot and load snapshot history.
-            const manuscriptId = manuscriptIdFromFolder(folder);
+            // Append snapshot to the manuscript file.
             const snapshot: ManuscriptSnapshot = {
                 takenAt: Date.now(),
                 totalWords: metrics.totalWords,
@@ -2087,40 +2086,44 @@ export default class EventideQuillPlugin extends Plugin {
                     wordCount: c.wordCount
                 }))
             };
-            await appendSnapshot(
+            const updated = await appendManuscriptSnapshot(
                 this.app.vault,
-                this.pluginDataDir,
-                manuscriptId,
                 folder,
                 snapshot,
                 this.settings.dashboardMaxSnapshots
             );
-            this.currentDashboardSnapshots = await loadSnapshots(this.app.vault, this.pluginDataDir, manuscriptId);
+            this.currentDashboardSnapshots = updated.snapshots;
+            this.currentManuscriptFileData = updated;
 
             // Re-render the panel if the Dashboard tab is active.
             this.lintPanel?.refreshDashboardPanel();
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            new Notice(`Quill: Dashboard refresh failed (${message}).`);
+            new Notice(`Quill: dashboard refresh failed (${message}).`);
         }
     }
 
     /**
      * Reclassify an entity's type and refresh the dashboard.
      *
-     * Writes the override to the active file's frontmatter under
-     * `quill.reclassifiedEntities`, then re-runs the dashboard refresh so
-     * the entity moves to the correct section.
+     * Writes the override to the manuscript sidecar file
+     * (`{folder}/quill-data.json`), then re-runs the dashboard refresh so
+     * the entity moves to the correct section. Pass `null` as `newType` to
+     * revert to the extracted type.
      */
-    async reclassifyDashboardEntity(entityId: string, newType: EntityType): Promise<void> {
+    async reclassifyDashboardEntity(entityId: string, newType: EntityType | null): Promise<void> {
         const activeFile = this.app.workspace.getActiveFile();
         if (!activeFile || activeFile.extension !== 'md') return;
 
-        await setEntityReclassification(this.app, activeFile, entityId, newType);
+        const folder = activeFile.parent?.path ?? '';
+        await setEntityReclassification(this.app.vault, folder, entityId, newType);
 
-        // Extract the display name from the entity ID for the notice.
         const namePart = entityId.split(':').slice(1).join(':').replace(/-/g, ' ');
-        new Notice(`Quill: reclassified "${namePart}" as ${newType}.`);
+        if (newType === null) {
+            new Notice(`Quill: reverted "${namePart}" to its original type.`);
+        } else {
+            new Notice(`Quill: reclassified "${namePart}" as ${newType}.`);
+        }
 
         await this.refreshDashboard();
     }
@@ -2129,23 +2132,19 @@ export default class EventideQuillPlugin extends Plugin {
      * Resolve the list of markdown files belonging to the active manuscript.
      *
      * Starts with the active file's folder (recursive if `includeSubfolders`),
-     * applies frontmatter `quill.chapters.add` and `quill.chapters.remove`
-     * overrides, and always includes the active file.
+     * applies chapter overrides from the manuscript sidecar file, and always
+     * includes the active file.
      */
-    private resolveManuscriptFiles(folder: string, activeFilePath: string, includeSubfolders: boolean): TFile[] {
+    private resolveManuscriptFiles(
+        folder: string,
+        activeFilePath: string,
+        includeSubfolders: boolean,
+        msFile: ManuscriptFileData
+    ): TFile[] {
         const allMarkdown = this.app.vault.getMarkdownFiles();
+        const addPaths = msFile.chapterOverrides.add;
+        const removeSet = new Set(msFile.chapterOverrides.remove);
 
-        // Load frontmatter overrides from the active file.
-        const activeTFile = this.app.vault.getAbstractFileByPath(activeFilePath);
-        let addPaths: string[] = [];
-        let removePaths: string[] = [];
-        if (activeTFile instanceof TFile) {
-            const ctxData = loadQuillContextData(this.app, activeTFile);
-            addPaths = ctxData.chapters?.add ?? [];
-            removePaths = ctxData.chapters?.remove ?? [];
-        }
-
-        const removeSet = new Set(removePaths);
         const result: TFile[] = [];
 
         // Folder scan.

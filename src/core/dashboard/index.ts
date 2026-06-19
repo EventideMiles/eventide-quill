@@ -4,8 +4,8 @@ export type {
     CharacterAppearance,
     ManuscriptMetrics,
     ManuscriptSnapshot,
-    ManuscriptSnapshotFile,
     PacingFlag,
+    ReclassifiedEntity,
     SectionMetrics,
     SectionRange
 } from './types';
@@ -19,4 +19,11 @@ export {
     manuscriptMetrics,
     pacingAnalysis
 } from './metrics';
-export { loadSnapshots, appendSnapshot } from './snapshot-store';
+export {
+    loadManuscriptFile,
+    saveManuscriptFile,
+    setEntityReclassification,
+    appendManuscriptSnapshot,
+    manuscriptDataPath
+} from './manuscript-file';
+export type { ManuscriptFileData } from './manuscript-file';

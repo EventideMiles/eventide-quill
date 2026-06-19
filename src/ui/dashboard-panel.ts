@@ -1,6 +1,6 @@
 import { Component } from 'obsidian';
 import type EventideQuillPlugin from '../main';
-import type { ManuscriptMetrics, ManuscriptSnapshotFile, SectionMetrics } from '../core/dashboard/types';
+import type { ManuscriptMetrics, ManuscriptSnapshot, SectionMetrics } from '../core/dashboard/types';
 import { getActiveDocument, renderDocumentHeader } from './document-header';
 
 /** Expand state for chapter rows, keyed by `${filePath}:${lineStart}`. Survives re-renders. */
@@ -76,6 +76,7 @@ export function renderDashboardTab(container: HTMLElement, plugin: EventideQuill
     renderPacingHeatmap(container, metrics);
     renderReadability(container, metrics);
     renderCharacterList(container, metrics, plugin, component);
+    renderReclassifiedList(container, metrics, plugin, component);
     renderTrends(container, plugin.currentDashboardSnapshots);
 }
 
@@ -297,11 +298,11 @@ function renderCharacterList(
             );
         }
 
-        // Reclassify button — cycles entity type to remove misclassified entries.
+        // Reclassify button — moves entity out of the character list.
         const reclassifyBtn = row.createEl('button', {
             cls: 'quill-dashboard-panel__reclassify-btn',
             text: 'Not a character',
-            attr: { title: 'Reclassify this entity' }
+            attr: { title: 'Move to other entities' }
         });
         component.registerDomEvent(reclassifyBtn, 'click', () => {
             void plugin.reclassifyDashboardEntity(character.entityId, 'location');
@@ -309,14 +310,67 @@ function renderCharacterList(
     }
 }
 
+/** Capitalize the first letter of a string. */
+function cap(s: string): string {
+    return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** Render reclassified entities with type selector buttons. */
+function renderReclassifiedList(
+    container: HTMLElement,
+    metrics: ManuscriptMetrics,
+    plugin: EventideQuillPlugin,
+    component: Component
+): void {
+    if (metrics.reclassified.length === 0) return;
+
+    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
+    section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Other entities' });
+
+    for (const entity of metrics.reclassified) {
+        const row = section.createEl('div', { cls: 'quill-dashboard-panel__reclassified-row' });
+        row.createEl('span', { cls: 'quill-dashboard-panel__character-name', text: entity.name });
+
+        const meta = row.createEl('span', { cls: 'quill-dashboard-panel__character-meta' });
+        meta.setText(`${entity.occurrences} mentions · was ${entity.originalType}, now ${entity.currentType}`);
+
+        // Type selector buttons.
+        const btnGroup = row.createEl('div', { cls: 'quill-dashboard-panel__type-btns' });
+
+        for (const type of ['location', 'plot-thread', 'theme', 'item'] as const) {
+            const isActive = entity.currentType === type;
+            const btn = btnGroup.createEl('button', {
+                cls: `quill-dashboard-panel__type-btn${isActive ? ' quill-dashboard-panel__type-btn--active' : ''}`,
+                text: cap(type),
+                attr: isActive ? { disabled: 'true' } : {}
+            });
+            if (!isActive) {
+                component.registerDomEvent(btn, 'click', () => {
+                    void plugin.reclassifyDashboardEntity(entity.entityId, type);
+                });
+            }
+        }
+
+        // Revert button.
+        const revertBtn = btnGroup.createEl('button', {
+            cls: 'quill-dashboard-panel__type-btn quill-dashboard-panel__type-btn--revert',
+            text: `Restore ${cap(entity.originalType)}`,
+            attr: { title: `Revert to original type (${entity.originalType})` }
+        });
+        component.registerDomEvent(revertBtn, 'click', () => {
+            void plugin.reclassifyDashboardEntity(entity.entityId, null);
+        });
+    }
+}
+
 /** Render the historical trends sparkline. */
-function renderTrends(container: HTMLElement, snapshots: ManuscriptSnapshotFile | null): void {
-    if (!snapshots || snapshots.snapshots.length < 2) return;
+function renderTrends(container: HTMLElement, snapshots: ManuscriptSnapshot[] | null): void {
+    if (!snapshots || snapshots.length < 2) return;
 
     const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
     section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Word count trend' });
 
-    const points = snapshots.snapshots;
+    const points = snapshots;
     const wordCounts = points.map((s) => s.totalWords);
     const max = Math.max(...wordCounts);
     const min = Math.min(...wordCounts);
