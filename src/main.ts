@@ -52,6 +52,7 @@ import type { ManuscriptMetrics, ManuscriptSnapshot, ChapterRange } from './core
 import { listChaptersInFile, manuscriptMetrics } from './core/dashboard/metrics';
 import {
     loadManuscriptFile,
+    saveManuscriptFile,
     setEntityReclassification,
     appendManuscriptSnapshot,
     type ManuscriptFileData
@@ -2071,8 +2072,10 @@ export default class EventideQuillPlugin extends Plugin {
                 }
             }
 
-            // Compute metrics.
-            const metrics = manuscriptMetrics(chapters, entities);
+            // Compute metrics — pass dismissed IDs so those entities are
+            // excluded from characters/reclassified and listed separately.
+            const dismissedIds = new Set(msFile.dismissedEntities);
+            const metrics = manuscriptMetrics(chapters, entities, dismissedIds);
             this.currentDashboardMetrics = metrics;
 
             // Append snapshot to the manuscript file.
@@ -2124,6 +2127,52 @@ export default class EventideQuillPlugin extends Plugin {
         } else {
             new Notice(`Quill: reclassified "${namePart}" as ${newType}.`);
         }
+
+        await this.refreshDashboard();
+    }
+
+    /**
+     * Dismiss an entity entirely from the dashboard.
+     *
+     * The entity ID is added to the manuscript sidecar file's
+     * `dismissedEntities` list and filtered out of all dashboard sections
+     * on the next refresh. The entity is not deleted — it can be restored.
+     */
+    async dismissDashboardEntity(entityId: string): Promise<void> {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== 'md') return;
+
+        const folder = activeFile.parent?.path ?? '';
+        const data = await loadManuscriptFile(this.app.vault, folder);
+        if (!data.dismissedEntities.includes(entityId)) {
+            data.dismissedEntities.push(entityId);
+            await saveManuscriptFile(this.app.vault, folder, data);
+        }
+
+        const namePart = entityId.split(':').slice(1).join(':').replace(/-/g, ' ');
+        new Notice(`Quill: dismissed "${namePart}".`);
+
+        await this.refreshDashboard();
+    }
+
+    /**
+     * Restore a previously dismissed entity.
+     *
+     * Removes the entity ID from the `dismissedEntities` list in the
+     * manuscript sidecar file. The entity reappears in its natural section
+     * (characters, reclassified, etc.) on the next refresh.
+     */
+    async restoreDashboardEntity(entityId: string): Promise<void> {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== 'md') return;
+
+        const folder = activeFile.parent?.path ?? '';
+        const data = await loadManuscriptFile(this.app.vault, folder);
+        data.dismissedEntities = data.dismissedEntities.filter((id) => id !== entityId);
+        await saveManuscriptFile(this.app.vault, folder, data);
+
+        const namePart = entityId.split(':').slice(1).join(':').replace(/-/g, ' ');
+        new Notice(`Quill: restored "${namePart}".`);
 
         await this.refreshDashboard();
     }

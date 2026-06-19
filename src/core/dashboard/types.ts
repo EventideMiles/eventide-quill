@@ -132,6 +132,18 @@ export interface ReclassifiedEntity {
     occurrences: number;
 }
 
+/** An entity the user dismissed entirely (false positive, not any type). */
+export interface DismissedEntity {
+    /** Entity ID (`type:normalized-name` from extraction). */
+    entityId: string;
+    /** Display name. */
+    name: string;
+    /** The type the extractor originally assigned. */
+    originalType: EntityType;
+    /** Total occurrences across the manuscript. */
+    occurrences: number;
+}
+
 /** Aggregated metrics for an entire manuscript. */
 export interface ManuscriptMetrics {
     /** Epoch milliseconds when the metrics were computed. */
@@ -162,6 +174,8 @@ export interface ManuscriptMetrics {
     characters: CharacterAppearance[];
     /** Entities the user reclassified away from their extracted type. */
     reclassified: ReclassifiedEntity[];
+    /** Entities the user dismissed entirely (false positives). */
+    dismissed: DismissedEntity[];
     /** Pacing flags aggregated across the manuscript. */
     pacingFlags: PacingFlag[];
 }

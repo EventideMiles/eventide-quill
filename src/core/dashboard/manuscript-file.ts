@@ -27,6 +27,8 @@ export interface ManuscriptFileData {
     };
     /** Entity type overrides: entity ID → new type. */
     reclassifiedEntities: Record<string, EntityType>;
+    /** Entity IDs the user dismissed entirely (false positives, not any type). */
+    dismissedEntities: string[];
     /** Historical word-count snapshots, oldest first. */
     snapshots: ManuscriptSnapshot[];
 }
@@ -37,6 +39,7 @@ function emptyManuscriptFileData(): ManuscriptFileData {
         schemaVersion: SCHEMA_VERSION,
         chapterOverrides: { add: [], remove: [] },
         reclassifiedEntities: {},
+        dismissedEntities: [],
         snapshots: []
     };
 }
@@ -77,6 +80,7 @@ export async function loadManuscriptFile(vault: Vault, folder: string): Promise<
                 typeof parsed.reclassifiedEntities === 'object' && parsed.reclassifiedEntities !== null
                     ? parsed.reclassifiedEntities
                     : {},
+            dismissedEntities: Array.isArray(parsed.dismissedEntities) ? parsed.dismissedEntities : [],
             snapshots: Array.isArray(parsed.snapshots) ? parsed.snapshots : []
         };
     } catch (err) {

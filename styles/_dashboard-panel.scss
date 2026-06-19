@@ -428,6 +428,29 @@
                 color: var(--text-normal);
             }
         }
+
+        &--dismiss {
+            color: var(--text-muted);
+
+            &:hover {
+                color: var(--color-red, var(--text-normal));
+            }
+        }
+    }
+
+    // --- Dismissed entities ---
+
+    &__dismissed-row {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        padding: $space-xs 0;
+        border-bottom: 1px solid var(--background-modifier-border);
+        opacity: 0.7;
+
+        &:last-child {
+            border-bottom: none;
+        }
     }
 
     // --- Trend sparkline ---

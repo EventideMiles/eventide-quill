@@ -5,6 +5,7 @@ import {
     ChapterMetrics,
     ChapterRange,
     CharacterAppearance,
+    DismissedEntity,
     ManuscriptMetrics,
     PacingFlag,
     ReclassifiedEntity,
@@ -417,8 +418,33 @@ function collectReclassified(entities: ExtractedEntity[]): ReclassifiedEntity[] 
     return result;
 }
 
+/** Collect dismissed entities with their original type and occurrence count. */
+function collectDismissed(entities: ExtractedEntity[], dismissedIds: Set<string>): DismissedEntity[] {
+    const result: DismissedEntity[] = [];
+    for (const entity of entities) {
+        if (!dismissedIds.has(entity.id)) continue;
+        const originalType = originalTypeFromId(entity.id);
+        result.push({
+            entityId: entity.id,
+            name: entity.name,
+            originalType: originalType ?? entity.type,
+            occurrences: entity.occurrences
+        });
+    }
+    return result;
+}
+
 /** Aggregate per-chapter metrics into a full manuscript snapshot. */
-export function manuscriptMetrics(chapters: ChapterRange[], entities: ExtractedEntity[]): ManuscriptMetrics {
+export function manuscriptMetrics(
+    chapters: ChapterRange[],
+    entities: ExtractedEntity[],
+    dismissedIds?: Set<string>
+): ManuscriptMetrics {
+    const disSet = dismissedIds ?? new Set<string>();
+
+    // Partition entities: dismissed ones go into a separate list, the rest
+    // are active for character/reclassified computation.
+    const activeEntities = entities.filter((e) => !disSet.has(e.id));
     const chapterMetricsList = chapters.map(chapterMetrics);
 
     let totalWords = 0;
@@ -456,8 +482,9 @@ export function manuscriptMetrics(chapters: ChapterRange[], entities: ExtractedE
     }
     const { mean: avgSentenceLength, stddev: sentenceLengthStddev } = stats(allWordCounts);
 
-    const characters = characterAppearances(chapters, entities);
-    const reclassified = collectReclassified(entities);
+    const characters = characterAppearances(chapters, activeEntities);
+    const reclassified = collectReclassified(activeEntities);
+    const dismissed = collectDismissed(entities, disSet);
 
     return {
         generatedAt: Date.now(),
@@ -474,6 +501,7 @@ export function manuscriptMetrics(chapters: ChapterRange[], entities: ExtractedE
         chapters: chapterMetricsList,
         characters,
         reclassified,
+        dismissed,
         pacingFlags: allFlags
     };
 }

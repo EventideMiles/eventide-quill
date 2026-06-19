@@ -77,6 +77,7 @@ export function renderDashboardTab(container: HTMLElement, plugin: EventideQuill
     renderReadability(container, metrics);
     renderCharacterList(container, metrics, plugin, component);
     renderReclassifiedList(container, metrics, plugin, component);
+    renderDismissedList(container, metrics, plugin, component);
     renderTrends(container, plugin.currentDashboardSnapshots);
 }
 
@@ -404,7 +405,7 @@ function renderReclassifiedList(
             }
         }
 
-        // Revert button.
+        // Revert button — restores original extracted type.
         const revertBtn = btnGroup.createEl('button', {
             cls: 'quill-dashboard-panel__type-btn quill-dashboard-panel__type-btn--revert',
             text: `Restore ${cap(entity.originalType)}`,
@@ -412,6 +413,46 @@ function renderReclassifiedList(
         });
         component.registerDomEvent(revertBtn, 'click', () => {
             void plugin.reclassifyDashboardEntity(entity.entityId, null);
+        });
+
+        // Dismiss button — removes the entity from all dashboard sections.
+        const dismissBtn = btnGroup.createEl('button', {
+            cls: 'quill-dashboard-panel__type-btn quill-dashboard-panel__type-btn--dismiss',
+            text: 'Dismiss',
+            attr: { title: 'Remove this entity from the dashboard entirely' }
+        });
+        component.registerDomEvent(dismissBtn, 'click', () => {
+            void plugin.dismissDashboardEntity(entity.entityId);
+        });
+    }
+}
+
+/** Render dismissed entities with restore buttons. */
+function renderDismissedList(
+    container: HTMLElement,
+    metrics: ManuscriptMetrics,
+    plugin: EventideQuillPlugin,
+    component: Component
+): void {
+    if (metrics.dismissed.length === 0) return;
+
+    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
+    section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Dismissed' });
+
+    for (const entity of metrics.dismissed) {
+        const row = section.createEl('div', { cls: 'quill-dashboard-panel__dismissed-row' });
+        row.createEl('span', { cls: 'quill-dashboard-panel__character-name', text: entity.name });
+
+        const meta = row.createEl('span', { cls: 'quill-dashboard-panel__character-meta' });
+        meta.setText(`${entity.occurrences} mentions · was ${entity.originalType}`);
+
+        const restoreBtn = row.createEl('button', {
+            cls: 'quill-dashboard-panel__type-btn quill-dashboard-panel__type-btn--revert',
+            text: 'Restore',
+            attr: { title: `Restore "${entity.name}" to its original type (${entity.originalType})` }
+        });
+        component.registerDomEvent(restoreBtn, 'click', () => {
+            void plugin.restoreDashboardEntity(entity.entityId);
         });
     }
 }

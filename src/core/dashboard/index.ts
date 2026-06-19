@@ -2,6 +2,7 @@ export type {
     ChapterMetrics,
     ChapterRange,
     CharacterAppearance,
+    DismissedEntity,
     ManuscriptMetrics,
     ManuscriptSnapshot,
     PacingFlag,
