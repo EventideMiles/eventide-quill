@@ -511,6 +511,22 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         }
                     })
             );
+
+        new Setting(content)
+            .setName('Restore defaults')
+            .setDesc('Reset all general settings to their default values.')
+            .addButton((button) =>
+                button.setButtonText('Restore defaults').onClick(async () => {
+                    this.plugin.settings.defaultTab = DEFAULT_SETTINGS.defaultTab;
+                    this.plugin.settings.enableDashboard = DEFAULT_SETTINGS.enableDashboard;
+                    this.plugin.settings.enableCriticalAnalysis = DEFAULT_SETTINGS.enableCriticalAnalysis;
+                    this.plugin.settings.dashboardAutoRefreshMinutes = DEFAULT_SETTINGS.dashboardAutoRefreshMinutes;
+                    this.plugin.settings.dashboardAutoSnapshotOnSave = DEFAULT_SETTINGS.dashboardAutoSnapshotOnSave;
+                    this.plugin.settings.dashboardMaxSnapshots = DEFAULT_SETTINGS.dashboardMaxSnapshots;
+                    await this.plugin.saveSettings();
+                    this.display();
+                })
+            );
     }
 
     /** Render the footer area (reserved for future donation / support links). */
@@ -1160,7 +1176,23 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render model behavior settings. */
     private renderModelBehaviorsSettings(containerEl: HTMLElement): void {
-        new Setting(containerEl).setName('Selection transformations').setHeading();
+        new Setting(containerEl)
+            .setName('Selection transformations')
+            .setHeading()
+            .addExtraButton((btn) =>
+                btn
+                    .setIcon('rotate-ccw')
+                    .setTooltip('Restore transformation defaults')
+                    .onClick(async () => {
+                        this.plugin.settings.narrativeVoicePreset = DEFAULT_SETTINGS.narrativeVoicePreset;
+                        this.plugin.settings.customNarrativeVoiceRules = DEFAULT_SETTINGS.customNarrativeVoiceRules;
+                        this.plugin.settings.transformTemperature = DEFAULT_SETTINGS.transformTemperature;
+                        this.plugin.settings.transformVaultContext = DEFAULT_SETTINGS.transformVaultContext;
+                        this.plugin.settings.transformMaxOutputTokens = DEFAULT_SETTINGS.transformMaxOutputTokens;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    })
+            );
 
         new Setting(containerEl)
             .setName('Narrative voice')
@@ -1227,7 +1259,25 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     })
             );
 
-        new Setting(containerEl).setName('Co-writer').setHeading();
+        new Setting(containerEl)
+            .setName('Co-writer')
+            .setHeading()
+            .addExtraButton((btn) =>
+                btn
+                    .setIcon('rotate-ccw')
+                    .setTooltip('Restore co-writer defaults')
+                    .onClick(async () => {
+                        this.plugin.settings.coWriterTemperature = DEFAULT_SETTINGS.coWriterTemperature;
+                        this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
+                        this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
+                        this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
+                        this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
+                        this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;
+                        this.plugin.settings.enableInlineDirectives = DEFAULT_SETTINGS.enableInlineDirectives;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    })
+            );
 
         new Setting(containerEl)
             .setName('Temperature')
@@ -1319,7 +1369,20 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 })
             );
 
-        new Setting(containerEl).setName('Analysis').setHeading();
+        new Setting(containerEl)
+            .setName('Analysis')
+            .setHeading()
+            .addExtraButton((btn) =>
+                btn
+                    .setIcon('rotate-ccw')
+                    .setTooltip('Restore analysis defaults')
+                    .onClick(async () => {
+                        this.plugin.settings.analysisTemperature = DEFAULT_SETTINGS.analysisTemperature;
+                        this.plugin.settings.analysisMaxOutputTokens = DEFAULT_SETTINGS.analysisMaxOutputTokens;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    })
+            );
 
         new Setting(containerEl)
             .setName('Analysis temperature')
@@ -1355,7 +1418,25 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     })
             );
 
-        new Setting(containerEl).setName('Context engine').setHeading();
+        new Setting(containerEl)
+            .setName('Context engine')
+            .setHeading()
+            .addExtraButton((btn) =>
+                btn
+                    .setIcon('rotate-ccw')
+                    .setTooltip('Restore context engine defaults')
+                    .onClick(async () => {
+                        this.plugin.settings.contextTokenBudget = DEFAULT_SETTINGS.contextTokenBudget;
+                        this.plugin.settings.contextCompactAtPercent = DEFAULT_SETTINGS.contextCompactAtPercent;
+                        this.plugin.settings.compactSummarySentences = DEFAULT_SETTINGS.compactSummarySentences;
+                        this.plugin.settings.contextIncludeVaultContext = DEFAULT_SETTINGS.contextIncludeVaultContext;
+                        this.plugin.settings.contextMaxVaultFiles = DEFAULT_SETTINGS.contextMaxVaultFiles;
+                        this.plugin.settings.contextMaxCharsPerFile = DEFAULT_SETTINGS.contextMaxCharsPerFile;
+                        this.plugin.settings.contextAutoScan = DEFAULT_SETTINGS.contextAutoScan;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    })
+            );
 
         new Setting(containerEl)
             .setName('Token budget')
@@ -1466,7 +1547,21 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 })
             );
 
-        new Setting(containerEl).setName('Linter AI').setHeading();
+        new Setting(containerEl)
+            .setName('Linter AI')
+            .setHeading()
+            .addExtraButton((btn) =>
+                btn
+                    .setIcon('rotate-ccw')
+                    .setTooltip('Restore linter AI defaults')
+                    .onClick(async () => {
+                        this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
+                        this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
+                        this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    })
+            );
 
         new Setting(containerEl)
             .setName('Enable AI-powered lint fixes')
@@ -1514,7 +1609,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('Restore defaults')
-            .setDesc('Reset all model behavior settings to their default values.')
+            .setDesc('Reset every setting on this tab. Use the per-section reset buttons above for targeted resets.')
             .addButton((button) =>
                 button.setButtonText('Restore defaults').onClick(async () => {
                     this.plugin.settings.transformTemperature = DEFAULT_SETTINGS.transformTemperature;
