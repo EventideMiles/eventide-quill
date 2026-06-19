@@ -13,6 +13,14 @@
 // Settings tabs
 // =========================================================================
 
+// Content div visibility — must be OUTSIDE .quill-settings because the
+// content divs are direct children of Obsidian's containerEl, not wrapped
+// in a .quill-settings element. The .is-hidden class is toggled by
+// showActiveTab() in settings.ts.
+div[class*='quill-settings-content-'].is-hidden {
+    display: none;
+}
+
 .quill-settings {
     &__tab-bar {
         display: flex;
@@ -24,13 +32,6 @@
         z-index: 100;
         background: var(--background-primary);
         padding-top: $space-xs;
-    }
-
-    // Tab content visibility — toggled via .is-hidden class (not inline styles).
-    [class*='quill-settings-content-'] {
-        &.is-hidden {
-            display: none;
-        }
     }
 
     &__tab {
