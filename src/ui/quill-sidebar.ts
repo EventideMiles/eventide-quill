@@ -698,7 +698,9 @@ export class QuillSidebarView extends ItemView {
                     text: 'Toggle prose linter'
                 });
                 this.renderEvents!.registerDomEvent(toggleBtn, 'click', () => {
-                    const view = this.getEditorView();
+                    const activeFile = this.app.workspace.getActiveFile();
+                    if (!activeFile || activeFile.extension !== 'md') return;
+                    const view = findEditorView(this.app, activeFile.path);
                     if (view) {
                         this.plugin.toggleLint(view.editor);
                     }
