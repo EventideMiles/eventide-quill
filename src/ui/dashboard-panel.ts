@@ -286,9 +286,9 @@ function renderCharacterList(
 
         const meta = row.createEl('span', { cls: 'quill-dashboard-panel__character-meta' });
         if (character.chaptersSinceLastSeen < 0) {
-            meta.setText(`Present in latest chapter`);
-        } else if (character.chaptersSinceLastSeen === 0) {
             meta.setText(`${character.occurrences} mentions · absent from all chapters`);
+        } else if (character.chaptersSinceLastSeen === 0) {
+            meta.setText(`${character.occurrences} mentions · present in latest chapter`);
         } else {
             meta.setText(
                 `${character.occurrences} mentions · last seen ${character.chaptersSinceLastSeen} chapter${

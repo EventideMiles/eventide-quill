@@ -365,7 +365,7 @@ export function characterAppearances(chapters: ChapterRange[], entities: Extract
             }
 
             const lastSeenChapter = chapterIndices.length > 0 ? chapterIndices[chapterIndices.length - 1]! : -1;
-            const chaptersSinceLastSeen = lastSeenChapter < 0 ? 0 : chapters.length - 1 - lastSeenChapter;
+            const chaptersSinceLastSeen = chapterIndices.length === 0 ? -1 : chapters.length - 1 - lastSeenChapter;
 
             return {
                 entityId: entity.id,

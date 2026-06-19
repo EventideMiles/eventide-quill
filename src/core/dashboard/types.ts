@@ -110,7 +110,7 @@ export interface CharacterAppearance {
     chapterIndices: number[];
     /** Index of the last chapter where the character appears, or -1 if absent. */
     lastSeenChapter: number;
-    /** Chapters since last appearance: -1 if in the latest chapter, 0 if in none. */
+    /** Chapters since last appearance: -1 if absent from all chapters, 0 if in the latest chapter. */
     chaptersSinceLastSeen: number;
 }
 
