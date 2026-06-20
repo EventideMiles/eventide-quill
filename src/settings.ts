@@ -31,6 +31,8 @@ export interface EventideQuillSettings {
     enableAiFillerAdverbs: boolean;
     enableAiHedging: boolean;
     enableAiWrapUps: boolean;
+    enableGremlins: boolean;
+    aggressiveGremlins: boolean;
     lintOnSave: boolean;
     aiProviders: ProviderConfig[];
     aiDefaultChatProvider: string;
@@ -96,6 +98,8 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     enableAiFillerAdverbs: true,
     enableAiHedging: true,
     enableAiWrapUps: true,
+    enableGremlins: true,
+    aggressiveGremlins: false,
     lintOnSave: false,
     aiProviders: [
         {
@@ -971,6 +975,37 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 })
             );
 
+        new Setting(content).setName('Gremlins').setHeading();
+
+        new Setting(content)
+            .setName('Invisible character detection')
+            .setDesc(
+                'Flag invisible / zero-width / non-printing unicode characters (formatting controls, soft hyphens, variation selectors, etc.) that may be AI watermarks or copy-paste artifacts.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.enableGremlins).onChange(async (value) => {
+                    this.plugin.settings.enableGremlins = value;
+                    if (!value) this.plugin.settings.aggressiveGremlins = false;
+                    await this.plugin.saveSettings();
+                    this.display();
+                })
+            );
+
+        new Setting(content)
+            .setName('Aggressive scanning')
+            .setDesc(
+                'Scan for every unicode format character, including those legitimately used in emoji (keycaps, zwj sequences, variation selectors, tag characters, etc.). Recommended for security audits.'
+            )
+            .addToggle((toggle) =>
+                toggle
+                    .setValue(this.plugin.settings.aggressiveGremlins)
+                    .setDisabled(!this.plugin.settings.enableGremlins)
+                    .onChange(async (value) => {
+                        this.plugin.settings.aggressiveGremlins = value;
+                        await this.plugin.saveSettings();
+                    })
+            );
+
         new Setting(content)
             .setName('Restore defaults')
             .setDesc('Reset all linter settings to their default values.')
@@ -997,6 +1032,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.enableAiFillerAdverbs = DEFAULT_SETTINGS.enableAiFillerAdverbs;
                     this.plugin.settings.enableAiHedging = DEFAULT_SETTINGS.enableAiHedging;
                     this.plugin.settings.enableAiWrapUps = DEFAULT_SETTINGS.enableAiWrapUps;
+                    this.plugin.settings.enableGremlins = DEFAULT_SETTINGS.enableGremlins;
+                    this.plugin.settings.aggressiveGremlins = DEFAULT_SETTINGS.aggressiveGremlins;
                     await this.plugin.saveSettings();
                     this.display();
                 })
