@@ -28,7 +28,8 @@ export const FIXABLE_RULES = new Set([
     'ai-filler-adverbs',
     'ai-hedging',
     'ai-wrap-ups',
-    'ai-em-dashes'
+    'ai-em-dashes',
+    'gremlins'
 ]);
 
 export interface RuleInfo {
@@ -113,7 +114,14 @@ export const RULE_INFO: Record<string, RuleInfo> = {
     },
     'ai-wrap-ups': {
         name: 'Wrap-up phrases',
-        description: 'Flags concluding phrases (in conclusion, ultimately, at the end of the day, etc.).',
+        description: 'Flags concluding phrases (in conclusion, to summarize, ultimately, etc.).',
         example: 'End on action, dialogue, or unresolved tension — not summary.'
+    },
+    gremlins: {
+        name: 'Gremlins',
+        description:
+            'Flags non-printing Unicode format characters (zero-width spaces, soft hyphens, variation selectors, etc.) that may be AI watermarks or copy-paste artifacts.',
+        example:
+            'Remove invisible characters that serve no purpose in prose — they can interfere with editing and introduce hidden tracking.'
     }
 };

@@ -483,6 +483,103 @@ export function checkAiWrapUps(text: string): LintResult[] {
     return results;
 }
 
+// ----------------------------------------------------------------
+// Gremlins — invisible / zero-width / non-printing format characters
+// ----------------------------------------------------------------
+
+/** Simple-mode gremlins: a focused set of known troublemakers. */
+const GREMLIN_RE =
+    /[\u200B-\u200D\u200E\u200F\uFEFF\u2060-\u2064\u00AD\u202A-\u202E\u2066-\u2069\u180E\u115F\u1160]|\uFE00|\uFE01|\uFE02|\uFE03|\uFE04|\uFE05|\uFE06|\uFE07|\uFE08|\uFE09|\uFE0A|\uFE0B|\uFE0C|\uFE0D|\uFE0E|\uFE0F/g;
+
+/** Aggressive-mode: every Unicode format character (\\p{Cf}) plus the enclosing keycap. */
+const AGGRESSIVE_GREMLIN_RE = /[\p{Cf}\u20E3]/gu;
+
+const GREMLIN_NAMES: Record<string, string> = {
+    '00AD': 'Soft hyphen',
+    '034F': 'Combining grapheme joiner',
+    '061C': 'Arabic letter mark',
+    '115F': 'Hangul choseong filler',
+    '1160': 'Hangul jungseong filler',
+    '180E': 'Mongolian vowel separator',
+    '200B': 'Zero-width space',
+    '200C': 'Zero-width non-joiner',
+    '200D': 'Zero-width joiner',
+    '200E': 'Left-to-right mark',
+    '200F': 'Right-to-left mark',
+    '202A': 'Left-to-right embedding',
+    '202B': 'Right-to-left embedding',
+    '202C': 'Pop directional formatting',
+    '202D': 'Left-to-right override',
+    '202E': 'Right-to-left override',
+    '2060': 'Word joiner',
+    '2061': 'Function application',
+    '2062': 'Invisible times',
+    '2063': 'Invisible separator',
+    '2064': 'Invisible plus',
+    '2066': 'Left-to-right isolate',
+    '2067': 'Right-to-left isolate',
+    '2068': 'First strong isolate',
+    '2069': 'Pop directional isolate',
+    FE00: 'Variation selector-1',
+    FE01: 'Variation selector-2',
+    FE02: 'Variation selector-3',
+    FE03: 'Variation selector-4',
+    FE04: 'Variation selector-5',
+    FE05: 'Variation selector-6',
+    FE06: 'Variation selector-7',
+    FE07: 'Variation selector-8',
+    FE08: 'Variation selector-9',
+    FE09: 'Variation selector-10',
+    FE0A: 'Variation selector-11',
+    FE0B: 'Variation selector-12',
+    FE0C: 'Variation selector-13',
+    FE0D: 'Variation selector-14',
+    FE0E: 'Variation selector-15',
+    FE0F: 'Variation selector-16',
+    FEFF: 'Zero-width no-break space (BOM)',
+    '20E3': 'Combining enclosing keycap'
+};
+
+/** Look up the human-readable name for a gremlin character, with a fallback for unknown format chars. */
+function gremlinName(char: string): string {
+    const cp = char.codePointAt(0);
+    if (cp === undefined) return 'Unknown character';
+    const hex = cp.toString(16).toUpperCase().padStart(4, '0');
+    const known = GREMLIN_NAMES[hex];
+    if (known) return known;
+    if (cp >= 0xe0100 && cp <= 0xe01ef) {
+        return `Variation selector-${cp - 0xe0100 + 17}`;
+    }
+    if (cp >= 0xe0020 && cp <= 0xe007f) {
+        if (cp === 0xe007f) return 'Cancel tag';
+        const tagChar = String.fromCodePoint(cp - 0xe0020 + 0x20);
+        const label = tagChar === ' ' ? 'space' : tagChar;
+        return `Tag character (${label})`;
+    }
+    return `Unicode format character (U+${hex})`;
+}
+
+/** Flag invisible / zero-width / non-printing format characters (gremlins). */
+export function checkGremlins(text: string, aggressive: boolean = false): LintResult[] {
+    const results: LintResult[] = [];
+    const re = aggressive ? AGGRESSIVE_GREMLIN_RE : GREMLIN_RE;
+    let match: RegExpExecArray | null;
+
+    while ((match = re.exec(text)) !== null) {
+        const pos = posAtOffset(text, match.index);
+        results.push({
+            line: pos.line,
+            column: pos.column,
+            length: match[0].length,
+            message: `Invisible formatting character (${gremlinName(match[0])})`,
+            severity: 'warning',
+            rule: 'gremlins'
+        });
+    }
+
+    return results;
+}
+
 const EM_DASH = /\u2014|\u2015|—/g;
 
 /** Flag em dashes, which AI prose tends to overuse. */
