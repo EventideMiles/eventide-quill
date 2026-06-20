@@ -3,6 +3,7 @@ import EventideQuillPlugin from './main';
 import { ModelInfo, ProviderConfig, ProviderType } from './ai/provider';
 import { createProvider, generateModelId, generateProviderId } from './ai/provider-registry';
 import { NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS } from './types';
+import { ConfirmModal } from './ui/confirm-modal';
 import type { ReadabilityFormula } from './core/dashboard/types';
 
 export type LinterMode = 'all' | 'prose' | 'ai';
@@ -42,6 +43,14 @@ export interface EventideQuillSettings {
     analysisTemperature: number;
     analysisMaxOutputTokens: number;
     enableCriticalAnalysis: boolean;
+    enableManuscriptAnalysis: boolean;
+    manuscriptAnalysisTemperature: number;
+    manuscriptAnalysisMaxOutputTokens: number;
+    manuscriptAnalysisChunkTokenSize: number;
+    manuscriptAnalysisTopKChunks: number;
+    embeddingChunkTokenSize: number;
+    enableEmbeddingWarming: boolean;
+    embeddingWarmingDebounceSeconds: number;
     linterTemperature: number;
     linterMaxOutputTokens: number;
     enableLinterAiFixes: boolean;
@@ -113,6 +122,14 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     analysisTemperature: 0.7,
     analysisMaxOutputTokens: 2048,
     enableCriticalAnalysis: true,
+    enableManuscriptAnalysis: true,
+    manuscriptAnalysisTemperature: 0.5,
+    manuscriptAnalysisMaxOutputTokens: 3072,
+    manuscriptAnalysisChunkTokenSize: 1024,
+    manuscriptAnalysisTopKChunks: 10,
+    embeddingChunkTokenSize: 512,
+    enableEmbeddingWarming: false,
+    embeddingWarmingDebounceSeconds: 30,
     linterTemperature: 0.3,
     linterMaxOutputTokens: 512,
     enableLinterAiFixes: true,
@@ -468,6 +485,157 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(content)
+            .setName('Manuscript analysis')
+            .setDesc(
+                'Show the manuscript analysis engine in the review tab for full-manuscript structural diagnostics.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.enableManuscriptAnalysis).onChange((value) => {
+                    this.plugin.settings.enableManuscriptAnalysis = value;
+                    void this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
+            .setName('Compression chunk size (tokens)')
+            .setDesc(
+                'Target tokens per chunk when using compress compaction (chat model summarization). The embedding chunk size is configured separately below. Default: 1024.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.manuscriptAnalysisChunkTokenSize))
+                    // settings.ts - no Component lifecycle available; raw addEventListener is required
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 256 && n <= 8192) {
+                            this.plugin.settings.manuscriptAnalysisChunkTokenSize = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.manuscriptAnalysisChunkTokenSize));
+                            new Notice('Value must be a number between 256 and 8192');
+                        }
+                    })
+            );
+
+        new Setting(content)
+            .setName('Manuscript top-k chunks')
+            .setDesc(
+                'Number of chunks to retrieve when using embed compaction. Higher includes more context; lower is more focused. Default: 10.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.manuscriptAnalysisTopKChunks))
+                    // settings.ts - no Component lifecycle available; raw addEventListener is required
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 1 && n <= 100) {
+                            this.plugin.settings.manuscriptAnalysisTopKChunks = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.manuscriptAnalysisTopKChunks));
+                            new Notice('Value must be a number between 1 and 100');
+                        }
+                    })
+            );
+
+        new Setting(content)
+            .setName('Manuscript analysis temperature')
+            .setDesc(
+                'Temperature for manuscript analysis AI responses. Higher values produce more varied output; lower values are more deterministic. Range: 0.0 – 2.0. Default: 0.5.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.manuscriptAnalysisTemperature))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseFloat(text.inputEl.value);
+                        if (!isNaN(n) && n >= 0 && n <= 2) {
+                            this.plugin.settings.manuscriptAnalysisTemperature = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.manuscriptAnalysisTemperature));
+                            new Notice('Value must be a number between 0.0 and 2.0');
+                        }
+                    })
+            );
+
+        new Setting(content)
+            .setName('Manuscript analysis max output tokens')
+            .setDesc(
+                'Maximum tokens per manuscript analysis response. Higher allows more detailed reports but uses more quota. Default: 3072.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.manuscriptAnalysisMaxOutputTokens))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 1 && n <= 65536) {
+                            this.plugin.settings.manuscriptAnalysisMaxOutputTokens = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.manuscriptAnalysisMaxOutputTokens));
+                            new Notice('Value must be a number between 1 and 65536');
+                        }
+                    })
+            );
+
+        new Setting(content)
+            .setName('Embedding cache warming')
+            .setDesc(
+                'Automatically pre-compute and cache embeddings for each folder containing Markdown files (cast notes, lore, outlines, manuscript chapters). Enables instant semantic retrieval. Root folder is excluded.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.enableEmbeddingWarming).onChange((value) => {
+                    this.plugin.settings.enableEmbeddingWarming = value;
+                    void this.plugin.saveSettings();
+                    if (value) {
+                        void this.plugin.warmAllEmbeddingCaches();
+                    }
+                })
+            );
+
+        new Setting(content)
+            .setName('Embedding warming debounce (seconds)')
+            .setDesc(
+                'How long to wait after the last file save before warming embeddings. Higher reduces API calls during active writing; lower keeps caches fresher. Default: 30.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.embeddingWarmingDebounceSeconds))
+                    // settings.ts - no Component lifecycle available; raw addEventListener is required
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 5 && n <= 600) {
+                            this.plugin.settings.embeddingWarmingDebounceSeconds = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.embeddingWarmingDebounceSeconds));
+                            new Notice('Value must be a number between 5 and 600');
+                        }
+                    })
+            );
+
+        new Setting(content)
+            .setName('Embedding chunk size (tokens)')
+            .setDesc(
+                "Target tokens per chunk when embedding. Must not exceed your embedding model's context window. Many local embedding models (e.g. Nomic-embed-text) support 512; cloud models may support more. Default: 512."
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.embeddingChunkTokenSize))
+                    // settings.ts - no Component lifecycle available; raw addEventListener is required
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 128 && n <= 8192) {
+                            this.plugin.settings.embeddingChunkTokenSize = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.embeddingChunkTokenSize));
+                            new Notice('Value must be a number between 128 and 8192');
+                        }
+                    })
+            );
+
+        new Setting(content)
             .setName('Readability formula')
             .setDesc('Which readability formula to display in the dashboard.')
             .addDropdown((dropdown) => {
@@ -540,6 +708,17 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.defaultTab = DEFAULT_SETTINGS.defaultTab;
                     this.plugin.settings.enableDashboard = DEFAULT_SETTINGS.enableDashboard;
                     this.plugin.settings.enableCriticalAnalysis = DEFAULT_SETTINGS.enableCriticalAnalysis;
+                    this.plugin.settings.enableManuscriptAnalysis = DEFAULT_SETTINGS.enableManuscriptAnalysis;
+                    this.plugin.settings.manuscriptAnalysisTemperature = DEFAULT_SETTINGS.manuscriptAnalysisTemperature;
+                    this.plugin.settings.manuscriptAnalysisMaxOutputTokens =
+                        DEFAULT_SETTINGS.manuscriptAnalysisMaxOutputTokens;
+                    this.plugin.settings.manuscriptAnalysisChunkTokenSize =
+                        DEFAULT_SETTINGS.manuscriptAnalysisChunkTokenSize;
+                    this.plugin.settings.manuscriptAnalysisTopKChunks = DEFAULT_SETTINGS.manuscriptAnalysisTopKChunks;
+                    this.plugin.settings.embeddingChunkTokenSize = DEFAULT_SETTINGS.embeddingChunkTokenSize;
+                    this.plugin.settings.enableEmbeddingWarming = DEFAULT_SETTINGS.enableEmbeddingWarming;
+                    this.plugin.settings.embeddingWarmingDebounceSeconds =
+                        DEFAULT_SETTINGS.embeddingWarmingDebounceSeconds;
                     this.plugin.settings.dashboardAutoRefreshMinutes = DEFAULT_SETTINGS.dashboardAutoRefreshMinutes;
                     this.plugin.settings.dashboardAutoSnapshotOnSave = DEFAULT_SETTINGS.dashboardAutoSnapshotOnSave;
                     this.plugin.settings.dashboardMaxSnapshots = DEFAULT_SETTINGS.dashboardMaxSnapshots;
@@ -1183,8 +1362,33 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         : ''
                 );
                 dropdown.onChange(async (value) => {
-                    this.plugin.settings.aiDefaultEmbedProvider = value;
-                    await this.plugin.saveSettings();
+                    const oldValue = this.plugin.settings.aiDefaultEmbedProvider;
+                    if (value === oldValue) return;
+
+                    // Reset dropdown to old value so cancellation doesn't leave stale UI state.
+                    dropdown.setValue(oldValue);
+
+                    // Warn that changing the embed model invalidates all cached embeddings.
+                    new ConfirmModal(
+                        this.app,
+                        'Change embed model?',
+                        'Changing the embed model will invalidate all cached embeddings in your vault. ' +
+                            'Embedding cache files (quill-embeddings.json) will be deleted and rebuilt ' +
+                            'with the new model. This may take a moment for large vaults.',
+                        async () => {
+                            await this.plugin.invalidateAllEmbeddingCaches();
+                            this.plugin.settings.aiDefaultEmbedProvider = value;
+                            await this.plugin.saveSettings();
+                            // Re-warm caches with the new model.
+                            if (this.plugin.settings.enableEmbeddingWarming) {
+                                void this.plugin.warmAllEmbeddingCaches();
+                            }
+                            // Update dropdown to reflect the confirmed value.
+                            dropdown.setValue(value);
+                            new Notice('Quill: Embed model changed. Caches will rebuild in the background.');
+                        },
+                        'Change model'
+                    ).open();
                 });
             });
     }

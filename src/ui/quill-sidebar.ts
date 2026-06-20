@@ -423,10 +423,15 @@ export class QuillSidebarView extends ItemView {
             this.reviewPanel.setCriticalGenerateHandler((mode, scope, customInstruction) => {
                 void this.plugin.requestAnalysis(mode, scope, customInstruction);
             });
+            this.reviewPanel.setManuscriptGenerateHandler((mode, scope, compaction, customInstruction) => {
+                void this.plugin.requestManuscriptAnalysis(mode, scope, compaction, customInstruction);
+            });
             this.reviewPanel.setChatMessageHandler((message) => {
                 // Dispatch to the right engine's chat handler.
                 if (this.reviewPanel?.activeEngine === 'editorial') {
                     void this.plugin.sendFeedbackChatMessage(message);
+                } else if (this.reviewPanel?.activeEngine === 'manuscript') {
+                    void this.plugin.sendManuscriptAnalysisChatMessage(message);
                 } else {
                     void this.plugin.sendAnalysisChatMessage(message);
                 }
@@ -434,6 +439,8 @@ export class QuillSidebarView extends ItemView {
             this.reviewPanel.setCancelGenerationHandler(() => {
                 if (this.reviewPanel?.activeEngine === 'editorial') {
                     this.plugin.cancelFeedbackGeneration();
+                } else if (this.reviewPanel?.activeEngine === 'manuscript') {
+                    this.plugin.cancelManuscriptAnalysisGeneration();
                 } else {
                     this.plugin.cancelAnalysisGeneration();
                 }
@@ -441,6 +448,8 @@ export class QuillSidebarView extends ItemView {
             this.reviewPanel.setCompactHandler(() => {
                 if (this.reviewPanel?.activeEngine === 'editorial') {
                     void this.plugin.compactFeedback();
+                } else if (this.reviewPanel?.activeEngine === 'manuscript') {
+                    void this.plugin.compactManuscriptAnalysis();
                 } else {
                     void this.plugin.compactAnalysis();
                 }
@@ -448,6 +457,8 @@ export class QuillSidebarView extends ItemView {
             this.reviewPanel.setNewChatHandler(() => {
                 if (this.reviewPanel?.activeEngine === 'editorial') {
                     this.plugin.resetFeedbackChat();
+                } else if (this.reviewPanel?.activeEngine === 'manuscript') {
+                    this.plugin.resetManuscriptAnalysisChat();
                 } else {
                     this.plugin.resetAnalysisChat();
                 }
@@ -458,6 +469,15 @@ export class QuillSidebarView extends ItemView {
             this.reviewPanel.setMaxAllowedTokens(chat.provider.config.maxContextTokens);
         }
         this.reviewPanel.setContainer(this.content);
+
+        // Trigger token estimate refresh for the manuscript engine.
+        // The actual async fetch is initiated by ReviewPanel's render path;
+        // the sidebar's setManuscriptTokenEstimate callback acts as a stale-
+        // state guard — the version check in ReviewPanel discards any
+        // estimate whose scope/compaction request was superseded.
+        if (this.reviewPanel.isManuscriptEngineActive()) {
+            this.reviewPanel.refreshManuscriptTokenEstimate();
+        }
     }
 
     /** Switch to the Review tab. */
@@ -609,7 +629,7 @@ export class QuillSidebarView extends ItemView {
 
     // --- Review tab passthroughs (unified for editorial + critical engines) ---
 
-    reviewStartLoading(engine: 'editorial' | 'critical', headerLabel: string, subLabel?: string): void {
+    reviewStartLoading(engine: 'editorial' | 'critical' | 'manuscript', headerLabel: string, subLabel?: string): void {
         this.reviewPanel?.startLoading(engine, headerLabel, subLabel);
     }
 
@@ -659,6 +679,10 @@ export class QuillSidebarView extends ItemView {
 
     reviewSetContextTokenEstimate(tokens: number): void {
         this.reviewPanel?.setContextTokenEstimate(tokens);
+    }
+
+    reviewSetManuscriptTokenEstimate(estimate: { estimated: number; max: number } | null): void {
+        this.reviewPanel?.setManuscriptTokenEstimate(estimate);
     }
 
     reviewSaveConversation(): void {
