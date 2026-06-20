@@ -1,4 +1,4 @@
-import { TFile, Vault } from 'obsidian';
+import { normalizePath, TFile, Vault } from 'obsidian';
 import type { ChatMessage } from '../ai/provider';
 
 /**
@@ -12,7 +12,7 @@ import type { ChatMessage } from '../ai/provider';
  */
 export async function readVaultFileText(vault: Vault, filePath: string, maxChars?: number): Promise<string> {
     try {
-        const file = vault.getAbstractFileByPath(filePath);
+        const file = vault.getAbstractFileByPath(normalizePath(filePath));
         if (!(file instanceof TFile)) return '';
         const content = await vault.cachedRead(file);
         const safeMax =
@@ -43,7 +43,7 @@ export async function readVaultFiles(
     const messages: ChatMessage[] = [];
     for (const filePath of filePaths) {
         try {
-            const file = vault.getAbstractFileByPath(filePath);
+            const file = vault.getAbstractFileByPath(normalizePath(filePath));
             if (file instanceof TFile) {
                 const content = await vault.cachedRead(file);
                 const safeMax =

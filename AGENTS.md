@@ -203,6 +203,7 @@ The project does not use `eslint-config-prettier`. The obsidianmd ESLint rules a
 - All UI text is sentence-case.
 - No telemetry. Never send vault contents without explicit opt-in.
 - No hardcoded secrets or API keys. Use Obsidian's `pluginDataDir` for persistent files.
+- **Always `normalizePath()` on user-defined or constructed file paths.** The Obsidian automated plugin review flags any path passed to `getAbstractFileByPath()`, `vault.create()`, `vault.adapter.*`, or similar that is not wrapped in `normalizePath()`. This includes user-typed paths (e.g. `FilenameModal`), paths loaded from sidecar JSON / frontmatter YAML, and any manual regex cleanup (`replace(/^\/+|\/+$/g, '')` — always replace with `normalizePath()`). The eslint-plugin-obsidianmd does NOT have a rule for this; the server-side review catches it independently. Import via `import { normalizePath } from 'obsidian'`.
 
 ## Commands & settings
 
