@@ -354,7 +354,7 @@ export class QuillSidebarView extends ItemView {
         for (const tab of tabs) {
             const btn = this.tabBar.createEl('button', {
                 cls: `quill-sidebar__tab${this.activeTopTab === tab.id ? ' quill-sidebar__tab--active' : ''}`,
-                attr: { title: tab.label }
+                attr: { title: tab.label, 'aria-label': tab.label }
             });
             const iconEl = btn.createEl('span', { cls: 'quill-sidebar__tab-icon' });
             setIcon(iconEl, tab.icon);
