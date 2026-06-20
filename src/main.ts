@@ -932,7 +932,9 @@ export default class EventideQuillPlugin extends Plugin {
             enableAiNegation: ai && this.settings.enableAiNegation,
             enableAiFillerAdverbs: ai && this.settings.enableAiFillerAdverbs,
             enableAiHedging: ai && this.settings.enableAiHedging,
-            enableAiWrapUps: ai && this.settings.enableAiWrapUps
+            enableAiWrapUps: ai && this.settings.enableAiWrapUps,
+            enableGremlins: this.settings.enableGremlins,
+            enableAggressiveGremlins: this.settings.enableAggressiveGremlins
         });
 
         const lines = text.split('\n');

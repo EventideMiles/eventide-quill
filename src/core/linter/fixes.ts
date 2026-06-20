@@ -24,5 +24,9 @@ export const FIXES: Record<string, LintFix> = {
     'ai-em-dashes': {
         description: 'Replace em dash with period',
         apply: () => '.'
+    },
+    gremlins: {
+        description: 'Remove invisible character',
+        apply: () => ''
     }
 };
