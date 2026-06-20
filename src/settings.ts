@@ -32,7 +32,7 @@ export interface EventideQuillSettings {
     enableAiHedging: boolean;
     enableAiWrapUps: boolean;
     enableGremlins: boolean;
-    aggressiveGremlins: boolean;
+    enableAggressiveGremlins: boolean;
     lintOnSave: boolean;
     aiProviders: ProviderConfig[];
     aiDefaultChatProvider: string;
@@ -99,7 +99,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     enableAiHedging: true,
     enableAiWrapUps: true,
     enableGremlins: true,
-    aggressiveGremlins: false,
+    enableAggressiveGremlins: false,
     lintOnSave: false,
     aiProviders: [
         {
@@ -985,7 +985,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addToggle((toggle) =>
                 toggle.setValue(this.plugin.settings.enableGremlins).onChange(async (value) => {
                     this.plugin.settings.enableGremlins = value;
-                    if (!value) this.plugin.settings.aggressiveGremlins = false;
+                    if (!value) this.plugin.settings.enableAggressiveGremlins = false;
                     await this.plugin.saveSettings();
                     this.display();
                 })
@@ -998,10 +998,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             )
             .addToggle((toggle) =>
                 toggle
-                    .setValue(this.plugin.settings.aggressiveGremlins)
+                    .setValue(this.plugin.settings.enableAggressiveGremlins)
                     .setDisabled(!this.plugin.settings.enableGremlins)
                     .onChange(async (value) => {
-                        this.plugin.settings.aggressiveGremlins = value;
+                        this.plugin.settings.enableAggressiveGremlins = value;
                         await this.plugin.saveSettings();
                     })
             );
@@ -1033,7 +1033,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.enableAiHedging = DEFAULT_SETTINGS.enableAiHedging;
                     this.plugin.settings.enableAiWrapUps = DEFAULT_SETTINGS.enableAiWrapUps;
                     this.plugin.settings.enableGremlins = DEFAULT_SETTINGS.enableGremlins;
-                    this.plugin.settings.aggressiveGremlins = DEFAULT_SETTINGS.aggressiveGremlins;
+                    this.plugin.settings.enableAggressiveGremlins = DEFAULT_SETTINGS.enableAggressiveGremlins;
                     await this.plugin.saveSettings();
                     this.display();
                 })

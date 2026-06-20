@@ -40,7 +40,7 @@ export interface LintOptions {
     enableAiHedging?: boolean;
     enableAiWrapUps?: boolean;
     enableGremlins?: boolean;
-    aggressiveGremlins?: boolean;
+    enableAggressiveGremlins?: boolean;
 }
 
 /** Run all enabled lint rules against `text` and return the combined results. */
@@ -118,7 +118,7 @@ export function lint(text: string, options?: LintOptions): LintResult[] {
     }
 
     if (opts.enableGremlins ?? true) {
-        run(() => checkGremlins(text, opts.aggressiveGremlins), 'gremlins');
+        run(() => checkGremlins(text, opts.enableAggressiveGremlins), 'gremlins');
     }
 
     results.sort((a, b) => a.line - b.line || a.column - b.column);

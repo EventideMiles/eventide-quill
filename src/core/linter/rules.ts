@@ -540,6 +540,7 @@ const GREMLIN_NAMES: Record<string, string> = {
     '20E3': 'Combining enclosing keycap'
 };
 
+/** Look up the human-readable name for a gremlin character, with a fallback for unknown format chars. */
 function gremlinName(char: string): string {
     const cp = char.codePointAt(0);
     if (cp === undefined) return 'Unknown character';
