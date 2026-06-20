@@ -1,4 +1,14 @@
-import { Editor, MarkdownView, Menu, Notice, Plugin, TAbstractFile, TFile, WorkspaceLeaf } from 'obsidian';
+import {
+    Editor,
+    MarkdownView,
+    Menu,
+    normalizePath,
+    Notice,
+    Plugin,
+    TAbstractFile,
+    TFile,
+    WorkspaceLeaf
+} from 'obsidian';
 import { EditorView } from '@codemirror/view';
 import { DEFAULT_SETTINGS, EventideQuillSettings, EventideQuillSettingTab } from './settings';
 import { lint } from './core/linter/linter';
@@ -79,7 +89,7 @@ import {
  * or other non-content data, not user writing.
  */
 function isExcludedPath(path: string, configDir: string): boolean {
-    const configFolder = configDir.replace(/^\/+|\/+$/g, '');
+    const configFolder = normalizePath(configDir);
     if (configFolder && (path.startsWith(configFolder + '/') || path.includes('/' + configFolder + '/'))) {
         return true;
     }
@@ -1190,14 +1200,14 @@ export default class EventideQuillPlugin extends Plugin {
             this.entityMods.set(id, { pinned: true, removed: false, manual: true, entity: entityFromId(id) });
         }
 
-        for (const p of fm.pinnedFiles ?? []) {
+        for (const p of (fm.pinnedFiles ?? []).map(normalizePath)) {
             this.pinnedContextPaths.add(p);
         }
-        for (const p of fm.removedFiles ?? []) {
+        for (const p of (fm.removedFiles ?? []).map(normalizePath)) {
             this.removedContextPaths.add(p);
         }
 
-        for (const fp of fm.addedFiles ?? []) {
+        for (const fp of (fm.addedFiles ?? []).map(normalizePath)) {
             if (!this.manualContextItems.some((i) => i.filePath === fp)) {
                 this.manualContextItems.push({
                     filePath: fp,
@@ -3431,8 +3441,8 @@ export default class EventideQuillPlugin extends Plugin {
         msFile: ManuscriptFileData
     ): TFile[] {
         const allMarkdown = this.app.vault.getMarkdownFiles();
-        const addPaths = msFile.chapterOverrides.add;
-        const removeSet = new Set(msFile.chapterOverrides.remove);
+        const addPaths = msFile.chapterOverrides.add.map(normalizePath);
+        const removeSet = new Set(msFile.chapterOverrides.remove.map(normalizePath));
 
         const result: TFile[] = [];
 
@@ -3447,7 +3457,7 @@ export default class EventideQuillPlugin extends Plugin {
         }
 
         // Add explicit overrides.
-        for (const addPath of addPaths) {
+        for (const addPath of addPaths.map(normalizePath)) {
             if (removeSet.has(addPath)) continue;
             const file = this.app.vault.getAbstractFileByPath(addPath);
             if (file instanceof TFile && file.extension === 'md' && !result.includes(file)) {

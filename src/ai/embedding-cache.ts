@@ -1,4 +1,4 @@
-import { Vault } from 'obsidian';
+import { normalizePath, Vault } from 'obsidian';
 import type { AiProvider } from './provider';
 
 /** Filename for the per-folder embedding cache. */
@@ -47,13 +47,13 @@ export function hashString(text: string): string {
 
 /** Resolve the vault-relative path to the embedding cache file for a folder. */
 export function embeddingDataPath(folder: string): string {
-    const clean = folder.replace(/^\/+|\/+$/g, '');
-    return clean.length > 0 ? `${clean}/${EMBEDDINGS_FILENAME}` : EMBEDDINGS_FILENAME;
+    const clean = normalizePath(folder);
+    return clean.length > 0 ? normalizePath(`${clean}/${EMBEDDINGS_FILENAME}`) : EMBEDDINGS_FILENAME;
 }
 
 /** Whether a folder is the vault root (never embedded). */
 export function isRootFolder(folder: string): boolean {
-    const clean = folder.replace(/^\/+|\/+$/g, '');
+    const clean = normalizePath(folder);
     return clean.length === 0;
 }
 
@@ -115,7 +115,7 @@ export class EmbeddingCache {
 
         const path = embeddingDataPath(this.folder);
         try {
-            const dir = this.folder.replace(/^\/+|\/+$/g, '');
+            const dir = normalizePath(this.folder);
             if (dir.length > 0 && !(await vault.adapter.exists(dir))) {
                 await vault.adapter.mkdir(dir);
             }

@@ -1,4 +1,4 @@
-import { App, MarkdownRenderer, Notice, TFile } from 'obsidian';
+import { App, MarkdownRenderer, normalizePath, Notice, TFile } from 'obsidian';
 import { FEEDBACK_PERSONAS } from '../ai/feedback';
 import { ANALYSIS_MODES, type AnalysisMode, type AnalysisScope } from '../ai/analysis';
 import {
@@ -388,7 +388,7 @@ export class ReviewPanel extends AbstractChatPanel {
             this.app,
             defaultName,
             async (path: string) => {
-                const normalizedPath = path.endsWith('.md') ? path : `${path}.md`;
+                const normalizedPath = normalizePath(path.endsWith('.md') ? path : `${path}.md`);
                 const lines: string[] = [];
                 lines.push(
                     isCritical
