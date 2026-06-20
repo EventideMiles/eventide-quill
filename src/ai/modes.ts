@@ -1,5 +1,5 @@
 /** The type of AI mode to use for a given interaction. */
-export type AiMode = 'narrative' | 'analysis' | 'critical' | 'linter';
+export type AiMode = 'narrative' | 'analysis' | 'critical' | 'linter' | 'manuscript-analysis';
 
 /** Configuration for an AI mode. */
 export interface AiModeConfig {
@@ -46,5 +46,13 @@ export const AI_MODE_CONFIGS: Record<AiMode, AiModeConfig> = {
             'Precise minimal editorial fixes — suggests the smallest change to resolve a flagged prose issue while preserving author voice.',
         defaultTemperature: 0.3,
         defaultMaxOutputTokens: 512
+    },
+    'manuscript-analysis': {
+        id: 'manuscript-analysis',
+        label: 'Manuscript analysis',
+        description:
+            'Full-manuscript structural diagnostics — scene taxonomy, pacing arcs, dialogue ecosystem, character arcs, and more.',
+        defaultTemperature: 0.5,
+        defaultMaxOutputTokens: 3072
     }
 };

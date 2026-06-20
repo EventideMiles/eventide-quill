@@ -1,6 +1,12 @@
 import { App, MarkdownRenderer, Notice, TFile } from 'obsidian';
 import { FEEDBACK_PERSONAS } from '../ai/feedback';
 import { ANALYSIS_MODES, type AnalysisMode, type AnalysisScope } from '../ai/analysis';
+import {
+    MANUSCRIPT_ANALYSIS_MODES,
+    type ManuscriptAnalysisMode,
+    type ManuscriptScope
+} from '../ai/manuscript-analysis';
+import type { CompactionStrategy } from '../ai/manuscript-compaction';
 import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
@@ -14,21 +20,21 @@ type ReviewSubtab = 'create' | 'results';
 type ResultsState = 'idle' | 'loading' | 'complete' | 'error';
 
 /** Which review engine the Create tab is configuring. */
-type ReviewEngine = 'editorial' | 'critical';
+type ReviewEngine = 'editorial' | 'critical' | 'manuscript';
 
 /** Scope picker value for the critical engine; `'auto'` defers to the plugin. */
 export type ScopeChoice = AnalysisScope | 'auto';
 
 /**
- * Unified Review panel — merges editorial feedback (persona-driven, multi-file)
- * and critical analysis (mode-driven, selection/scene/document) into a single
- * sidebar tab with an engine picker at the top of the Create sub-tab.
+ * Unified Review panel — merges editorial feedback (persona-driven, multi-file),
+ * critical analysis (mode-driven, selection/scene/document), and manuscript
+ * analysis (full-manuscript structural diagnostics) into a single sidebar tab
+ * with an engine picker at the top of the Create sub-tab.
  *
- * Both engines share the same Results sub-tab (streaming report + follow-up
+ * All engines share the same Results sub-tab (streaming report + follow-up
  * chat + compaction + context files). The plugin keeps separate conversation
- * state per engine (`feedbackCurrentMessages` / `analysisCurrentMessages`);
- * this panel dispatches callbacks based on `activeEngine`, which is set when
- * the writer clicks Generate.
+ * state per engine; this panel dispatches callbacks based on `activeEngine`,
+ * which is set when the writer clicks Generate.
  */
 export class ReviewPanel extends AbstractChatPanel {
     private subtab: ReviewSubtab = 'create';
@@ -51,6 +57,15 @@ export class ReviewPanel extends AbstractChatPanel {
     private currentMode: AnalysisMode | '' = '';
     private currentScope: ScopeChoice = 'auto';
 
+    // --- Manuscript state ---
+    private currentManuscriptMode: ManuscriptAnalysisMode | '' = '';
+    private currentManuscriptScope: ManuscriptScope = { kind: 'full' };
+    private currentCompactionStrategy: CompactionStrategy = 'embed';
+    private manuscriptTokenEstimate: { estimated: number; max: number } | null = null;
+    /** Monotonic counter incremented on every manuscript scope/compaction change.
+     *  Used by setManuscriptTokenEstimate to discard stale promise results. */
+    private manuscriptSettingsVersion = 0;
+
     // --- Shared state ---
     private reportText = '';
     private customInstruction = '';
@@ -66,6 +81,14 @@ export class ReviewPanel extends AbstractChatPanel {
     private onEditorialGenerate: ((personaId: string, customInstruction?: string) => void) | null = null;
     private onCriticalGenerate: ((mode: AnalysisMode, scope: ScopeChoice, customInstruction?: string) => void) | null =
         null;
+    private onManuscriptGenerate:
+        | ((
+              mode: ManuscriptAnalysisMode,
+              scope: ManuscriptScope,
+              compaction: CompactionStrategy,
+              customInstruction?: string
+          ) => void)
+        | null = null;
     private onChatMessage: ((message: string) => void) | null = null;
 
     constructor(app: App) {
@@ -85,6 +108,58 @@ export class ReviewPanel extends AbstractChatPanel {
         handler: (mode: AnalysisMode, scope: ScopeChoice, customInstruction?: string) => void
     ): void {
         this.onCriticalGenerate = handler;
+    }
+
+    setManuscriptGenerateHandler(
+        handler: (
+            mode: ManuscriptAnalysisMode,
+            scope: ManuscriptScope,
+            compaction: CompactionStrategy,
+            customInstruction?: string
+        ) => void
+    ): void {
+        this.onManuscriptGenerate = handler;
+    }
+
+    /** Update the pre-generation token estimate display for the manuscript engine.
+     *  Discards the update if a newer scope/compaction request has superseded it. */
+    setManuscriptTokenEstimate(estimate: { estimated: number; max: number } | null): void {
+        if (this.manuscriptSettingsVersion !== this._manuscriptEstimateRequestVersion) return;
+        this.manuscriptTokenEstimate = estimate;
+        if (this.engine === 'manuscript' && this.subtab === 'create' && this.containerEl) this.render();
+    }
+
+    /** Internal version tracker for stale-promise protection in setManuscriptTokenEstimate. */
+    private _manuscriptEstimateRequestVersion = 0;
+
+    /** Request a fresh token estimate.
+     *  Increments the settings version so in-flight older promises are discarded.
+     *  Call this after manuscript scope or compaction changes.
+     *  The caller is responsible for calling render() to update the UI. */
+    refreshManuscriptTokenEstimate(): void {
+        this.manuscriptSettingsVersion++;
+        this._manuscriptEstimateRequestVersion = this.manuscriptSettingsVersion;
+        // The sidebar's setManuscriptTokenEstimate callback is the single source
+        // of truth for fetching estimates.  Trigger a re-render so the sidebar
+        // fires the async estimate request.
+        if (this.containerEl && this.engine === 'manuscript' && this.subtab === 'create') {
+            this.render();
+        }
+    }
+
+    /** Whether the manuscript engine is the currently selected engine on the Create tab. */
+    isManuscriptEngineActive(): boolean {
+        return this.engine === 'manuscript' && this.subtab === 'create';
+    }
+
+    /** Get the current manuscript scope selection. */
+    getManuscriptScope(): ManuscriptScope {
+        return this.currentManuscriptScope;
+    }
+
+    /** Get the current compaction strategy selection. */
+    getManuscriptCompaction(): CompactionStrategy {
+        return this.currentCompactionStrategy;
     }
 
     setChatMessageHandler(handler: (message: string) => void): void {
@@ -300,30 +375,43 @@ export class ReviewPanel extends AbstractChatPanel {
     saveConversation(): void {
         const timestamp = new Date().toISOString().slice(0, 10);
         const isCritical = this.activeEngine === 'critical';
-        const defaultName = `${isCritical ? 'quill-analysis' : 'quill-conversation'}-${timestamp}.md`;
-        const title = isCritical ? 'Save analysis report' : 'Save conversation';
+        const isManuscript = this.activeEngine === 'manuscript';
+        const defaultName = `${
+            isCritical ? 'quill-analysis' : isManuscript ? 'quill-manuscript-analysis' : 'quill-conversation'
+        }-${timestamp}.md`;
+        const title = isCritical
+            ? 'Save analysis report'
+            : isManuscript
+              ? 'Save manuscript analysis'
+              : 'Save conversation';
         new FilenameModal(
             this.app,
             defaultName,
             async (path: string) => {
                 const normalizedPath = path.endsWith('.md') ? path : `${path}.md`;
                 const lines: string[] = [];
-                lines.push(isCritical ? '# Quill critical analysis' : '# Quill feedback conversation');
+                lines.push(
+                    isCritical
+                        ? '# Quill critical analysis'
+                        : isManuscript
+                          ? '# Quill manuscript analysis'
+                          : '# Quill feedback conversation'
+                );
                 lines.push('');
                 lines.push(`*Saved on ${new Date().toLocaleString()}*`);
-                if (isCritical) {
+                if (isCritical || isManuscript) {
                     lines.push(`*Mode: ${this.headerLabel}*`);
                 }
                 lines.push('');
 
                 if (this.reportText) {
-                    lines.push(isCritical ? '## Report' : '## Initial feedback');
+                    lines.push(isCritical || isManuscript ? '## Report' : '## Initial feedback');
                     lines.push('');
                     lines.push(this.reportText);
                     lines.push('');
                 }
                 if (this.chatHistory.length > 0) {
-                    lines.push(isCritical ? '## Follow-up discussion' : '## Conversation');
+                    lines.push(isCritical || isManuscript ? '## Follow-up discussion' : '## Conversation');
                     lines.push('');
                     for (const msg of this.chatHistory) {
                         if (msg.role === 'system') {
@@ -440,7 +528,7 @@ export class ReviewPanel extends AbstractChatPanel {
                 cls: `quill-sidebar__subtab${this.subtab === tab.id ? ' quill-sidebar__subtab--active' : ''}`,
                 text: tab.label
             });
-            btn.addEventListener('click', () => {
+            this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.subtab = tab.id;
                 this.render();
             });
@@ -467,9 +555,11 @@ export class ReviewPanel extends AbstractChatPanel {
         if (this.engine === 'editorial') {
             this.renderManuscriptsSection(scroll);
             this.renderPersonaSection(scroll);
-        } else {
+        } else if (this.engine === 'critical') {
             this.renderModeSection(scroll);
             this.renderScopeSection(scroll);
+        } else {
+            this.renderManuscriptModeSection(scroll);
         }
 
         // Shared: custom instruction + generate.
@@ -484,15 +574,22 @@ export class ReviewPanel extends AbstractChatPanel {
                     : 'e.g. "Focus on whether the protagonist\'s change of heart is earned."'
         });
         customArea.value = this.customInstruction;
-        customArea.addEventListener('input', () => {
+        this.renderEvents.registerDomEvent(customArea, 'input', () => {
             this.customInstruction = customArea.value;
         });
 
+        const buttonLabel =
+            this.engine === 'editorial'
+                ? 'Generate feedback'
+                : this.engine === 'critical'
+                  ? 'Run analysis'
+                  : 'Run manuscript analysis';
+
         const generateBtn = scroll.createEl('button', {
             cls: 'quill-form__submit mod-cta',
-            text: this.engine === 'editorial' ? 'Generate feedback' : 'Run analysis'
+            text: buttonLabel
         });
-        generateBtn.addEventListener('click', () => this.triggerGenerate());
+        this.renderEvents.registerDomEvent(generateBtn, 'click', () => this.triggerGenerate());
     }
 
     private renderEnginePicker(container: HTMLElement): void {
@@ -501,7 +598,8 @@ export class ReviewPanel extends AbstractChatPanel {
 
         const engines: { id: ReviewEngine; label: string; desc: string }[] = [
             { id: 'critical', label: 'Critical analysis', desc: 'Targeted consistency checks with line refs.' },
-            { id: 'editorial', label: 'Editor feedback', desc: 'Persona-driven review of selected manuscripts.' }
+            { id: 'editorial', label: 'Editor feedback', desc: 'Persona-driven review of selected manuscripts.' },
+            { id: 'manuscript', label: 'Manuscript analysis', desc: 'Full-manuscript structural diagnostics.' }
         ];
 
         const row = container.createDiv({ cls: 'quill-option-picker' });
@@ -510,7 +608,7 @@ export class ReviewPanel extends AbstractChatPanel {
             if (this.engine === eng.id) btn.addClass('quill-option-picker__option--active');
             btn.createEl('span', { cls: 'quill-option-picker__name', text: eng.label });
             btn.createEl('span', { cls: 'quill-option-picker__desc', text: eng.desc });
-            btn.addEventListener('click', () => {
+            this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.engine = eng.id;
                 if (this.containerEl) this.render();
             });
@@ -560,7 +658,7 @@ export class ReviewPanel extends AbstractChatPanel {
                 item.createEl('span', { cls: 'quill-review-panel__file-name', text: name });
                 item.createEl('span', { cls: 'quill-review-panel__file-tokens', text: `~${tokens} tokens` });
                 const remove = item.createEl('button', { cls: 'quill-review-panel__file-remove', text: '\u00d7' });
-                remove.addEventListener('click', () => this.removeContextFile(filePath));
+                this.renderEvents.registerDomEvent(remove, 'click', () => this.removeContextFile(filePath));
             }
         }
 
@@ -568,7 +666,7 @@ export class ReviewPanel extends AbstractChatPanel {
             cls: 'quill-review-panel__file-add',
             text: '+ add file'
         });
-        addBtn.addEventListener('click', () => {
+        this.renderEvents.registerDomEvent(addBtn, 'click', () => {
             const exclude = [...this.contextFilePaths, ...this.chatContextFiles.getFiles()];
             new VaultFileSuggestModal(
                 this.app,
@@ -591,7 +689,7 @@ export class ReviewPanel extends AbstractChatPanel {
             const name = btn.createEl('span', { cls: 'quill-option-picker__name', text: persona.name });
             name.title = persona.description;
             btn.createEl('span', { cls: 'quill-option-picker__desc', text: persona.description });
-            btn.addEventListener('click', () => {
+            this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.triggerEditorial(persona.id);
             });
         }
@@ -609,7 +707,7 @@ export class ReviewPanel extends AbstractChatPanel {
             if (this.currentMode === mode.id) btn.addClass('quill-option-picker__option--active');
             btn.createEl('span', { cls: 'quill-option-picker__name', text: mode.label });
             btn.createEl('span', { cls: 'quill-option-picker__desc', text: mode.description });
-            btn.addEventListener('click', () => {
+            this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.currentMode = mode.id;
                 if (this.containerEl) this.render();
             });
@@ -634,11 +732,157 @@ export class ReviewPanel extends AbstractChatPanel {
                 text: scope.label,
                 title: scope.hint
             });
-            btn.addEventListener('click', () => {
+            this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.currentScope = scope.id;
                 if (this.containerEl) this.render();
             });
         }
+    }
+
+    // --- Manuscript mode section ---
+
+    private renderManuscriptModeSection(container: HTMLElement): void {
+        const section = container.createDiv({ cls: 'quill-form__section' });
+        section.createEl('p', { cls: 'quill-form__label', text: 'Analysis mode' });
+
+        const modes = container.createDiv({ cls: 'quill-option-picker' });
+        for (const mode of MANUSCRIPT_ANALYSIS_MODES) {
+            const btn = modes.createEl('button', { cls: 'quill-option-picker__option' });
+            if (this.currentManuscriptMode === mode.id) btn.addClass('quill-option-picker__option--active');
+            btn.createEl('span', { cls: 'quill-option-picker__name', text: mode.label });
+            btn.createEl('span', { cls: 'quill-option-picker__desc', text: mode.description });
+            this.renderEvents.registerDomEvent(btn, 'click', () => {
+                this.currentManuscriptMode = mode.id;
+                if (this.containerEl) this.render();
+            });
+        }
+
+        this.renderManuscriptScopeSection(container);
+        this.renderManuscriptCompactionSection(container);
+        this.renderManuscriptTokenEstimate(container);
+    }
+
+    private renderManuscriptScopeSection(container: HTMLElement): void {
+        const section = container.createDiv({ cls: 'quill-form__section' });
+        section.createEl('p', { cls: 'quill-form__label', text: 'Scope' });
+
+        const scopeRow = container.createDiv({ cls: 'quill-review-panel__scope-row' });
+        const isFull = this.currentManuscriptScope.kind === 'full';
+
+        const fullBtn = scopeRow.createEl('button', {
+            cls: `quill-review-panel__scope-btn${isFull ? ' quill-review-panel__scope-btn--active' : ''}`,
+            text: 'Full manuscript',
+            title: 'Analyze the entire manuscript (all chapters).'
+        });
+        this.renderEvents.registerDomEvent(fullBtn, 'click', () => {
+            this.currentManuscriptScope = { kind: 'full' };
+            this.refreshManuscriptTokenEstimate();
+        });
+
+        const surrBtn = scopeRow.createEl('button', {
+            cls: `quill-review-panel__scope-btn${this.currentManuscriptScope.kind === 'surrounding' ? ' quill-review-panel__scope-btn--active' : ''}`,
+            text: 'Surrounding chapters',
+            title: 'Chapter at Cursor plus n chapters before and after.'
+        });
+        this.renderEvents.registerDomEvent(surrBtn, 'click', () => {
+            this.currentManuscriptScope = { kind: 'surrounding', count: 1 };
+            this.refreshManuscriptTokenEstimate();
+        });
+
+        if (this.currentManuscriptScope.kind === 'surrounding') {
+            const countRow = section.createDiv({ cls: 'quill-review-panel__scope-row' });
+            countRow.createEl('span', { cls: 'quill-form__label', text: 'Chapters before/after:' });
+
+            const count = this.currentManuscriptScope.count;
+            const decBtn = countRow.createEl('button', {
+                cls: 'quill-review-panel__scope-btn',
+                text: '\u2212',
+                title: 'Decrease surrounding chapter count'
+            });
+            this.renderEvents.registerDomEvent(decBtn, 'click', () => {
+                this.currentManuscriptScope = { kind: 'surrounding', count: Math.max(1, count - 1) };
+                this.refreshManuscriptTokenEstimate();
+            });
+
+            countRow.createEl('span', {
+                cls: 'quill-review-panel__scope-count',
+                text: String(count)
+            });
+
+            const incBtn = countRow.createEl('button', {
+                cls: 'quill-review-panel__scope-btn',
+                text: '+',
+                title: 'Increase surrounding chapter count'
+            });
+            this.renderEvents.registerDomEvent(incBtn, 'click', () => {
+                this.currentManuscriptScope = { kind: 'surrounding', count: Math.min(10, count + 1) };
+                this.refreshManuscriptTokenEstimate();
+            });
+        }
+    }
+
+    private renderManuscriptCompactionSection(container: HTMLElement): void {
+        const section = container.createDiv({ cls: 'quill-form__section' });
+        section.createEl('p', { cls: 'quill-form__label', text: 'Text compaction' });
+
+        const strategies: { id: CompactionStrategy; label: string; hint: string; recommended?: boolean }[] = [
+            {
+                id: 'embed',
+                label: 'Embed + retrieve',
+                hint: 'Chunk the manuscript, embed each chunk, retrieve the most relevant by similarity.',
+                recommended: true
+            },
+            {
+                id: 'compress',
+                label: 'Compress with AI',
+                hint: 'Use the chat model to summarize each chunk. Slower and less accurate.'
+            },
+            {
+                id: 'full',
+                label: 'Full text',
+                hint: 'Send the raw manuscript text. Best for small manuscripts or large context windows.'
+            }
+        ];
+
+        const row = container.createDiv({ cls: 'quill-review-panel__scope-row' });
+        for (const strat of strategies) {
+            const label = strat.recommended ? `${strat.label} (recommended)` : strat.label;
+            const btn = row.createEl('button', {
+                cls: `quill-review-panel__scope-btn${this.currentCompactionStrategy === strat.id ? ' quill-review-panel__scope-btn--active' : ''}`,
+                text: label,
+                title: strat.hint
+            });
+            this.renderEvents.registerDomEvent(btn, 'click', () => {
+                this.currentCompactionStrategy = strat.id;
+                this.refreshManuscriptTokenEstimate();
+            });
+        }
+
+        if (this.currentCompactionStrategy === 'compress') {
+            section.createEl('p', {
+                cls: 'quill-form__hint',
+                text: 'Uses your chat model to compress each chunk — less accurate than embedding. Set up an embed model in settings for better results.'
+            });
+        }
+    }
+
+    private renderManuscriptTokenEstimate(container: HTMLElement): void {
+        if (!this.manuscriptTokenEstimate) return;
+        const { estimated, max } = this.manuscriptTokenEstimate;
+        const pct = max > 0 ? (estimated / max) * 100 : 0;
+
+        let cls = 'quill-review-panel__token-estimate';
+        let suffix = '';
+        if (pct > 100) {
+            cls += ' quill-review-panel__token-estimate--over';
+            suffix = ' \u26a0 Exceeds budget \u2014 LLM may trim context or error';
+        } else if (pct > 90) {
+            cls += ' quill-review-panel__token-estimate--warn';
+            suffix = " \u26a0 Approaching model's context window limit";
+        }
+
+        const text = `\u2248 ${estimated.toLocaleString()} / ${max.toLocaleString()} tokens (${Math.round(pct)}% of budget)${suffix}`;
+        container.createEl('p', { cls, text });
     }
 
     // --- Generate dispatch ---
@@ -652,8 +896,10 @@ export class ReviewPanel extends AbstractChatPanel {
                 return;
             }
             this.triggerEditorial('custom');
-        } else {
+        } else if (this.engine === 'critical') {
             this.triggerCritical();
+        } else {
+            this.triggerManuscript();
         }
     }
 
@@ -669,6 +915,19 @@ export class ReviewPanel extends AbstractChatPanel {
             return;
         }
         this.onCriticalGenerate?.(this.currentMode, this.currentScope, this.customInstruction || undefined);
+    }
+
+    private triggerManuscript(): void {
+        if (!this.currentManuscriptMode) {
+            new Notice('Quill: Pick a manuscript analysis mode first.');
+            return;
+        }
+        this.onManuscriptGenerate?.(
+            this.currentManuscriptMode,
+            this.currentManuscriptScope,
+            this.currentCompactionStrategy,
+            this.customInstruction || undefined
+        );
     }
 
     // ========================================================================
@@ -723,7 +982,7 @@ export class ReviewPanel extends AbstractChatPanel {
                 cls: 'quill-review-panel__nav-btn',
                 text: 'New review'
             });
-            newBtn.addEventListener('click', () => this.resetResults());
+            this.renderEvents.registerDomEvent(newBtn, 'click', () => this.resetResults());
 
             // Chat section
             const chatSection = scroll.createDiv({ cls: 'quill-chat-panel__section' });
@@ -761,7 +1020,7 @@ export class ReviewPanel extends AbstractChatPanel {
                 cls: 'quill-review-panel__nav-btn',
                 text: 'Back to create'
             });
-            retryBtn.addEventListener('click', () => this.resetResults());
+            this.renderEvents.registerDomEvent(retryBtn, 'click', () => this.resetResults());
         }
 
         // Bottom area (chat input) — only when complete
@@ -780,7 +1039,7 @@ export class ReviewPanel extends AbstractChatPanel {
             text: '\u00b1',
             title: 'Add file to context'
         });
-        addCtxBtn.addEventListener('click', () => {
+        this.renderEvents.registerDomEvent(addCtxBtn, 'click', () => {
             const exclude =
                 this.activeEngine === 'editorial'
                     ? [...this.chatContextFiles.getFiles(), ...this.contextFilePaths]
@@ -792,19 +1051,19 @@ export class ReviewPanel extends AbstractChatPanel {
             text: '\ud83d\udcbe',
             title: 'Save to file'
         });
-        saveBtn.addEventListener('click', () => this.saveConversation());
+        this.renderEvents.registerDomEvent(saveBtn, 'click', () => this.saveConversation());
         const compactBtn = btnRow.createEl('button', {
             cls: 'quill-chat-panel__action-btn quill-chat-panel__action-btn--compact',
             text: '\u00bb\u00bb',
             title: 'Compact conversation'
         });
-        compactBtn.addEventListener('click', () => this.onCompact?.());
+        this.renderEvents.registerDomEvent(compactBtn, 'click', () => this.onCompact?.());
         const newChatBtn = btnRow.createEl('button', {
             cls: 'quill-chat-panel__action-btn',
             text: '\u2713',
             title: 'New chat'
         });
-        newChatBtn.addEventListener('click', () => this.onNewChat?.(false));
+        this.renderEvents.registerDomEvent(newChatBtn, 'click', () => this.onNewChat?.(false));
         btnRow.createEl('div', { cls: 'quill-chat-panel__btn-spacer' });
         const actionBtn = btnRow.createEl('button', {
             cls: `quill-cowriter-panel__send-btn mod-cta${this.chatLoading ? ' quill-cowriter-panel__send-btn--stop' : ''}`,
@@ -841,11 +1100,11 @@ export class ReviewPanel extends AbstractChatPanel {
             this.onChatMessage?.(text);
         };
         const doStop = () => this.onCancelGeneration?.();
-        actionBtn.addEventListener('click', () => {
+        this.renderEvents.registerDomEvent(actionBtn, 'click', () => {
             if (this.chatLoading) doStop();
             else doSend();
         });
-        input.addEventListener('keydown', (e) => {
+        this.renderEvents.registerDomEvent(input, 'keydown', (e) => {
             if (this.chatLoading) return;
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -860,7 +1119,9 @@ export class ReviewPanel extends AbstractChatPanel {
             const label =
                 this.activeEngine === 'editorial'
                     ? buildFileLabel(this.contextFilePaths.length, this.chatContextFiles.fileCount())
-                    : 'analysis';
+                    : this.activeEngine === 'manuscript'
+                      ? 'manuscript'
+                      : 'analysis';
             ctxIndicator.setText(formatTokenIndicatorText(label, totalTokens, maxTokens));
         };
         setIndicatorText();
