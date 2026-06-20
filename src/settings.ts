@@ -128,7 +128,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     manuscriptAnalysisChunkTokenSize: 1024,
     manuscriptAnalysisTopKChunks: 10,
     embeddingChunkTokenSize: 512,
-    enableEmbeddingWarming: true,
+    enableEmbeddingWarming: false,
     embeddingWarmingDebounceSeconds: 30,
     linterTemperature: 0.3,
     linterMaxOutputTokens: 512,
@@ -504,6 +504,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.manuscriptAnalysisChunkTokenSize))
+                    // settings.ts - no Component lifecycle available; raw addEventListener is required
                     .inputEl.addEventListener('blur', () => {
                         const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 256 && n <= 8192) {
@@ -524,6 +525,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.manuscriptAnalysisTopKChunks))
+                    // settings.ts - no Component lifecycle available; raw addEventListener is required
                     .inputEl.addEventListener('blur', () => {
                         const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 1 && n <= 100) {
@@ -537,6 +539,46 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(content)
+            .setName('Manuscript analysis temperature')
+            .setDesc(
+                'Temperature for manuscript analysis AI responses. Higher values produce more varied output; lower values are more deterministic. Range: 0.0 – 2.0. Default: 0.5.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.manuscriptAnalysisTemperature))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseFloat(text.inputEl.value);
+                        if (!isNaN(n) && n >= 0 && n <= 2) {
+                            this.plugin.settings.manuscriptAnalysisTemperature = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.manuscriptAnalysisTemperature));
+                            new Notice('Value must be a number between 0.0 and 2.0');
+                        }
+                    })
+            );
+
+        new Setting(content)
+            .setName('Manuscript analysis max output tokens')
+            .setDesc(
+                'Maximum tokens per manuscript analysis response. Higher allows more detailed reports but uses more quota. Default: 3072.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.manuscriptAnalysisMaxOutputTokens))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 1 && n <= 65536) {
+                            this.plugin.settings.manuscriptAnalysisMaxOutputTokens = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.manuscriptAnalysisMaxOutputTokens));
+                            new Notice('Value must be a number between 1 and 65536');
+                        }
+                    })
+            );
+
+        new Setting(content)
             .setName('Embedding cache warming')
             .setDesc(
                 'Automatically pre-compute and cache embeddings for each folder containing Markdown files (cast notes, lore, outlines, manuscript chapters). Enables instant semantic retrieval. Root folder is excluded.'
@@ -545,6 +587,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.enableEmbeddingWarming).onChange((value) => {
                     this.plugin.settings.enableEmbeddingWarming = value;
                     void this.plugin.saveSettings();
+                    if (value) {
+                        void this.plugin.warmAllEmbeddingCaches();
+                    }
                 })
             );
 
@@ -556,6 +601,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.embeddingWarmingDebounceSeconds))
+                    // settings.ts - no Component lifecycle available; raw addEventListener is required
                     .inputEl.addEventListener('blur', () => {
                         const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 5 && n <= 600) {
@@ -576,6 +622,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(String(this.plugin.settings.embeddingChunkTokenSize))
+                    // settings.ts - no Component lifecycle available; raw addEventListener is required
                     .inputEl.addEventListener('blur', () => {
                         const n = parseInt(text.inputEl.value, 10);
                         if (!isNaN(n) && n >= 128 && n <= 8192) {
@@ -1318,6 +1365,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     const oldValue = this.plugin.settings.aiDefaultEmbedProvider;
                     if (value === oldValue) return;
 
+                    // Reset dropdown to old value so cancellation doesn't leave stale UI state.
+                    dropdown.setValue(oldValue);
+
                     // Warn that changing the embed model invalidates all cached embeddings.
                     new ConfirmModal(
                         this.app,
@@ -1333,6 +1383,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             if (this.plugin.settings.enableEmbeddingWarming) {
                                 void this.plugin.warmAllEmbeddingCaches();
                             }
+                            // Update dropdown to reflect the confirmed value.
+                            dropdown.setValue(value);
                             new Notice('Quill: Embed model changed. Caches will rebuild in the background.');
                         },
                         'Change model'

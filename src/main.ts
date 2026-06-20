@@ -44,7 +44,7 @@ import {
     type ManuscriptAnalysisMode,
     type ManuscriptScope
 } from './ai/manuscript-analysis';
-import { chunkManuscript, compressChunks, type CompactionStrategy } from './ai/manuscript-compaction';
+import { chunkManuscript, compressChunks, type Chunk, type CompactionStrategy } from './ai/manuscript-compaction';
 import { EmbeddingCache, hashString, rankBySimilarity } from './ai/embedding-cache';
 import { compactConversation } from './ai/compaction';
 import { estimateTokens } from './utils/tokens';
@@ -2194,10 +2194,22 @@ export default class EventideQuillPlugin extends Plugin {
                 try {
                     const embedKey = parseProviderKey(this.settings.aiDefaultEmbedProvider);
                     const embedModelId = embedKey?.modelId || '';
-                    const chunks = chunkManuscript(selectedText, {
+                    const chunkOptions = {
                         targetTokenSize: Math.floor(this.settings.embeddingChunkTokenSize * 0.85),
                         overlap: 0.1
-                    });
+                    };
+
+                    // Chunk each chapter individually to preserve file associations.
+                    const chunks: Chunk[] = [];
+                    for (const chapter of selectedChapters) {
+                        const chapterChunks = chunkManuscript(
+                            chapter.text,
+                            chunkOptions,
+                            chapter.filePath,
+                            chapter.title
+                        );
+                        chunks.push(...chapterChunks);
+                    }
 
                     // Attach hashes for cache lookups.
                     for (const chunk of chunks) {
@@ -2205,28 +2217,16 @@ export default class EventideQuillPlugin extends Plugin {
                     }
 
                     // Group chunks by their source folder for cache lookup.
-                    const folderGroups = new Map<string, typeof chunks>();
-                    for (const chapter of selectedChapters) {
-                        const folder = chapter.filePath.includes('/')
-                            ? chapter.filePath.substring(0, chapter.filePath.lastIndexOf('/'))
+                    const folderGroups = new Map<string, Chunk[]>();
+                    for (const chunk of chunks) {
+                        if (!chunk.filePath) continue;
+                        const folder = chunk.filePath.includes('/')
+                            ? chunk.filePath.substring(0, chunk.filePath.lastIndexOf('/'))
                             : '';
                         if (!folderGroups.has(folder)) {
                             folderGroups.set(folder, []);
                         }
-                    }
-                    // Assign chunks to folders based on selected chapters order.
-                    let chunkIdx = 0;
-                    for (const chapter of selectedChapters) {
-                        const folder = chapter.filePath.includes('/')
-                            ? chapter.filePath.substring(0, chapter.filePath.lastIndexOf('/'))
-                            : '';
-                        const group = folderGroups.get(folder);
-                        if (group && chunkIdx < chunks.length) {
-                            const c = chunks[chunkIdx]!;
-                            c.filePath = chapter.filePath;
-                            group.push(c);
-                            chunkIdx++;
-                        }
+                        folderGroups.get(folder)!.push(chunk);
                     }
 
                     // Load caches per folder and ensure embeddings.
@@ -2255,7 +2255,10 @@ export default class EventideQuillPlugin extends Plugin {
                     compactionNote = ` (embedded: ${ranked.length}/${chunks.length} chunks)`;
                     wasCompacted = true;
                 } catch (err: unknown) {
-                    if (err instanceof Error && err.name === 'AbortError') return;
+                    if (err instanceof Error && err.name === 'AbortError') {
+                        await this.lintPanel?.reviewChatFinished();
+                        return;
+                    }
                     new Notice('Quill: Embedding failed. Sending full text instead.');
                     manuscriptText = selectedText;
                 }
@@ -2355,7 +2358,10 @@ export default class EventideQuillPlugin extends Plugin {
      * Reads each file, strips frontmatter, splits into chapters, extracts entities.
      * Returns null (with a Notice) if no chapters are found.
      */
-    private async resolveManuscriptChapters(activeFile: TFile): Promise<{
+    private async resolveManuscriptChapters(
+        activeFile: TFile,
+        silent = false
+    ): Promise<{
         chapters: ChapterRange[];
         entities: ExtractedEntity[];
         msFile: ManuscriptFileData;
@@ -2377,8 +2383,10 @@ export default class EventideQuillPlugin extends Plugin {
         const splitByHeading = msFile.splitByHeading ?? DEFAULT_SPLIT_BY_HEADING;
         const chapterFiles = this.resolveManuscriptFiles(folder, activeFile.path, includeSubfolders, msFile);
         if (chapterFiles.length === 0) {
-            new Notice('Quill: No manuscript files found for this folder.');
-            this.lintPanel?.reviewError('No manuscript files.');
+            if (!silent) {
+                new Notice('Quill: No manuscript files found for this folder.');
+                this.lintPanel?.reviewError('No manuscript files.');
+            }
             return null;
         }
 
@@ -2397,8 +2405,10 @@ export default class EventideQuillPlugin extends Plugin {
         }
 
         if (chapters.length === 0) {
-            new Notice('Quill: No chapters found in manuscript files.');
-            this.lintPanel?.reviewError('No chapters.');
+            if (!silent) {
+                new Notice('Quill: No chapters found in manuscript files.');
+                this.lintPanel?.reviewError('No chapters.');
+            }
             return null;
         }
 
@@ -2454,7 +2464,7 @@ export default class EventideQuillPlugin extends Plugin {
         const activeFile = this.app.workspace.getActiveFile();
         if (!activeFile || activeFile.extension !== 'md') return null;
 
-        const resolved = await this.resolveManuscriptChapters(activeFile);
+        const resolved = await this.resolveManuscriptChapters(activeFile, true);
         if (!resolved) return null;
 
         let { chapters } = resolved;
@@ -2591,6 +2601,13 @@ export default class EventideQuillPlugin extends Plugin {
             // Load cache and ensure embeddings (incremental).
             const cache = await EmbeddingCache.load(this.app.vault, folder, modelId);
             await cache.ensureEmbeddings(embedProvider, allChunks, modelId);
+
+            // Re-validate model id before persisting — a model change during
+            // warming would leave stale embeddings if we save unchecked.
+            const currentKey = parseProviderKey(this.settings.aiDefaultEmbedProvider);
+            const currentModelId = currentKey?.modelId || '';
+            if (currentModelId !== modelId) return;
+
             await cache.save(this.app.vault);
         } catch {
             // Best-effort warming — failures are non-critical.
@@ -2740,7 +2757,10 @@ export default class EventideQuillPlugin extends Plugin {
                 }
             }
         } catch (err: unknown) {
-            if (err instanceof Error && err.name === 'AbortError') return;
+            if (err instanceof Error && err.name === 'AbortError') {
+                await this.lintPanel?.reviewChatFinished();
+                return;
+            }
             const msg = err instanceof Error ? err.message : String(err);
             await this.lintPanel?.reviewChatError(msg);
             new Notice('Quill: Manuscript analysis chat failed.');

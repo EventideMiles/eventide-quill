@@ -143,6 +143,10 @@ export function buildManuscriptAnalysisMessages(
         'as a narrative system.'
     ];
 
+    if (options.customInstruction) {
+        systemParts.push('', `--- Writer's custom instruction ---`, options.customInstruction);
+    }
+
     if (options.compacted) {
         systemParts.push(
             '',

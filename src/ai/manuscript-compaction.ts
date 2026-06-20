@@ -1,6 +1,5 @@
 import type { AiProvider, ChatMessage } from './provider';
 import { estimateTokens } from '../utils/tokens';
-import { cosineSimilarity } from './embedding-cache';
 
 /** Compaction strategy for manuscript analysis. */
 export type CompactionStrategy = 'full' | 'embed' | 'compress';
@@ -138,41 +137,6 @@ export function chunkManuscript(
 }
 
 /**
- * Embed chunks and rank them by cosine similarity to the query.
- * Returns the top-K chunks.
- */
-export async function rankChunks(
-    provider: AiProvider,
-    chunks: Chunk[],
-    query: string,
-    topK: number = 10,
-    model?: string
-): Promise<Chunk[]> {
-    if (chunks.length === 0) return [];
-
-    const inputs = chunks.map((c) => c.text);
-    inputs.push(query);
-
-    const result = await provider.embed({ input: inputs, model });
-    if (result.embeddings.length < inputs.length) {
-        return chunks.slice(0, topK);
-    }
-
-    const queryEmbedding = result.embeddings[result.embeddings.length - 1]!;
-    const scored: { chunk: Chunk; score: number }[] = [];
-
-    for (let i = 0; i < chunks.length; i++) {
-        const chunkEmbedding = result.embeddings[i];
-        if (!chunkEmbedding) continue;
-        const score = cosineSimilarity(chunkEmbedding, queryEmbedding);
-        scored.push({ chunk: chunks[i]!, score });
-    }
-
-    scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, topK).map((s) => s.chunk);
-}
-
-/**
  * Compress chunks by sending each to the chat LLM for summarization.
  * Returns the concatenated summary text.
  */
@@ -211,7 +175,7 @@ export async function compressChunks(
             messages,
             model: options.model,
             temperature: 0.3,
-            maxTokens: 512,
+            maxTokens: 150,
             signal: options.signal
         });
 

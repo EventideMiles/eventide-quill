@@ -62,6 +62,9 @@ export class ReviewPanel extends AbstractChatPanel {
     private currentManuscriptScope: ManuscriptScope = { kind: 'full' };
     private currentCompactionStrategy: CompactionStrategy = 'embed';
     private manuscriptTokenEstimate: { estimated: number; max: number } | null = null;
+    /** Monotonic counter incremented on every manuscript scope/compaction change.
+     *  Used by setManuscriptTokenEstimate to discard stale promise results. */
+    private manuscriptSettingsVersion = 0;
 
     // --- Shared state ---
     private reportText = '';
@@ -118,10 +121,30 @@ export class ReviewPanel extends AbstractChatPanel {
         this.onManuscriptGenerate = handler;
     }
 
-    /** Update the pre-generation token estimate display for the manuscript engine. */
+    /** Update the pre-generation token estimate display for the manuscript engine.
+     *  Discards the update if a newer scope/compaction request has superseded it. */
     setManuscriptTokenEstimate(estimate: { estimated: number; max: number } | null): void {
+        if (this.manuscriptSettingsVersion !== this._manuscriptEstimateRequestVersion) return;
         this.manuscriptTokenEstimate = estimate;
         if (this.engine === 'manuscript' && this.subtab === 'create' && this.containerEl) this.render();
+    }
+
+    /** Internal version tracker for stale-promise protection in setManuscriptTokenEstimate. */
+    private _manuscriptEstimateRequestVersion = 0;
+
+    /** Request a fresh token estimate.
+     *  Increments the settings version so in-flight older promises are discarded.
+     *  Call this after manuscript scope or compaction changes.
+     *  The caller is responsible for calling render() to update the UI. */
+    refreshManuscriptTokenEstimate(): void {
+        this.manuscriptSettingsVersion++;
+        this._manuscriptEstimateRequestVersion = this.manuscriptSettingsVersion;
+        // The sidebar's setManuscriptTokenEstimate callback is the single source
+        // of truth for fetching estimates.  Trigger a re-render so the sidebar
+        // fires the async estimate request.
+        if (this.containerEl && this.engine === 'manuscript' && this.subtab === 'create') {
+            this.render();
+        }
     }
 
     /** Whether the manuscript engine is the currently selected engine on the Create tab. */
@@ -352,30 +375,43 @@ export class ReviewPanel extends AbstractChatPanel {
     saveConversation(): void {
         const timestamp = new Date().toISOString().slice(0, 10);
         const isCritical = this.activeEngine === 'critical';
-        const defaultName = `${isCritical ? 'quill-analysis' : 'quill-conversation'}-${timestamp}.md`;
-        const title = isCritical ? 'Save analysis report' : 'Save conversation';
+        const isManuscript = this.activeEngine === 'manuscript';
+        const defaultName = `${
+            isCritical ? 'quill-analysis' : isManuscript ? 'quill-manuscript-analysis' : 'quill-conversation'
+        }-${timestamp}.md`;
+        const title = isCritical
+            ? 'Save analysis report'
+            : isManuscript
+              ? 'Save manuscript analysis'
+              : 'Save conversation';
         new FilenameModal(
             this.app,
             defaultName,
             async (path: string) => {
                 const normalizedPath = path.endsWith('.md') ? path : `${path}.md`;
                 const lines: string[] = [];
-                lines.push(isCritical ? '# Quill critical analysis' : '# Quill feedback conversation');
+                lines.push(
+                    isCritical
+                        ? '# Quill critical analysis'
+                        : isManuscript
+                          ? '# Quill manuscript analysis'
+                          : '# Quill feedback conversation'
+                );
                 lines.push('');
                 lines.push(`*Saved on ${new Date().toLocaleString()}*`);
-                if (isCritical) {
+                if (isCritical || isManuscript) {
                     lines.push(`*Mode: ${this.headerLabel}*`);
                 }
                 lines.push('');
 
                 if (this.reportText) {
-                    lines.push(isCritical ? '## Report' : '## Initial feedback');
+                    lines.push(isCritical || isManuscript ? '## Report' : '## Initial feedback');
                     lines.push('');
                     lines.push(this.reportText);
                     lines.push('');
                 }
                 if (this.chatHistory.length > 0) {
-                    lines.push(isCritical ? '## Follow-up discussion' : '## Conversation');
+                    lines.push(isCritical || isManuscript ? '## Follow-up discussion' : '## Conversation');
                     lines.push('');
                     for (const msg of this.chatHistory) {
                         if (msg.role === 'system') {
@@ -492,7 +528,7 @@ export class ReviewPanel extends AbstractChatPanel {
                 cls: `quill-sidebar__subtab${this.subtab === tab.id ? ' quill-sidebar__subtab--active' : ''}`,
                 text: tab.label
             });
-            btn.addEventListener('click', () => {
+            this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.subtab = tab.id;
                 this.render();
             });
@@ -538,7 +574,7 @@ export class ReviewPanel extends AbstractChatPanel {
                     : 'e.g. "Focus on whether the protagonist\'s change of heart is earned."'
         });
         customArea.value = this.customInstruction;
-        customArea.addEventListener('input', () => {
+        this.renderEvents.registerDomEvent(customArea, 'input', () => {
             this.customInstruction = customArea.value;
         });
 
@@ -553,7 +589,7 @@ export class ReviewPanel extends AbstractChatPanel {
             cls: 'quill-form__submit mod-cta',
             text: buttonLabel
         });
-        generateBtn.addEventListener('click', () => this.triggerGenerate());
+        this.renderEvents.registerDomEvent(generateBtn, 'click', () => this.triggerGenerate());
     }
 
     private renderEnginePicker(container: HTMLElement): void {
@@ -572,7 +608,7 @@ export class ReviewPanel extends AbstractChatPanel {
             if (this.engine === eng.id) btn.addClass('quill-option-picker__option--active');
             btn.createEl('span', { cls: 'quill-option-picker__name', text: eng.label });
             btn.createEl('span', { cls: 'quill-option-picker__desc', text: eng.desc });
-            btn.addEventListener('click', () => {
+            this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.engine = eng.id;
                 if (this.containerEl) this.render();
             });
@@ -622,7 +658,7 @@ export class ReviewPanel extends AbstractChatPanel {
                 item.createEl('span', { cls: 'quill-review-panel__file-name', text: name });
                 item.createEl('span', { cls: 'quill-review-panel__file-tokens', text: `~${tokens} tokens` });
                 const remove = item.createEl('button', { cls: 'quill-review-panel__file-remove', text: '\u00d7' });
-                remove.addEventListener('click', () => this.removeContextFile(filePath));
+                this.renderEvents.registerDomEvent(remove, 'click', () => this.removeContextFile(filePath));
             }
         }
 
@@ -630,7 +666,7 @@ export class ReviewPanel extends AbstractChatPanel {
             cls: 'quill-review-panel__file-add',
             text: '+ add file'
         });
-        addBtn.addEventListener('click', () => {
+        this.renderEvents.registerDomEvent(addBtn, 'click', () => {
             const exclude = [...this.contextFilePaths, ...this.chatContextFiles.getFiles()];
             new VaultFileSuggestModal(
                 this.app,
@@ -653,7 +689,7 @@ export class ReviewPanel extends AbstractChatPanel {
             const name = btn.createEl('span', { cls: 'quill-option-picker__name', text: persona.name });
             name.title = persona.description;
             btn.createEl('span', { cls: 'quill-option-picker__desc', text: persona.description });
-            btn.addEventListener('click', () => {
+            this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.triggerEditorial(persona.id);
             });
         }
@@ -671,7 +707,7 @@ export class ReviewPanel extends AbstractChatPanel {
             if (this.currentMode === mode.id) btn.addClass('quill-option-picker__option--active');
             btn.createEl('span', { cls: 'quill-option-picker__name', text: mode.label });
             btn.createEl('span', { cls: 'quill-option-picker__desc', text: mode.description });
-            btn.addEventListener('click', () => {
+            this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.currentMode = mode.id;
                 if (this.containerEl) this.render();
             });
@@ -696,7 +732,7 @@ export class ReviewPanel extends AbstractChatPanel {
                 text: scope.label,
                 title: scope.hint
             });
-            btn.addEventListener('click', () => {
+            this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.currentScope = scope.id;
                 if (this.containerEl) this.render();
             });
@@ -715,7 +751,7 @@ export class ReviewPanel extends AbstractChatPanel {
             if (this.currentManuscriptMode === mode.id) btn.addClass('quill-option-picker__option--active');
             btn.createEl('span', { cls: 'quill-option-picker__name', text: mode.label });
             btn.createEl('span', { cls: 'quill-option-picker__desc', text: mode.description });
-            btn.addEventListener('click', () => {
+            this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.currentManuscriptMode = mode.id;
                 if (this.containerEl) this.render();
             });
@@ -738,9 +774,9 @@ export class ReviewPanel extends AbstractChatPanel {
             text: 'Full manuscript',
             title: 'Analyze the entire manuscript (all chapters).'
         });
-        fullBtn.addEventListener('click', () => {
+        this.renderEvents.registerDomEvent(fullBtn, 'click', () => {
             this.currentManuscriptScope = { kind: 'full' };
-            if (this.containerEl) this.render();
+            this.refreshManuscriptTokenEstimate();
         });
 
         const surrBtn = scopeRow.createEl('button', {
@@ -748,9 +784,9 @@ export class ReviewPanel extends AbstractChatPanel {
             text: 'Surrounding chapters',
             title: 'Chapter at Cursor plus n chapters before and after.'
         });
-        surrBtn.addEventListener('click', () => {
+        this.renderEvents.registerDomEvent(surrBtn, 'click', () => {
             this.currentManuscriptScope = { kind: 'surrounding', count: 1 };
-            if (this.containerEl) this.render();
+            this.refreshManuscriptTokenEstimate();
         });
 
         if (this.currentManuscriptScope.kind === 'surrounding') {
@@ -763,9 +799,9 @@ export class ReviewPanel extends AbstractChatPanel {
                 text: '\u2212',
                 title: 'Decrease surrounding chapter count'
             });
-            decBtn.addEventListener('click', () => {
+            this.renderEvents.registerDomEvent(decBtn, 'click', () => {
                 this.currentManuscriptScope = { kind: 'surrounding', count: Math.max(1, count - 1) };
-                if (this.containerEl) this.render();
+                this.refreshManuscriptTokenEstimate();
             });
 
             countRow.createEl('span', {
@@ -778,9 +814,9 @@ export class ReviewPanel extends AbstractChatPanel {
                 text: '+',
                 title: 'Increase surrounding chapter count'
             });
-            incBtn.addEventListener('click', () => {
+            this.renderEvents.registerDomEvent(incBtn, 'click', () => {
                 this.currentManuscriptScope = { kind: 'surrounding', count: Math.min(10, count + 1) };
-                if (this.containerEl) this.render();
+                this.refreshManuscriptTokenEstimate();
             });
         }
     }
@@ -816,9 +852,9 @@ export class ReviewPanel extends AbstractChatPanel {
                 text: label,
                 title: strat.hint
             });
-            btn.addEventListener('click', () => {
+            this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.currentCompactionStrategy = strat.id;
-                if (this.containerEl) this.render();
+                this.refreshManuscriptTokenEstimate();
             });
         }
 
@@ -946,7 +982,7 @@ export class ReviewPanel extends AbstractChatPanel {
                 cls: 'quill-review-panel__nav-btn',
                 text: 'New review'
             });
-            newBtn.addEventListener('click', () => this.resetResults());
+            this.renderEvents.registerDomEvent(newBtn, 'click', () => this.resetResults());
 
             // Chat section
             const chatSection = scroll.createDiv({ cls: 'quill-chat-panel__section' });
@@ -984,7 +1020,7 @@ export class ReviewPanel extends AbstractChatPanel {
                 cls: 'quill-review-panel__nav-btn',
                 text: 'Back to create'
             });
-            retryBtn.addEventListener('click', () => this.resetResults());
+            this.renderEvents.registerDomEvent(retryBtn, 'click', () => this.resetResults());
         }
 
         // Bottom area (chat input) — only when complete
@@ -1003,7 +1039,7 @@ export class ReviewPanel extends AbstractChatPanel {
             text: '\u00b1',
             title: 'Add file to context'
         });
-        addCtxBtn.addEventListener('click', () => {
+        this.renderEvents.registerDomEvent(addCtxBtn, 'click', () => {
             const exclude =
                 this.activeEngine === 'editorial'
                     ? [...this.chatContextFiles.getFiles(), ...this.contextFilePaths]
@@ -1015,19 +1051,19 @@ export class ReviewPanel extends AbstractChatPanel {
             text: '\ud83d\udcbe',
             title: 'Save to file'
         });
-        saveBtn.addEventListener('click', () => this.saveConversation());
+        this.renderEvents.registerDomEvent(saveBtn, 'click', () => this.saveConversation());
         const compactBtn = btnRow.createEl('button', {
             cls: 'quill-chat-panel__action-btn quill-chat-panel__action-btn--compact',
             text: '\u00bb\u00bb',
             title: 'Compact conversation'
         });
-        compactBtn.addEventListener('click', () => this.onCompact?.());
+        this.renderEvents.registerDomEvent(compactBtn, 'click', () => this.onCompact?.());
         const newChatBtn = btnRow.createEl('button', {
             cls: 'quill-chat-panel__action-btn',
             text: '\u2713',
             title: 'New chat'
         });
-        newChatBtn.addEventListener('click', () => this.onNewChat?.(false));
+        this.renderEvents.registerDomEvent(newChatBtn, 'click', () => this.onNewChat?.(false));
         btnRow.createEl('div', { cls: 'quill-chat-panel__btn-spacer' });
         const actionBtn = btnRow.createEl('button', {
             cls: `quill-cowriter-panel__send-btn mod-cta${this.chatLoading ? ' quill-cowriter-panel__send-btn--stop' : ''}`,
@@ -1064,11 +1100,11 @@ export class ReviewPanel extends AbstractChatPanel {
             this.onChatMessage?.(text);
         };
         const doStop = () => this.onCancelGeneration?.();
-        actionBtn.addEventListener('click', () => {
+        this.renderEvents.registerDomEvent(actionBtn, 'click', () => {
             if (this.chatLoading) doStop();
             else doSend();
         });
-        input.addEventListener('keydown', (e) => {
+        this.renderEvents.registerDomEvent(input, 'keydown', (e) => {
             if (this.chatLoading) return;
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();

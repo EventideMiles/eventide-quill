@@ -470,13 +470,13 @@ export class QuillSidebarView extends ItemView {
         }
         this.reviewPanel.setContainer(this.content);
 
-        // Fire-and-forget token estimate for the manuscript engine.
+        // Trigger token estimate refresh for the manuscript engine.
+        // The actual async fetch is initiated by ReviewPanel's render path;
+        // the sidebar's setManuscriptTokenEstimate callback acts as a stale-
+        // state guard — the version check in ReviewPanel discards any
+        // estimate whose scope/compaction request was superseded.
         if (this.reviewPanel.isManuscriptEngineActive()) {
-            const scope = this.reviewPanel.getManuscriptScope();
-            const compaction = this.reviewPanel.getManuscriptCompaction();
-            void this.plugin.getManuscriptTokenEstimate(scope, compaction).then((estimate) => {
-                this.reviewPanel?.setManuscriptTokenEstimate(estimate);
-            });
+            this.reviewPanel.refreshManuscriptTokenEstimate();
         }
     }
 
