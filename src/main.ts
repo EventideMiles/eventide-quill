@@ -2654,6 +2654,17 @@ export default class EventideQuillPlugin extends Plugin {
      * vectors that can't be mixed.
      */
     async invalidateAllEmbeddingCaches(): Promise<void> {
+        // Cancel any pending warming timers so they don't fire after
+        // invalidation and attempt to persist cache with the old model.
+        this.clearEmbeddingWarmingTimers();
+
+        // Wait for in-flight warming operations to finish so they don't
+        // recreate stale cache files after deletion. The warmers' own
+        // re-validation check (modelId mismatch) provides a safety net.
+        while (this.embeddingWarmingActive.size > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, 50));
+        }
+
         const allFiles = this.app.vault.getFiles();
         const cacheFiles = allFiles.filter((f) => f.name === 'quill-embeddings.json');
         for (const file of cacheFiles) {
