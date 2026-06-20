@@ -28,8 +28,15 @@
         font-size: var(--font-ui-small);
         font-family: var(--font-interface);
         text-align: center;
-        transition: color $transition-base, border-color $transition-base;
+        transition:
+            color $transition-base,
+            border-color $transition-base;
         border-bottom: 2px solid transparent;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: $space-sm;
+        overflow: hidden;
 
         &:hover {
             color: var(--text-normal);
@@ -39,6 +46,53 @@
             color: var(--text-accent);
             border-bottom-color: var(--text-accent);
         }
+    }
+
+    &__tab-icon {
+        display: inline-flex;
+        vertical-align: middle;
+        flex-shrink: 0;
+    }
+
+    &__tab-label {
+        // Hidden in compact mode; the icon-only tooltip is provided via title attribute.
+    }
+
+    &--compact &__tab-label {
+        display: none;
+    }
+
+    // Watermark mode: the icon sits absolutely positioned behind the label text
+    // as a ghosted backdrop. This reclaims the horizontal space the icon normally
+    // occupies, so the label has room to breathe in medium-width sidebars.
+    &--watermark &__tab {
+        position: relative;
+    }
+
+    &--watermark &__tab-icon {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 1.5em;
+        height: 1.5em;
+        opacity: 0.8;
+        color: var(--text-accent);
+        pointer-events: none;
+    }
+
+    &--watermark &__tab-label {
+        position: relative;
+        z-index: 1;
+    }
+
+    &__header {
+        padding: $space-sm $space-md;
+        font-size: var(--font-ui-small);
+        font-weight: var(--font-semibold);
+        color: var(--text-muted);
+        border-bottom: 1px solid var(--background-modifier-border);
+        flex-shrink: 0;
     }
 
     &__content {
@@ -68,7 +122,9 @@
         font-size: var(--font-ui-smaller);
         font-family: var(--font-interface);
         text-align: center;
-        transition: color $transition-base, border-color $transition-base;
+        transition:
+            color $transition-base,
+            border-color $transition-base;
         border-bottom: 2px solid transparent;
 
         &:hover {

@@ -1,4 +1,4 @@
-import { Component, ItemView, MarkdownView, Notice, WorkspaceLeaf } from 'obsidian';
+import { Component, ItemView, MarkdownView, Notice, setIcon, WorkspaceLeaf } from 'obsidian';
 import { LintResult, RULE_INFO, FIXABLE_RULES } from '../core/linter/types';
 import { FIXES } from '../core/linter/fixes';
 import { renderChangeCard, renderChangeBulkBar } from './change-card';
@@ -42,6 +42,7 @@ export class QuillSidebarView extends ItemView {
     private reviewPanel: ReviewPanel | null = null;
     /** Co-writer panel for the Co-writer tab. */
     private coWriterPanel: CoWriterPanel | null = null;
+    private resizeObserver: ResizeObserver | null = null;
 
     /** Create the sidebar view for the given workspace leaf. */
     constructor(leaf: WorkspaceLeaf, plugin: EventideQuillPlugin) {
@@ -81,6 +82,21 @@ export class QuillSidebarView extends ItemView {
         this.content = this.container.createDiv({ cls: 'quill-sidebar__content' });
         this.render();
 
+        // Observe the content element for width changes to toggle responsive modes:
+        //   >= 480px → normal (icon + label side by side)
+        //   380-480px → watermark (icon behind text as ghost, no layout space)
+        //   < 380px  → compact (icons only, labels hidden)
+        this.resizeObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const width = entry.contentRect.width;
+                const compact = width < 380;
+                const watermark = !compact && width < 480;
+                this.container.classList.toggle('quill-sidebar--compact', compact);
+                this.container.classList.toggle('quill-sidebar--watermark', watermark);
+            }
+        });
+        this.resizeObserver.observe(this.contentEl);
+
         // Re-render context, co-writer, and review tabs when the active file
         // changes (each shows the active document header / derives from it).
         this.registerEvent(
@@ -95,6 +111,12 @@ export class QuillSidebarView extends ItemView {
                 }
             })
         );
+    }
+
+    /** Clean up the ResizeObserver when the view is destroyed. */
+    onunload() {
+        this.resizeObserver?.disconnect();
+        this.resizeObserver = null;
     }
 
     /** Update the stored results and cache the editor text for passage context. */
@@ -286,6 +308,7 @@ export class QuillSidebarView extends ItemView {
 
         if (this.activeTopTab === 'linter') {
             this.renderLinterSubTabBar();
+            this.renderHeader();
             if (this.activeLinterSubTab === 'results') {
                 this.renderResultsTab();
             } else if (this.activeLinterSubTab === 'pending') {
@@ -294,10 +317,12 @@ export class QuillSidebarView extends ItemView {
                 this.renderDetailsTab();
             }
         } else if (this.activeTopTab === 'context') {
+            this.renderHeader();
             const ctxScroll = this.content.createDiv({ cls: 'quill-context-panel__scroll' });
             renderContextTab(ctxScroll, this.currentAssembly, this.plugin, this.renderEvents);
         } else if (this.activeTopTab === 'dashboard') {
             this.renderDashboardSubTabBar();
+            this.renderHeader();
             if (this.dashboardSubTab === 'pending') {
                 this.renderPendingTab();
             } else if (this.dashboardSubTab === 'settings') {
@@ -308,29 +333,47 @@ export class QuillSidebarView extends ItemView {
                 renderDashboardTab(dashScroll, this.plugin, this.renderEvents);
             }
         } else if (this.activeTopTab === 'cowriter') {
+            this.renderHeader();
             this.renderCoWriterTab();
         } else {
+            this.renderHeader();
             this.renderReviewTab();
         }
     }
 
-    /** Render the top-level tab bar. */
+    /** Render the top-level tab bar with icons, labels, and hover tooltips. */
     private renderTopTabBar() {
-        const tabs: { id: TopTab; label: string }[] = [
-            { id: 'dashboard', label: 'Dashboard' },
-            { id: 'linter', label: 'Linter' },
-            { id: 'context', label: 'Context' },
-            { id: 'review', label: 'Review' },
-            { id: 'cowriter', label: 'Co-writer' }
+        const tabs: { id: TopTab; label: string; icon: string }[] = [
+            { id: 'dashboard', label: 'Dashboard', icon: 'gauge' },
+            { id: 'linter', label: 'Linter', icon: 'list-checks' },
+            { id: 'context', label: 'Context', icon: 'file-stack' },
+            { id: 'review', label: 'Review', icon: 'message-square-text' },
+            { id: 'cowriter', label: 'Co-writer', icon: 'feather' }
         ];
 
         for (const tab of tabs) {
             const btn = this.tabBar.createEl('button', {
                 cls: `quill-sidebar__tab${this.activeTopTab === tab.id ? ' quill-sidebar__tab--active' : ''}`,
-                text: tab.label
+                attr: { title: tab.label }
             });
+            const iconEl = btn.createEl('span', { cls: 'quill-sidebar__tab-icon' });
+            setIcon(iconEl, tab.icon);
+            btn.createEl('span', { cls: 'quill-sidebar__tab-label', text: tab.label });
             this.renderEvents!.registerDomEvent(btn, 'click', () => this.switchTopTab(tab.id));
         }
+    }
+
+    /** Render a persistent header showing the current tab name below the subtab bar. */
+    private renderHeader(): void {
+        const labels: Record<TopTab, string> = {
+            dashboard: 'Dashboard',
+            linter: 'Linter',
+            context: 'Context',
+            review: 'Review',
+            cowriter: 'Co-writer'
+        };
+        const el = this.content.createDiv({ cls: 'quill-sidebar__header' });
+        el.setText(labels[this.activeTopTab]);
     }
 
     /** Render the dashboard sub-tab bar (Overview | Settings | Pending). */
