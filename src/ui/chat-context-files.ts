@@ -1,4 +1,4 @@
-import { App, TFile } from 'obsidian';
+import { App, normalizePath, TFile } from 'obsidian';
 
 /**
  * State + pill-bar DOM for a list of context files added mid-conversation.
@@ -86,7 +86,7 @@ export class ChatContextFiles {
 
     private async refreshTokenFor(filePath: string): Promise<void> {
         try {
-            const file = this.app.vault.getAbstractFileByPath(filePath);
+            const file = this.app.vault.getAbstractFileByPath(normalizePath(filePath));
             if (file instanceof TFile) {
                 const content = await this.app.vault.cachedRead(file);
                 // Guard against removal during the async read: don't reintroduce

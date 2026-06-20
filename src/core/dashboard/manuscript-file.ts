@@ -1,4 +1,4 @@
-import { Notice, Vault } from 'obsidian';
+import { normalizePath, Notice, Vault } from 'obsidian';
 import type { EntityType } from '../context-engine/types';
 import type { ManuscriptSnapshot } from './types';
 
@@ -48,8 +48,8 @@ function emptyManuscriptFileData(): ManuscriptFileData {
 
 /** Resolve the vault-relative path to the manuscript data file. */
 export function manuscriptDataPath(folder: string): string {
-    const clean = folder.replace(/^\/+|\/+$/g, '');
-    return clean.length > 0 ? `${clean}/${MANUSCRIPT_DATA_FILENAME}` : MANUSCRIPT_DATA_FILENAME;
+    const clean = normalizePath(folder);
+    return clean.length > 0 ? normalizePath(`${clean}/${MANUSCRIPT_DATA_FILENAME}`) : MANUSCRIPT_DATA_FILENAME;
 }
 
 /**
@@ -132,7 +132,7 @@ export async function saveManuscriptFile(vault: Vault, folder: string, data: Man
     try {
         // Ensure parent directory exists (folder should already exist since
         // the manuscript files live there, but guard just in case).
-        const dir = folder.replace(/^\/+|\/+$/g, '');
+        const dir = normalizePath(folder);
         if (dir.length > 0 && !(await vault.adapter.exists(dir))) {
             await vault.adapter.mkdir(dir);
         }
