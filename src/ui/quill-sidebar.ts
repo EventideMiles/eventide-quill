@@ -113,11 +113,10 @@ export class QuillSidebarView extends ItemView {
         );
     }
 
-    /** Clean up the ResizeObserver when the view is closed. */
-    onClose(): Promise<void> {
+    /** Clean up the ResizeObserver when the view is destroyed. */
+    onunload() {
         this.resizeObserver?.disconnect();
         this.resizeObserver = null;
-        return super.onClose();
     }
 
     /** Update the stored results and cache the editor text for passage context. */
