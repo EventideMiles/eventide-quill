@@ -10,6 +10,7 @@ import type { CompactionStrategy } from '../ai/manuscript-compaction';
 import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
+import { buildEmbedFolderPath, embedFolderLabel, parseEmbedFolderPath } from '../utils/vault-files';
 import { FilenameModal } from './filename-modal';
 import { ChatContextFiles } from './chat-context-files';
 
@@ -39,6 +40,27 @@ export type ScopeChoice = AnalysisScope | 'auto';
 export class ReviewPanel extends AbstractChatPanel {
     private subtab: ReviewSubtab = 'create';
     private resultsState: ResultsState = 'idle';
+    /** Whether to show "full embed" folder options in the file picker. Set by sidebar from plugin settings. */
+    private showFullEmbed = false;
+    /** Top-K chunk count for embed folder token estimation. Set by sidebar from plugin settings. */
+    private embeddingsTopK = 10;
+    /** Per-folder top-K overrides. Set by sidebar from plugin settings. */
+    private folderTopKOverrides: Record<string, number> = {};
+
+    /** Set whether the "full embed" folder option should appear in file pickers. */
+    setShowFullEmbed(value: boolean): void {
+        this.showFullEmbed = value;
+    }
+
+    /** Set the embeddings top-K chunk count for folder token estimation. */
+    setEmbeddingsTopK(value: number): void {
+        this.embeddingsTopK = value;
+    }
+
+    /** Set the per-folder top-K overrides map. */
+    setFolderTopKOverrides(overrides: Record<string, number>): void {
+        this.folderTopKOverrides = overrides;
+    }
 
     // --- Engine selection ---
     /** Which engine the Create tab is currently configuring. */
@@ -179,13 +201,50 @@ export class ReviewPanel extends AbstractChatPanel {
         if (this.contextFilePaths.includes(filePath)) return;
         this.contextFilePaths.push(filePath);
         try {
-            const file = this.app.vault.getAbstractFileByPath(filePath);
-            if (file instanceof TFile) {
-                const content = await this.app.vault.cachedRead(file);
-                // Guard against removal during the async read: only record a
-                // token count if the file is still selected.
+            const parsed = parseEmbedFolderPath(filePath);
+            if (parsed) {
+                // Read the cache file directly (skip EmbeddingCache.load —
+                // that requires a matching modelId) to estimate tokens from
+                // chunk texts. For top-K: average chunk size × embeddingsTopK.
+                // For full: all chunk texts.
+                const cachePath = normalizePath(`${parsed.folderPath}/quill-embeddings.json`);
+                const entries: { chunkText?: string }[] = [];
+                try {
+                    const exists = await this.app.vault.adapter.exists(cachePath);
+                    if (exists) {
+                        const raw = await this.app.vault.adapter.read(cachePath);
+                        const data = JSON.parse(raw) as { entries?: { chunkText?: string }[] };
+                        if (data && Array.isArray(data.entries)) {
+                            entries.push(...data.entries);
+                        }
+                    }
+                } catch {
+                    // Best-effort
+                }
                 if (this.contextFilePaths.includes(filePath)) {
-                    this.contextFileTokens.set(filePath, Math.ceil(content.length / 4));
+                    let totalChars = 0;
+                    if (parsed.mode === 'full' || entries.length === 0) {
+                        for (const entry of entries) {
+                            totalChars += (entry.chunkText ?? '').length;
+                        }
+                    } else {
+                        let avgChars = 0;
+                        for (const entry of entries) {
+                            avgChars += (entry.chunkText ?? '').length;
+                        }
+                        avgChars = Math.ceil(avgChars / entries.length);
+                        const topK = this.folderTopKOverrides[parsed.folderPath] ?? this.embeddingsTopK;
+                        totalChars = avgChars * Math.min(topK, entries.length);
+                    }
+                    this.contextFileTokens.set(filePath, Math.ceil(totalChars / 4));
+                }
+            } else {
+                const file = this.app.vault.getAbstractFileByPath(filePath);
+                if (file instanceof TFile) {
+                    const content = await this.app.vault.cachedRead(file);
+                    if (this.contextFilePaths.includes(filePath)) {
+                        this.contextFileTokens.set(filePath, Math.ceil(content.length / 4));
+                    }
                 }
             }
         } catch {
@@ -654,7 +713,10 @@ export class ReviewPanel extends AbstractChatPanel {
             for (const filePath of this.contextFilePaths) {
                 const tokens = this.contextFileTokens.get(filePath) ?? 0;
                 const item = list.createDiv({ cls: 'quill-review-panel__file-item' });
-                const name = filePath.split('/').pop() ?? filePath;
+                const parsed = parseEmbedFolderPath(filePath);
+                const name = parsed
+                    ? embedFolderLabel(parsed.folderPath, parsed.mode)
+                    : (filePath.split('/').pop() ?? filePath);
                 item.createEl('span', { cls: 'quill-review-panel__file-name', text: name });
                 item.createEl('span', { cls: 'quill-review-panel__file-tokens', text: `~${tokens} tokens` });
                 const remove = item.createEl('button', { cls: 'quill-review-panel__file-remove', text: '\u00d7' });
@@ -670,11 +732,14 @@ export class ReviewPanel extends AbstractChatPanel {
             const exclude = [...this.contextFilePaths, ...this.chatContextFiles.getFiles()];
             new VaultFileSuggestModal(
                 this.app,
-                (file) => {
-                    void this.addContextFile(file.path);
+                (item) => {
+                    const path =
+                        item.kind === 'file' ? item.file.path : buildEmbedFolderPath(item.folderPath, item.mode);
+                    void this.addContextFile(path);
                 },
                 exclude,
-                'Select a manuscript to include as context...'
+                'Select a manuscript to include as context...',
+                this.showFullEmbed
             ).open();
         });
     }
@@ -1044,7 +1109,17 @@ export class ReviewPanel extends AbstractChatPanel {
                 this.activeEngine === 'editorial'
                     ? [...this.chatContextFiles.getFiles(), ...this.contextFilePaths]
                     : [...this.chatContextFiles.getFiles()];
-            new VaultFileSuggestModal(this.app, (file) => void this.addChatContextFile(file.path), exclude).open();
+            new VaultFileSuggestModal(
+                this.app,
+                (item) => {
+                    const path =
+                        item.kind === 'file' ? item.file.path : buildEmbedFolderPath(item.folderPath, item.mode);
+                    void this.addChatContextFile(path);
+                },
+                exclude,
+                undefined,
+                this.showFullEmbed
+            ).open();
         });
         const saveBtn = btnRow.createEl('button', {
             cls: 'quill-chat-panel__action-btn',

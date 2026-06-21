@@ -1,6 +1,55 @@
 import { normalizePath, TFile, Vault } from 'obsidian';
 import type { ChatMessage } from '../ai/provider';
 
+/** Path prefix for a top-K embedded folder in the context file list. */
+export const EMBED_PATH_PREFIX = 'embed:';
+/** Path prefix for a full-embed folder in the context file list. */
+export const EMBED_FULL_PATH_PREFIX = 'embed-full:';
+
+/** Check if a context file path represents an embedded folder. */
+export function isEmbedFolderPath(path: string): boolean {
+    return path.startsWith(EMBED_PATH_PREFIX) || path.startsWith(EMBED_FULL_PATH_PREFIX);
+}
+
+/** Parse the folder path and mode from an embed path. */
+export function parseEmbedFolderPath(path: string): { folderPath: string; mode: 'top-k' | 'full' } | null {
+    if (path.startsWith(EMBED_FULL_PATH_PREFIX)) {
+        return { folderPath: path.slice(EMBED_FULL_PATH_PREFIX.length), mode: 'full' };
+    }
+    if (path.startsWith(EMBED_PATH_PREFIX)) {
+        return { folderPath: path.slice(EMBED_PATH_PREFIX.length), mode: 'top-k' };
+    }
+    return null;
+}
+
+/** Build an embed path for a folder. */
+export function buildEmbedFolderPath(folderPath: string, mode: 'top-k' | 'full'): string {
+    return mode === 'full' ? `${EMBED_FULL_PATH_PREFIX}${folderPath}` : `${EMBED_PATH_PREFIX}${folderPath}`;
+}
+
+/** Get the display label for an embedded folder item. */
+export function embedFolderLabel(folderName: string, mode: 'top-k' | 'full'): string {
+    return mode === 'full' ? `${folderName} full embed` : `${folderName} embedded`;
+}
+
+/**
+ * Find all folders that have a quill-embeddings.json cache file.
+ * Synchronous — uses TFile metadata already loaded by Obsidian.
+ * @param allFiles All files in the vault (from vault.getFiles()).
+ * @returns A set of folder paths (vault-relative, no trailing slash).
+ */
+export function findEmbeddedFolders(allFiles: TFile[]): Set<string> {
+    const folders = new Set<string>();
+    for (const file of allFiles) {
+        if (file.name !== 'quill-embeddings.json') continue;
+        const parentPath = file.parent?.path ?? '';
+        if (parentPath && parentPath !== '/') {
+            folders.add(parentPath);
+        }
+    }
+    return folders;
+}
+
 /**
  * Read a single vault file's content as raw text, capped to maxChars.
  * Best-effort: returns empty string if the file cannot be found or read.

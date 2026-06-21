@@ -49,9 +49,12 @@ export interface EventideQuillSettings {
     manuscriptAnalysisTemperature: number;
     manuscriptAnalysisMaxOutputTokens: number;
     manuscriptAnalysisChunkTokenSize: number;
-    manuscriptAnalysisTopKChunks: number;
+    embeddingsTopKChunks: number;
     embeddingChunkTokenSize: number;
     enableEmbeddingWarming: boolean;
+    enableFullEmbedPickerOption: boolean;
+    folderTopKOverrides: Record<string, number>;
+    enableDebugLogging: boolean;
     embeddingWarmingDebounceSeconds: number;
     linterTemperature: number;
     linterMaxOutputTokens: number;
@@ -130,9 +133,12 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     manuscriptAnalysisTemperature: 0.5,
     manuscriptAnalysisMaxOutputTokens: 3072,
     manuscriptAnalysisChunkTokenSize: 1024,
-    manuscriptAnalysisTopKChunks: 10,
+    embeddingsTopKChunks: 10,
     embeddingChunkTokenSize: 512,
     enableEmbeddingWarming: false,
+    enableFullEmbedPickerOption: false,
+    folderTopKOverrides: {},
+    enableDebugLogging: false,
     embeddingWarmingDebounceSeconds: 30,
     linterTemperature: 0.3,
     linterMaxOutputTokens: 512,
@@ -359,6 +365,58 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         });
     }
 
+    /** Collect unique folder paths from the vault's markdown files. */
+    private getVaultFolders(): string[] {
+        const folderSet = new Set<string>();
+        for (const file of this.app.vault.getMarkdownFiles()) {
+            const parent = file.parent;
+            if (parent && parent.path !== '/') {
+                folderSet.add(parent.path);
+            }
+        }
+        return [...folderSet].sort((a, b) => a.localeCompare(b));
+    }
+
+    /** Render the list of folder top-K override rows. */
+    private renderFolderOverrides(container: HTMLElement): void {
+        container.empty();
+        const entries = Object.entries(this.plugin.settings.folderTopKOverrides).sort((a, b) =>
+            a[0].localeCompare(b[0])
+        );
+
+        for (const [folder, count] of entries) {
+            const row = container.createDiv({ cls: 'quill-folder-override-row' });
+            row.createEl('span', { cls: 'quill-folder-override-row__name', text: folder });
+
+            const input = row.createEl('input', {
+                cls: 'quill-folder-override-row__input',
+                type: 'number',
+                value: String(count),
+                attr: { min: '1', max: '100' }
+            });
+            input.addEventListener('blur', () => {
+                const n = parseInt(input.value, 10);
+                if (!isNaN(n) && n >= 1 && n <= 100) {
+                    this.plugin.settings.folderTopKOverrides[folder] = n;
+                    void this.plugin.saveSettings();
+                } else {
+                    input.value = String(this.plugin.settings.folderTopKOverrides[folder]);
+                    new Notice('Value must be between 1 and 100');
+                }
+            });
+
+            const removeBtn = row.createEl('button', {
+                cls: 'quill-folder-override-row__remove',
+                text: '\u00d7'
+            });
+            removeBtn.addEventListener('click', () => {
+                delete this.plugin.settings.folderTopKOverrides[folder];
+                void this.plugin.saveSettings();
+                this.renderFolderOverrides(container);
+            });
+        }
+    }
+
     /** Render the welcome tab (onboarding + feature overview). */
     private renderWelcomeTab(containerEl: HTMLElement): void {
         const content = containerEl.createEl('div', { cls: 'quill-settings-content-welcome' });
@@ -500,6 +558,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 })
             );
 
+        // --- Analysis settings ---
+        new Setting(content).setName('Analysis').setHeading();
+
         new Setting(content)
             .setName('Compression chunk size (tokens)')
             .setDesc(
@@ -517,27 +578,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         } else {
                             text.setValue(String(this.plugin.settings.manuscriptAnalysisChunkTokenSize));
                             new Notice('Value must be a number between 256 and 8192');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Manuscript top-k chunks')
-            .setDesc(
-                'Number of chunks to retrieve when using embed compaction. Higher includes more context; lower is more focused. Default: 10.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.manuscriptAnalysisTopKChunks))
-                    // settings.ts - no Component lifecycle available; raw addEventListener is required
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1 && n <= 100) {
-                            this.plugin.settings.manuscriptAnalysisTopKChunks = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.manuscriptAnalysisTopKChunks));
-                            new Notice('Value must be a number between 1 and 100');
                         }
                     })
             );
@@ -578,6 +618,30 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         } else {
                             text.setValue(String(this.plugin.settings.manuscriptAnalysisMaxOutputTokens));
                             new Notice('Value must be a number between 1 and 65536');
+                        }
+                    })
+            );
+
+        // --- Embedding settings ---
+        new Setting(content).setName('Embeddings').setHeading();
+
+        new Setting(content)
+            .setName('Embedding top-k chunks')
+            .setDesc(
+                'Number of chunks (paragraphs) retrieved from embedded folders. Higher = more context but more tokens; lower = tighter focus, less window pressure. Recommended: 8–12 for most use cases. 3–5 keeps overhead minimal. 15+ may crowd the context window.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.embeddingsTopKChunks))
+                    // settings.ts - no Component lifecycle available; raw addEventListener is required
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 1 && n <= 100) {
+                            this.plugin.settings.embeddingsTopKChunks = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.embeddingsTopKChunks));
+                            new Notice('Value must be a number between 1 and 100');
                         }
                     })
             );
@@ -640,6 +704,65 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(content)
+            .setName('Show full embed in file picker')
+            .setDesc(
+                'When enabled, file pickers show a "{Folder name} full embed" option alongside "{Folder name} embedded" (top-K). Full embed sends all chunk texts from the folder; top-K sends only the most relevant. Default: off.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.enableFullEmbedPickerOption).onChange((value) => {
+                    this.plugin.settings.enableFullEmbedPickerOption = value;
+                    void this.plugin.saveSettings();
+                })
+            );
+
+        // --- Folder-specific top-K overrides ---
+        new Setting(content)
+            .setName('Folder-specific chunk overrides')
+            .setDesc(
+                'Set a custom top-k chunk count for specific embedded folders. Use a higher number for folders that are more important to your writing (e.g., plot maps), and a lower number for auxiliary lore. Folders without an override use the global setting above.'
+            )
+            .setHeading();
+
+        const overridesContainer = content.createDiv({ cls: 'quill-folder-overrides-list' });
+
+        this.renderFolderOverrides(overridesContainer);
+
+        new Setting(content).addButton((button) =>
+            button.setButtonText('+ add folder').onClick(() => {
+                const folders = this.getVaultFolders();
+                new FolderSuggestModal(this.app, folders, (folder) => {
+                    if (this.plugin.settings.folderTopKOverrides[folder]) {
+                        new Notice('Folder already has an override.');
+                        return;
+                    }
+                    this.plugin.settings.folderTopKOverrides[folder] = this.plugin.settings.embeddingsTopKChunks;
+                    void this.plugin.saveSettings();
+                    this.renderFolderOverrides(overridesContainer);
+                }).open();
+            })
+        );
+
+        // --- Debug logging (dev-only) ---
+        if (__DEV__) {
+            new Setting(content).setName('Debug').setHeading();
+
+            new Setting(content)
+                .setName('Enable debug logging')
+                .setDesc(
+                    'When enabled, logs AI payload context to the browser console (console.warn). Useful for inspecting the actual data sent to providers.'
+                )
+                .addToggle((toggle) =>
+                    toggle.setValue(this.plugin.settings.enableDebugLogging).onChange(async (value) => {
+                        this.plugin.settings.enableDebugLogging = value;
+                        await this.plugin.saveSettings();
+                    })
+                );
+        }
+
+        // --- Dashboard settings ---
+        new Setting(content).setName('Dashboard').setHeading();
+
+        new Setting(content)
             .setName('Readability formula')
             .setDesc('Which readability formula to display in the dashboard.')
             .addDropdown((dropdown) => {
@@ -653,8 +776,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 });
             });
-
-        new Setting(content).setName('Dashboard').setHeading();
 
         new Setting(content)
             .setName('Auto-refresh interval')
@@ -704,6 +825,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     })
             );
 
+        // --- Restore defaults ---
         new Setting(content)
             .setName('Restore defaults')
             .setDesc('Reset all general settings to their default values.')
@@ -718,9 +840,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         DEFAULT_SETTINGS.manuscriptAnalysisMaxOutputTokens;
                     this.plugin.settings.manuscriptAnalysisChunkTokenSize =
                         DEFAULT_SETTINGS.manuscriptAnalysisChunkTokenSize;
-                    this.plugin.settings.manuscriptAnalysisTopKChunks = DEFAULT_SETTINGS.manuscriptAnalysisTopKChunks;
+                    this.plugin.settings.embeddingsTopKChunks = DEFAULT_SETTINGS.embeddingsTopKChunks;
                     this.plugin.settings.embeddingChunkTokenSize = DEFAULT_SETTINGS.embeddingChunkTokenSize;
                     this.plugin.settings.enableEmbeddingWarming = DEFAULT_SETTINGS.enableEmbeddingWarming;
+                    this.plugin.settings.enableFullEmbedPickerOption = DEFAULT_SETTINGS.enableFullEmbedPickerOption;
+                    this.plugin.settings.folderTopKOverrides = DEFAULT_SETTINGS.folderTopKOverrides;
+                    this.plugin.settings.enableDebugLogging = DEFAULT_SETTINGS.enableDebugLogging;
                     this.plugin.settings.embeddingWarmingDebounceSeconds =
                         DEFAULT_SETTINGS.embeddingWarmingDebounceSeconds;
                     this.plugin.settings.dashboardAutoRefreshMinutes = DEFAULT_SETTINGS.dashboardAutoRefreshMinutes;
@@ -2004,5 +2129,29 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         };
         this.plugin.settings.aiProviders.push(newProvider);
         void this.plugin.saveSettings().then(() => this.display());
+    }
+}
+
+/** Modal for picking a vault folder from the list of markdown-containing folders. */
+class FolderSuggestModal extends SuggestModal<string> {
+    constructor(
+        app: App,
+        private folders: string[],
+        private onPick: (folder: string) => void
+    ) {
+        super(app);
+    }
+
+    getSuggestions(query: string): string[] {
+        const q = query.toLowerCase();
+        return this.folders.filter((f) => f.toLowerCase().includes(q));
+    }
+
+    renderSuggestion(folder: string, el: HTMLElement): void {
+        el.createEl('span', { text: folder });
+    }
+
+    onChooseSuggestion(folder: string): void {
+        this.onPick(folder);
     }
 }

@@ -9,6 +9,7 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = process.argv[2] === 'production';
+const watch = process.argv[2] === 'watch';
 
 const context = await esbuild.context({
 	banner: {
@@ -39,11 +40,17 @@ const context = await esbuild.context({
 	treeShaking: true,
 	outfile: 'main.js',
 	minify: prod,
+	define: {
+		__DEV__: prod ? 'false' : 'true'
+	},
 });
 
 if (prod) {
 	await context.rebuild();
 	process.exit(0);
-} else {
+} else if (watch) {
 	await context.watch();
+} else {
+	await context.rebuild();
+	process.exit(0);
 }

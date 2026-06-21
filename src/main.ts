@@ -70,7 +70,7 @@ import {
     toDiffSnapshots
 } from './ui/change-diff-extension';
 import { ChangeSet } from './core/change-set';
-import { readVaultFiles } from './utils/vault-files';
+import { parseEmbedFolderPath, readVaultFiles } from './utils/vault-files';
 import type { ManuscriptMetrics, ManuscriptSnapshot, ChapterRange } from './core/dashboard/types';
 import { listChaptersInFile, manuscriptMetrics } from './core/dashboard/metrics';
 import {
@@ -978,7 +978,13 @@ export default class EventideQuillPlugin extends Plugin {
 
     /** Load persisted settings, merging with defaults. */
     async loadSettings() {
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, (await this.loadData()) as Partial<EventideQuillSettings>);
+        const saved = (await this.loadData()) as Record<string, unknown>;
+        // Migration: renamed manuscriptAnalysisTopKChunks → embeddingsTopKChunks
+        if (saved && 'manuscriptAnalysisTopKChunks' in saved && !('embeddingsTopKChunks' in saved)) {
+            saved.embeddingsTopKChunks = saved.manuscriptAnalysisTopKChunks;
+            delete saved.manuscriptAnalysisTopKChunks;
+        }
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
     }
 
     /**
@@ -1393,6 +1399,186 @@ export default class EventideQuillPlugin extends Plugin {
         this.currentAssembly.totalTokens += tokenEstimate;
         this.lintPanel?.setContextAssembly(this.currentAssembly);
         this.syncQuillFrontmatter();
+    }
+
+    /** Add an embedded folder as a manual context item. Loads the cache for token estimation. */
+    async addFolderContextItem(folderPath: string, mode: 'top-k' | 'full'): Promise<void> {
+        if (!this.currentAssembly) return;
+
+        const embedPath = mode === 'full' ? `embed-full:${folderPath}` : `embed:${folderPath}`;
+        if (this.removedContextPaths.has(embedPath)) {
+            this.removedContextPaths.delete(embedPath);
+        }
+        if (this.currentAssembly.contextItems.some((i) => i.filePath === embedPath)) {
+            return;
+        }
+
+        // Estimate tokens from the embedding cache to show a reasonable budget.
+        const embedProvider = this.getDefaultEmbedProvider();
+        const embedKey = embedProvider ? parseProviderKey(this.settings.aiDefaultEmbedProvider) : null;
+        const modelId = embedKey?.modelId ?? '';
+        let tokenEstimate = 0;
+        if (modelId && folderPath) {
+            try {
+                const cache = await EmbeddingCache.load(this.app.vault, folderPath, modelId);
+                const count = cache.size;
+                tokenEstimate = count * this.settings.embeddingChunkTokenSize;
+            } catch {
+                tokenEstimate = 1000;
+            }
+        }
+
+        const item: ContextItem = {
+            filePath: embedPath,
+            excerpt: '',
+            matchedEntities: [],
+            tokenEstimate,
+            pinned: true,
+            relevanceScore: 10,
+            manual: true,
+            folderPath,
+            embedMode: mode
+        };
+        this.manualContextItems.push(item);
+        this.pinnedContextPaths.add(embedPath);
+        this.currentAssembly.contextItems.push(item);
+        this.currentAssembly.totalTokens += tokenEstimate;
+        this.lintPanel?.setContextAssembly(this.currentAssembly);
+        this.syncQuillFrontmatter();
+    }
+
+    /**
+     * Resolve all folder context items in the assembly by loading their embedding
+     * caches. For top-K mode, embeds the document text as a query and retrieves
+     * the most relevant chunks. For full mode, retrieves all chunk texts.
+     */
+    async resolveFolderContextItems(assembly: ContextAssembly, documentText: string): Promise<void> {
+        const folderItems = assembly.contextItems.filter((i) => i.folderPath && i.embedMode);
+        if (folderItems.length === 0) return;
+
+        const embedProvider = this.getDefaultEmbedProvider();
+        const embedKey = embedProvider ? parseProviderKey(this.settings.aiDefaultEmbedProvider) : null;
+        const embedModelId = embedKey?.modelId ?? '';
+        if (!embedProvider || !embedModelId) return;
+
+        for (const item of folderItems) {
+            try {
+                const cache = await EmbeddingCache.load(this.app.vault, item.folderPath!, embedModelId);
+
+                if (item.embedMode === 'full') {
+                    // Full mode: include all chunk texts.
+                    const allEntries = cache.getAll();
+                    const texts = allEntries.map((e) => e.chunkText);
+                    const fullText = texts.join('\n\n---\n\n');
+                    item.excerpt = fullText;
+                    item.tokenEstimate = Math.ceil(fullText.length / 4);
+                    item.resolvedChunks = texts;
+                } else {
+                    // Top-K mode: embed the document as query, rank by similarity.
+                    const allEntries = cache.getAll();
+                    if (allEntries.length === 0) continue;
+
+                    // Attach embeddings to chunks for ranking.
+                    const chunks = allEntries.map((e, i) => ({
+                        index: i,
+                        text: e.chunkText,
+                        tokenEstimate: 0,
+                        embedding: e.embedding
+                    }));
+
+                    // Embed the document text as a query.
+                    const queryResult = await embedProvider.embed({ input: documentText, model: embedModelId });
+                    const queryEmbedding = queryResult.embeddings[0];
+                    if (!queryEmbedding) continue;
+
+                    const topK = this.settings.embeddingsTopKChunks;
+                    const ranked = rankBySimilarity(chunks, queryEmbedding, topK);
+                    const texts = ranked.map((c) => c.text);
+                    const combined = texts.join('\n\n---\n\n');
+                    item.excerpt = combined;
+                    item.tokenEstimate = Math.ceil(combined.length / 4);
+                    item.resolvedChunks = texts;
+                }
+
+                // Recalculate total tokens in the assembly.
+                assembly.totalTokens = assembly.contextItems.reduce((sum, ci) => sum + ci.tokenEstimate, 0);
+            } catch {
+                // Best-effort resolution — keep existing excerpt.
+            }
+        }
+    }
+
+    /**
+     * Resolve embed-prefixed paths into ChatMessages. Regular file paths are
+     * returned for the caller to pass to readVaultFiles.
+     */
+    private async resolveEmbedPathsToMessages(
+        paths: string[],
+        label: string,
+        documentText: string,
+        maxChars?: number
+    ): Promise<{ regularPaths: string[]; messages: ChatMessage[] }> {
+        const regularPaths: string[] = [];
+        const messages: ChatMessage[] = [];
+
+        if (!this.getDefaultEmbedProvider()) {
+            return { regularPaths: paths, messages };
+        }
+
+        const embedKey = parseProviderKey(this.settings.aiDefaultEmbedProvider);
+        const embedModelId = embedKey?.modelId ?? '';
+
+        for (const path of paths) {
+            const parsed = parseEmbedFolderPath(path);
+            if (!parsed) {
+                regularPaths.push(path);
+                continue;
+            }
+
+            try {
+                const cache = await EmbeddingCache.load(this.app.vault, parsed.folderPath, embedModelId);
+                const allEntries = cache.getAll();
+                if (allEntries.length === 0) continue;
+
+                let texts: string[];
+                if (parsed.mode === 'full') {
+                    texts = allEntries.map((e) => e.chunkText);
+                } else {
+                    // Top-K: embed document as query, rank by similarity.
+                    const topK =
+                        this.settings.folderTopKOverrides[parsed.folderPath] ?? this.settings.embeddingsTopKChunks;
+                    const chunks = allEntries.map((e, i) => ({
+                        index: i,
+                        text: e.chunkText,
+                        tokenEstimate: Math.ceil(e.chunkText.length / 4),
+                        embedding: e.embedding
+                    }));
+                    const embedProvider = this.getDefaultEmbedProvider()!;
+                    const queryResult = await embedProvider.embed({ input: documentText, model: embedModelId });
+                    const queryEmbedding = queryResult.embeddings[0];
+                    if (!queryEmbedding) continue;
+
+                    const ranked = rankBySimilarity(chunks, queryEmbedding, topK);
+                    texts = ranked.map((c) => c.text);
+                }
+
+                const safeMax =
+                    typeof maxChars === 'number' && maxChars >= 0 && Number.isFinite(maxChars)
+                        ? Math.floor(maxChars)
+                        : undefined;
+                const combined = texts.join('\n\n---\n\n');
+                const excerpt = safeMax !== undefined ? combined.slice(0, safeMax) : combined;
+
+                messages.push({
+                    role: 'system',
+                    content: `${label} (${parsed.folderPath}, ${parsed.mode}):\n${excerpt}`
+                });
+            } catch {
+                // Best-effort — skip failed folder resolution.
+            }
+        }
+
+        return { regularPaths, messages };
     }
 
     /** Check whether any entities or context items have been removed. */
@@ -2257,7 +2443,7 @@ export default class EventideQuillPlugin extends Plugin {
                     const queryEmbedding = queryResult.embeddings[0]!;
 
                     // Rank all chunks by similarity.
-                    const ranked = rankBySimilarity(chunks, queryEmbedding, this.settings.manuscriptAnalysisTopKChunks);
+                    const ranked = rankBySimilarity(chunks, queryEmbedding, this.settings.embeddingsTopKChunks);
                     manuscriptText = ranked
                         .map((c) => {
                             const prefix = c.chapterTitle ? `[${c.chapterTitle}] ` : '';
@@ -2504,7 +2690,7 @@ export default class EventideQuillPlugin extends Plugin {
         let estimatedTextTokens: number;
         if (compaction === 'embed') {
             // Embed compaction: top-K chunks of ~embeddingChunkTokenSize each.
-            estimatedTextTokens = this.settings.manuscriptAnalysisTopKChunks * this.settings.embeddingChunkTokenSize;
+            estimatedTextTokens = this.settings.embeddingsTopKChunks * this.settings.embeddingChunkTokenSize;
         } else if (compaction === 'compress') {
             // Compress: each chunk becomes ~150 tokens of summary.
             const chunkCount = Math.ceil(estimateTokens(selectedText) / this.settings.manuscriptAnalysisChunkTokenSize);
@@ -2524,6 +2710,17 @@ export default class EventideQuillPlugin extends Plugin {
     // ========================================================================
     // Embedding cache warming
     // ========================================================================
+
+    /** Read a file's text from the vault. Returns empty string on failure. */
+    private async getFileText(filePath: string): Promise<string> {
+        try {
+            const file = this.app.vault.getAbstractFileByPath(filePath);
+            if (!(file instanceof TFile)) return '';
+            return await this.app.vault.cachedRead(file);
+        } catch {
+            return '';
+        }
+    }
 
     /**
      * Schedule debounced embedding warming for a folder.
@@ -2708,12 +2905,35 @@ export default class EventideQuillPlugin extends Plugin {
 
         // Chat context files are injected fresh as system messages on every call.
         const chatContextPaths = this.lintPanel?.reviewChatContextFiles() ?? [];
-        const referenceMessages = await readVaultFiles(
-            this.app.vault,
+
+        // Get the active document text for embedding queries.
+        const activeFile = this.app.workspace.getActiveFile();
+        const documentText = activeFile ? await this.getFileText(activeFile.path) : '';
+
+        // Resolve any embed-prefixed paths in chat context files.
+        const { regularPaths: resolvedRefPaths, messages: refEmbedMessages } = await this.resolveEmbedPathsToMessages(
             chatContextPaths,
+            'Reference file',
+            documentText,
+            this.settings.contextMaxCharsPerFile
+        );
+
+        // Resolve folder context items in the assembly.
+        try {
+            if (this.currentAssembly) {
+                await this.resolveFolderContextItems(this.currentAssembly, documentText);
+            }
+        } catch {
+            // Best-effort
+        }
+
+        const refFileMessages = await readVaultFiles(
+            this.app.vault,
+            resolvedRefPaths,
             'Reference file',
             this.settings.contextMaxCharsPerFile
         );
+        const referenceMessages = [...refEmbedMessages, ...refFileMessages];
         const injectedTokens = estimateTokens(referenceMessages);
 
         const maxTokens = chat.provider.config.maxContextTokens;
@@ -2753,6 +2973,10 @@ export default class EventideQuillPlugin extends Plugin {
             ...referenceMessages,
             ...this.manuscriptAnalysisCurrentMessages.slice(1)
         ];
+
+        if (__DEV__ && this.settings.enableDebugLogging) {
+            console.warn('Quill: Manuscript Analysis Chat API payload', JSON.stringify(baseMessages, null, 2));
+        }
 
         try {
             const stream = chat.provider.chatCompletion({
@@ -3018,12 +3242,35 @@ export default class EventideQuillPlugin extends Plugin {
         // injected fresh as system messages on every call, mirroring feedback.
         // They are NOT stored in analysisCurrentMessages so they survive compaction.
         const chatContextPaths = this.lintPanel?.reviewChatContextFiles() ?? [];
-        const referenceMessages = await readVaultFiles(
-            this.app.vault,
+
+        // Get the active document text for embedding queries.
+        const activeFile = this.app.workspace.getActiveFile();
+        const documentText = activeFile ? await this.getFileText(activeFile.path) : '';
+
+        // Resolve any embed-prefixed paths in chat context files.
+        const { regularPaths: resolvedRefPaths, messages: refEmbedMessages } = await this.resolveEmbedPathsToMessages(
             chatContextPaths,
+            'Reference file',
+            documentText,
+            this.settings.contextMaxCharsPerFile
+        );
+
+        // Resolve folder context items in the assembly.
+        try {
+            if (this.currentAssembly) {
+                await this.resolveFolderContextItems(this.currentAssembly, documentText);
+            }
+        } catch {
+            // Best-effort
+        }
+
+        const refFileMessages = await readVaultFiles(
+            this.app.vault,
+            resolvedRefPaths,
             'Reference file',
             this.settings.contextMaxCharsPerFile
         );
+        const referenceMessages = [...refEmbedMessages, ...refFileMessages];
         const injectedTokens = estimateTokens(referenceMessages);
 
         const maxTokens = chat.provider.config.maxContextTokens;
@@ -3061,6 +3308,10 @@ export default class EventideQuillPlugin extends Plugin {
             ...referenceMessages,
             ...this.analysisCurrentMessages.slice(1) // context heads + chat turns
         ];
+
+        if (__DEV__ && this.settings.enableDebugLogging) {
+            console.warn('Quill: Analysis Chat API payload', JSON.stringify(baseMessages, null, 2));
+        }
 
         try {
             const stream = chat.provider.chatCompletion({
@@ -3120,7 +3371,9 @@ export default class EventideQuillPlugin extends Plugin {
             this.lintPanel?.coWriterSetAdditionalContextTokens(0);
             return;
         }
-        const messages = await loadAdditionalContext(this, files);
+        const activeFile = this.app.workspace.getActiveFile();
+        const documentText = activeFile ? await this.getFileText(activeFile.path) : '';
+        const messages = await loadAdditionalContext(this, files, documentText);
         this.lintPanel?.coWriterSetAdditionalContextTokens(estimateTokens(messages));
     }
 
@@ -3527,6 +3780,25 @@ export default class EventideQuillPlugin extends Plugin {
             return;
         }
 
+        // Get the active document text for embedding queries.
+        const documentText = activeFile ? await this.getFileText(activeFile.path) : '';
+
+        // Resolve any embed-prefixed paths in manuscriptPaths.
+        const { regularPaths: resolvedPaths, messages: embedMessages } = await this.resolveEmbedPathsToMessages(
+            manuscriptPaths,
+            'Manuscript',
+            documentText
+        );
+
+        // Resolve folder context items in the assembly (context panel flow).
+        try {
+            if (this.currentAssembly) {
+                await this.resolveFolderContextItems(this.currentAssembly, documentText);
+            }
+        } catch {
+            // Best-effort
+        }
+
         // Include context engine items (vault auto-scan) as reference context
         // in the system prompt, not in the user message.
         const contextParts: string[] = [];
@@ -3546,7 +3818,8 @@ export default class EventideQuillPlugin extends Plugin {
         // Read manuscript files and inject them as system messages.
         // They are NOT stored in feedbackCurrentMessages — injected fresh on
         // every API call so they always survive compaction.
-        const manuscriptMessages = await readVaultFiles(this.app.vault, manuscriptPaths, 'Manuscript');
+        const fileMessages = await readVaultFiles(this.app.vault, resolvedPaths, 'Manuscript');
+        const manuscriptMessages = [...embedMessages, ...fileMessages];
 
         if (manuscriptMessages.length === 0) {
             new Notice('Quill: Could not read any content from the selected manuscripts.');
@@ -3571,6 +3844,10 @@ export default class EventideQuillPlugin extends Plugin {
             ...manuscriptMessages,
             this.feedbackCurrentMessages[1]! // user instruction
         ];
+
+        if (__DEV__ && this.settings.enableDebugLogging) {
+            console.warn('Quill: Feedback API payload', JSON.stringify(apiMessages, null, 2));
+        }
 
         try {
             const stream = getFeedback(chat.provider, persona, {
@@ -3655,13 +3932,37 @@ export default class EventideQuillPlugin extends Plugin {
             activePath && !additionalPaths.includes(activePath) ? [activePath, ...additionalPaths] : additionalPaths;
         const chatContextFilePaths = this.lintPanel?.reviewChatContextFiles() ?? [];
 
-        const manuscriptMessages = await readVaultFiles(this.app.vault, manuscriptPaths, 'Manuscript');
-        const referenceMessages = await readVaultFiles(
-            this.app.vault,
+        // Get the active document text for embedding queries.
+        const documentText = activeFile ? await this.getFileText(activeFile.path) : '';
+
+        // Resolve any embed-prefixed paths.
+        const { regularPaths: resolvedManuscriptPaths, messages: manuscriptEmbedMessages } =
+            await this.resolveEmbedPathsToMessages(manuscriptPaths, 'Manuscript', documentText);
+        const { regularPaths: resolvedRefPaths, messages: refEmbedMessages } = await this.resolveEmbedPathsToMessages(
             chatContextFilePaths,
+            'Reference file',
+            documentText,
+            this.settings.contextMaxCharsPerFile
+        );
+
+        // Resolve folder context items in the assembly (context panel flow).
+        try {
+            if (this.currentAssembly) {
+                await this.resolveFolderContextItems(this.currentAssembly, documentText);
+            }
+        } catch {
+            // Best-effort
+        }
+
+        const fileMessages = await readVaultFiles(this.app.vault, resolvedManuscriptPaths, 'Manuscript');
+        const manuscriptMessages = [...manuscriptEmbedMessages, ...fileMessages];
+        const refMessages = await readVaultFiles(
+            this.app.vault,
+            resolvedRefPaths,
             'Reference file',
             this.settings.contextMaxCharsPerFile
         );
+        const referenceMessages = [...refEmbedMessages, ...refMessages];
 
         const injectedContext: ChatMessage[] = [...manuscriptMessages, ...referenceMessages];
 
@@ -3709,6 +4010,10 @@ export default class EventideQuillPlugin extends Plugin {
             ...injectedContext,
             ...this.feedbackCurrentMessages.slice(1) // context heads + chat turns (including new message)
         ];
+
+        if (__DEV__ && this.settings.enableDebugLogging) {
+            console.warn('Quill: Feedback Chat API payload', JSON.stringify(baseMessages, null, 2));
+        }
 
         try {
             const stream = chat.provider.chatCompletion({

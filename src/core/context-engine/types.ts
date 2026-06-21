@@ -39,7 +39,7 @@ export interface VoiceMarker {
 
 /** A context item assembled from the vault for AI consumption. */
 export interface ContextItem {
-    /** The source file path in the vault. */
+    /** The source file path in the vault. For folder items, prefixed with "embed:" or "embed-full:". */
     filePath: string;
     /** The relevant text excerpt from the file. */
     excerpt: string;
@@ -53,6 +53,12 @@ export interface ContextItem {
     relevanceScore: number;
     /** Whether the user manually added this file to context (not auto-discovered). */
     manual: boolean;
+    /** If set, this item represents a folder with embedded chunks rather than a single file. */
+    folderPath?: string;
+    /** Embedding mode: 'top-k' retrieves the most relevant chunks; 'full' retrieves all. */
+    embedMode?: 'top-k' | 'full';
+    /** Resolved chunk texts from the folder cache. Populated lazily before AI calls. */
+    resolvedChunks?: string[];
 }
 
 /** The full context assembly result. */

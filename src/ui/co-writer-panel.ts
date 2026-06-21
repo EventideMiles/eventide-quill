@@ -1,8 +1,9 @@
-import { App, MarkdownRenderer, TFile } from 'obsidian';
+import { App, MarkdownRenderer } from 'obsidian';
 import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { ConfirmModal } from './confirm-modal';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
+import { buildEmbedFolderPath } from '../utils/vault-files';
 import { renderChangeBulkBar, renderChangeCard } from './change-card';
 import type EventideQuillPlugin from '../main';
 import type { DraftState, CoWriterChatMessage, CoWriterOption, CoachPhase } from '../ai/co-writer';
@@ -821,10 +822,14 @@ export class CoWriterPanel extends AbstractChatPanel {
                 const activeFile = this.app.workspace.getActiveFile();
                 new VaultFileSuggestModal(
                     this.app,
-                    (file: TFile) => {
-                        this.onLinkPlotMap?.(file.path);
+                    (item) => {
+                        const path =
+                            item.kind === 'file' ? item.file.path : buildEmbedFolderPath(item.folderPath, item.mode);
+                        this.onLinkPlotMap?.(path);
                     },
-                    [activeFile?.path ?? '']
+                    [activeFile?.path ?? ''],
+                    undefined,
+                    this.plugin.settings.enableFullEmbedPickerOption
                 ).open();
             });
         }
@@ -895,10 +900,14 @@ export class CoWriterPanel extends AbstractChatPanel {
             const activeFile = this.app.workspace.getActiveFile();
             new VaultFileSuggestModal(
                 this.app,
-                (file: TFile) => {
-                    this.onAddContextFile?.(file.path);
+                (item) => {
+                    const path =
+                        item.kind === 'file' ? item.file.path : buildEmbedFolderPath(item.folderPath, item.mode);
+                    this.onAddContextFile?.(path);
                 },
-                [activeFile?.path ?? '', ...this.getContextFiles(), ...this.getVaultContextFiles()]
+                [activeFile?.path ?? '', ...this.getContextFiles(), ...this.getVaultContextFiles()],
+                undefined,
+                this.plugin.settings.enableFullEmbedPickerOption
             ).open();
         });
 

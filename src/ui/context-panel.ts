@@ -1,38 +1,77 @@
-import { App, Component, FuzzyMatch, FuzzySuggestModal, TFile } from 'obsidian';
+import { App, Component, FuzzyMatch, FuzzySuggestModal } from 'obsidian';
 import type { ContextAssembly, ContextItem, ExtractedEntity } from '../core/context-engine/types';
 import type EventideQuillPlugin from '../main';
+import type { VaultSuggestionItem } from './vault-file-suggest-modal';
+import { embedFolderLabel, findEmbeddedFolders } from '../utils/vault-files';
 import { findEditorView } from '../utils/find-editor';
 import { getBudgetColor } from './token-indicator';
 
-/** Search modal for finding a vault file to add as a context item. */
-class AddFileModal extends FuzzySuggestModal<TFile> {
+/** Search modal for finding a vault file or embedded folder to add as a context item. */
+class AddFileModal extends FuzzySuggestModal<VaultSuggestionItem> {
     private plugin: EventideQuillPlugin;
+    private embeddedFolders: Array<{ path: string; name: string }>;
 
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app);
         this.plugin = plugin;
         this.setPlaceholder('Search vault files to add to context...');
+        this.embeddedFolders = this.discoverEmbeddedFolders();
     }
 
-    /** Return all markdown files in the vault as search candidates. */
-    getItems(): TFile[] {
-        return this.app.vault.getMarkdownFiles();
+    private discoverEmbeddedFolders(): Array<{ path: string; name: string }> {
+        const cacheFolders = findEmbeddedFolders(this.app.vault.getFiles());
+        return [...cacheFolders]
+            .map((folderPath) => ({
+                path: folderPath,
+                name: folderPath.split('/').pop() ?? folderPath
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name));
     }
 
-    /** Return a searchable label for the given file. */
-    getItemText(item: TFile): string {
-        return item.path;
+    getItems(): VaultSuggestionItem[] {
+        const items: VaultSuggestionItem[] = [];
+
+        // Add markdown files.
+        for (const file of this.app.vault.getMarkdownFiles()) {
+            items.push({ kind: 'file', file });
+        }
+
+        // Add embedded folders.
+        const showFull = this.plugin.settings.enableFullEmbedPickerOption;
+        for (const folder of this.embeddedFolders) {
+            items.push({ kind: 'folder', folderPath: folder.path, folderName: folder.name, mode: 'top-k' });
+            if (showFull) {
+                items.push({ kind: 'folder', folderPath: folder.path, folderName: folder.name, mode: 'full' });
+            }
+        }
+
+        return items;
     }
 
-    /** Render a single suggestion row in the fuzzy finder. */
-    renderSuggestion(item: FuzzyMatch<TFile>, el: HTMLElement): void {
-        el.createEl('div', { text: item.item.basename });
-        el.createEl('div', { cls: 'quill-context-panel__item-matched', text: item.item.path });
+    getItemText(item: VaultSuggestionItem): string {
+        if (item.kind === 'file') {
+            return item.file.path;
+        }
+        return `${embedFolderLabel(item.folderName, item.mode)} ${item.folderPath}`;
     }
 
-    /** Handle the user choosing a file and add it as a manual context item. */
-    onChooseItem(item: TFile): void {
-        void this.plugin.addManualContextItem(item.path);
+    renderSuggestion(item: FuzzyMatch<VaultSuggestionItem>, el: HTMLElement): void {
+        if (item.item.kind === 'file') {
+            el.createEl('div', { text: item.item.file.basename });
+            el.createEl('div', { cls: 'quill-context-panel__item-matched', text: item.item.file.path });
+        } else {
+            const label = embedFolderLabel(item.item.folderName, item.item.mode);
+            el.createEl('div', { text: label });
+            el.createEl('div', { cls: 'quill-context-panel__item-matched', text: item.item.folderPath });
+        }
+    }
+
+    onChooseItem(item: VaultSuggestionItem): void {
+        if (item.kind === 'file') {
+            void this.plugin.addManualContextItem(item.file.path);
+        } else {
+            void this.plugin.addFolderContextItem(item.folderPath, item.mode);
+        }
     }
 }
 
