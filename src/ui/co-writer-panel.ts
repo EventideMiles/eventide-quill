@@ -522,7 +522,13 @@ export class CoWriterPanel extends AbstractChatPanel {
                                 responseEl,
                                 '',
                                 this.renderEvents
-                            );
+                            ).then(() => {
+                                // Re-check scroll after async markdown render completes,
+                                // since scrollHeight may have changed.
+                                if (!this.userScrolledUp) {
+                                    this.scrollToBottom();
+                                }
+                            });
                         }
                     }
 
@@ -697,6 +703,9 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.renderEvents.registerDomEvent(applyBtn, 'click', () => {
             if (this.optionsLoading) return;
             this.optionsLoading = true;
+            applyBtn.setText('Generating\u2026');
+            applyBtn.addClass('quill-cowriter-panel__option-apply--applying');
+            applyBtn.disabled = true;
             this.scheduleRender();
             this.onApplyOption?.(idx);
         });
