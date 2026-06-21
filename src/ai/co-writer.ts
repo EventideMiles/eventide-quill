@@ -490,6 +490,9 @@ export class CoWriterSession {
     fulfillActive = false;
     /** Called whenever Fulfill edits change (generation progress, approval, rejection). */
     onFulfillUpdate: (() => void) | null = null;
+    /** Called whenever the Direct continuation changes (streaming progress, approval, rejection).
+     *  Pushes the current directChanges edits to the panel for in-chat review. */
+    onDirectChangeUpdate: (() => void) | null = null;
 
     /**
      * Analyze the voice of a prose passage using the AI provider.
@@ -1661,16 +1664,22 @@ export class CoWriterSession {
             effects: setDiffEdits.of(preserved),
             selection: { anchor: change.from + change.insert.length }
         });
+        this.onDirectChangeUpdate?.();
         this.onDraftAccepted?.();
     }
 
     /** Reject the Direct continuation: discard the buffered prose (nothing was
-     *  ever written to the document) and clear the diff. */
+     *  ever written to the document) and clear the diff. Resets optionsLoading
+     *  so the panel re-enables the Apply buttons on the existing option set. */
     rejectDirectChange(id: number): void {
         void id;
         this.directChanges.clear();
         const cm = this.getManuscriptCm();
         if (cm) clearDiffEdits(cm, 'direct');
+        this.optionsLoading = false;
+        this.onOptionsLoading?.(false);
+        this.onDirectChangeUpdate?.();
+        this.onChatUpdate?.();
     }
 
     /** Clear Direct change state (e.g., on reset / new chat). */
@@ -1678,6 +1687,7 @@ export class CoWriterSession {
         this.directChanges.clear();
         const cm = this.getManuscriptCm();
         if (cm) clearDiffEdits(cm, 'direct');
+        this.onDirectChangeUpdate?.();
     }
 
     /**
@@ -1863,6 +1873,7 @@ export class CoWriterSession {
                 applyEdit.newText += sanitizeProse(chunk.text);
                 syncChangeSetPositions(cm, this.directChanges, 'direct');
                 pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
+                this.onDirectChangeUpdate?.();
             }
 
             if (plugin.settings.coWriterAppendNewline) {
@@ -1895,7 +1906,15 @@ export class CoWriterSession {
             }
         } finally {
             notice.hide();
-            this.onOptionsLoading?.(false);
+            // If a pending diff remains in the editor, keep optionsLoading true so
+            // the Apply buttons stay disabled until the user approves or rejects
+            // the continuation. This prevents co-simultaneous apply streams from
+            // blending in the editor. approveDirectChange / rejectDirectChange
+            // (or the error / empty paths below) are responsible for resetting it.
+            const hasPending = applyEdit.state === 'pending';
+            this.optionsLoading = hasPending;
+            this.onOptionsLoading?.(hasPending);
+            this.onDirectChangeUpdate?.();
             this.onChatUpdate?.();
         }
     }
@@ -2200,11 +2219,20 @@ export class CoWriterSession {
         cm.contentDOM.setAttribute('contenteditable', 'true');
     }
 
-    /** Cancel any in-flight API call. */
+    /** Cancel any in-flight API call. If no generation is in flight but a pending
+     *  Direct continuation is awaiting review, reject it so the panel unlocks. */
     cancelGeneration(): void {
         if (this.abortController) {
             this.abortController.abort();
             this.abortController = null;
+        } else if (this.directChanges.hasPending) {
+            this.directChanges.clear();
+            const cm = this.getManuscriptCm();
+            if (cm) clearDiffEdits(cm, 'direct');
+            this.optionsLoading = false;
+            this.onOptionsLoading?.(false);
+            this.onDirectChangeUpdate?.();
+            this.onChatUpdate?.();
         }
     }
 

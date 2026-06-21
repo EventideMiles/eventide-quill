@@ -1659,6 +1659,9 @@ export default class EventideQuillPlugin extends Plugin {
         session.onFulfillUpdate = () => {
             this.lintPanel?.coWriterSetFulfillState(session.fulfillChanges.edits, session.fulfillActive);
         };
+        session.onDirectChangeUpdate = () => {
+            this.lintPanel?.coWriterSetDirectChange(session.directChanges.edits[0] ?? null);
+        };
     }
 
     /**

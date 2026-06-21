@@ -69,6 +69,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private fulfillSections: ProposedEdit[] = [];
     /** Whether a Fulfill sweep is currently generating. */
     private fulfillActive = false;
+    /** Direct-mode proposed continuation (mirrored from the session), rendered as a review card. */
+    private directChange: ProposedEdit | null = null;
     /** Whether the mode picker is open (replaces the mode-cycle-on-click behavior). */
     private modePickerOpen = false;
 
@@ -91,6 +93,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onRejectFulfillSection: ((id: number) => void) | null = null;
     private onApproveAllFulfill: (() => void) | null = null;
     private onRejectAllFulfill: (() => void) | null = null;
+    private onApproveDirect: ((id: number) => void) | null = null;
+    private onRejectDirect: ((id: number) => void) | null = null;
 
     /**
      * Conversation token estimate pushed from the plugin layer.
@@ -233,6 +237,22 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Set the handler invoked to reject all pending Fulfill sections. */
     setRejectAllFulfillHandler(handler: () => void): void {
         this.onRejectAllFulfill = handler;
+    }
+
+    /** Set the handler invoked to approve the pending Direct continuation by id. */
+    setApproveDirectHandler(handler: (id: number) => void): void {
+        this.onApproveDirect = handler;
+    }
+
+    /** Set the handler invoked to reject the pending Direct continuation by id. */
+    setRejectDirectHandler(handler: (id: number) => void): void {
+        this.onRejectDirect = handler;
+    }
+
+    /** Replace the Direct continuation edit (null = none pending) and re-render. */
+    setDirectChange(edit: ProposedEdit | null): void {
+        this.directChange = edit;
+        this.scheduleRender();
     }
 
     /** Replace the Fulfill section list and/or active flag and re-render. */
@@ -585,6 +605,10 @@ export class CoWriterPanel extends AbstractChatPanel {
                 }
             }
 
+            if (this.directChange) {
+                this.renderDirectChangeCard(scroll);
+            }
+
             if (this.optionsLoading) {
                 const bubble = scroll.createEl('div', {
                     cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--assistant quill-cowriter-panel__chat-bubble--streaming'
@@ -597,7 +621,19 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.registerScrollListener(scroll);
     }
 
-    /** Render Fulfill-mode review cards (one per directive) plus bulk actions,
+    /** Render the Direct continuation review card (Approve/Reject), using the
+     *  shared change-card component. Mirrors the Fulfill review UI so the user
+     *  has a single place to resolve the pending continuation before doing
+     *  anything else. */
+    private renderDirectChangeCard(container: HTMLElement): void {
+        if (!this.directChange) return;
+        renderChangeCard(container, this.directChange, null, this.app, this.renderEvents, {
+            onApprove: (id: number) => this.onApproveDirect?.(id),
+            onReject: (id: number) => this.onRejectDirect?.(id)
+        });
+    }
+
+    /** Render the Fulfill-mode review cards (one per directive) plus bulk actions,
      *  using the shared change-card component. For Fulfill the removed side is the
      *  directive comment (shown inline as the red diff, not repeated in the card). */
     private renderFulfillSections(container: HTMLElement): void {
