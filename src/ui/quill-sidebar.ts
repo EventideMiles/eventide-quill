@@ -513,6 +513,15 @@ export class QuillSidebarView extends ItemView {
         }
         this.reviewPanel.setContainer(this.content);
 
+        // Sync full-embed picker option from settings.
+        this.reviewPanel.setShowFullEmbed(this.plugin.settings.enableFullEmbedPickerOption);
+
+        // Sync embeddings top-K for folder token estimation.
+        this.reviewPanel.setEmbeddingsTopK(this.plugin.settings.embeddingsTopKChunks);
+
+        // Sync per-folder top-K overrides for folder token estimation.
+        this.reviewPanel.setFolderTopKOverrides(this.plugin.settings.folderTopKOverrides);
+
         // Trigger token estimate refresh for the manuscript engine.
         // The actual async fetch is initiated by ReviewPanel's render path;
         // the sidebar's setManuscriptTokenEstimate callback acts as a stale-

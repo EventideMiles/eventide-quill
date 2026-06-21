@@ -1,4 +1,5 @@
 import { App, normalizePath, TFile } from 'obsidian';
+import { embedFolderLabel, parseEmbedFolderPath } from '../utils/vault-files';
 
 /**
  * State + pill-bar DOM for a list of context files added mid-conversation.
@@ -77,6 +78,13 @@ export class ChatContextFiles {
         this.onChange();
     }
 
+    /** Override the token estimate for a specific file path (e.g. for embed-folder paths). */
+    setTokenOverride(filePath: string, tokens: number): void {
+        if (!this.files.includes(filePath)) return;
+        this.fileTokens.set(filePath, tokens);
+        this.onChange();
+    }
+
     /** Empty the list. Does not fire onChange — caller decides whether to refresh. */
     clear(): void {
         this.files = [];
@@ -85,12 +93,18 @@ export class ChatContextFiles {
     }
 
     private async refreshTokenFor(filePath: string): Promise<void> {
+        if (parseEmbedFolderPath(filePath)) {
+            // Embed folder paths have no real file to read; token count is
+            // computed at AI call time via resolveEmbedPathsToMessages.
+            if (this.files.includes(filePath)) {
+                this.fileTokens.set(filePath, 0);
+            }
+            return;
+        }
         try {
             const file = this.app.vault.getAbstractFileByPath(normalizePath(filePath));
             if (file instanceof TFile) {
                 const content = await this.app.vault.cachedRead(file);
-                // Guard against removal during the async read: don't reintroduce
-                // a stale token entry for a file that's no longer selected.
                 if (this.files.includes(filePath)) {
                     this.fileTokens.set(filePath, Math.ceil(content.length / 4));
                 }
@@ -116,7 +130,10 @@ export class ChatContextFiles {
         const bar = this.bottomArea.createDiv({ cls: barClass });
         for (const filePath of this.files) {
             const pill = bar.createDiv({ cls: `${this.cssPrefix}__ctx-pill` });
-            const name = filePath.split('/').pop() ?? filePath;
+            const parsed = parseEmbedFolderPath(filePath);
+            const name = parsed
+                ? embedFolderLabel(parsed.folderPath, parsed.mode)
+                : (filePath.split('/').pop() ?? filePath);
             pill.createEl('span', { text: truncateMiddle(name, 24) });
             const removeBtn = pill.createEl('button', {
                 cls: `${this.cssPrefix}__ctx-remove`,

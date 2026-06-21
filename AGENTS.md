@@ -27,8 +27,9 @@ Scripts (see `package.json`):
 
 | Script | What it does |
 |--------|--------------|
-| `npm run dev` | esbuild watch mode |
-| `npm run build` | **Four stages:** `sass` → `prettier --write` → `tsc -noEmit -skipLibCheck` (typecheck, no emit) → esbuild production |
+| `npm run dev` | esbuild watch mode (`__DEV__ = true`, sourcemaps inline) |
+| `npm run build` | **Four stages:** `sass` → `prettier --write` → `tsc -noEmit -skipLibCheck` (typecheck, no emit) → esbuild dev build (`__DEV__ = true`, sourcemaps inline, no minify) |
+| `npm run build:release` | Same four stages as `build` but with esbuild production mode (`__DEV__ = false`, no sourcemaps, minified). Used by release CI. |
 | `npm run lint` | `eslint .` then `stylelint 'styles/**/*.scss'` |
 | `npm run lint:styles` | `stylelint 'styles/**/*.scss'` (SCSS only) |
 | `npm run lint:fix` | `eslint . --fix` then `prettier --write 'src/**/*.ts'` then `stylelint --fix 'styles/**/*.scss'` |
@@ -47,8 +48,19 @@ No automated test framework exists in this project (no jest/vitest/mocha, no `*.
 1. `npm run build` (sass + Prettier + `tsc` + esbuild), and
 2. `npm run lint`, and
 3. Manual smoke test in Obsidian (especially on mobile) for UI or provider changes.
+4. For release builds, also run `npm run build:release` to verify minification and `__DEV__` tree-shaking work correctly.
 
-CI (`.github/workflows/lint.yml`) runs `build` + `lint` on every push and PR across Node 20/22/24.
+CI (`.github/workflows/lint.yml`) runs `build` + `lint` on every push and PR across Node 20/22/24. CI for releases (`.github/workflows/release.yml`) runs `build:release` instead.
+
+## `__DEV__` compile-time constant
+
+`__DEV__` is a boolean injected at build time via esbuild's `define`:
+- **Dev builds** (`npm run build`, `npm run dev`): `__DEV__ = true`
+- **Release builds** (`npm run build:release`): `__DEV__ = false`
+
+Use it to gate debug-only code (console logging, dev-only settings, etc.). In release builds esbuild tree-shakes the dead branches, eliminating the code entirely.
+
+To add a new global that ESLint knows about, edit `eslint.config.mts` globals and `src/global.d.ts` for TypeScript.
 
 ## Styling
 
