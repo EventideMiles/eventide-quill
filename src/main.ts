@@ -1890,7 +1890,7 @@ export default class EventideQuillPlugin extends Plugin {
         try {
             for (let i = 0; i < groups.length; i++) {
                 const group = groups[i]!;
-                const { system, user } = buildBatchLinterPrompt(group);
+                const { system, user } = buildBatchLinterPrompt(group, this.settings.wikiLinkBehavior);
 
                 try {
                     const response = await streamBatchFix(
@@ -1997,7 +1997,7 @@ export default class EventideQuillPlugin extends Plugin {
                 const endOffset = (lineOffsets[flag.lineEnd] ?? editorText.length) - 1;
                 const passageText = editorText.slice(startOffset, Math.max(startOffset, endOffset));
 
-                const { system, user } = buildPacingFixPrompt(flag, passageText);
+                const { system, user } = buildPacingFixPrompt(flag, passageText, this.settings.wikiLinkBehavior);
 
                 try {
                     const response = await streamBatchFix(
@@ -2129,7 +2129,7 @@ export default class EventideQuillPlugin extends Plugin {
         const endOffset = Math.max(startOffset, (lineOffsets[flag.lineEnd] ?? editorText.length) - 1);
         const passageText = editorText.slice(startOffset, endOffset);
 
-        const { system, user } = buildPacingFixPrompt(flag, passageText);
+        const { system, user } = buildPacingFixPrompt(flag, passageText, this.settings.wikiLinkBehavior);
 
         this.batchFixInProgress = true;
         this.batchFixSource = 'dashboard';

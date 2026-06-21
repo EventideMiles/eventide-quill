@@ -2,7 +2,7 @@ import { Editor, Notice, Platform } from 'obsidian';
 import { EditorView } from '@codemirror/view';
 import { gatherVaultContext } from '../core/context-engine';
 import { ChatMessage } from './provider';
-import { getSystemPrompt } from './prompts';
+import { getSystemPrompt, getWikiLinkInstruction, type WikiLinkBehavior } from './prompts';
 import { clearDiffEdits, pushDiffEdits, toDiffSnapshots } from '../ui/change-diff-extension';
 import type EventideQuillPlugin from '../main';
 
@@ -50,7 +50,8 @@ export function getUserPrompt(
     selectedText: string,
     fullDocumentText: string,
     maxContextChars: number,
-    toneOrInstruction?: string
+    toneOrInstruction?: string,
+    wikiLinkBehavior?: WikiLinkBehavior
 ): string {
     const instruction = getInstruction(type, toneOrInstruction);
 
@@ -73,7 +74,7 @@ export function getUserPrompt(
         selectedText,
         '',
         '--- Output ---',
-        'Rewrite only the passage above. Your output must be approximately the same length as the passage — do not expand, add new content, or generate surrounding sentences unless the instruction explicitly says to (e.g., "make longer"). Output nothing else — no document text, no explanations, no labels.'
+        `Rewrite only the passage above. Your output must be approximately the same length as the passage — do not expand, add new content, or generate surrounding sentences unless the instruction explicitly says to (e.g., "make longer"). ${getWikiLinkInstruction(wikiLinkBehavior ?? 'preserve')} Output nothing else — no document text, no explanations, no labels.`
     ].join('\n');
 }
 
@@ -164,8 +165,13 @@ export async function applyTransformation(
             ? await gatherVaultContext(plugin.app.vault, fullDocumentText, assembly)
             : '';
 
-        const { narrativeVoicePreset, transformTemperature, transformMaxOutputTokens } = plugin.settings;
-        const systemPrompt = getSystemPrompt('narrative', { vaultContext, narrativePreset: narrativeVoicePreset });
+        const { narrativeVoicePreset, transformTemperature, transformMaxOutputTokens, wikiLinkBehavior } =
+            plugin.settings;
+        const systemPrompt = getSystemPrompt('narrative', {
+            vaultContext,
+            narrativePreset: narrativeVoicePreset,
+            wikiLinkBehavior
+        });
 
         // Budget the context window holistically.
         // Rough token estimates (English: ~4 chars per token):
@@ -188,7 +194,7 @@ export async function applyTransformation(
         const docTokens = totalBudget - systemTokens - instructionTokens - responseTokens;
         const maxContextChars = Math.min(docTokens * 4, 100_000);
 
-        const userPrompt = getUserPrompt(type, selectedText, fullDocumentText, maxContextChars, tone);
+        const userPrompt = getUserPrompt(type, selectedText, fullDocumentText, maxContextChars, tone, wikiLinkBehavior);
 
         const messages: ChatMessage[] = [
             { role: 'system', content: systemPrompt },

@@ -1,6 +1,7 @@
 import { LintResult, RULE_INFO } from '../core/linter/types';
 import type { PacingFlag } from '../core/dashboard/types';
 import { AiProvider, ChatMessage } from './provider';
+import { getWikiLinkInstruction, type WikiLinkBehavior } from './prompts';
 
 /** Replace em dashes with comma+space — matches the co-writer's sanitizeProse convention. */
 function sanitizeProse(text: string): string {
@@ -101,7 +102,10 @@ export function groupFindingsByPassage(results: LintResult[], editorText: string
  * Lists ALL issues found in the passage and asks the AI to rewrite the
  * entire passage to address them all simultaneously.
  */
-export function buildBatchLinterPrompt(group: FindingGroup): { system: string; user: string } {
+export function buildBatchLinterPrompt(
+    group: FindingGroup,
+    wikiLinkBehavior?: WikiLinkBehavior
+): { system: string; user: string } {
     const system = [
         'You are an editor fixing prose issues in a passage of fiction.',
         'You will be shown a passage with one or more flagged issues.',
@@ -113,6 +117,7 @@ export function buildBatchLinterPrompt(group: FindingGroup): { system: string; u
         '- Do not introduce new characters, plot points, or information.',
         '- Maintain the same paragraph structure unless splitting improves clarity.',
         '- Do not use em dashes (—). Use commas, semicolons, or split sentences instead.',
+        '- ' + getWikiLinkInstruction(wikiLinkBehavior ?? 'preserve'),
         '',
         'Output ONLY the rewritten passage. No explanations, labels, or markdown.'
     ].join('\n');
@@ -144,7 +149,11 @@ export function buildBatchLinterPrompt(group: FindingGroup): { system: string; u
  * Asks the AI to vary the sentence rhythm in a passage that is uniformly
  * short or uniformly long.
  */
-export function buildPacingFixPrompt(flag: PacingFlag, passageText: string): { system: string; user: string } {
+export function buildPacingFixPrompt(
+    flag: PacingFlag,
+    passageText: string,
+    wikiLinkBehavior?: WikiLinkBehavior
+): { system: string; user: string } {
     const isShort = flag.kind === 'uniform-short';
 
     const system = [
@@ -160,6 +169,7 @@ export function buildPacingFixPrompt(flag: PacingFlag, passageText: string): { s
         '- Do not introduce new characters, plot points, or information.',
         '- Keep the same paragraph structure.',
         '- Do not use em dashes (—). Use commas, semicolons, or split sentences instead.',
+        '- ' + getWikiLinkInstruction(wikiLinkBehavior ?? 'preserve'),
         '',
         'Output ONLY the rewritten passage. No explanations, labels, or markdown.'
     ].join('\n');

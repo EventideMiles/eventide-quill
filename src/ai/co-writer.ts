@@ -1514,7 +1514,8 @@ export class CoWriterSession {
                     plugin.settings.narrativeVoicePreset,
                     undefined,
                     [{ source: 'inline', text: range.text }],
-                    plotMapText
+                    plotMapText,
+                    plugin.settings.wikiLinkBehavior
                 );
                 const userMessage = [
                     'Fulfill the inline directive at this point in the scene. Your prose will replace the directive comment and sit between the text above and the text below.',
@@ -1790,7 +1791,8 @@ export class CoWriterSession {
             plugin.settings.narrativeVoicePreset,
             vaultContext,
             applySteering,
-            plotMapText
+            plotMapText,
+            plugin.settings.wikiLinkBehavior
         );
 
         const userMessage = [
@@ -1994,7 +1996,8 @@ export class CoWriterSession {
             plugin.settings.narrativeVoicePreset,
             vaultContext,
             directSteering,
-            plotMapText
+            plotMapText,
+            plugin.settings.wikiLinkBehavior
         );
 
         const proseForContext = textBeforeCursor.slice(-12000);

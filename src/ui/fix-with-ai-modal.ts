@@ -295,7 +295,8 @@ export class FixWithAiModal extends Modal {
                     maxTokens: this.plugin.settings.linterMaxOutputTokens,
                     signal: this.currentAbort.signal
                 },
-                customInstruction
+                customInstruction,
+                this.plugin.settings.wikiLinkBehavior
             );
 
             if (result === null) {

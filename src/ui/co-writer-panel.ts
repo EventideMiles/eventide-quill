@@ -342,10 +342,20 @@ export class CoWriterPanel extends AbstractChatPanel {
         }
         if (!this.containerEl) return;
         const el = this.containerEl.querySelector('.quill-cowriter-panel__response-text--streaming');
-        if (el) el.setText(last?.content ?? '');
-        // Auto-scroll only if the user hasn't scrolled up
+        if (el) {
+            el.setText(last?.content ?? '');
+        } else if (text) {
+            // Streaming element not yet rendered — schedule a full render
+            this.scheduleRender();
+        }
+        // Auto-scroll only if the user hasn't scrolled up.
+        // Use rAF so the browser has reflowed with the new content first.
         if (!this.userScrolledUp) {
-            this.scrollToBottom();
+            window.requestAnimationFrame(() => {
+                if (!this.containerEl) return;
+                if (this.userScrolledUp) return;
+                this.scrollToBottom();
+            });
         }
     }
 
@@ -537,8 +547,10 @@ export class CoWriterPanel extends AbstractChatPanel {
         // Scroll listener: if user scrolls up during streaming, stop auto-follow
         this.registerScrollListener(scroll);
 
-        // Auto-scroll to bottom
-        scroll.scrollTop = scroll.scrollHeight;
+        // Auto-scroll to bottom if the user hasn't scrolled up
+        if (!this.userScrolledUp) {
+            scroll.scrollTop = scroll.scrollHeight;
+        }
     }
 
     /** Render Fulfill-mode review cards (one per directive) plus bulk actions,
@@ -592,6 +604,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             });
             this.renderEvents.registerDomEvent(optionsBtn, 'click', () => {
                 if (this.optionsLoading) return;
+                this.userScrolledUp = false;
                 this.optionsLoading = true;
                 optionsBtn.disabled = true;
                 this.scheduleRender();
@@ -645,6 +658,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             });
             this.renderEvents.registerDomEvent(initBtn, 'click', () => {
                 if (this.optionsLoading) return;
+                this.userScrolledUp = false;
                 this.optionsLoading = true;
                 // Immediate disable — no rAF delay
                 initBtn.disabled = true;
@@ -921,10 +935,8 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (generating) refreshBtn.disabled = true;
         this.renderEvents.registerDomEvent(refreshBtn, 'click', () => {
             if (this.optionsLoading || this.draftState === 'generating') return;
+            this.userScrolledUp = false;
             this.optionsLoading = true;
-            refreshBtn.disabled = true;
-            actionBtn.setText('Stop');
-            actionBtn.addClass('quill-cowriter-panel__send-btn--stop');
             this.scheduleRender();
             this.onGenerateOptions?.('');
         });
@@ -1018,9 +1030,6 @@ export class CoWriterPanel extends AbstractChatPanel {
             } else {
                 this.optionsLoading = true;
             }
-            actionBtn.setText('Stop');
-            actionBtn.addClass('quill-cowriter-panel__send-btn--stop');
-            refreshBtn.disabled = true;
             this.scheduleRender();
             if (this.inputMode === 'direct') {
                 this.onSendMessage?.(text);

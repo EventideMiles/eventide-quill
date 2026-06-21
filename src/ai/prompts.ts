@@ -6,12 +6,30 @@ import type { ExtractedEntity, VoiceMarker } from '../core/context-engine/types'
 import { type LintResult, RULE_INFO } from '../core/linter/types';
 import { type NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS, type VoiceProfile } from '../types';
 
+/** Wiki link behavior modes for AI prompt instructions. */
+export type WikiLinkBehavior = 'preserve' | 'adaptive';
+
+/**
+ * Get the instruction string for the given wiki link behavior mode.
+ * Used across all prose-generation prompts.
+ */
+export function getWikiLinkInstruction(behavior: WikiLinkBehavior): string {
+    if (behavior === 'adaptive') {
+        return 'Preserve Obsidian wiki links (surrounded by [[ ]]) — keep the brackets, page name, and heading (after #) exactly as they are. You may adapt the display text after the pipe (|) to fit the prose, or omit the display text entirely if the page name reads naturally on its own. Do not create new wiki links that did not exist in the original passage.';
+    }
+    return 'Preserve Obsidian wiki links (surrounded by [[ ]]) exactly as they appear — do not modify, remove, or reformat the brackets, the link text, pipes (|), or hashtags (#) inside them.';
+}
+
 /**
  * Build the narrative-mode system prompt for prose generation.
  * This is the existing style-constraints prompt used for selection transformations,
  * co-writer continuations, and guided plot branching.
  */
-function getNarrativeSystemPrompt(vaultContext: string, narrativePreset: NarrativeVoicePreset): string {
+function getNarrativeSystemPrompt(
+    vaultContext: string,
+    narrativePreset: NarrativeVoicePreset,
+    wikiLinkBehavior: WikiLinkBehavior = 'preserve'
+): string {
     const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === narrativePreset) ?? NARRATIVE_VOICE_PRESETS[0];
     if (!def) {
         throw new Error('NARRATIVE_VOICE_PRESETS must not be empty');
@@ -36,10 +54,11 @@ function getNarrativeSystemPrompt(vaultContext: string, narrativePreset: Narrati
         perspectiveRules,
         '',
         'Formatting:',
-        `${9 + def.rules.length}. No bold text in the narrative.`,
-        `${9 + def.rules.length + 1}. Italics allowed sparingly for internal thoughts or emphasis.`,
-        `${9 + def.rules.length + 2}. No bullet lists in the narrative.`,
-        `${9 + def.rules.length + 3}. Output only the rewritten passage. No introductory text, no apologies, no meta-commentary.`
+        `${9 + def.rules.length}. ${getWikiLinkInstruction(wikiLinkBehavior)}`,
+        `${9 + def.rules.length + 1}. No bold text in the narrative.`,
+        `${9 + def.rules.length + 2}. Italics allowed sparingly for internal thoughts or emphasis.`,
+        `${9 + def.rules.length + 3}. No bullet lists in the narrative.`,
+        `${9 + def.rules.length + 4}. Output only the rewritten passage. No introductory text, no apologies, no meta-commentary.`
     ];
 
     if (vaultContext) {
@@ -112,7 +131,7 @@ function getAnalysisSystemPrompt(persona?: FeedbackPersona, vaultContext?: strin
  * The AI suggests the minimal change to resolve a flagged prose issue
  * while preserving the author's voice, style, and intent.
  */
-function getLinterSystemPrompt(): string {
+function getLinterSystemPrompt(wikiLinkBehavior: WikiLinkBehavior = 'preserve'): string {
     return [
         'You are an editor fixing specific prose issues. You will be shown a passage and a flagged span within it.',
         "Suggest the minimal change that fixes the issue while preserving the author's voice.",
@@ -124,6 +143,7 @@ function getLinterSystemPrompt(): string {
         '- For adverbs, try removing them or strengthening the verb.',
         '- For clichés, offer a fresh alternative.',
         '- Only fix the flagged issue — do not make unrelated improvements.',
+        `- ${getWikiLinkInstruction(wikiLinkBehavior)}`,
         '',
         'Output ONLY the replacement text for the flagged span.',
         'If the fix is to delete the flagged text, output: DELETE',
@@ -145,11 +165,16 @@ export function getSystemPrompt(
         vaultContext?: string;
         narrativePreset?: NarrativeVoicePreset;
         persona?: FeedbackPersona;
+        wikiLinkBehavior?: WikiLinkBehavior;
     }
 ): string {
     switch (mode) {
         case 'narrative':
-            return getNarrativeSystemPrompt(options?.vaultContext ?? '', options?.narrativePreset ?? 'third-limited');
+            return getNarrativeSystemPrompt(
+                options?.vaultContext ?? '',
+                options?.narrativePreset ?? 'third-limited',
+                options?.wikiLinkBehavior
+            );
         case 'analysis':
             return getAnalysisSystemPrompt(options?.persona, options?.vaultContext);
         case 'critical':
@@ -160,7 +185,7 @@ export function getSystemPrompt(
             // pinning a sub-mode.
             return getAnalysisBasePrompt().join('\n');
         case 'linter':
-            return getLinterSystemPrompt();
+            return getLinterSystemPrompt(options?.wikiLinkBehavior);
         case 'manuscript-analysis':
             // The shared manuscript-analysis base. Mode-specific focus (scene taxonomy,
             // structural arc, etc.) is layered on by getManuscriptAnalysisModePrompt().
@@ -284,7 +309,8 @@ export function getCoWriterGenerationPrompt(
     narrativePreset: NarrativeVoicePreset,
     vaultContext?: string,
     activeSteering?: ActiveSteering[],
-    plotMapText?: string
+    plotMapText?: string,
+    wikiLinkBehavior?: WikiLinkBehavior
 ): string {
     const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === narrativePreset) ?? NARRATIVE_VOICE_PRESETS[0];
     if (!def) {
@@ -327,10 +353,11 @@ export function getCoWriterGenerationPrompt(
         "- Stay within the established POV character's senses and knowledge.",
         '',
         'Formatting:',
-        `${9 + def.rules.length}. No bold text in the narrative.`,
-        `${9 + def.rules.length + 1}. Italics allowed sparingly for internal thoughts or emphasis.`,
-        `${9 + def.rules.length + 2}. No bullet lists in the narrative.`,
-        `${9 + def.rules.length + 3}. Output only the continuation. No introductory text, no apologies, no meta-commentary.`
+        `${9 + def.rules.length}. ${getWikiLinkInstruction(wikiLinkBehavior ?? 'preserve')}`,
+        `${9 + def.rules.length + 1}. No bold text in the narrative.`,
+        `${9 + def.rules.length + 2}. Italics allowed sparingly for internal thoughts or emphasis.`,
+        `${9 + def.rules.length + 3}. No bullet lists in the narrative.`,
+        `${9 + def.rules.length + 4}. Output only the continuation. No introductory text, no apologies, no meta-commentary.`
     ];
 
     if (vaultContext) {
