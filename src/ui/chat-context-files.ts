@@ -78,6 +78,11 @@ export class ChatContextFiles {
         this.onChange();
     }
 
+    /** Override the token estimate for a specific file path (e.g. for embed-folder paths). */
+    setTokenOverride(filePath: string, tokens: number): void {
+        this.fileTokens.set(filePath, tokens);
+    }
+
     /** Empty the list. Does not fire onChange — caller decides whether to refresh. */
     clear(): void {
         this.files = [];

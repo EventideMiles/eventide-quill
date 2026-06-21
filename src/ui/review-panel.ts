@@ -55,11 +55,13 @@ export class ReviewPanel extends AbstractChatPanel {
     /** Set the embeddings top-K chunk count for folder token estimation. */
     setEmbeddingsTopK(value: number): void {
         this.embeddingsTopK = value;
+        void this.refreshEmbedContextTokenEstimates();
     }
 
     /** Set the per-folder top-K overrides map. */
     setFolderTopKOverrides(overrides: Record<string, number>): void {
         this.folderTopKOverrides = overrides;
+        void this.refreshEmbedContextTokenEstimates();
     }
 
     // --- Engine selection ---
@@ -197,46 +199,52 @@ export class ReviewPanel extends AbstractChatPanel {
     // Manuscript context files (editorial engine only)
     // ========================================================================
 
+    private async estimateEmbedFolderTokens(parsed: {
+        folderPath: string;
+        mode: 'top-k' | 'full';
+    }): Promise<number | null> {
+        const cachePath = normalizePath(`${parsed.folderPath}/quill-embeddings.json`);
+        const entries: { chunkText?: string }[] = [];
+        try {
+            const exists = await this.app.vault.adapter.exists(cachePath);
+            if (exists) {
+                const raw = await this.app.vault.adapter.read(cachePath);
+                const data = JSON.parse(raw) as { entries?: { chunkText?: string }[] };
+                if (data && Array.isArray(data.entries)) {
+                    entries.push(...data.entries);
+                }
+            }
+        } catch {
+            // Best-effort
+        }
+
+        let totalChars = 0;
+        if (parsed.mode === 'full' || entries.length === 0) {
+            for (const entry of entries) {
+                totalChars += (entry.chunkText ?? '').length;
+            }
+        } else {
+            let avgChars = 0;
+            for (const entry of entries) {
+                avgChars += (entry.chunkText ?? '').length;
+            }
+            avgChars = Math.ceil(avgChars / entries.length);
+            const topK = this.folderTopKOverrides[parsed.folderPath] ?? this.embeddingsTopK;
+            totalChars = avgChars * Math.min(topK, entries.length);
+        }
+
+        return Math.ceil(totalChars / 4);
+    }
+
     async addContextFile(filePath: string): Promise<void> {
         if (this.contextFilePaths.includes(filePath)) return;
         this.contextFilePaths.push(filePath);
         try {
             const parsed = parseEmbedFolderPath(filePath);
             if (parsed) {
-                // Read the cache file directly (skip EmbeddingCache.load —
-                // that requires a matching modelId) to estimate tokens from
-                // chunk texts. For top-K: average chunk size × embeddingsTopK.
-                // For full: all chunk texts.
-                const cachePath = normalizePath(`${parsed.folderPath}/quill-embeddings.json`);
-                const entries: { chunkText?: string }[] = [];
-                try {
-                    const exists = await this.app.vault.adapter.exists(cachePath);
-                    if (exists) {
-                        const raw = await this.app.vault.adapter.read(cachePath);
-                        const data = JSON.parse(raw) as { entries?: { chunkText?: string }[] };
-                        if (data && Array.isArray(data.entries)) {
-                            entries.push(...data.entries);
-                        }
-                    }
-                } catch {
-                    // Best-effort
-                }
-                if (this.contextFilePaths.includes(filePath)) {
-                    let totalChars = 0;
-                    if (parsed.mode === 'full' || entries.length === 0) {
-                        for (const entry of entries) {
-                            totalChars += (entry.chunkText ?? '').length;
-                        }
-                    } else {
-                        let avgChars = 0;
-                        for (const entry of entries) {
-                            avgChars += (entry.chunkText ?? '').length;
-                        }
-                        avgChars = Math.ceil(avgChars / entries.length);
-                        const topK = this.folderTopKOverrides[parsed.folderPath] ?? this.embeddingsTopK;
-                        totalChars = avgChars * Math.min(topK, entries.length);
-                    }
-                    this.contextFileTokens.set(filePath, Math.ceil(totalChars / 4));
+                const tokens = await this.estimateEmbedFolderTokens(parsed);
+                if (tokens !== null && this.contextFilePaths.includes(filePath)) {
+                    this.contextFileTokens.set(filePath, tokens);
                 }
             } else {
                 const file = this.app.vault.getAbstractFileByPath(filePath);
@@ -261,6 +269,20 @@ export class ReviewPanel extends AbstractChatPanel {
         if (this.containerEl) this.render();
     }
 
+    /** Recalculate token estimates for all embed-folder context files. */
+    private async refreshEmbedContextTokenEstimates(): Promise<void> {
+        for (const filePath of this.contextFilePaths) {
+            const parsed = parseEmbedFolderPath(filePath);
+            if (parsed) {
+                const tokens = await this.estimateEmbedFolderTokens(parsed);
+                if (tokens !== null) {
+                    this.contextFileTokens.set(filePath, tokens);
+                }
+            }
+        }
+        if (this.containerEl) this.render();
+    }
+
     getContextFilePaths(): string[] {
         return [...this.contextFilePaths];
     }
@@ -279,6 +301,13 @@ export class ReviewPanel extends AbstractChatPanel {
 
     async addChatContextFile(filePath: string): Promise<void> {
         await this.chatContextFiles.add(filePath);
+        const parsed = parseEmbedFolderPath(filePath);
+        if (parsed) {
+            const tokens = await this.estimateEmbedFolderTokens(parsed);
+            if (tokens !== null) {
+                this.chatContextFiles.setTokenOverride(filePath, tokens);
+            }
+        }
     }
 
     removeChatContextFile(filePath: string): void {

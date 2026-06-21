@@ -844,7 +844,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.embeddingChunkTokenSize = DEFAULT_SETTINGS.embeddingChunkTokenSize;
                     this.plugin.settings.enableEmbeddingWarming = DEFAULT_SETTINGS.enableEmbeddingWarming;
                     this.plugin.settings.enableFullEmbedPickerOption = DEFAULT_SETTINGS.enableFullEmbedPickerOption;
-                    this.plugin.settings.folderTopKOverrides = DEFAULT_SETTINGS.folderTopKOverrides;
+                    this.plugin.settings.folderTopKOverrides = { ...DEFAULT_SETTINGS.folderTopKOverrides };
                     this.plugin.settings.enableDebugLogging = DEFAULT_SETTINGS.enableDebugLogging;
                     this.plugin.settings.embeddingWarmingDebounceSeconds =
                         DEFAULT_SETTINGS.embeddingWarmingDebounceSeconds;

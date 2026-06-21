@@ -3,7 +3,7 @@ import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { ConfirmModal } from './confirm-modal';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
-import { buildEmbedFolderPath } from '../utils/vault-files';
+import { buildEmbedFolderPath, embedFolderLabel, parseEmbedFolderPath } from '../utils/vault-files';
 import { renderChangeBulkBar, renderChangeCard } from './change-card';
 import type EventideQuillPlugin from '../main';
 import type { DraftState, CoWriterChatMessage, CoWriterOption, CoachPhase } from '../ai/co-writer';
@@ -762,7 +762,9 @@ export class CoWriterPanel extends AbstractChatPanel {
             const ctxRow = bottom.createEl('div', { cls: 'quill-cowriter-panel__ctx-row' });
             for (const filePath of contextFiles) {
                 const pill = ctxRow.createEl('span', { cls: 'quill-cowriter-panel__ctx-pill' });
-                pill.createEl('span', { text: fileNameFromPath(filePath) });
+                const parsed = parseEmbedFolderPath(filePath);
+                const label = parsed ? embedFolderLabel(parsed.folderPath, parsed.mode) : fileNameFromPath(filePath);
+                pill.createEl('span', { text: label });
                 const removeBtn = pill.createEl('button', {
                     cls: 'quill-cowriter-panel__ctx-remove',
                     text: '\u00d7'
@@ -823,9 +825,9 @@ export class CoWriterPanel extends AbstractChatPanel {
                 new VaultFileSuggestModal(
                     this.app,
                     (item) => {
-                        const path =
-                            item.kind === 'file' ? item.file.path : buildEmbedFolderPath(item.folderPath, item.mode);
-                        this.onLinkPlotMap?.(path);
+                        if (item.kind === 'file') {
+                            this.onLinkPlotMap?.(item.file.path);
+                        }
                     },
                     [activeFile?.path ?? ''],
                     undefined,
