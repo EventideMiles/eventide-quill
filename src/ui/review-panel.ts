@@ -40,6 +40,11 @@ export type ScopeChoice = AnalysisScope | 'auto';
 export class ReviewPanel extends AbstractChatPanel {
     private subtab: ReviewSubtab = 'create';
     private resultsState: ResultsState = 'idle';
+    /** Monotonic counter incremented on every render start. Used by
+     *  renderResultsTab to bail out after an await if a newer render
+     *  has superseded it — prevents stale async renders from appending
+     *  duplicate DOM elements (e.g. multiple chat input bars). */
+    private renderToken = 0;
     /** Whether to show "full embed" folder options in the file picker. Set by sidebar from plugin settings. */
     private showFullEmbed = false;
     /** Top-K chunk count for embed folder token estimation. Set by sidebar from plugin settings. */
@@ -595,12 +600,13 @@ export class ReviewPanel extends AbstractChatPanel {
 
     render(): void {
         if (!this.containerEl) return;
+        this.renderToken++;
         this.unloadAndClearContainer();
         this.renderSubtabBar();
         if (this.subtab === 'create') {
             this.renderCreateTab();
         } else {
-            void this.renderResultsTab();
+            void this.renderResultsTab(this.renderToken);
         }
     }
 
@@ -1030,12 +1036,13 @@ export class ReviewPanel extends AbstractChatPanel {
 
     private async rerenderResultsTab(): Promise<void> {
         if (!this.containerEl) return;
+        this.renderToken++;
         this.unloadAndClearContainer();
         this.renderSubtabBar();
-        await this.renderResultsTab();
+        await this.renderResultsTab(this.renderToken);
     }
 
-    private async renderResultsTab(): Promise<void> {
+    private async renderResultsTab(token: number): Promise<void> {
         if (!this.containerEl) return;
         const scroll = this.containerEl.createDiv({ cls: 'quill-sidebar__content-plain' });
 
@@ -1070,6 +1077,7 @@ export class ReviewPanel extends AbstractChatPanel {
                 '',
                 this.renderEvents
             );
+            if (token !== this.renderToken) return;
 
             const controls = scroll.createDiv({ cls: 'quill-review-panel__controls' });
             const newBtn = controls.createEl('button', {
@@ -1098,6 +1106,7 @@ export class ReviewPanel extends AbstractChatPanel {
                                 '',
                                 this.renderEvents
                             );
+                            if (token !== this.renderToken) return;
                         } else {
                             bubble.setText(msg.content);
                         }
