@@ -1636,6 +1636,9 @@ export default class EventideQuillPlugin extends Plugin {
             this.lintPanel?.coWriterSetContextTokenEstimate(conversationTokens);
             this.lintPanel?.coWriterSetMaxAllowedTokens(maxTokens);
         };
+        session.onDiscussStartStreaming = () => {
+            this.lintPanel?.coWriterDiscussStartStreaming();
+        };
         session.onDiscussChunk = (text: string) => {
             this.lintPanel?.coWriterDiscussAppendChunk(text);
         };

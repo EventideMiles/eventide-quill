@@ -465,6 +465,8 @@ export class CoWriterSession {
     /** Called when the discuss-mode token estimate changes (conversation tokens only;
      * the panel adds vault context item tokens on top to compute the total). */
     onTokenEstimate: ((conversationTokens: number, maxTokens: number) => void) | null = null;
+    /** Called when a discuss response starts streaming. */
+    onDiscussStartStreaming: (() => void) | null = null;
     /** Called when a discuss response chunk arrives during streaming. */
     onDiscussChunk: ((text: string) => void) | null = null;
     /** Called when the discuss response is complete (triggers markdown render). */
@@ -894,6 +896,7 @@ export class CoWriterSession {
         let response = '';
 
         // Notify panel that streaming is starting
+        this.onDiscussStartStreaming?.();
         this.onDiscussChunk?.('');
 
         try {
@@ -1135,6 +1138,7 @@ export class CoWriterSession {
         let thought = '';
         let response = '';
 
+        this.onDiscussStartStreaming?.();
         this.onDiscussChunk?.('');
 
         try {

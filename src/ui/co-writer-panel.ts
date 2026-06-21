@@ -310,6 +310,9 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Replace the current continuation options and re-render. */
     setCurrentOptions(options: CoWriterOption[]): void {
         this.currentOptions = options;
+        if (options.length > 0) {
+            this.userScrolledUp = false;
+        }
         this.scheduleRender();
     }
 
