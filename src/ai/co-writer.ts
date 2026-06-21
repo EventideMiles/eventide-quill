@@ -1838,6 +1838,7 @@ export class CoWriterSession {
         // 'generating' hides Approve/Reject while streaming; flipped to 'pending'
         // once the result is final.
         applyEdit.state = 'generating';
+        this.optionsLoading = true;
         this.onOptionsLoading?.(true);
         this.onChatUpdate?.();
 
