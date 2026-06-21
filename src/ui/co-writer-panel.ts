@@ -111,6 +111,12 @@ export class CoWriterPanel extends AbstractChatPanel {
      */
     private plotMapTokens = 0;
 
+    /** Promises from async MarkdownRenderer.render() calls during the current render cycle. */
+    private renderPromises: Promise<void>[] = [];
+
+    /** Monotonic render counter; used to discard stale async finalizations. */
+    private renderId = 0;
+
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app);
         this.plugin = plugin;
@@ -238,9 +244,13 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Set the active input mode (e.g. from the right-click submenu). */
     setMode(mode: InputMode): void {
+        const oldMode = this.inputMode;
         this.inputMode = mode;
         this.modePickerOpen = false;
-        this.render();
+        if (oldMode === 'fulfill' || mode === 'fulfill') {
+            this.onNewChat?.(false);
+        }
+        this.scheduleRender();
     }
 
     /** Set the current coach phase. */
@@ -391,21 +401,27 @@ export class CoWriterPanel extends AbstractChatPanel {
     render(): void {
         if (!this.containerEl) return;
 
-        // Save scroll positions and textarea focus before destroying DOM
+        // Save scroll state and textarea focus before destroying DOM
+        const previousScroll = this.getScrollContainer();
+        const savedScrollTop = previousScroll?.scrollTop ?? 0;
+        const wasAtBottom = !this.userScrolledUp || (previousScroll ? this.isScrollAtBottom() : true);
         const savedThoughtScroll =
             this.containerEl.querySelector('.quill-cowriter-panel__thought-content')?.scrollTop ?? 0;
         const textareaHadFocus =
             this.containerEl.querySelector('.quill-cowriter-panel__input') ===
             this.containerEl.ownerDocument.activeElement;
 
+        const currentRenderId = ++this.renderId;
+        this.renderPending = true;
         this.unloadAndClearContainer();
+        this.renderPromises = [];
 
         // Thought section during generation (options or draft streaming)
         if ((this.draftState === 'generating' || this.optionsLoading) && this.plugin.settings.enableCoWriterThought) {
             this.renderThoughtSection();
         }
 
-        // Scrollable chat area
+        // Scrollable chat area (populates this.renderPromises)
         this.renderChatArea();
 
         // Pinned bottom area
@@ -425,6 +441,34 @@ export class CoWriterPanel extends AbstractChatPanel {
             if (newTextarea) {
                 newTextarea.focus();
             }
+        }
+
+        // Initial scroll restoration  (before async markdown content resolves)
+        if (wasAtBottom) {
+            this.scrollToBottom();
+        } else if (savedScrollTop > 0) {
+            const c = this.getScrollContainer();
+            if (c) {
+                c.scrollTop = Math.min(savedScrollTop, Math.max(0, c.scrollHeight - c.clientHeight));
+            }
+        }
+
+        this.renderPending = false;
+
+        // Finalize scroll after all async markdown renders are in the DOM.
+        // Using renderId guard so a stale callback can't overwrite a newer render's scroll.
+        if (this.renderPromises.length > 0) {
+            void Promise.all(this.renderPromises).then(() => {
+                if (this.renderId !== currentRenderId) return;
+                if (wasAtBottom) {
+                    this.scrollToBottom();
+                } else if (savedScrollTop > 0) {
+                    const c = this.getScrollContainer();
+                    if (c) {
+                        c.scrollTop = Math.min(savedScrollTop, Math.max(0, c.scrollHeight - c.clientHeight));
+                    }
+                }
+            });
         }
     }
 
@@ -516,19 +560,15 @@ export class CoWriterPanel extends AbstractChatPanel {
                             responseEl.addClass('quill-cowriter-panel__response-text--streaming');
                             responseEl.setText(msg.content || '\u2026');
                         } else {
-                            void MarkdownRenderer.render(
+                            const p = MarkdownRenderer.render(
                                 this.app,
                                 normalizeParagraphBreaks(msg.content),
                                 responseEl,
                                 '',
                                 this.renderEvents
-                            ).then(() => {
-                                // Re-check scroll after async markdown render completes,
-                                // since scrollHeight may have changed.
-                                if (!this.userScrolledUp) {
-                                    this.scrollToBottom();
-                                }
-                            });
+                            );
+                            void p;
+                            this.renderPromises.push(p);
                         }
                     }
 
@@ -555,11 +595,6 @@ export class CoWriterPanel extends AbstractChatPanel {
 
         // Scroll listener: if user scrolls up during streaming, stop auto-follow
         this.registerScrollListener(scroll);
-
-        // Auto-scroll to bottom if the user hasn't scrolled up
-        if (!this.userScrolledUp) {
-            scroll.scrollTop = scroll.scrollHeight;
-        }
     }
 
     /** Render Fulfill-mode review cards (one per directive) plus bulk actions,
@@ -878,9 +913,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             textWrap.createEl('div', { cls: 'quill-cowriter-panel__mode-row-label', text: m.label });
             textWrap.createEl('div', { cls: 'quill-cowriter-panel__mode-row-desc', text: m.desc });
             const choose = () => {
-                this.inputMode = m.mode;
-                this.modePickerOpen = false;
-                this.scheduleRender();
+                this.setMode(m.mode);
             };
             this.renderEvents.registerDomEvent(row, 'click', choose);
             this.renderEvents.registerDomEvent(row, 'keydown', (e: KeyboardEvent) => {

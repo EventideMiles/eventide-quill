@@ -52,6 +52,9 @@ export abstract class AbstractChatPanel {
     /** Debounce guard for scheduleRender(). */
     protected renderScheduled = false;
 
+    /** True while render() is mid-execution; scroll events are ignored during this window. */
+    protected renderPending = false;
+
     constructor(app: App) {
         this.app = app;
     }
@@ -122,12 +125,15 @@ export abstract class AbstractChatPanel {
     /**
      * Register a passive scroll listener on the given scroll container
      * to track whether the user has scrolled up (disabling auto-follow).
+     * Scroll events are ignored during render() to avoid races between
+     * scroll-top assignment and the listener.
      */
     protected registerScrollListener(scrollEl: HTMLElement): void {
         this.renderEvents.registerDomEvent(
             scrollEl,
             'scroll',
             () => {
+                if (this.renderPending) return;
                 this.userScrolledUp = !this.isScrollAtBottom();
             },
             { passive: true }
