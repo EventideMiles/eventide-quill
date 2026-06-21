@@ -19,6 +19,9 @@ import { compactConversation } from './compaction';
 import { estimateTokens } from '../utils/tokens';
 import { readVaultFiles, readVaultFileText } from '../utils/vault-files';
 import { parseDirectives, parseAllDirectives } from '../utils/directives';
+import { EmbeddingCache, rankBySimilarity } from './embedding-cache';
+import { parseProviderKey } from './provider-registry';
+import { parseEmbedFolderPath } from '../utils/vault-files';
 import { ChangeSet } from '../core/change-set';
 import {
     clearDiffEdits,
@@ -228,11 +231,92 @@ export function buildVaultContext(contextItems: Array<{ filePath: string; excerp
  * @param contextFilePaths - Paths to context files to load.
  * @returns An array of ChatMessage system messages for the loaded files.
  */
+/**
+ * Resolve embed-prefixed paths to ChatMessages using the embedding cache.
+ * Returns regular paths (unchanged) and resolved embed messages separately.
+ */
+async function resolveEmbedPathsToMessages(
+    plugin: EventideQuillPlugin,
+    paths: string[],
+    label: string,
+    documentText: string,
+    maxChars?: number
+): Promise<{ regularPaths: string[]; messages: ChatMessage[] }> {
+    const regularPaths: string[] = [];
+    const messages: ChatMessage[] = [];
+
+    const embedProvider = plugin.getDefaultEmbedProvider();
+    if (!embedProvider) {
+        return { regularPaths: paths, messages };
+    }
+
+    const embedKey = parseProviderKey(plugin.settings.aiDefaultEmbedProvider);
+    const embedModelId = embedKey?.modelId ?? '';
+
+    for (const path of paths) {
+        const parsed = parseEmbedFolderPath(path);
+        if (!parsed) {
+            regularPaths.push(path);
+            continue;
+        }
+
+        try {
+            const cache = await EmbeddingCache.load(plugin.app.vault, parsed.folderPath, embedModelId);
+            const allEntries = cache.getAll();
+            if (allEntries.length === 0) continue;
+
+            let texts: string[];
+            let topK = plugin.settings.embeddingsTopKChunks;
+            if (parsed.mode === 'full') {
+                // Full mode: include all chunk texts
+                texts = allEntries.map((e) => e.chunkText ?? '');
+            } else {
+                // Top-K mode: retrieve most relevant chunks
+                topK = plugin.settings.folderTopKOverrides[parsed.folderPath] ?? plugin.settings.embeddingsTopKChunks;
+                const docResult = await embedProvider.embed({ input: documentText, model: embedModelId });
+                const ranked = rankBySimilarity(allEntries, docResult.embeddings[0] ?? [], topK);
+                texts = ranked.map((e) => e.chunkText ?? '');
+            }
+
+            const content = texts.join('\n\n');
+            const charLimit = maxChars ?? 10000;
+            const truncated = content.length > charLimit ? content.slice(0, charLimit) + '...' : content;
+            const displayK = parsed.mode === 'full' ? 'all chunks' : `top-${topK}`;
+            messages.push({
+                role: 'system',
+                content: `${label} (${parsed.folderPath}, ${displayK}): ${truncated}`
+            });
+        } catch (err) {
+            console.warn(`Quill: Failed to resolve embed path ${path}:`, err);
+        }
+    }
+
+    return { regularPaths, messages };
+}
+
 export async function loadAdditionalContext(
     plugin: EventideQuillPlugin,
-    contextFilePaths: string[]
+    contextFilePaths: string[],
+    documentText?: string
 ): Promise<ChatMessage[]> {
-    return readVaultFiles(plugin.app.vault, contextFilePaths, 'Reference file', plugin.settings.contextMaxCharsPerFile);
+    if (!contextFilePaths.length) return [];
+
+    // Resolve embed-prefixed paths (embedded folders) before reading regular files.
+    const { regularPaths, messages: embedMessages } = await resolveEmbedPathsToMessages(
+        plugin,
+        contextFilePaths,
+        'Reference file',
+        documentText ?? '',
+        plugin.settings.contextMaxCharsPerFile
+    );
+
+    const fileMessages = await readVaultFiles(
+        plugin.app.vault,
+        regularPaths,
+        'Reference file',
+        plugin.settings.contextMaxCharsPerFile
+    );
+    return [...embedMessages, ...fileMessages];
 }
 
 /**
@@ -493,16 +577,17 @@ export class CoWriterSession {
         this.lockEditor();
 
         // For initialize (empty direction), move cursor to end so AI reads the full document
+        let fullText: string;
         let proseForOptions: string;
         if (!direction) {
-            const fullText = editor.getValue();
+            fullText = editor.getValue();
             const endPos = editor.offsetToPos(fullText.length);
             editor.setCursor(endPos);
             editor.scrollIntoView({ from: endPos, to: endPos }, true);
             proseForOptions = fullText.slice(-4000);
         } else {
             const cursor = editor.getCursor();
-            const fullText = editor.getValue();
+            fullText = editor.getValue();
             const cursorOffset = editor.posToOffset(cursor);
             const textBeforeCursor = fullText.slice(0, cursorOffset);
             proseForOptions = textBeforeCursor.slice(-4000);
@@ -520,7 +605,7 @@ export class CoWriterSession {
                 ? buildVaultContext(plugin.currentAssembly.contextItems)
                 : '';
 
-        const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
+        const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths, fullText);
         const optionsPlotMap = await buildPlotMapMessage(plugin);
         const optionsDirective = buildDirectiveMessage(plugin, proseForOptions);
 
@@ -540,12 +625,14 @@ export class CoWriterSession {
             content: prompt
         });
 
-        console.warn('[Quill Co-writer] Option generation context', {
-            manuscriptExcerptChars: proseForOptions.length,
-            vaultContextChars: vaultContext.length,
-            vaultContextFiles: plugin.currentAssembly?.contextItems.length ?? 0,
-            additionalFiles: this.contextFilePaths
-        });
+        if (__DEV__ && plugin.settings.enableDebugLogging) {
+            console.warn('[Quill Co-writer] Option generation context', {
+                manuscriptExcerptChars: proseForOptions.length,
+                vaultContextChars: vaultContext.length,
+                vaultContextFiles: plugin.currentAssembly?.contextItems.length ?? 0,
+                additionalFiles: this.contextFilePaths
+            });
+        }
 
         let thought = '';
 
@@ -720,7 +807,7 @@ export class CoWriterSession {
         if (vaultContext) {
             injectedContext.push({ role: 'system', content: `Vault context for reference:\n${vaultContext}` });
         }
-        const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
+        const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths, fullText);
         injectedContext.push(...additionalContextMessages);
         const discussPlotMap = await buildPlotMapMessage(plugin);
         if (discussPlotMap) {
@@ -791,15 +878,17 @@ export class CoWriterSession {
             ...this.discussCurrentMessages.slice(1) // context heads + chat turns
         ];
 
-        console.warn('[Quill Co-writer] Discuss context', {
-            manuscriptExcerptChars: proseForContext.length,
-            vaultContextChars: vaultContext.length,
-            vaultContextFiles: plugin.currentAssembly?.contextItems.length ?? 0,
-            additionalFiles: this.contextFilePaths,
-            discussCurrentMessages: this.discussCurrentMessages.length,
-            totalTokens,
-            maxTokens
-        });
+        if (__DEV__ && plugin.settings.enableDebugLogging) {
+            console.warn('[Quill Co-writer] Discuss context', {
+                manuscriptExcerptChars: proseForContext.length,
+                vaultContextChars: vaultContext.length,
+                vaultContextFiles: plugin.currentAssembly?.contextItems.length ?? 0,
+                additionalFiles: this.contextFilePaths,
+                discussCurrentMessages: this.discussCurrentMessages.length,
+                totalTokens,
+                maxTokens
+            });
+        }
 
         let thought = '';
         let response = '';
@@ -939,7 +1028,7 @@ export class CoWriterSession {
         if (vaultContext) {
             injectedContext.push({ role: 'system', content: `Vault context for reference:\n${vaultContext}` });
         }
-        const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
+        const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths, fullText);
         injectedContext.push(...additionalContextMessages);
         const coachPlotMap = await buildPlotMapMessage(plugin);
         if (coachPlotMap) {
@@ -1031,15 +1120,17 @@ export class CoWriterSession {
             ...this.discussCurrentMessages.slice(1)
         ];
 
-        console.warn('[Quill Co-writer] Coach context', {
-            manuscriptExcerptChars: proseForContext.length,
-            vaultContextChars: vaultContext.length,
-            vaultContextFiles: plugin.currentAssembly?.contextItems.length ?? 0,
-            additionalFiles: this.contextFilePaths,
-            phase: this.coachSession?.phase,
-            totalTokens,
-            maxTokens
-        });
+        if (__DEV__ && plugin.settings.enableDebugLogging) {
+            console.warn('[Quill Co-writer] Coach context', {
+                manuscriptExcerptChars: proseForContext.length,
+                vaultContextChars: vaultContext.length,
+                vaultContextFiles: plugin.currentAssembly?.contextItems.length ?? 0,
+                additionalFiles: this.contextFilePaths,
+                phase: this.coachSession?.phase,
+                totalTokens,
+                maxTokens
+            });
+        }
 
         let thought = '';
         let response = '';
@@ -1231,7 +1322,7 @@ export class CoWriterSession {
             plugin.settings.coWriterVaultContext && plugin.currentAssembly
                 ? buildVaultContext(plugin.currentAssembly.contextItems)
                 : '';
-        const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
+        const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths, fullText);
         const coachOptionsPlotMap = await buildPlotMapMessage(plugin);
         const coachOptionsDirective = buildDirectiveMessage(plugin, proseForOptions);
 
@@ -1685,7 +1776,7 @@ export class CoWriterSession {
                 : '';
 
         // Build additional context from user-added files
-        const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
+        const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths, fullText);
         const plotMapText = await loadPlotMapText(plugin);
         const applySteering = inlineSteering(plugin, textBeforeCursor);
 
@@ -1889,7 +1980,7 @@ export class CoWriterSession {
                 ? buildVaultContext(plugin.currentAssembly.contextItems)
                 : '';
 
-        const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths);
+        const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths, fullText);
         const plotMapText = await loadPlotMapText(plugin);
         const directSteering = [...inlineSteering(plugin, textBeforeCursor), ...(extraSteering ?? [])];
 
