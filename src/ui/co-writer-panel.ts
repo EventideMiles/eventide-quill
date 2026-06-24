@@ -267,7 +267,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         const oldMode = this.inputMode;
         this.inputMode = mode;
         this.modePickerOpen = false;
-        if (oldMode === 'fulfill' || mode === 'fulfill') {
+        if (oldMode !== mode && (oldMode === 'fulfill' || mode === 'fulfill')) {
             this.onNewChat?.(false);
         }
         this.scheduleRender();
@@ -605,10 +605,6 @@ export class CoWriterPanel extends AbstractChatPanel {
                 }
             }
 
-            if (this.directChange) {
-                this.renderDirectChangeCard(scroll);
-            }
-
             if (this.optionsLoading) {
                 const bubble = scroll.createEl('div', {
                     cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--assistant quill-cowriter-panel__chat-bubble--streaming'
@@ -619,6 +615,12 @@ export class CoWriterPanel extends AbstractChatPanel {
 
         // Scroll listener: if user scrolls up during streaming, stop auto-follow
         this.registerScrollListener(scroll);
+
+        // Direct change card — always rendered when a pending/active Direct
+        // continuation exists, independent of chat state (empty prompt, etc.).
+        if (this.directChange) {
+            this.renderDirectChangeCard(scroll);
+        }
     }
 
     /** Render the Direct continuation review card (Approve/Reject), using the
@@ -627,10 +629,13 @@ export class CoWriterPanel extends AbstractChatPanel {
      *  anything else. */
     private renderDirectChangeCard(container: HTMLElement): void {
         if (!this.directChange) return;
-        renderChangeCard(container, this.directChange, null, this.app, this.renderEvents, {
+        const p = renderChangeCard(container, this.directChange, null, this.app, this.renderEvents, {
             onApprove: (id: number) => this.onApproveDirect?.(id),
             onReject: (id: number) => this.onRejectDirect?.(id)
         });
+        if (p) {
+            this.renderPromises.push(p);
+        }
     }
 
     /** Render the Fulfill-mode review cards (one per directive) plus bulk actions,
@@ -647,7 +652,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             }
         );
         for (const edit of this.fulfillSections) {
-            renderChangeCard(container, edit, null, this.app, this.renderEvents, {
+            void renderChangeCard(container, edit, null, this.app, this.renderEvents, {
                 onApprove: (id: number) => this.onApproveFulfillSection?.(id),
                 onReject: (id: number) => this.onRejectFulfillSection?.(id)
             });
@@ -767,6 +772,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             cls: 'quill-cowriter-panel__option-apply mod-cta',
             text: applying ? 'Generating\u2026' : 'Apply'
         });
+        applyBtn.disabled = applying;
         if (applying) {
             applyBtn.addClass('quill-cowriter-panel__option-apply--applying');
         }

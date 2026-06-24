@@ -49,7 +49,7 @@ export function applyReplacement(
 export function applyCmReplacement(view: EditorView, result: LintResult, replacement: string): void {
     const doc = view.state.doc;
     const lineInfo = doc.line(result.line);
-    const from = lineInfo.from + result.column;
+    const from = Math.min(lineInfo.from + result.column, lineInfo.to);
     // Clamp `to` to the end of the start line. Lint spans are single-line; a
     // result.length that would cross into subsequent lines indicates a stale
     // or oversized span and must never delete across the line boundary.

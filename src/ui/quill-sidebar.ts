@@ -935,7 +935,7 @@ export class QuillSidebarView extends ItemView {
         // Individual change cards.
         const scroll = container.createEl('div', { cls: 'quill-linter__pending-list' });
         for (const edit of edits) {
-            renderChangeCard(scroll, edit, edit.originalText ?? null, this.app, this.renderEvents!, {
+            void renderChangeCard(scroll, edit, edit.originalText ?? null, this.app, this.renderEvents!, {
                 onApprove: (id: number) => {
                     this.plugin.approveLintBatchChange(id);
                     this.render();

@@ -5,6 +5,7 @@ import { createProvider, generateModelId, generateProviderId } from './ai/provid
 import { NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS } from './types';
 import { ConfirmModal } from './ui/confirm-modal';
 import type { ReadabilityFormula } from './core/dashboard/types';
+import type { WikiLinkBehavior } from './ai/prompts';
 
 export type LinterMode = 'all' | 'prose' | 'ai';
 export type SettingsTab = 'welcome' | 'general' | 'linter' | 'ai-providers' | 'model-behaviors';
@@ -40,7 +41,7 @@ export interface EventideQuillSettings {
     transformTemperature: number;
     transformVaultContext: boolean;
     transformMaxOutputTokens: number;
-    wikiLinkBehavior: 'preserve' | 'adaptive';
+    wikiLinkBehavior: WikiLinkBehavior;
     narrativeVoicePreset: NarrativeVoicePreset;
     customNarrativeVoiceRules: string;
     analysisTemperature: number;
@@ -1660,7 +1661,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     .addOption('adaptive', 'Adaptive (smart display text)')
                     .setValue(this.plugin.settings.wikiLinkBehavior)
                     .onChange(async (value) => {
-                        this.plugin.settings.wikiLinkBehavior = value as 'preserve' | 'adaptive';
+                        this.plugin.settings.wikiLinkBehavior = value as WikiLinkBehavior;
                         await this.plugin.saveSettings();
                     })
             );

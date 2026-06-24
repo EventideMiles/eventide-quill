@@ -43,7 +43,7 @@ export function renderChangeCard(
     app: App,
     events: Component,
     handlers: ChangeCardHandlers
-): void {
+): Promise<void> | undefined {
     const card = container.createEl('div', {
         cls: `quill-change-card quill-change-card--${edit.state}`
     });
@@ -58,9 +58,10 @@ export function renderChangeCard(
     }
 
     // Added (green)
+    let renderPromise: Promise<void> | undefined;
     if (edit.newText.length > 0) {
         const added = card.createEl('div', { cls: 'quill-change-card__added' });
-        void MarkdownRenderer.render(app, normalizeParagraphBreaks(edit.newText), added, '', events);
+        renderPromise = MarkdownRenderer.render(app, normalizeParagraphBreaks(edit.newText), added, '', events);
     }
 
     const statusText =
@@ -89,4 +90,6 @@ export function renderChangeCard(
         });
         events.registerDomEvent(rejectBtn, 'click', () => handlers.onReject?.(edit.id));
     }
+
+    return renderPromise;
 }

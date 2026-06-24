@@ -32,9 +32,10 @@ import {
     toDiffSnapshots
 } from '../ui/change-diff-extension';
 
-/** Replace em dashes (—) with a comma+space for prose that shouldn't use them. */
+/** Replace em dashes (—) with a comma+space for prose that shouldn't use them.
+ *  Preserves content inside wiki links ([[...]]) so linked targets are not broken. */
 function sanitizeProse(text: string): string {
-    return text.replace(/\u2014/g, ', ');
+    return text.replace(/\[\[[^\]]*\]\]|\u2014/g, (match) => (match.startsWith('[[') ? match : ', '));
 }
 
 /**
@@ -1845,6 +1846,9 @@ export class CoWriterSession {
         const cm = (editor as unknown as { cm: EditorView }).cm;
         if (!cm) {
             new Notice('Quill: Could not access editor for streaming.');
+            this.directChanges.clear();
+            this.abortController = null;
+            this.optionsLoading = false;
             this.onOptionsLoading?.(false);
             return;
         }
@@ -2075,6 +2079,8 @@ export class CoWriterSession {
         const cm = (editor as unknown as { cm: EditorView }).cm;
         if (!cm) {
             new Notice('Quill: Could not access editor for streaming.');
+            this.directChanges.clear();
+            this.abortController = null;
             this.onOptionsLoading?.(false);
             return;
         }
@@ -2106,6 +2112,7 @@ export class CoWriterSession {
                 directEdit.newText += sanitizeProse(chunk.text);
                 syncChangeSetPositions(cm, this.directChanges, 'direct');
                 pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
+                this.onDirectChangeUpdate?.();
             }
 
             // Stopping-point enforcement on the buffered text.
@@ -2151,6 +2158,7 @@ export class CoWriterSession {
         } finally {
             notice.hide();
             this.onOptionsLoading?.(false);
+            this.onDirectChangeUpdate?.();
             this.onChatUpdate?.();
         }
     }
@@ -2226,7 +2234,8 @@ export class CoWriterSession {
         if (this.abortController) {
             this.abortController.abort();
             this.abortController = null;
-        } else if (this.directChanges.hasPending) {
+        }
+        if (this.directChanges.hasPending) {
             this.directChanges.clear();
             const cm = this.getManuscriptCm();
             if (cm) clearDiffEdits(cm, 'direct');

@@ -4,9 +4,10 @@ import { AiProvider, ChatMessage } from './provider';
 import { getWikiLinkInstruction, type WikiLinkBehavior } from './prompts';
 import { SCENE_BREAK_HEADING, SCENE_BREAK_RULE } from '../utils/text-analysis';
 
-/** Replace em dashes with comma+space — matches the co-writer's sanitizeProse convention. */
+/** Replace em dashes with comma+space — matches the co-writer's sanitizeProse convention.
+ *  Preserves content inside wiki links ([[...]]) so linked targets are not broken. */
 function sanitizeProse(text: string): string {
-    return text.replace(/\u2014/g, ', ');
+    return text.replace(/\[\[[^\]]*\]\]|\u2014/g, (match) => (match.startsWith('[[') ? match : ', '));
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
