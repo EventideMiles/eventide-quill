@@ -32,9 +32,10 @@ import {
     toDiffSnapshots
 } from '../ui/change-diff-extension';
 
-/** Replace em dashes (—) with a comma+space for prose that shouldn't use them. */
+/** Replace em dashes (—) with a comma+space for prose that shouldn't use them.
+ *  Preserves content inside wiki links ([[...]]) so linked targets are not broken. */
 function sanitizeProse(text: string): string {
-    return text.replace(/\u2014/g, ', ');
+    return text.replace(/\[\[[^\]]*\]\]|\u2014/g, (match) => (match.startsWith('[[') ? match : ', '));
 }
 
 /**
@@ -465,6 +466,8 @@ export class CoWriterSession {
     /** Called when the discuss-mode token estimate changes (conversation tokens only;
      * the panel adds vault context item tokens on top to compute the total). */
     onTokenEstimate: ((conversationTokens: number, maxTokens: number) => void) | null = null;
+    /** Called when a discuss response starts streaming. */
+    onDiscussStartStreaming: (() => void) | null = null;
     /** Called when a discuss response chunk arrives during streaming. */
     onDiscussChunk: ((text: string) => void) | null = null;
     /** Called when the discuss response is complete (triggers markdown render). */
@@ -488,6 +491,9 @@ export class CoWriterSession {
     fulfillActive = false;
     /** Called whenever Fulfill edits change (generation progress, approval, rejection). */
     onFulfillUpdate: (() => void) | null = null;
+    /** Called whenever the Direct continuation changes (streaming progress, approval, rejection).
+     *  Pushes the current directChanges edits to the panel for in-chat review. */
+    onDirectChangeUpdate: (() => void) | null = null;
 
     /**
      * Analyze the voice of a prose passage using the AI provider.
@@ -894,6 +900,7 @@ export class CoWriterSession {
         let response = '';
 
         // Notify panel that streaming is starting
+        this.onDiscussStartStreaming?.();
         this.onDiscussChunk?.('');
 
         try {
@@ -1135,6 +1142,7 @@ export class CoWriterSession {
         let thought = '';
         let response = '';
 
+        this.onDiscussStartStreaming?.();
         this.onDiscussChunk?.('');
 
         try {
@@ -1514,7 +1522,8 @@ export class CoWriterSession {
                     plugin.settings.narrativeVoicePreset,
                     undefined,
                     [{ source: 'inline', text: range.text }],
-                    plotMapText
+                    plotMapText,
+                    plugin.settings.wikiLinkBehavior
                 );
                 const userMessage = [
                     'Fulfill the inline directive at this point in the scene. Your prose will replace the directive comment and sit between the text above and the text below.',
@@ -1656,16 +1665,22 @@ export class CoWriterSession {
             effects: setDiffEdits.of(preserved),
             selection: { anchor: change.from + change.insert.length }
         });
+        this.onDirectChangeUpdate?.();
         this.onDraftAccepted?.();
     }
 
     /** Reject the Direct continuation: discard the buffered prose (nothing was
-     *  ever written to the document) and clear the diff. */
+     *  ever written to the document) and clear the diff. Resets optionsLoading
+     *  so the panel re-enables the Apply buttons on the existing option set. */
     rejectDirectChange(id: number): void {
         void id;
         this.directChanges.clear();
         const cm = this.getManuscriptCm();
         if (cm) clearDiffEdits(cm, 'direct');
+        this.optionsLoading = false;
+        this.onOptionsLoading?.(false);
+        this.onDirectChangeUpdate?.();
+        this.onChatUpdate?.();
     }
 
     /** Clear Direct change state (e.g., on reset / new chat). */
@@ -1673,6 +1688,9 @@ export class CoWriterSession {
         this.directChanges.clear();
         const cm = this.getManuscriptCm();
         if (cm) clearDiffEdits(cm, 'direct');
+        this.optionsLoading = false;
+        this.onOptionsLoading?.(false);
+        this.onDirectChangeUpdate?.();
     }
 
     /**
@@ -1790,7 +1808,8 @@ export class CoWriterSession {
             plugin.settings.narrativeVoicePreset,
             vaultContext,
             applySteering,
-            plotMapText
+            plotMapText,
+            plugin.settings.wikiLinkBehavior
         );
 
         const userMessage = [
@@ -1822,12 +1841,16 @@ export class CoWriterSession {
         // 'generating' hides Approve/Reject while streaming; flipped to 'pending'
         // once the result is final.
         applyEdit.state = 'generating';
+        this.optionsLoading = true;
         this.onOptionsLoading?.(true);
         this.onChatUpdate?.();
 
         const cm = (editor as unknown as { cm: EditorView }).cm;
         if (!cm) {
             new Notice('Quill: Could not access editor for streaming.');
+            this.directChanges.clear();
+            this.abortController = null;
+            this.optionsLoading = false;
             this.onOptionsLoading?.(false);
             return;
         }
@@ -1857,6 +1880,7 @@ export class CoWriterSession {
                 applyEdit.newText += sanitizeProse(chunk.text);
                 syncChangeSetPositions(cm, this.directChanges, 'direct');
                 pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
+                this.onDirectChangeUpdate?.();
             }
 
             if (plugin.settings.coWriterAppendNewline) {
@@ -1889,7 +1913,15 @@ export class CoWriterSession {
             }
         } finally {
             notice.hide();
-            this.onOptionsLoading?.(false);
+            // If a pending diff remains in the editor, keep optionsLoading true so
+            // the Apply buttons stay disabled until the user approves or rejects
+            // the continuation. This prevents co-simultaneous apply streams from
+            // blending in the editor. approveDirectChange / rejectDirectChange
+            // (or the error / empty paths below) are responsible for resetting it.
+            const hasPending = applyEdit.state === 'pending';
+            this.optionsLoading = hasPending;
+            this.onOptionsLoading?.(hasPending);
+            this.onDirectChangeUpdate?.();
             this.onChatUpdate?.();
         }
     }
@@ -1994,7 +2026,8 @@ export class CoWriterSession {
             plugin.settings.narrativeVoicePreset,
             vaultContext,
             directSteering,
-            plotMapText
+            plotMapText,
+            plugin.settings.wikiLinkBehavior
         );
 
         const proseForContext = textBeforeCursor.slice(-12000);
@@ -2048,6 +2081,8 @@ export class CoWriterSession {
         const cm = (editor as unknown as { cm: EditorView }).cm;
         if (!cm) {
             new Notice('Quill: Could not access editor for streaming.');
+            this.directChanges.clear();
+            this.abortController = null;
             this.onOptionsLoading?.(false);
             return;
         }
@@ -2079,6 +2114,7 @@ export class CoWriterSession {
                 directEdit.newText += sanitizeProse(chunk.text);
                 syncChangeSetPositions(cm, this.directChanges, 'direct');
                 pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
+                this.onDirectChangeUpdate?.();
             }
 
             // Stopping-point enforcement on the buffered text.
@@ -2123,7 +2159,10 @@ export class CoWriterSession {
             }
         } finally {
             notice.hide();
-            this.onOptionsLoading?.(false);
+            const hasPending = this.directChanges.hasPending;
+            this.optionsLoading = hasPending;
+            this.onOptionsLoading?.(hasPending);
+            this.onDirectChangeUpdate?.();
             this.onChatUpdate?.();
         }
     }
@@ -2193,11 +2232,21 @@ export class CoWriterSession {
         cm.contentDOM.setAttribute('contenteditable', 'true');
     }
 
-    /** Cancel any in-flight API call. */
+    /** Cancel any in-flight API call. If no generation is in flight but a pending
+     *  Direct continuation is awaiting review, reject it so the panel unlocks. */
     cancelGeneration(): void {
         if (this.abortController) {
             this.abortController.abort();
             this.abortController = null;
+        }
+        if (this.directChanges.hasPending) {
+            this.directChanges.clear();
+            const cm = this.getManuscriptCm();
+            if (cm) clearDiffEdits(cm, 'direct');
+            this.optionsLoading = false;
+            this.onOptionsLoading?.(false);
+            this.onDirectChangeUpdate?.();
+            this.onChatUpdate?.();
         }
     }
 

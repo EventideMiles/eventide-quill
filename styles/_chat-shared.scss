@@ -141,6 +141,16 @@
     &--compact {
         font-size: var(--font-ui-smaller);
     }
+
+    &:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+
+        &:hover {
+            background: transparent;
+            color: var(--text-muted);
+        }
+    }
 }
 
 // Chat textarea — where the writer types follow-up messages.
@@ -163,6 +173,18 @@
     &:focus {
         border-color: var(--interactive-accent);
         outline: none;
+    }
+
+    &:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+        background: var(--background-secondary);
+
+        &::placeholder {
+            color: var(--text-muted);
+            opacity: 1;
+            -webkit-text-fill-color: var(--text-muted);
+        }
     }
 }
 

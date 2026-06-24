@@ -1,10 +1,13 @@
 import { LintResult, RULE_INFO } from '../core/linter/types';
 import type { PacingFlag } from '../core/dashboard/types';
 import { AiProvider, ChatMessage } from './provider';
+import { getWikiLinkInstruction, type WikiLinkBehavior } from './prompts';
+import { SCENE_BREAK_HEADING, SCENE_BREAK_RULE } from '../utils/text-analysis';
 
-/** Replace em dashes with comma+space — matches the co-writer's sanitizeProse convention. */
+/** Replace em dashes with comma+space — matches the co-writer's sanitizeProse convention.
+ *  Preserves content inside wiki links ([[...]]) so linked targets are not broken. */
 function sanitizeProse(text: string): string {
-    return text.replace(/\u2014/g, ', ');
+    return text.replace(/\[\[[^\]]*\]\]|\u2014/g, (match) => (match.startsWith('[[') ? match : ', '));
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -39,6 +42,10 @@ export function groupFindingsByPassage(results: LintResult[], editorText: string
 
     const lines = editorText.split('\n');
     const isBlank = (text: string) => text.trim().length === 0;
+    // Structural markdown lines act as hard passage boundaries (in addition to
+    // blank lines) so a heading or scene break without a preceding blank line
+    // is never absorbed into an adjacent prose passage and rewritten over.
+    const isBoundary = (text: string) => isBlank(text) || SCENE_BREAK_HEADING.test(text) || SCENE_BREAK_RULE.test(text);
 
     // Build line-start offset table for character-offset lookups.
     const lineOffsets: number[] = [0];
@@ -56,13 +63,13 @@ export function groupFindingsByPassage(results: LintResult[], editorText: string
     for (const result of sorted) {
         const lineIdx = result.line - 1;
 
-        // Find paragraph boundaries (walk outward to blank lines).
+        // Find paragraph boundaries (walk outward to blank/structural lines).
         let paraStartIdx = lineIdx;
-        while (paraStartIdx > 0 && !isBlank(lines[paraStartIdx - 1] ?? '')) {
+        while (paraStartIdx > 0 && !isBoundary(lines[paraStartIdx - 1] ?? '')) {
             paraStartIdx--;
         }
         let paraEndIdx = lineIdx;
-        while (paraEndIdx < lines.length - 1 && !isBlank(lines[paraEndIdx + 1] ?? '')) {
+        while (paraEndIdx < lines.length - 1 && !isBoundary(lines[paraEndIdx + 1] ?? '')) {
             paraEndIdx++;
         }
 
@@ -101,7 +108,10 @@ export function groupFindingsByPassage(results: LintResult[], editorText: string
  * Lists ALL issues found in the passage and asks the AI to rewrite the
  * entire passage to address them all simultaneously.
  */
-export function buildBatchLinterPrompt(group: FindingGroup): { system: string; user: string } {
+export function buildBatchLinterPrompt(
+    group: FindingGroup,
+    wikiLinkBehavior?: WikiLinkBehavior
+): { system: string; user: string } {
     const system = [
         'You are an editor fixing prose issues in a passage of fiction.',
         'You will be shown a passage with one or more flagged issues.',
@@ -113,6 +123,7 @@ export function buildBatchLinterPrompt(group: FindingGroup): { system: string; u
         '- Do not introduce new characters, plot points, or information.',
         '- Maintain the same paragraph structure unless splitting improves clarity.',
         '- Do not use em dashes (—). Use commas, semicolons, or split sentences instead.',
+        '- ' + getWikiLinkInstruction(wikiLinkBehavior ?? 'preserve'),
         '',
         'Output ONLY the rewritten passage. No explanations, labels, or markdown.'
     ].join('\n');
@@ -144,7 +155,11 @@ export function buildBatchLinterPrompt(group: FindingGroup): { system: string; u
  * Asks the AI to vary the sentence rhythm in a passage that is uniformly
  * short or uniformly long.
  */
-export function buildPacingFixPrompt(flag: PacingFlag, passageText: string): { system: string; user: string } {
+export function buildPacingFixPrompt(
+    flag: PacingFlag,
+    passageText: string,
+    wikiLinkBehavior?: WikiLinkBehavior
+): { system: string; user: string } {
     const isShort = flag.kind === 'uniform-short';
 
     const system = [
@@ -160,6 +175,7 @@ export function buildPacingFixPrompt(flag: PacingFlag, passageText: string): { s
         '- Do not introduce new characters, plot points, or information.',
         '- Keep the same paragraph structure.',
         '- Do not use em dashes (—). Use commas, semicolons, or split sentences instead.',
+        '- ' + getWikiLinkInstruction(wikiLinkBehavior ?? 'preserve'),
         '',
         'Output ONLY the rewritten passage. No explanations, labels, or markdown.'
     ].join('\n');

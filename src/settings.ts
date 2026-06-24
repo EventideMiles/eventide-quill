@@ -5,6 +5,7 @@ import { createProvider, generateModelId, generateProviderId } from './ai/provid
 import { NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS } from './types';
 import { ConfirmModal } from './ui/confirm-modal';
 import type { ReadabilityFormula } from './core/dashboard/types';
+import type { WikiLinkBehavior } from './ai/prompts';
 
 export type LinterMode = 'all' | 'prose' | 'ai';
 export type SettingsTab = 'welcome' | 'general' | 'linter' | 'ai-providers' | 'model-behaviors';
@@ -40,6 +41,7 @@ export interface EventideQuillSettings {
     transformTemperature: number;
     transformVaultContext: boolean;
     transformMaxOutputTokens: number;
+    wikiLinkBehavior: WikiLinkBehavior;
     narrativeVoicePreset: NarrativeVoicePreset;
     customNarrativeVoiceRules: string;
     analysisTemperature: number;
@@ -124,6 +126,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     transformTemperature: 1.0,
     transformVaultContext: true,
     transformMaxOutputTokens: 4096,
+    wikiLinkBehavior: 'preserve',
     narrativeVoicePreset: 'third-limited',
     customNarrativeVoiceRules: 'No genre-specific or context-specific rules configured.',
     analysisTemperature: 0.7,
@@ -1576,6 +1579,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.transformTemperature = DEFAULT_SETTINGS.transformTemperature;
                         this.plugin.settings.transformVaultContext = DEFAULT_SETTINGS.transformVaultContext;
                         this.plugin.settings.transformMaxOutputTokens = DEFAULT_SETTINGS.transformMaxOutputTokens;
+                        this.plugin.settings.wikiLinkBehavior = DEFAULT_SETTINGS.wikiLinkBehavior;
                         await this.plugin.saveSettings();
                         this.display();
                     })
@@ -1643,6 +1647,22 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             text.setValue(String(this.plugin.settings.transformMaxOutputTokens));
                             new Notice('Value must be a number ≥ 1');
                         }
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName('Wiki link handling')
+            .setDesc(
+                'How AI should handle Obsidian wiki links ([[...]]) when rewriting or generating prose. "preserve" keeps them exactly as-is. "adaptive" allows the AI to adapt the display text after the pipe (|) to fit the prose while keeping the page name and heading intact.'
+            )
+            .addDropdown((dropdown) =>
+                dropdown
+                    .addOption('preserve', 'Preserve exactly')
+                    .addOption('adaptive', 'Adaptive (smart display text)')
+                    .setValue(this.plugin.settings.wikiLinkBehavior)
+                    .onChange(async (value) => {
+                        this.plugin.settings.wikiLinkBehavior = value as WikiLinkBehavior;
+                        await this.plugin.saveSettings();
                     })
             );
 
@@ -1945,6 +1965,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
                         this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
                         this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
+                        this.plugin.settings.wikiLinkBehavior = DEFAULT_SETTINGS.wikiLinkBehavior;
                         await this.plugin.saveSettings();
                         this.display();
                     })
@@ -2002,6 +2023,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.transformTemperature = DEFAULT_SETTINGS.transformTemperature;
                     this.plugin.settings.transformVaultContext = DEFAULT_SETTINGS.transformVaultContext;
                     this.plugin.settings.transformMaxOutputTokens = DEFAULT_SETTINGS.transformMaxOutputTokens;
+                    this.plugin.settings.wikiLinkBehavior = DEFAULT_SETTINGS.wikiLinkBehavior;
                     this.plugin.settings.narrativeVoicePreset = DEFAULT_SETTINGS.narrativeVoicePreset;
                     this.plugin.settings.customNarrativeVoiceRules = DEFAULT_SETTINGS.customNarrativeVoiceRules;
                     this.plugin.settings.analysisTemperature = DEFAULT_SETTINGS.analysisTemperature;

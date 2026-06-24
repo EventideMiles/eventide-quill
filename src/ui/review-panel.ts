@@ -40,6 +40,11 @@ export type ScopeChoice = AnalysisScope | 'auto';
 export class ReviewPanel extends AbstractChatPanel {
     private subtab: ReviewSubtab = 'create';
     private resultsState: ResultsState = 'idle';
+    /** Monotonic counter incremented on every render start. Used by
+     *  renderResultsTab to bail out after an await if a newer render
+     *  has superseded it — prevents stale async renders from appending
+     *  duplicate DOM elements (e.g. multiple chat input bars). */
+    private renderToken = 0;
     /** Whether to show "full embed" folder options in the file picker. Set by sidebar from plugin settings. */
     private showFullEmbed = false;
     /** Top-K chunk count for embed folder token estimation. Set by sidebar from plugin settings. */
@@ -595,12 +600,15 @@ export class ReviewPanel extends AbstractChatPanel {
 
     render(): void {
         if (!this.containerEl) return;
+        const token = ++this.renderToken;
+        this.renderPending = true;
         this.unloadAndClearContainer();
         this.renderSubtabBar();
         if (this.subtab === 'create') {
             this.renderCreateTab();
+            if (token === this.renderToken) this.renderPending = false;
         } else {
-            void this.renderResultsTab();
+            void this.renderResultsTab(token);
         }
     }
 
@@ -1030,100 +1038,115 @@ export class ReviewPanel extends AbstractChatPanel {
 
     private async rerenderResultsTab(): Promise<void> {
         if (!this.containerEl) return;
+        this.renderToken++;
         this.unloadAndClearContainer();
         this.renderSubtabBar();
-        await this.renderResultsTab();
+        await this.renderResultsTab(this.renderToken);
     }
 
-    private async renderResultsTab(): Promise<void> {
-        if (!this.containerEl) return;
-        const scroll = this.containerEl.createDiv({ cls: 'quill-sidebar__content-plain' });
+    private async renderResultsTab(token: number): Promise<void> {
+        try {
+            if (!this.containerEl) return;
+            const scroll = this.containerEl.createDiv({ cls: 'quill-sidebar__content-plain' });
 
-        if (this.resultsState === 'idle') {
-            scroll.createEl('p', {
-                text: 'No results yet. Use the new review tab to generate a report.',
-                cls: 'quill-empty-hint'
-            });
-            return;
-        }
+            if (this.resultsState === 'idle') {
+                scroll.createEl('p', {
+                    text: 'No results yet. Use the new review tab to generate a report.',
+                    cls: 'quill-empty-hint'
+                });
+                return;
+            }
 
-        // Header — engine-aware
-        const header = scroll.createDiv({ cls: 'quill-review-panel__header' });
-        header.createEl('span', { cls: 'quill-review-panel__persona', text: this.headerLabel });
-        if (this.subLabel) {
-            header.createEl('span', { cls: 'quill-review-panel__scope-tag', text: this.subLabel });
-        }
+            // Header — engine-aware
+            const header = scroll.createDiv({ cls: 'quill-review-panel__header' });
+            header.createEl('span', { cls: 'quill-review-panel__persona', text: this.headerLabel });
+            if (this.subLabel) {
+                header.createEl('span', { cls: 'quill-review-panel__scope-tag', text: this.subLabel });
+            }
 
-        if (this.resultsState === 'loading') {
-            header.createEl('span', { cls: 'quill-review-panel__status', text: 'Analyzing...' });
-            scroll.createDiv({ cls: 'quill-review-panel__report' }).setText('');
-        } else if (this.resultsState === 'complete') {
-            header.createEl('span', {
-                cls: 'quill-review-panel__status quill-review-panel__status--done',
-                text: 'Done'
-            });
-            const report = scroll.createDiv({ cls: 'quill-review-panel__report-rendered' });
-            await MarkdownRenderer.render(
-                this.app,
-                normalizeParagraphBreaks(this.reportText),
-                report,
-                '',
-                this.renderEvents
-            );
+            if (this.resultsState === 'loading') {
+                header.createEl('span', { cls: 'quill-review-panel__status', text: 'Analyzing...' });
+                scroll.createDiv({ cls: 'quill-review-panel__report' }).setText('');
+            } else if (this.resultsState === 'complete') {
+                header.createEl('span', {
+                    cls: 'quill-review-panel__status quill-review-panel__status--done',
+                    text: 'Done'
+                });
+                const report = scroll.createDiv({ cls: 'quill-review-panel__report-rendered' });
+                await MarkdownRenderer.render(
+                    this.app,
+                    normalizeParagraphBreaks(this.reportText),
+                    report,
+                    '',
+                    this.renderEvents
+                );
+                if (token !== this.renderToken) return;
 
-            const controls = scroll.createDiv({ cls: 'quill-review-panel__controls' });
-            const newBtn = controls.createEl('button', {
-                cls: 'quill-review-panel__nav-btn',
-                text: 'New review'
-            });
-            this.renderEvents.registerDomEvent(newBtn, 'click', () => this.resetResults());
+                const controls = scroll.createDiv({ cls: 'quill-review-panel__controls' });
+                const newBtn = controls.createEl('button', {
+                    cls: 'quill-review-panel__nav-btn',
+                    text: 'New review'
+                });
+                this.renderEvents.registerDomEvent(newBtn, 'click', () => this.resetResults());
 
-            // Chat section
-            const chatSection = scroll.createDiv({ cls: 'quill-chat-panel__section' });
-            for (const msg of this.chatHistory) {
-                if (msg.role === 'system') {
-                    chatSection.createDiv({ cls: 'quill-chat-panel__context-head', text: msg.content });
-                } else {
-                    const bubble = chatSection.createDiv({
-                        cls: `quill-chat-panel__bubble quill-chat-panel__bubble--${msg.role}`
-                    });
-                    if (msg.role === 'assistant') {
-                        await MarkdownRenderer.render(
-                            this.app,
-                            normalizeParagraphBreaks(msg.content),
-                            bubble,
-                            '',
-                            this.renderEvents
-                        );
-                    } else {
-                        bubble.setText(msg.content);
+                // Chat section — only render when there's history or an in-flight
+                // follow-up. Skipping the empty section avoids a stray bordered
+                // strip appearing alongside the chat input bar.
+                if (this.chatHistory.length > 0 || this.chatLoading) {
+                    const chatSection = scroll.createDiv({ cls: 'quill-chat-panel__section' });
+                    for (const msg of this.chatHistory) {
+                        if (msg.role === 'system') {
+                            chatSection.createDiv({ cls: 'quill-chat-panel__context-head', text: msg.content });
+                        } else {
+                            const bubble = chatSection.createDiv({
+                                cls: `quill-chat-panel__bubble quill-chat-panel__bubble--${msg.role}`
+                            });
+                            if (msg.role === 'assistant') {
+                                await MarkdownRenderer.render(
+                                    this.app,
+                                    normalizeParagraphBreaks(msg.content),
+                                    bubble,
+                                    '',
+                                    this.renderEvents
+                                );
+                                if (token !== this.renderToken) return;
+                            } else {
+                                bubble.setText(msg.content);
+                            }
+                        }
+                    }
+                    if (this.chatLoading) {
+                        chatSection.createDiv({
+                            cls: 'quill-chat-panel__bubble quill-chat-panel__bubble--assistant quill-chat-panel__bubble--streaming',
+                            text: '\u2026'
+                        });
                     }
                 }
-            }
-            if (this.chatLoading) {
-                chatSection.createDiv({
-                    cls: 'quill-chat-panel__bubble quill-chat-panel__bubble--assistant quill-chat-panel__bubble--streaming',
-                    text: '\u2026'
+            } else if (this.resultsState === 'error') {
+                header.createEl('span', { cls: 'quill-review-panel__status', text: 'Failed' });
+                scroll.createEl('p', { cls: 'quill-review-panel__error-text', text: this.reportText });
+                const controls = scroll.createDiv({ cls: 'quill-review-panel__controls' });
+                const retryBtn = controls.createEl('button', {
+                    cls: 'quill-review-panel__nav-btn',
+                    text: 'Back to create'
                 });
+                this.renderEvents.registerDomEvent(retryBtn, 'click', () => this.resetResults());
             }
-        } else if (this.resultsState === 'error') {
-            header.createEl('span', { cls: 'quill-review-panel__status', text: 'Failed' });
-            scroll.createEl('p', { cls: 'quill-review-panel__error-text', text: this.reportText });
-            const controls = scroll.createDiv({ cls: 'quill-review-panel__controls' });
-            const retryBtn = controls.createEl('button', {
-                cls: 'quill-review-panel__nav-btn',
-                text: 'Back to create'
-            });
-            this.renderEvents.registerDomEvent(retryBtn, 'click', () => this.resetResults());
-        }
 
-        // Bottom area (chat input) — only when complete
-        if (this.resultsState === 'complete') {
-            this.renderChatBottom(scroll);
+            // Bottom area (chat input) — present from the moment a review starts
+            // (loading) so the bar doesn't pop in when streaming ends. Disabled
+            // while the initial report is streaming; enabled once complete.
+            if (this.resultsState === 'loading' || this.resultsState === 'complete') {
+                this.renderChatBottom(scroll, this.resultsState !== 'complete');
+            }
+        } finally {
+            if (token === this.renderToken) {
+                this.renderPending = false;
+            }
         }
     }
 
-    private renderChatBottom(_scroll: HTMLElement): void {
+    private renderChatBottom(_scroll: HTMLElement, disabled = false): void {
         if (!this.containerEl) return;
         const bottomArea = this.containerEl.createDiv({ cls: 'quill-chat-panel__bottom' });
 
@@ -1133,7 +1156,9 @@ export class ReviewPanel extends AbstractChatPanel {
             text: '\u00b1',
             title: 'Add file to context'
         });
+        addCtxBtn.disabled = disabled;
         this.renderEvents.registerDomEvent(addCtxBtn, 'click', () => {
+            if (disabled) return;
             const exclude =
                 this.activeEngine === 'editorial'
                     ? [...this.chatContextFiles.getFiles(), ...this.contextFilePaths]
@@ -1155,30 +1180,41 @@ export class ReviewPanel extends AbstractChatPanel {
             text: '\ud83d\udcbe',
             title: 'Save to file'
         });
-        this.renderEvents.registerDomEvent(saveBtn, 'click', () => this.saveConversation());
+        saveBtn.disabled = disabled;
+        this.renderEvents.registerDomEvent(saveBtn, 'click', () => {
+            if (!disabled) this.saveConversation();
+        });
         const compactBtn = btnRow.createEl('button', {
             cls: 'quill-chat-panel__action-btn quill-chat-panel__action-btn--compact',
             text: '\u00bb\u00bb',
             title: 'Compact conversation'
         });
-        this.renderEvents.registerDomEvent(compactBtn, 'click', () => this.onCompact?.());
+        compactBtn.disabled = disabled;
+        this.renderEvents.registerDomEvent(compactBtn, 'click', () => {
+            if (!disabled) this.onCompact?.();
+        });
         const newChatBtn = btnRow.createEl('button', {
             cls: 'quill-chat-panel__action-btn',
             text: '\u2713',
             title: 'New chat'
         });
-        this.renderEvents.registerDomEvent(newChatBtn, 'click', () => this.onNewChat?.(false));
+        newChatBtn.disabled = disabled;
+        this.renderEvents.registerDomEvent(newChatBtn, 'click', () => {
+            if (!disabled) this.onNewChat?.(false);
+        });
         btnRow.createEl('div', { cls: 'quill-chat-panel__btn-spacer' });
         const actionBtn = btnRow.createEl('button', {
             cls: `quill-cowriter-panel__send-btn mod-cta${this.chatLoading ? ' quill-cowriter-panel__send-btn--stop' : ''}`,
-            text: this.chatLoading ? 'Stop' : 'Send'
+            text: disabled ? 'Generating\u2026' : this.chatLoading ? 'Stop' : 'Send'
         });
+        actionBtn.disabled = disabled;
 
         const taRow = bottomArea.createDiv({ cls: 'quill-chat-panel__ta-row' });
         const input = taRow.createEl('textarea', {
             cls: 'quill-chat-panel__input',
-            placeholder: 'Ask a follow-up\u2026'
+            placeholder: disabled ? 'Generating report\u2026' : 'Ask a follow-up\u2026'
         });
+        input.disabled = disabled;
 
         const doSend = () => {
             if (this.chatLoading) return;
@@ -1192,7 +1228,16 @@ export class ReviewPanel extends AbstractChatPanel {
             actionBtn.setText('Stop');
             actionBtn.addClass('quill-cowriter-panel__send-btn--stop');
 
-            const chatSection = this.containerEl?.querySelector('.quill-chat-panel__section');
+            let chatSection = this.containerEl?.querySelector('.quill-chat-panel__section');
+            if (!chatSection) {
+                // First follow-up — chat section hasn't been rendered yet.
+                // Create it so the user bubble and streaming ellipsis have
+                // a container until the next full rerender.
+                const scroll = this.containerEl?.querySelector('.quill-sidebar__content-plain');
+                if (scroll) {
+                    chatSection = scroll.createDiv({ cls: 'quill-chat-panel__section' });
+                }
+            }
             if (chatSection) {
                 chatSection.createDiv({ cls: 'quill-chat-panel__bubble quill-chat-panel__bubble--user', text });
                 chatSection.createDiv({
@@ -1205,11 +1250,12 @@ export class ReviewPanel extends AbstractChatPanel {
         };
         const doStop = () => this.onCancelGeneration?.();
         this.renderEvents.registerDomEvent(actionBtn, 'click', () => {
+            if (disabled) return;
             if (this.chatLoading) doStop();
             else doSend();
         });
         this.renderEvents.registerDomEvent(input, 'keydown', (e) => {
-            if (this.chatLoading) return;
+            if (disabled || this.chatLoading) return;
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 doSend();

@@ -1,6 +1,6 @@
 import { LintResult } from '../core/linter/types';
 import { AiProvider, ChatMessage } from './provider';
-import { getSystemPrompt, getLinterUserPrompt } from './prompts';
+import { getSystemPrompt, getLinterUserPrompt, type WikiLinkBehavior } from './prompts';
 
 /** Configuration for the AI linter fix request. */
 export interface LinterAiOptions {
@@ -61,11 +61,12 @@ export async function suggestLintFix(
     editorText: string,
     provider: AiProvider,
     options: LinterAiOptions,
-    customInstruction?: string
+    customInstruction?: string,
+    wikiLinkBehavior?: WikiLinkBehavior
 ): Promise<string | null> {
     const contextLines = extractContextLines(editorText, result);
 
-    const systemPrompt = getSystemPrompt('linter');
+    const systemPrompt = getSystemPrompt('linter', { wikiLinkBehavior });
     const userPrompt = getLinterUserPrompt(result, contextLines, customInstruction);
 
     const messages: ChatMessage[] = [

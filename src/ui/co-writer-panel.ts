@@ -69,6 +69,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private fulfillSections: ProposedEdit[] = [];
     /** Whether a Fulfill sweep is currently generating. */
     private fulfillActive = false;
+    /** Direct-mode proposed continuation (mirrored from the session), rendered as a review card. */
+    private directChange: ProposedEdit | null = null;
     /** Whether the mode picker is open (replaces the mode-cycle-on-click behavior). */
     private modePickerOpen = false;
 
@@ -91,6 +93,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onRejectFulfillSection: ((id: number) => void) | null = null;
     private onApproveAllFulfill: (() => void) | null = null;
     private onRejectAllFulfill: (() => void) | null = null;
+    private onApproveDirect: ((id: number) => void) | null = null;
+    private onRejectDirect: ((id: number) => void) | null = null;
 
     /**
      * Conversation token estimate pushed from the plugin layer.
@@ -110,6 +114,12 @@ export class CoWriterPanel extends AbstractChatPanel {
      * Pushed from the plugin layer when the plot map link changes.
      */
     private plotMapTokens = 0;
+
+    /** Promises from async MarkdownRenderer.render() calls during the current render cycle. */
+    private renderPromises: Promise<void>[] = [];
+
+    /** Monotonic render counter; used to discard stale async finalizations. */
+    private renderId = 0;
 
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app);
@@ -229,6 +239,22 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.onRejectAllFulfill = handler;
     }
 
+    /** Set the handler invoked to approve the pending Direct continuation by id. */
+    setApproveDirectHandler(handler: (id: number) => void): void {
+        this.onApproveDirect = handler;
+    }
+
+    /** Set the handler invoked to reject the pending Direct continuation by id. */
+    setRejectDirectHandler(handler: (id: number) => void): void {
+        this.onRejectDirect = handler;
+    }
+
+    /** Replace the Direct continuation edit (null = none pending) and re-render. */
+    setDirectChange(edit: ProposedEdit | null): void {
+        this.directChange = edit;
+        this.scheduleRender();
+    }
+
     /** Replace the Fulfill section list and/or active flag and re-render. */
     setFulfillState(sections: ProposedEdit[], active: boolean): void {
         this.fulfillSections = sections;
@@ -238,9 +264,13 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Set the active input mode (e.g. from the right-click submenu). */
     setMode(mode: InputMode): void {
+        const oldMode = this.inputMode;
         this.inputMode = mode;
         this.modePickerOpen = false;
-        this.render();
+        if (oldMode !== mode && (oldMode === 'fulfill' || mode === 'fulfill')) {
+            this.onNewChat?.(false);
+        }
+        this.scheduleRender();
     }
 
     /** Set the current coach phase. */
@@ -310,6 +340,9 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Replace the current continuation options and re-render. */
     setCurrentOptions(options: CoWriterOption[]): void {
         this.currentOptions = options;
+        if (options.length > 0) {
+            this.userScrolledUp = false;
+        }
         this.scheduleRender();
     }
 
@@ -342,10 +375,20 @@ export class CoWriterPanel extends AbstractChatPanel {
         }
         if (!this.containerEl) return;
         const el = this.containerEl.querySelector('.quill-cowriter-panel__response-text--streaming');
-        if (el) el.setText(last?.content ?? '');
-        // Auto-scroll only if the user hasn't scrolled up
+        if (el) {
+            el.setText(last?.content ?? '');
+        } else if (text) {
+            // Streaming element not yet rendered — schedule a full render
+            this.scheduleRender();
+        }
+        // Auto-scroll only if the user hasn't scrolled up.
+        // Use rAF so the browser has reflowed with the new content first.
         if (!this.userScrolledUp) {
-            this.scrollToBottom();
+            window.requestAnimationFrame(() => {
+                if (!this.containerEl) return;
+                if (this.userScrolledUp) return;
+                this.scrollToBottom();
+            });
         }
     }
 
@@ -378,21 +421,27 @@ export class CoWriterPanel extends AbstractChatPanel {
     render(): void {
         if (!this.containerEl) return;
 
-        // Save scroll positions and textarea focus before destroying DOM
+        // Save scroll state and textarea focus before destroying DOM
+        const previousScroll = this.getScrollContainer();
+        const savedScrollTop = previousScroll?.scrollTop ?? 0;
+        const wasAtBottom = !this.userScrolledUp || (previousScroll ? this.isScrollAtBottom() : true);
         const savedThoughtScroll =
             this.containerEl.querySelector('.quill-cowriter-panel__thought-content')?.scrollTop ?? 0;
         const textareaHadFocus =
             this.containerEl.querySelector('.quill-cowriter-panel__input') ===
             this.containerEl.ownerDocument.activeElement;
 
+        const currentRenderId = ++this.renderId;
+        this.renderPending = true;
         this.unloadAndClearContainer();
+        this.renderPromises = [];
 
         // Thought section during generation (options or draft streaming)
         if ((this.draftState === 'generating' || this.optionsLoading) && this.plugin.settings.enableCoWriterThought) {
             this.renderThoughtSection();
         }
 
-        // Scrollable chat area
+        // Scrollable chat area (populates this.renderPromises)
         this.renderChatArea();
 
         // Pinned bottom area
@@ -412,6 +461,34 @@ export class CoWriterPanel extends AbstractChatPanel {
             if (newTextarea) {
                 newTextarea.focus();
             }
+        }
+
+        // Initial scroll restoration  (before async markdown content resolves)
+        if (wasAtBottom) {
+            this.scrollToBottom();
+        } else if (savedScrollTop > 0) {
+            const c = this.getScrollContainer();
+            if (c) {
+                c.scrollTop = Math.min(savedScrollTop, Math.max(0, c.scrollHeight - c.clientHeight));
+            }
+        }
+
+        this.renderPending = false;
+
+        // Finalize scroll after all async markdown renders are in the DOM.
+        // Using renderId guard so a stale callback can't overwrite a newer render's scroll.
+        if (this.renderPromises.length > 0) {
+            void Promise.all(this.renderPromises).then(() => {
+                if (this.renderId !== currentRenderId) return;
+                if (wasAtBottom) {
+                    this.scrollToBottom();
+                } else if (savedScrollTop > 0) {
+                    const c = this.getScrollContainer();
+                    if (c) {
+                        c.scrollTop = Math.min(savedScrollTop, Math.max(0, c.scrollHeight - c.clientHeight));
+                    }
+                }
+            });
         }
     }
 
@@ -503,13 +580,15 @@ export class CoWriterPanel extends AbstractChatPanel {
                             responseEl.addClass('quill-cowriter-panel__response-text--streaming');
                             responseEl.setText(msg.content || '\u2026');
                         } else {
-                            void MarkdownRenderer.render(
+                            const p = MarkdownRenderer.render(
                                 this.app,
                                 normalizeParagraphBreaks(msg.content),
                                 responseEl,
                                 '',
                                 this.renderEvents
                             );
+                            void p;
+                            this.renderPromises.push(p);
                         }
                     }
 
@@ -537,11 +616,29 @@ export class CoWriterPanel extends AbstractChatPanel {
         // Scroll listener: if user scrolls up during streaming, stop auto-follow
         this.registerScrollListener(scroll);
 
-        // Auto-scroll to bottom
-        scroll.scrollTop = scroll.scrollHeight;
+        // Direct change card — always rendered when a pending/active Direct
+        // continuation exists, independent of chat state (empty prompt, etc.).
+        if (this.directChange) {
+            this.renderDirectChangeCard(scroll);
+        }
     }
 
-    /** Render Fulfill-mode review cards (one per directive) plus bulk actions,
+    /** Render the Direct continuation review card (Approve/Reject), using the
+     *  shared change-card component. Mirrors the Fulfill review UI so the user
+     *  has a single place to resolve the pending continuation before doing
+     *  anything else. */
+    private renderDirectChangeCard(container: HTMLElement): void {
+        if (!this.directChange) return;
+        const p = renderChangeCard(container, this.directChange, null, this.app, this.renderEvents, {
+            onApprove: (id: number) => this.onApproveDirect?.(id),
+            onReject: (id: number) => this.onRejectDirect?.(id)
+        });
+        if (p) {
+            this.renderPromises.push(p);
+        }
+    }
+
+    /** Render the Fulfill-mode review cards (one per directive) plus bulk actions,
      *  using the shared change-card component. For Fulfill the removed side is the
      *  directive comment (shown inline as the red diff, not repeated in the card). */
     private renderFulfillSections(container: HTMLElement): void {
@@ -555,7 +652,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             }
         );
         for (const edit of this.fulfillSections) {
-            renderChangeCard(container, edit, null, this.app, this.renderEvents, {
+            void renderChangeCard(container, edit, null, this.app, this.renderEvents, {
                 onApprove: (id: number) => this.onApproveFulfillSection?.(id),
                 onReject: (id: number) => this.onRejectFulfillSection?.(id)
             });
@@ -592,6 +689,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             });
             this.renderEvents.registerDomEvent(optionsBtn, 'click', () => {
                 if (this.optionsLoading) return;
+                this.userScrolledUp = false;
                 this.optionsLoading = true;
                 optionsBtn.disabled = true;
                 this.scheduleRender();
@@ -645,6 +743,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             });
             this.renderEvents.registerDomEvent(initBtn, 'click', () => {
                 if (this.optionsLoading) return;
+                this.userScrolledUp = false;
                 this.optionsLoading = true;
                 // Immediate disable — no rAF delay
                 initBtn.disabled = true;
@@ -673,6 +772,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             cls: 'quill-cowriter-panel__option-apply mod-cta',
             text: applying ? 'Generating\u2026' : 'Apply'
         });
+        applyBtn.disabled = applying;
         if (applying) {
             applyBtn.addClass('quill-cowriter-panel__option-apply--applying');
         }
@@ -680,6 +780,9 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.renderEvents.registerDomEvent(applyBtn, 'click', () => {
             if (this.optionsLoading) return;
             this.optionsLoading = true;
+            applyBtn.setText('Generating\u2026');
+            applyBtn.addClass('quill-cowriter-panel__option-apply--applying');
+            applyBtn.disabled = true;
             this.scheduleRender();
             this.onApplyOption?.(idx);
         });
@@ -852,9 +955,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             textWrap.createEl('div', { cls: 'quill-cowriter-panel__mode-row-label', text: m.label });
             textWrap.createEl('div', { cls: 'quill-cowriter-panel__mode-row-desc', text: m.desc });
             const choose = () => {
-                this.inputMode = m.mode;
-                this.modePickerOpen = false;
-                this.scheduleRender();
+                this.setMode(m.mode);
             };
             this.renderEvents.registerDomEvent(row, 'click', choose);
             this.renderEvents.registerDomEvent(row, 'keydown', (e: KeyboardEvent) => {
@@ -921,10 +1022,8 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (generating) refreshBtn.disabled = true;
         this.renderEvents.registerDomEvent(refreshBtn, 'click', () => {
             if (this.optionsLoading || this.draftState === 'generating') return;
+            this.userScrolledUp = false;
             this.optionsLoading = true;
-            refreshBtn.disabled = true;
-            actionBtn.setText('Stop');
-            actionBtn.addClass('quill-cowriter-panel__send-btn--stop');
             this.scheduleRender();
             this.onGenerateOptions?.('');
         });
@@ -1018,9 +1117,6 @@ export class CoWriterPanel extends AbstractChatPanel {
             } else {
                 this.optionsLoading = true;
             }
-            actionBtn.setText('Stop');
-            actionBtn.addClass('quill-cowriter-panel__send-btn--stop');
-            refreshBtn.disabled = true;
             this.scheduleRender();
             if (this.inputMode === 'direct') {
                 this.onSendMessage?.(text);

@@ -1636,6 +1636,9 @@ export default class EventideQuillPlugin extends Plugin {
             this.lintPanel?.coWriterSetContextTokenEstimate(conversationTokens);
             this.lintPanel?.coWriterSetMaxAllowedTokens(maxTokens);
         };
+        session.onDiscussStartStreaming = () => {
+            this.lintPanel?.coWriterDiscussStartStreaming();
+        };
         session.onDiscussChunk = (text: string) => {
             this.lintPanel?.coWriterDiscussAppendChunk(text);
         };
@@ -1655,6 +1658,9 @@ export default class EventideQuillPlugin extends Plugin {
         };
         session.onFulfillUpdate = () => {
             this.lintPanel?.coWriterSetFulfillState(session.fulfillChanges.edits, session.fulfillActive);
+        };
+        session.onDirectChangeUpdate = () => {
+            this.lintPanel?.coWriterSetDirectChange(session.directChanges.edits[0] ?? null);
         };
     }
 
@@ -1890,7 +1896,7 @@ export default class EventideQuillPlugin extends Plugin {
         try {
             for (let i = 0; i < groups.length; i++) {
                 const group = groups[i]!;
-                const { system, user } = buildBatchLinterPrompt(group);
+                const { system, user } = buildBatchLinterPrompt(group, this.settings.wikiLinkBehavior);
 
                 try {
                     const response = await streamBatchFix(
@@ -1997,7 +2003,7 @@ export default class EventideQuillPlugin extends Plugin {
                 const endOffset = (lineOffsets[flag.lineEnd] ?? editorText.length) - 1;
                 const passageText = editorText.slice(startOffset, Math.max(startOffset, endOffset));
 
-                const { system, user } = buildPacingFixPrompt(flag, passageText);
+                const { system, user } = buildPacingFixPrompt(flag, passageText, this.settings.wikiLinkBehavior);
 
                 try {
                     const response = await streamBatchFix(
@@ -2129,7 +2135,7 @@ export default class EventideQuillPlugin extends Plugin {
         const endOffset = Math.max(startOffset, (lineOffsets[flag.lineEnd] ?? editorText.length) - 1);
         const passageText = editorText.slice(startOffset, endOffset);
 
-        const { system, user } = buildPacingFixPrompt(flag, passageText);
+        const { system, user } = buildPacingFixPrompt(flag, passageText, this.settings.wikiLinkBehavior);
 
         this.batchFixInProgress = true;
         this.batchFixSource = 'dashboard';

@@ -118,27 +118,55 @@ export function countSyllables(word: string): number {
 const SENTENCE_END = /[.!?:;](?=[\s"'\u201c\u201d\u2018\u2019]|$)/g;
 const QUOTE_AFTER = /["'\u201c\u201d\u2018\u2019]/;
 
-/** Split `text` into sentence ranges with 1-based line/col positions. */
+/** Split `text` into sentence ranges with 1-based line/col positions.
+ *
+ *  A sentence ends at the earliest of: terminal punctuation (`.!?:;` followed
+ *  by whitespace/quote/EOL, respecting abbreviations) OR a newline. Treating
+ *  `\n` as a hard boundary prevents markdown structural lines — headings,
+ *  scene breaks, placeholders — from gluing onto adjacent prose when they
+ *  don't end in punctuation (e.g. `pain.\n## Heading\n[TBD]\n\n...`). */
 export function splitSentences(text: string, abbreviationsPattern: RegExp): SentenceRange[] {
     const ranges: SentenceRange[] = [];
     let lastIndex = 0;
-    let match: RegExpExecArray | null;
+    let searchFrom = 0;
 
-    SENTENCE_END.lastIndex = 0;
+    while (searchFrom < text.length) {
+        SENTENCE_END.lastIndex = searchFrom;
+        const match = SENTENCE_END.exec(text);
+        const nlIdx = text.indexOf('\n', searchFrom);
 
-    while ((match = SENTENCE_END.exec(text)) !== null) {
-        const char = match[0];
-        const prev = text[match.index - 1];
-        if (char === prev) continue;
+        let end: number;
+        let resume: number;
+        const punctFirst = match !== null && (nlIdx === -1 || match.index + 1 <= nlIdx);
 
-        if (char === '.') {
-            const beforePeriod = text.slice(Math.max(0, match.index - 6), match.index);
-            if (abbreviationsPattern.test(beforePeriod + '.')) continue;
-        }
+        if (punctFirst) {
+            const char = match[0];
+            const prev = text[match.index - 1];
+            // Doubled punctuation (e.g. "..") — not a real boundary; skip past it.
+            if (char === prev) {
+                searchFrom = match.index + 1;
+                continue;
+            }
+            if (char === '.') {
+                const beforePeriod = text.slice(Math.max(0, match.index - 6), match.index);
+                if (abbreviationsPattern.test(beforePeriod + '.')) {
+                    searchFrom = match.index + 1;
+                    continue;
+                }
+            }
 
-        let end = match.index + 1;
-        while (QUOTE_AFTER.test(text.charAt(end))) {
-            end++;
+            end = match.index + 1;
+            while (QUOTE_AFTER.test(text.charAt(end))) {
+                end++;
+            }
+            resume = end;
+        } else if (nlIdx !== -1) {
+            // Newline terminates the sentence even without preceding punctuation.
+            // The newline char itself is excluded from the sentence text.
+            end = nlIdx;
+            resume = nlIdx + 1;
+        } else {
+            break;
         }
 
         const sentenceText = text.slice(lastIndex, end);
@@ -154,7 +182,8 @@ export function splitSentences(text: string, abbreviationsPattern: RegExp): Sent
             });
         }
 
-        lastIndex = end;
+        lastIndex = resume;
+        searchFrom = resume;
     }
 
     const remaining = text.slice(lastIndex).trim();
