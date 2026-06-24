@@ -1688,6 +1688,8 @@ export class CoWriterSession {
         this.directChanges.clear();
         const cm = this.getManuscriptCm();
         if (cm) clearDiffEdits(cm, 'direct');
+        this.optionsLoading = false;
+        this.onOptionsLoading?.(false);
         this.onDirectChangeUpdate?.();
     }
 
@@ -2157,7 +2159,9 @@ export class CoWriterSession {
             }
         } finally {
             notice.hide();
-            this.onOptionsLoading?.(false);
+            const hasPending = this.directChanges.hasPending;
+            this.optionsLoading = hasPending;
+            this.onOptionsLoading?.(hasPending);
             this.onDirectChangeUpdate?.();
             this.onChatUpdate?.();
         }
