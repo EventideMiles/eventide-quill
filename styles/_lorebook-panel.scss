@@ -1,0 +1,159 @@
+// Lorebook panel — the Lorebook tab in the sidebar.
+//
+// Block: quill-lorebook-panel. All elements belong to this block.
+// Renders: lorebook coverage summary (entries / referenced / orphaned / missing),
+// missing-entity gaps, and referenced/orphaned entry lists with type badges.
+
+@use 'base' as *;
+
+.quill-lorebook-panel {
+    &__scroll {
+        flex: 1;
+        overflow-y: auto;
+        min-height: 0;
+    }
+
+    &__actions {
+        display: flex;
+        align-items: center;
+        gap: $space-md;
+        margin-bottom: $space-lg;
+    }
+
+    &__active-entry {
+        margin-bottom: $space-lg;
+        padding: $space-md;
+        background: var(--background-primary-alt);
+        border-radius: $radius-md;
+    }
+
+    &__active-entry-row {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+    }
+
+    &__active-entry-label {
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        flex-shrink: 0;
+    }
+
+    &__active-entry-select {
+        flex: 1;
+        min-width: 0;
+    }
+
+    &__active-entry-hint {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-faint, var(--text-muted));
+        margin-top: $space-xs;
+    }
+
+    &__empty {
+        text-align: center;
+        color: var(--text-muted);
+        padding: $space-xxl $space-md;
+    }
+
+    &__empty-hint {
+        font-style: italic;
+    }
+
+    &__summary {
+        display: flex;
+        flex-wrap: wrap;
+        gap: $space-sm;
+        margin-bottom: $space-md;
+    }
+
+    &__stat {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        padding: $space-xs $space-sm;
+        border-radius: $radius-sm;
+        background: var(--background-modifier-hover);
+    }
+
+    &__stat--good {
+        color: var(--color-green);
+    }
+
+    &__stat--muted {
+        color: var(--text-faint, var(--text-muted));
+    }
+
+    &__stat--warn {
+        color: var(--color-orange);
+    }
+
+    &__subheading {
+        font-size: var(--font-ui-smaller);
+        font-weight: 600;
+        color: var(--text-muted);
+        margin: $space-md 0 $space-xs;
+    }
+
+    &__gaps,
+    &__entries {
+        display: flex;
+        flex-direction: column;
+    }
+
+    &__gap,
+    &__entry {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        padding: $space-xs $space-md;
+        border-bottom: 1px solid var(--background-modifier-border);
+
+        &:last-child {
+            border-bottom: none;
+        }
+    }
+
+    &__entry--referenced {
+        color: var(--text-normal);
+    }
+
+    &__entry-name,
+    &__gap-name {
+        font-size: var(--font-ui-small);
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    &__gap-count {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        flex-shrink: 0;
+    }
+
+    &__gap-btn {
+        flex-shrink: 0;
+        font-size: var(--font-ui-smaller);
+        padding: $space-xs $space-sm;
+        border-radius: $radius-sm;
+
+        &:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+    }
+
+    &__badge {
+        font-size: var(--font-ui-smaller);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        color: var(--text-muted);
+        background: var(--background-modifier-hover);
+        border-radius: $radius-sm;
+        padding: 2px $space-xs;
+        flex-shrink: 0;
+    }
+}

@@ -21,7 +21,7 @@ import { readVaultFiles, readVaultFileText } from '../utils/vault-files';
 import { parseDirectives, parseAllDirectives } from '../utils/directives';
 import { EmbeddingCache, rankBySimilarity } from './embedding-cache';
 import { parseProviderKey } from './provider-registry';
-import { parseEmbedFolderPath } from '../utils/vault-files';
+import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
 import { ChangeSet } from '../core/change-set';
 import {
     clearDiffEdits,
@@ -300,12 +300,17 @@ export async function loadAdditionalContext(
     contextFilePaths: string[],
     documentText?: string
 ): Promise<ChatMessage[]> {
-    if (!contextFilePaths.length) return [];
+    // Lore entries auto-inject as embed: sources when the toggle is on. They
+    // ride the same top-K retrieval path as manual folder context, so no new
+    // resolution logic is needed — only the path list is extended.
+    const lorePaths = plugin.settings.coWriterLoreContext ? loreFolderEmbedPaths(plugin.settings.lorebookFolders) : [];
+    const allPaths = [...lorePaths, ...contextFilePaths];
+    if (!allPaths.length) return [];
 
     // Resolve embed-prefixed paths (embedded folders) before reading regular files.
     const { regularPaths, messages: embedMessages } = await resolveEmbedPathsToMessages(
         plugin,
-        contextFilePaths,
+        allPaths,
         'Reference file',
         documentText ?? '',
         plugin.settings.contextMaxCharsPerFile

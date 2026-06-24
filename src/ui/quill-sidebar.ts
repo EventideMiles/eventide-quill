@@ -9,6 +9,7 @@ import { renderContextTab } from './context-panel';
 import { ReviewPanel } from './review-panel';
 import { CoWriterPanel } from './co-writer-panel';
 import { renderDashboardTab, renderDashboardSettingsTab } from './dashboard-panel';
+import { renderLorebookTab } from './lorebook-panel';
 import type { InputMode } from './co-writer-panel';
 import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase } from '../ai/co-writer';
 import type { ProposedEdit } from '../core/change-set';
@@ -17,11 +18,18 @@ import type { ContextAssembly } from '../core/context-engine/types';
 
 export const QUILL_VIEW_TYPE = 'quill-sidebar';
 
-type TopTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard';
+type TopTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard' | 'lorebook';
 type LinterSubTab = 'results' | 'details' | 'pending';
 
 /** Allow-list of valid TopTab values, used to validate persisted settings. */
-const VALID_TOP_TABS: ReadonlySet<TopTab> = new Set<TopTab>(['linter', 'context', 'review', 'cowriter', 'dashboard']);
+const VALID_TOP_TABS: ReadonlySet<TopTab> = new Set<TopTab>([
+    'linter',
+    'context',
+    'review',
+    'cowriter',
+    'dashboard',
+    'lorebook'
+]);
 
 export class QuillSidebarView extends ItemView {
     private results: LintResult[] = [];
@@ -105,7 +113,8 @@ export class QuillSidebarView extends ItemView {
                     this.activeTopTab === 'context' ||
                     this.activeTopTab === 'cowriter' ||
                     this.activeTopTab === 'review' ||
-                    this.activeTopTab === 'dashboard'
+                    this.activeTopTab === 'dashboard' ||
+                    this.activeTopTab === 'lorebook'
                 ) {
                     this.render();
                 }
@@ -335,6 +344,10 @@ export class QuillSidebarView extends ItemView {
         } else if (this.activeTopTab === 'cowriter') {
             this.renderHeader();
             this.renderCoWriterTab();
+        } else if (this.activeTopTab === 'lorebook') {
+            this.renderHeader();
+            const loreScroll = this.content.createDiv({ cls: 'quill-lorebook-panel__scroll' });
+            renderLorebookTab(loreScroll, this.plugin, this.renderEvents);
         } else {
             this.renderHeader();
             this.renderReviewTab();
@@ -345,6 +358,7 @@ export class QuillSidebarView extends ItemView {
     private renderTopTabBar() {
         const tabs: { id: TopTab; label: string; icon: string }[] = [
             { id: 'dashboard', label: 'Dashboard', icon: 'gauge' },
+            { id: 'lorebook', label: 'Lorebook', icon: 'book-open' },
             { id: 'linter', label: 'Linter', icon: 'list-checks' },
             { id: 'context', label: 'Context', icon: 'file-stack' },
             { id: 'review', label: 'Review', icon: 'message-square-text' },
@@ -367,6 +381,7 @@ export class QuillSidebarView extends ItemView {
     private renderHeader(): void {
         const labels: Record<TopTab, string> = {
             dashboard: 'Dashboard',
+            lorebook: 'Lorebook',
             linter: 'Linter',
             context: 'Context',
             review: 'Review',
@@ -550,9 +565,22 @@ export class QuillSidebarView extends ItemView {
         this.render();
     }
 
+    /** Switch to the Lorebook tab. */
+    switchToLorebookTab(): void {
+        this.activeTopTab = 'lorebook';
+        this.render();
+    }
+
     /** Re-render the Dashboard panel if it's the active tab. */
     refreshDashboardPanel(): void {
         if (this.activeTopTab === 'dashboard') {
+            this.render();
+        }
+    }
+
+    /** Re-render the Lorebook panel if it's the active tab. */
+    refreshLorebookPanel(): void {
+        if (this.activeTopTab === 'lorebook') {
             this.render();
         }
     }

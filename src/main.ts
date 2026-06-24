@@ -70,9 +70,11 @@ import {
     toDiffSnapshots
 } from './ui/change-diff-extension';
 import { ChangeSet } from './core/change-set';
-import { parseEmbedFolderPath, readVaultFiles } from './utils/vault-files';
+import { parseEmbedFolderPath, readVaultFiles, loreFolderEmbedPaths } from './utils/vault-files';
 import type { ManuscriptMetrics, ManuscriptSnapshot, ChapterRange } from './core/dashboard/types';
 import { listChaptersInFile, manuscriptMetrics } from './core/dashboard/metrics';
+import { scanLorebook, computeCoverage } from './core/dashboard/lorebook-scanner';
+import type { LoreCoverage, LoreEntryType } from './core/dashboard/lorebook-types';
 import {
     loadManuscriptFile,
     saveManuscriptFile,
@@ -285,6 +287,11 @@ export default class EventideQuillPlugin extends Plugin {
     lintBatchChangeSet: ChangeSet = new ChangeSet();
     /** Current dashboard metrics for the active manuscript, or null when not yet computed. */
     currentDashboardMetrics: ManuscriptMetrics | null = null;
+    /** Lorebook coverage for the active manuscript, or null when not yet computed. */
+    currentLoreCoverage: LoreCoverage | null = null;
+    /** Entities extracted during the last dashboard refresh, retained so the
+     *  Lorebook tab can recompute coverage without re-running extraction. */
+    currentManuscriptEntities: ExtractedEntity[] = [];
     /** Historical snapshots for the active manuscript, or null when not yet loaded. */
     currentDashboardSnapshots: ManuscriptSnapshot[] | null = null;
     /** Per-manuscript dashboard data loaded from the sidecar file, or null when not yet loaded. */
@@ -778,6 +785,22 @@ export default class EventideQuillPlugin extends Plugin {
             name: 'Quill: Refresh dashboard',
             callback: () => {
                 void this.refreshDashboard();
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-lorebook-open',
+            name: 'Quill: Open lorebook',
+            callback: () => {
+                void this.openLorebookPanel();
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-lorebook-refresh',
+            name: 'Quill: Scan lorebook',
+            callback: () => {
+                void this.refreshLorebook();
             }
         });
 
@@ -1506,6 +1529,17 @@ export default class EventideQuillPlugin extends Plugin {
                 // Best-effort resolution — keep existing excerpt.
             }
         }
+    }
+
+    /**
+     * Lorebook folders as `embed:` reference paths, gated on the
+     * `reviewLoreContext` setting. Prepended to reference-context resolution
+     * for editorial feedback, critical analysis, and manuscript analysis so
+     * relevant lore entries ride the same top-K retrieval as manual context.
+     * Returns empty when the toggle is off or no folders are configured.
+     */
+    private loreReferencePaths(): string[] {
+        return this.settings.reviewLoreContext ? loreFolderEmbedPaths(this.settings.lorebookFolders) : [];
     }
 
     /**
@@ -2918,7 +2952,7 @@ export default class EventideQuillPlugin extends Plugin {
 
         // Resolve any embed-prefixed paths in chat context files.
         const { regularPaths: resolvedRefPaths, messages: refEmbedMessages } = await this.resolveEmbedPathsToMessages(
-            chatContextPaths,
+            [...this.loreReferencePaths(), ...chatContextPaths],
             'Reference file',
             documentText,
             this.settings.contextMaxCharsPerFile
@@ -3255,7 +3289,7 @@ export default class EventideQuillPlugin extends Plugin {
 
         // Resolve any embed-prefixed paths in chat context files.
         const { regularPaths: resolvedRefPaths, messages: refEmbedMessages } = await this.resolveEmbedPathsToMessages(
-            chatContextPaths,
+            [...this.loreReferencePaths(), ...chatContextPaths],
             'Reference file',
             documentText,
             this.settings.contextMaxCharsPerFile
@@ -3450,6 +3484,12 @@ export default class EventideQuillPlugin extends Plugin {
         this.lintPanel?.switchToDashboardTab();
     }
 
+    /** Activate the sidebar and switch to the Lorebook tab. */
+    async openLorebookPanel(): Promise<void> {
+        await this.openLintPanel();
+        this.lintPanel?.switchToLorebookTab();
+    }
+
     /**
      * Refresh dashboard metrics for the active manuscript.
      *
@@ -3526,6 +3566,17 @@ export default class EventideQuillPlugin extends Plugin {
             const metrics = manuscriptMetrics(chapters, entities, dismissedIds);
             this.currentDashboardMetrics = metrics;
 
+            // Scan lorebook folders and compute coverage against the manuscript's
+            // extracted entities. Always scan (cheap, metadata-cache only) so the
+            // Lorebook tab reflects current state.
+            this.currentManuscriptEntities = entities;
+            const loreEntries = scanLorebook(
+                this.app,
+                this.settings.lorebookFolders,
+                this.settings.lorebookFolderTypes
+            );
+            this.currentLoreCoverage = computeCoverage(loreEntries, entities, dismissedIds);
+
             // Append snapshot to the manuscript file.
             const snapshot: ManuscriptSnapshot = {
                 takenAt: Date.now(),
@@ -3548,6 +3599,7 @@ export default class EventideQuillPlugin extends Plugin {
 
             // Re-render the panel if the Dashboard tab is active.
             this.lintPanel?.refreshDashboardPanel();
+            this.lintPanel?.refreshLorebookPanel();
 
             // Fire-and-forget embedding cache warming for the manuscript folder.
             if (this.settings.enableEmbeddingWarming && folder) {
@@ -3557,6 +3609,56 @@ export default class EventideQuillPlugin extends Plugin {
             const message = err instanceof Error ? err.message : String(err);
             new Notice(`Quill: dashboard refresh failed (${message}).`);
         }
+    }
+
+    /**
+     * Refresh lorebook coverage independently of the dashboard.
+     *
+     * Reuses the entities extracted during the last dashboard refresh when
+     * available (so the Lorebook tab and Dashboard agree on the entity base).
+     * Falls back to a single-file extraction from the active document when no
+     * dashboard refresh has run for this session — full-manuscript coverage
+     * then requires a dashboard refresh first.
+     */
+    async refreshLorebook(): Promise<void> {
+        if (this.settings.lorebookFolders.length === 0) {
+            this.currentLoreCoverage = null;
+            this.lintPanel?.refreshLorebookPanel();
+            return;
+        }
+
+        let entities = this.currentManuscriptEntities;
+        if (entities.length === 0) {
+            const activeFile = this.app.workspace.getActiveFile();
+            if (activeFile && activeFile.extension === 'md') {
+                const text = await this.getFileText(activeFile.path);
+                entities = extractAllEntities(text);
+            }
+        }
+
+        const dismissedIds = new Set(this.currentManuscriptFileData?.dismissedEntities ?? []);
+        const loreEntries = scanLorebook(this.app, this.settings.lorebookFolders, this.settings.lorebookFolderTypes);
+        this.currentLoreCoverage = computeCoverage(loreEntries, entities, dismissedIds);
+        this.lintPanel?.refreshLorebookPanel();
+    }
+
+    /**
+     * Set (or clear) the `quill-type` frontmatter on a lore entry file.
+     *
+     * Writes the flat `quill-type` key via Obsidian's `processFrontMatter` API
+     * (non-destructive — other frontmatter is preserved). Pass `null` to clear
+     * the per-file type so the entry inherits its folder's default. Refreshes
+     * lorebook coverage so the change is reflected immediately.
+     */
+    async setLoreEntryType(file: TFile, type: LoreEntryType | null): Promise<void> {
+        await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+            if (type === null) {
+                delete fm['quill-type'];
+            } else {
+                fm['quill-type'] = type;
+            }
+        });
+        await this.refreshLorebook();
     }
 
     /**
@@ -3945,7 +4047,7 @@ export default class EventideQuillPlugin extends Plugin {
         const { regularPaths: resolvedManuscriptPaths, messages: manuscriptEmbedMessages } =
             await this.resolveEmbedPathsToMessages(manuscriptPaths, 'Manuscript', documentText);
         const { regularPaths: resolvedRefPaths, messages: refEmbedMessages } = await this.resolveEmbedPathsToMessages(
-            chatContextFilePaths,
+            [...this.loreReferencePaths(), ...chatContextFilePaths],
             'Reference file',
             documentText,
             this.settings.contextMaxCharsPerFile

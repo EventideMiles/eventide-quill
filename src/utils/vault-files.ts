@@ -33,6 +33,19 @@ export function embedFolderLabel(folderName: string, mode: 'top-k' | 'full'): st
 }
 
 /**
+ * Map lorebook folders to `embed:` context paths (top-K mode).
+ *
+ * Pure mapping — the caller decides whether to include them based on the
+ * `coWriterLoreContext` / `reviewLoreContext` toggles. Returned paths feed
+ * straight into the existing embed-resolution pipeline, so lore entries are
+ * retrieved via the same per-folder top-K + embedding cache as manual folder
+ * context.
+ */
+export function loreFolderEmbedPaths(folders: string[]): string[] {
+    return folders.map((f) => buildEmbedFolderPath(f, 'top-k'));
+}
+
+/**
  * Find all folders that have a quill-embeddings.json cache file.
  * Synchronous — uses TFile metadata already loaded by Obsidian.
  * @param allFiles All files in the vault (from vault.getFiles()).
