@@ -2,6 +2,7 @@ import { LintResult, RULE_INFO } from '../core/linter/types';
 import type { PacingFlag } from '../core/dashboard/types';
 import { AiProvider, ChatMessage } from './provider';
 import { getWikiLinkInstruction, type WikiLinkBehavior } from './prompts';
+import { SCENE_BREAK_HEADING, SCENE_BREAK_RULE } from '../utils/text-analysis';
 
 /** Replace em dashes with comma+space — matches the co-writer's sanitizeProse convention. */
 function sanitizeProse(text: string): string {
@@ -40,6 +41,10 @@ export function groupFindingsByPassage(results: LintResult[], editorText: string
 
     const lines = editorText.split('\n');
     const isBlank = (text: string) => text.trim().length === 0;
+    // Structural markdown lines act as hard passage boundaries (in addition to
+    // blank lines) so a heading or scene break without a preceding blank line
+    // is never absorbed into an adjacent prose passage and rewritten over.
+    const isBoundary = (text: string) => isBlank(text) || SCENE_BREAK_HEADING.test(text) || SCENE_BREAK_RULE.test(text);
 
     // Build line-start offset table for character-offset lookups.
     const lineOffsets: number[] = [0];
@@ -57,13 +62,13 @@ export function groupFindingsByPassage(results: LintResult[], editorText: string
     for (const result of sorted) {
         const lineIdx = result.line - 1;
 
-        // Find paragraph boundaries (walk outward to blank lines).
+        // Find paragraph boundaries (walk outward to blank/structural lines).
         let paraStartIdx = lineIdx;
-        while (paraStartIdx > 0 && !isBlank(lines[paraStartIdx - 1] ?? '')) {
+        while (paraStartIdx > 0 && !isBoundary(lines[paraStartIdx - 1] ?? '')) {
             paraStartIdx--;
         }
         let paraEndIdx = lineIdx;
-        while (paraEndIdx < lines.length - 1 && !isBlank(lines[paraEndIdx + 1] ?? '')) {
+        while (paraEndIdx < lines.length - 1 && !isBoundary(lines[paraEndIdx + 1] ?? '')) {
             paraEndIdx++;
         }
 
