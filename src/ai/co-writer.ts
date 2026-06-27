@@ -466,12 +466,13 @@ export interface CoWriterChatMessage {
     /** Lore draft attached to this message (lorebook coach mode only). */
     loreDraft?: LoreDraftEntry;
     /**
-     * If set, this assistant message is a tool-use indicator (e.g., "Used
-     * manuscript_mentions"), not a prose response. The panel renders it as a
-     * distinct, muted entry so tool calls are visible as their own turns in
-     * the chat history.
+     * Tools the model called during this turn, shown as muted indicators
+     * within the assistant bubble (below the response text). Empty for turns
+     * where the model didn't call any tools. Stored as an array on the
+     * message rather than as separate chat entries so they don't interfere
+     * with the panel's streaming-placeholder logic.
      */
-    toolCall?: { name: string; argsSummary: string };
+    toolUses?: { name: string; argsSummary: string }[];
 }
 
 /**
@@ -1619,8 +1620,13 @@ export class CoWriterSession {
                 this.abortController = new AbortController();
                 ctx.signal = this.abortController.signal;
 
-                // Each round starts a fresh streaming placeholder so the user
-                // sees each model turn (and its reasoning) as its own message.
+                // Push a fresh placeholder for this round BEFORE calling
+                // discussStartStreaming. The panel's discussStartStreaming
+                // checks "is the last message already assistant?" and skips
+                // its own push when so — by pre-pushing our own draft we
+                // prevent a duplicate placeholder and own the message we'll
+                // finalize in place after the stream.
+                this.chatHistory.push({ role: 'assistant', content: '' });
                 this.thoughtBuffer = '';
                 this.onDiscussStartStreaming?.();
                 this.onDiscussChunk?.('');
@@ -1697,16 +1703,29 @@ export class CoWriterSession {
                     this.loreCoachSession.phase = 'develop';
                 }
 
-                // Push the assistant message to BOTH the display history and
-                // the API-level conversation. toolCalls are included on the API
-                // copy so the model sees its prior tool invocations next round.
+                // REPLACE the placeholder (last message) with the finalized
+                // message — never push a second assistant message, or the
+                // placeholder and the final would both render and duplicate
+                // the response text. Tool calls are annotated on the message
+                // as `toolUses` (rendered within the bubble by the panel).
                 const draftForMessage = this.currentLoreDraft;
-                this.chatHistory.push({
-                    role: 'assistant',
-                    content: response,
-                    thought: thought || undefined,
-                    loreDraft: draftForMessage ?? undefined
-                });
+                const lastIdx = this.chatHistory.length - 1;
+                if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
+                    this.chatHistory[lastIdx] = {
+                        role: 'assistant',
+                        content: response,
+                        thought: thought || undefined,
+                        loreDraft: draftForMessage ?? undefined,
+                        toolUses:
+                            toolCalls.length > 0
+                                ? toolCalls.map((c) => ({
+                                      name: c.name,
+                                      argsSummary: summarizeToolArgs(c.name, c.arguments)
+                                  }))
+                                : undefined
+                    };
+                }
+
                 this.loreCoachMessages.push({
                     role: 'assistant',
                     content: response,
@@ -1718,18 +1737,10 @@ export class CoWriterSession {
                     break;
                 }
 
-                // Execute each tool: push a visible "Used X" indicator to the
-                // chat, execute, and push a role:'tool' result to the API history.
+                // Execute each tool and push a role:'tool' result to the API
+                // history. No separate chat entries — tool calls are already
+                // visible as `toolUses` annotations on the assistant message.
                 for (const call of toolCalls) {
-                    this.chatHistory.push({
-                        role: 'assistant',
-                        content: '',
-                        toolCall: {
-                            name: call.name,
-                            argsSummary: summarizeToolArgs(call.name, call.arguments)
-                        }
-                    });
-
                     const tool = registry.get(call.name);
                     let resultText: string;
                     if (!tool) {
@@ -1777,17 +1788,16 @@ export class CoWriterSession {
                     });
                 }
 
-                // If propose_entry was called, advance the session phase and
-                // fire the draft-ready callback so the panel renders the review
-                // card on the message we just pushed.
+                // If propose_entry was called, advance phase and fire the
+                // draft-ready callback.
                 if (this.currentLoreDraft && this.loreCoachSession) {
                     this.loreCoachSession.entryType = this.currentLoreDraft.entryType;
                     this.loreCoachSession.phase = 'refine';
                     this.onLoreDraftReady?.();
                 }
 
-                // Sync the chat so the user sees the model's text, the tool
-                // indicators, and can watch progress before the next round.
+                // Sync the chat so the user sees the finalized message + tool
+                // annotations before the next round starts.
                 this.onChatUpdate?.();
 
                 // Continue to next round — the model will see its tool_calls

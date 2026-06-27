@@ -608,30 +608,6 @@ export class CoWriterPanel extends AbstractChatPanel {
                     });
                     bubble.setText(msg.content);
                 } else if (msg.role === 'assistant') {
-                    // Tool-use indicator: render as a distinct muted entry, not a
-                    // normal chat bubble, so tool calls are visible as their own
-                    // turns in the conversation.
-                    if (msg.toolCall) {
-                        const indicator = scroll.createEl('div', {
-                            cls: 'quill-cowriter-panel__tool-call'
-                        });
-                        indicator.createEl('span', {
-                            cls: 'quill-cowriter-panel__tool-call-icon',
-                            text: '\u29c9'
-                        });
-                        indicator.createEl('span', {
-                            cls: 'quill-cowriter-panel__tool-call-text',
-                            text: `Used ${msg.toolCall.name}`
-                        });
-                        if (msg.toolCall.argsSummary) {
-                            indicator.createEl('span', {
-                                cls: 'quill-cowriter-panel__tool-call-args',
-                                text: msg.toolCall.argsSummary
-                            });
-                        }
-                        continue;
-                    }
-
                     const bubble = scroll.createEl('div', {
                         cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--assistant'
                     });
@@ -699,6 +675,31 @@ export class CoWriterPanel extends AbstractChatPanel {
                         this.renderEvents.registerDomEvent(acceptBtn, 'click', () => {
                             this.onAcceptPlan?.();
                         });
+                    }
+
+                    // Tool-use indicators — muted entries showing which tools the
+                    // model called during this turn. Rendered within the bubble
+                    // (below the response text) so they don't interfere with the
+                    // streaming-placeholder logic.
+                    if (msg.toolUses && msg.toolUses.length > 0) {
+                        const toolList = bubble.createEl('div', { cls: 'quill-cowriter-panel__tool-uses' });
+                        for (const use of msg.toolUses) {
+                            const entry = toolList.createEl('div', { cls: 'quill-cowriter-panel__tool-use' });
+                            entry.createEl('span', {
+                                cls: 'quill-cowriter-panel__tool-use-icon',
+                                text: '\u29c9'
+                            });
+                            entry.createEl('span', {
+                                cls: 'quill-cowriter-panel__tool-use-name',
+                                text: `Used ${use.name}`
+                            });
+                            if (use.argsSummary) {
+                                entry.createEl('span', {
+                                    cls: 'quill-cowriter-panel__tool-use-args',
+                                    text: use.argsSummary
+                                });
+                            }
+                        }
                     }
 
                     // Lorebook coach draft card — rendered under the message
