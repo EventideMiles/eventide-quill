@@ -80,18 +80,41 @@ export class OllamaProvider implements AiProvider {
         const modelConfig = resolveModel(this.config.models, 'chat', options.model, this.name);
 
         const url = buildUrl(this.config.endpoint, '/api/chat');
-        const body = JSON.stringify({
+
+        // Ollama accepts the same `tools` field shape as OpenAI, and accepts
+        // `tool_calls` on assistant messages and `role: 'tool'` result messages.
+        // Ollama is lenient about tool_call_id but accepts it when provided.
+        const bodyObj: Record<string, unknown> = {
             model: modelConfig.model,
-            messages: options.messages.map((m) => ({
-                role: m.role,
-                content: m.content
-            })),
+            messages: options.messages.map((m) => {
+                const out: Record<string, unknown> = { role: m.role };
+                if (m.content !== undefined) out.content = m.content;
+                if (m.toolCalls && m.toolCalls.length > 0) {
+                    out.tool_calls = m.toolCalls.map((tc) => ({
+                        id: tc.id,
+                        type: 'function',
+                        function: { name: tc.name, arguments: tc.arguments }
+                    }));
+                }
+                if (m.toolCallId !== undefined) out.tool_call_id = m.toolCallId;
+                if (m.name !== undefined) out.name = m.name;
+                return out;
+            }),
             stream: true,
             options: {
                 temperature: options.temperature ?? 0.7,
                 num_predict: options.maxTokens ?? this.config.maxOutputTokens
             }
-        });
+        };
+
+        if (options.tools && options.tools.length > 0) {
+            bodyObj.tools = options.tools.map((t) => ({
+                type: 'function',
+                function: { name: t.name, description: t.description, parameters: t.parameters }
+            }));
+        }
+
+        const body = JSON.stringify(bodyObj);
 
         const headers = { 'Content-Type': 'application/json' };
 

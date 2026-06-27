@@ -6,9 +6,10 @@ import type { Tool, ToolContext } from './tool';
  * reference material, existing lore entries, or research notes the writer
  * has already authored.
  *
- * Args: a vault-relative file path (e.g. `Lore/Characters/Sarah Connor.md`)
- * OR a note name (e.g. `Sarah Connor`). Path lookups are exact; name
- * lookups search the metadata cache and resolve the first match.
+ * The `path` argument may be a vault-relative file path (e.g.,
+ * `Lore/Characters/Sarah Connor.md`) OR a note name (e.g., `Sarah Connor`).
+ * Path lookups are exact; name lookups search the metadata cache and resolve
+ * the first match.
  *
  * Result is the note's body text with frontmatter stripped. If the file
  * doesn't exist or isn't readable, returns a clear error string so the
@@ -25,16 +26,25 @@ export const vaultLookupTool: Tool = {
     id: 'vault_lookup',
     description:
         'Read the text content of a note in the vault. Pass a vault-relative ' +
-        'path (e.g. "Lore/Characters/Sarah Connor.md") or a note name ' +
-        '(e.g. "Sarah Connor"). Returns the body text without frontmatter.',
-    argSchema: 'path_or_note_name',
+        'path (e.g., "Lore/Characters/Sarah Connor.md") or a note name ' +
+        '(e.g., "Sarah Connor"). Returns the body text without frontmatter.',
+    parameters: {
+        type: 'object',
+        properties: {
+            path: {
+                type: 'string',
+                description: 'Vault-relative file path or note name to look up.'
+            }
+        },
+        required: ['path']
+    },
     maxResultTokens: 1500,
     requiresNetwork: false,
 
-    async execute(args: string, ctx: ToolContext): Promise<string> {
-        const query = args.trim();
+    async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
+        const query = typeof args.path === 'string' ? args.path.trim() : '';
         if (!query) {
-            return 'Error: no path or note name supplied. Usage: <vault_lookup>Lore/Characters/Sarah Connor.md</vault_lookup>';
+            return 'Error: no path or note name supplied. Provide a "path" argument.';
         }
 
         const file = resolveVaultFile(query, ctx);

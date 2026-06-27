@@ -21,15 +21,23 @@ export const manuscriptMentionsTool: Tool = {
     description:
         'Find every mention of an entity in the active manuscript. ' +
         'Returns occurrence count, line numbers, and known aliases. ' +
-        'Matches against entity names AND aliases (case-insensitive).',
-    argSchema: 'entity_name',
+        'Matches against entity names AND aliases (case-insensitive). ' +
+        'Pass an empty name to list every entity the extractor found.',
+    parameters: {
+        type: 'object',
+        properties: {
+            name: {
+                type: 'string',
+                description: 'Entity name or alias to search for (e.g., "Sarah Connor"). Case-insensitive.'
+            }
+        }
+    },
     maxResultTokens: 500,
     requiresNetwork: false,
 
-    async execute(args: string, ctx: ToolContext): Promise<string> {
-        const name = args.trim();
-        if (!name)
-            return 'Error: no entity name supplied. Usage: <manuscript_mentions>Sarah Connor</manuscript_mentions>';
+    async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
+        const rawName = args.name;
+        const name = typeof rawName === 'string' ? rawName.trim() : '';
 
         const entities = await resolveEntities(ctx);
         if (entities.length === 0) {
@@ -37,6 +45,14 @@ export const manuscriptMentionsTool: Tool = {
                 'No manuscript entities available. Open a manuscript file and run ' +
                 'a Dashboard refresh first, or ensure the active document is a chapter.'
             );
+        }
+
+        // Empty name → list all entities (the prompt is "show me what we're working with").
+        if (!name) {
+            return `Entities found in the manuscript (${entities.length} total):\n${entities
+                .filter((e) => !e.removed)
+                .map(formatEntity)
+                .join('\n')}`;
         }
 
         const needle = name.toLowerCase();

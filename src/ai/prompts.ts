@@ -5,7 +5,6 @@ import type { ManuscriptAnalysisMode } from './manuscript-analysis';
 import type { ExtractedEntity, VoiceMarker } from '../core/context-engine/types';
 import { type LintResult, RULE_INFO } from '../core/linter/types';
 import { type NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS, type VoiceProfile } from '../types';
-import type { LoreEntryType } from '../core/dashboard/lorebook-types';
 
 /** Wiki link behavior modes for AI prompt instructions. */
 export type WikiLinkBehavior = 'preserve' | 'adaptive';
@@ -914,18 +913,16 @@ function getManuscriptModeFocus(mode: ManuscriptAnalysisMode): string {
 
 /**
  * Build the system prompt for the Lorebook Coach. Establishes the role
- * (developmental editor for fiction lore, NOT a prose writer), splices in
- * the tool catalog from the registry, and documents the `<lore_draft>` tag
- * the model emits when it's ready to propose an entry.
+ * (developmental editor for fiction lore, NOT a prose writer) and the working
+ * agreements. The provider injects tool definitions natively via the `tools`
+ * request-body field, so this prompt doesn't enumerate them — it just tells
+ * the model how to behave and points at the tool-calling mechanism.
  *
- * @param toolCatalog   Output of `registry.renderCatalog()` — may be empty.
- * @param entryTypeHint Optional declared type for the first entry.
+ * The model proposes entries by calling the `propose_entry` tool (not by
+ * emitting pseudo-XML tags). The tool framework handles execution and
+ * surfaces the draft to the writer's UI as a side effect.
  */
-export function getLoreCoachSystemPrompt(toolCatalog: string, entryTypeHint?: LoreEntryType | null): string {
-    const typeLine = entryTypeHint ? `\nThe writer has indicated they're developing a ${entryTypeHint}.` : '';
-    const catalog = toolCatalog.trim();
-    const catalogBlock = catalog ? `\n${catalog}\n` : '\n(No tools are currently registered.)\n';
-
+export function getLoreCoachSystemPrompt(): string {
     return [
         'You are a developmental editor for fiction lore — characters, locations,',
         'factions, items, events, plot threads, and themes. You help a novelist',
@@ -944,38 +941,24 @@ export function getLoreCoachSystemPrompt(toolCatalog: string, entryTypeHint?: Lo
         '2. Ask probing worldbuilding questions. Push the writer on motivations,',
         '   contradictions, gaps, voice, and specificity. Do not accept the first',
         '   answer — dig until the entry has real depth.',
-        '3. When you have enough (or when the writer asks), draft the entry by',
-        '   emitting a `<lore_draft>` block (see below). The writer will review',
-        '   and save it.',
+        '3. When you have enough (or when the writer asks), call the `propose_entry`',
+        '   tool with the entry markdown as arguments. The writer will see the draft',
+        '   as a review card and can save it, request changes, or discard it.',
         '4. Refine on request. Treat every follow-up as a chance to deepen the',
         '   entry, not just polish its prose.',
         '',
         '## Proposing a draft',
         '',
-        'When you are ready to propose an entry, emit EXACTLY ONE block:',
+        'Always use the `propose_entry` tool to surface a draft. Never write the',
+        'draft body as plain markdown in your response — the writer would not see',
+        'it as a reviewable draft. The tool takes `name`, `content` (markdown body),',
+        'and optional `entry_type`. Do NOT include frontmatter in the content; the',
+        'system adds `quill-type` at save time.',
         '',
-        '  <lore_draft type="character" name="Sarah Connor">',
-        '  # Sarah Connor',
-        '',
-        '  ## Background',
-        '  ...markdown body...',
-        '  </lore_draft>',
-        '',
-        '`type` is one of: character, location, event, item, faction, plot-thread, theme.',
-        'It may be omitted if unclear. `name` is the entry display name. The body is',
-        'markdown — use headings, lists, and paragraphs. Do NOT include frontmatter;',
-        'the system adds `quill-type` from the type attribute at save time.',
-        '',
-        'Outside the draft block, you may speak freely — narrate your reasoning,',
-        'summarize what you found via tools, ask follow-up questions, or note',
-        'open issues for the writer to decide.',
-        '',
-        '## Tools',
-        catalogBlock,
-        'Call a tool by emitting its opening tag, the arguments, and the closing tag.',
-        'The system executes it and replies with a `<tool_result>` block. Continue',
-        'your response after each result. You may call multiple tools in one response.',
-        typeLine
+        'Outside the tool call, you may speak freely — narrate your reasoning,',
+        'summarize what you found via other tools, ask follow-up questions, or',
+        'note open issues for the writer to decide. The tool call carries the',
+        'draft; your text carries the conversation around it.'
     ].join('\n');
 }
 

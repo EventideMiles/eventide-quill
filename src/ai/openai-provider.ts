@@ -95,16 +95,43 @@ export class OpenAiCompatibleProvider implements AiProvider {
         const url = buildUrl(this.config.endpoint, '/chat/completions');
         const headers = this.buildHeaders();
 
-        const body = JSON.stringify({
+        // Project messages into the OpenAI request shape. Tool-call fields
+        // (`tool_calls`, `tool_call_id`, `name`) are preserved only when
+        // present, so conversations without tools serialize exactly as before.
+        const bodyObj: Record<string, unknown> = {
             model: modelConfig.model,
-            messages: options.messages.map((m) => ({
-                role: m.role,
-                content: m.content
-            })),
+            messages: options.messages.map((m) => {
+                const out: Record<string, unknown> = { role: m.role };
+                if (m.content !== undefined) out.content = m.content;
+                if (m.toolCalls && m.toolCalls.length > 0) {
+                    out.tool_calls = m.toolCalls.map((tc) => ({
+                        id: tc.id,
+                        type: 'function',
+                        function: { name: tc.name, arguments: tc.arguments }
+                    }));
+                }
+                if (m.toolCallId !== undefined) out.tool_call_id = m.toolCallId;
+                if (m.name !== undefined) out.name = m.name;
+                return out;
+            }),
             max_tokens: options.maxTokens ?? this.config.maxOutputTokens,
             temperature: options.temperature ?? 0.7,
             stream: true
-        });
+        };
+
+        // Attach tools when provided. The provider passes them through verbatim;
+        // the model's API or chat template decides whether to use them. Models
+        // without tool-call support will return an error here that surfaces to
+        // the user as a ProviderError Notice.
+        if (options.tools && options.tools.length > 0) {
+            bodyObj.tools = options.tools.map((t) => ({
+                type: 'function',
+                function: { name: t.name, description: t.description, parameters: t.parameters }
+            }));
+            bodyObj.tool_choice = options.toolChoice ?? 'auto';
+        }
+
+        const body = JSON.stringify(bodyObj);
 
         if (isStreamingSupported()) {
             const reader = await streamResponseWithCatch(url, {

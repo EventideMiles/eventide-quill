@@ -1,5 +1,5 @@
-import type { AiProvider, ChatChunk, ChatMessage } from '../provider';
-import type { Tool, ToolContext, ToolInvocation, ToolRegistry } from './tool';
+import type { AiProvider, ChatChunk, ChatMessage, ToolCallRequest } from '../provider';
+import type { Tool, ToolContext, ToolRegistry } from './tool';
 
 /**
  * Maximum number of tool rounds before the loop gives up and emits a final
@@ -14,176 +14,28 @@ import type { Tool, ToolContext, ToolInvocation, ToolRegistry } from './tool';
 const MAX_TOOL_ROUNDS = 5;
 
 /**
- * Stateful streaming parser that detects pseudo-XML tool invocations
- * (`<toolId>args</toolId>`) inside the model's token stream, strips them
- * from the emitted text, and queues them for execution.
+ * Wrap a provider's chat completion stream with native tool-call support.
  *
- * The parser is intentionally tolerant: any `<...>` that doesn't match a
- * registered tool's id passes through as literal text (so model prose
- * containing `<` characters, partial tags, or unknown tools is preserved
- * verbatim for the consumer).
+ * Attaches the registry's tool definitions to the request when present, then
+ * consumes the streamed response. If the model emits `tool_calls`, this loop:
+ *   1. Accumulates the streamed fragments by index into complete calls.
+ *   2. Appends an assistant message carrying the parsed `tool_calls` to the
+ *      conversation (so the model sees its prior tool invocations on the
+ *      next round).
+ *   3. Executes each tool and appends a `role: 'tool'` result message.
+ *   4. Starts a new completion with the extended messages.
  *
- * The parser must handle three streaming edge cases correctly:
- *   1. **Tag split across chunks** — e.g. `<manuscript` in one chunk,
- *      `_mentions>Sarah</manuscript_mentions>` in the next. The parser
- *      holds back any trailing substring that could be the start of a tag.
- *   2. **Args split across chunks** — opening tag seen but close tag not
- *      yet in buffer. The parser holds back from the opening tag onward
- *      until the close tag arrives.
- *   3. **Unclosed tag at end of stream** — `flush()` emits any held-back
- *      buffer as literal text. The model wrote a `<` that didn't resolve
- *      to a real tool call; surface it rather than silently dropping it.
+ * To the consumer this looks like one continuous stream: intermediate
+ * `done: true` chunks are suppressed; only the final round's done chunk
+ * (when the model produces no tool calls) reaches the caller. Tool-call
+ * fragments never reach the consumer — they're accumulated internally.
  *
- * Multiple invocations in a single response are supported — the parser
- * loops its buffer until no more complete tags are present.
+ * The `options.messages` array is treated as read-only — a shallow clone is
+ * made internally and the original is not mutated. Tool call / result
+ * messages accumulate on the internal clone only.
  *
- * Nested tags (e.g. `<a>...<b>...</b>...</a>`) are NOT supported — the
- * inner tag becomes part of the outer tag's args string. This is a
- * deliberate simplification for v1.
- */
-export class ToolStreamParser {
-    private buffer = '';
-    private readonly invocations: ToolInvocation[] = [];
-    private readonly toolIds: Set<string>;
-    /** Length of the longest opening tag, used to bound the partial-tag scan. */
-    private readonly maxTagLength: number;
-
-    constructor(registry: ToolRegistry) {
-        const tools = registry.list();
-        this.toolIds = new Set(tools.map((t) => t.id));
-        this.maxTagLength = tools.reduce((max, t) => Math.max(max, t.id.length + 2), 1);
-    }
-
-    /**
-     * Feed a chunk of text. Returns the substring safe to emit to the
-     * consumer right now (everything except inside-tool-tag content and
-     * any trailing partial-tag prefix).
-     */
-    feed(chunk: string): { text: string } {
-        this.buffer += chunk;
-        return this.processBuffer();
-    }
-
-    /**
-     * Flush at end of stream. Any remaining buffer is unclosed / partial
-     * and is emitted as literal text.
-     */
-    flush(): { text: string } {
-        const text = this.buffer;
-        this.buffer = '';
-        return { text };
-    }
-
-    /** Drain queued invocations; empties the internal queue. */
-    drainInvocations(): ToolInvocation[] {
-        const invs = this.invocations;
-        // Reset to a fresh array rather than `.length = 0` so any retained
-        // reference (defensive) is not mutated.
-        while (this.invocations.length > 0) this.invocations.pop();
-        return invs;
-    }
-
-    private processBuffer(): { text: string } {
-        let emitText = '';
-
-        while (this.buffer.length > 0) {
-            const earliest = this.findEarliestOpeningTag(this.buffer);
-
-            if (earliest === null) {
-                // No opening tag in the buffer. Hold back any trailing substring
-                // that could be the prefix of a tag (e.g. the "<manu" prefix of
-                // "<manuscript_mentions>") so we don't emit a partial tag to the
-                // consumer that would then be redacted when the rest arrives.
-                const safeLen = this.safeEmitLength(this.buffer);
-                emitText += this.buffer.slice(0, safeLen);
-                this.buffer = this.buffer.slice(safeLen);
-                return { text: emitText };
-            }
-
-            // Emit text before the opening tag.
-            emitText += this.buffer.slice(0, earliest.idx);
-
-            // Look for the matching close tag after the opening tag.
-            const afterOpen = earliest.idx + earliest.tagLength;
-            const closeIdx = this.buffer.indexOf(earliest.closeTag, afterOpen);
-
-            if (closeIdx === -1) {
-                // Close tag not yet in buffer — hold back from the opening tag
-                // onward and wait for more chunks.
-                this.buffer = this.buffer.slice(earliest.idx);
-                return { text: emitText };
-            }
-
-            // Complete invocation — extract args, queue, advance past close tag.
-            const args = this.buffer.slice(afterOpen, closeIdx).trim();
-            this.invocations.push({ toolId: earliest.toolId, args });
-            this.buffer = this.buffer.slice(closeIdx + earliest.closeTag.length);
-        }
-
-        return { text: emitText };
-    }
-
-    /** Find the earliest opening tag of any registered tool in the buffer. */
-    private findEarliestOpeningTag(
-        text: string
-    ): { idx: number; toolId: string; tagLength: number; closeTag: string } | null {
-        let best: { idx: number; toolId: string; tagLength: number; closeTag: string } | null = null;
-        for (const toolId of this.toolIds) {
-            const openTag = `<${toolId}>`;
-            const idx = text.indexOf(openTag);
-            if (idx !== -1 && (best === null || idx < best.idx)) {
-                best = { idx, toolId, tagLength: openTag.length, closeTag: `</${toolId}>` };
-            }
-        }
-        return best;
-    }
-
-    /**
-     * Length of the safe-to-emit prefix of `text`. Any trailing substring
-     * that is a prefix of some opening tag (e.g. the `<` of `<manuscript_mentions>`
-     * at the very end of the buffer) is held back so the parser can resolve
-     * it once the next chunk arrives.
-     *
-     * Scans at most `maxTagLength` trailing chars — tags are bounded in length
-     * so longer scans would be wasted work.
-     */
-    private safeEmitLength(text: string): number {
-        const maxScan = Math.min(text.length, this.maxTagLength);
-        let holdback = 0;
-        for (let i = 1; i <= maxScan; i++) {
-            const suffix = text.slice(text.length - i);
-            for (const toolId of this.toolIds) {
-                if (`<${toolId}>`.startsWith(suffix)) {
-                    holdback = i;
-                    break;
-                }
-            }
-        }
-        return text.length - holdback;
-    }
-}
-
-/**
- * Wrap a provider's chat completion stream with pseudo-tool support.
- *
- * Yields chunks identical in shape to the underlying provider's output
- * (`text`, `thought`, `done`, `model`, `usage`) so it's a drop-in
- * replacement for `provider.chatCompletion(options)`. The differences:
- *
- *   1. **Tool tags are stripped from `text`** — `<toolId>args</toolId>`
- *      never reaches the consumer; only the surrounding prose does.
- *   2. **Multiple rounds are possible** — if the model emits any tool
- *      calls in its response, the loop executes them, appends a
- *      `<tool_result>` message for each, and starts a new completion
- *      with the extended message array. To the consumer this looks like
- *      one continuous stream of text.
- *   3. **Intermediate `done: true` chunks are suppressed** — the consumer
- *      only sees `done: true` when the model produces a response with no
- *      tool calls (or when `maxRounds` is exceeded).
- *
- * The `options.messages` array is treated as read-only — a shallow clone
- * is made internally and the original is not mutated. Tool result messages
- * accumulate on the internal clone only.
+ * If the registry is empty, this is a transparent passthrough — useful so
+ * callers can wrap unconditionally without branching on tool availability.
  *
  * @param provider  The AI provider to call.
  * @param options   The base chat options (messages, model, temperature, etc.).
@@ -204,8 +56,9 @@ export async function* streamWithTools(
     ctx: ToolContext,
     maxRounds: number = MAX_TOOL_ROUNDS
 ): AsyncGenerator<ChatChunk> {
-    if (registry.size === 0) {
-        // Empty registry — no parsing overhead, just forward the stream.
+    const tools = registry.toToolDefinitions();
+    if (tools.length === 0) {
+        // Empty registry — no tools to send; plain passthrough.
         yield* provider.chatCompletion(options);
         return;
     }
@@ -215,35 +68,55 @@ export async function* streamWithTools(
     let lastModel: string | undefined;
 
     for (let round = 0; round < maxRounds; round++) {
-        const parser = new ToolStreamParser(registry);
+        const fragmentBuffer = new Map<number, { id?: string; name?: string; arguments: string }>();
         let assistantText = '';
 
-        for await (const chunk of provider.chatCompletion({ ...options, messages })) {
-            assistantText += chunk.text;
+        const stream = provider.chatCompletion({
+            ...options,
+            messages,
+            tools,
+            toolChoice: 'auto'
+        });
+
+        for await (const chunk of stream) {
             if (chunk.usage) lastUsage = chunk.usage;
             if (chunk.model) lastModel = chunk.model;
 
-            const parsed = parser.feed(chunk.text);
-            if (parsed.text || chunk.thought) {
-                const yieldChunk: ChatChunk = {
-                    text: parsed.text,
-                    done: false
-                };
+            if (chunk.text) {
+                assistantText += chunk.text;
+                const yieldChunk: ChatChunk = { text: chunk.text, done: false };
                 if (chunk.thought) yieldChunk.thought = chunk.thought;
                 if (chunk.model) yieldChunk.model = chunk.model;
                 yield yieldChunk;
+            } else if (chunk.thought) {
+                // Thought-only chunk (no text) — pass through so the reasoning
+                // indicator updates even when the model isn't producing prose.
+                yield { text: '', thought: chunk.thought, done: false };
+            }
+
+            // Accumulate tool-call fragments by index. The first fragment for
+            // an index carries id + name; subsequent fragments carry argument
+            // substrings that must be concatenated before JSON parsing.
+            if (chunk.toolCalls) {
+                for (const frag of chunk.toolCalls) {
+                    const existing = fragmentBuffer.get(frag.index);
+                    if (existing) {
+                        if (frag.id !== undefined) existing.id = frag.id;
+                        if (frag.name !== undefined) existing.name = frag.name;
+                        if (frag.arguments !== undefined) existing.arguments += frag.arguments;
+                    } else {
+                        fragmentBuffer.set(frag.index, {
+                            id: frag.id,
+                            name: frag.name,
+                            arguments: frag.arguments ?? ''
+                        });
+                    }
+                }
             }
         }
 
-        // Flush trailing literal text (e.g. an unclosed `<` the model emitted).
-        const flushed = parser.flush();
-        if (flushed.text) {
-            yield { text: flushed.text, done: false };
-        }
-
-        const invocations = parser.drainInvocations();
-        if (invocations.length === 0) {
-            // No tool calls — the model's response is final.
+        // No fragments means no tool calls — the model's response is final.
+        if (fragmentBuffer.size === 0) {
             const doneChunk: ChatChunk = { text: '', done: true };
             if (lastModel) doneChunk.model = lastModel;
             if (lastUsage) doneChunk.usage = lastUsage;
@@ -251,27 +124,49 @@ export async function* streamWithTools(
             return;
         }
 
-        // Append the assistant's response (including its tool tags) so the
-        // model sees its own prior turn verbatim, then append a result
-        // message for each invoked tool.
-        messages.push({ role: 'assistant', content: assistantText });
+        // Materialize accumulated fragments into complete tool-call requests.
+        // Sort by index so the order is stable across providers.
+        const toolCalls: ToolCallRequest[] = [...fragmentBuffer.entries()]
+            .sort(([a], [b]) => a - b)
+            .map(([idx, acc], i) => ({
+                // Fall back to a synthetic id if the provider didn't assign one
+                // (Ollama doesn't always provide ids; OpenAI always does).
+                id: acc.id ?? `call_${idx}`,
+                name: acc.name ?? '',
+                arguments: acc.arguments
+            }));
 
-        for (const inv of invocations) {
-            const tool = registry.get(inv.toolId);
-            if (!tool) continue; // Defensive — parser only matches registered ids.
+        // Append the assistant's turn (text + tool_calls) so the model sees
+        // its own prior tool invocations in conversation history on the next
+        // round. OpenAI requires this; Ollama accepts it.
+        const assistantMessage: ChatMessage = {
+            role: 'assistant',
+            content: assistantText,
+            toolCalls
+        };
+        messages.push(assistantMessage);
 
-            const result = await executeToolSafely(tool, inv.args, ctx);
+        // Execute each tool and append a result message. Execution happens
+        // sequentially to preserve order and avoid concurrent vault access.
+        for (const call of toolCalls) {
+            const tool = registry.get(call.name);
+            let resultText: string;
+            if (!tool) {
+                resultText = `Error: tool "${call.name}" is not registered.`;
+            } else {
+                resultText = await executeToolSafely(tool, call.arguments, ctx);
+            }
             messages.push({
-                role: 'user',
-                content: `<tool_result tool="${inv.toolId}">\n${result}\n</tool_result>`
+                role: 'tool',
+                content: resultText,
+                toolCallId: call.id,
+                name: call.name
             });
         }
-        // Loop continues: a new completion will start with the extended messages.
+        // Loop continues: a new completion starts with the extended messages.
     }
 
     // Exceeded maxRounds — emit a final done so the consumer's stream ends cleanly.
-    // The model has already produced its prose through the prior rounds; this just
-    // closes the stream without further tool calls.
     const doneChunk: ChatChunk = { text: '', done: true };
     if (lastModel) doneChunk.model = lastModel;
     if (lastUsage) doneChunk.usage = lastUsage;
@@ -279,13 +174,25 @@ export async function* streamWithTools(
 }
 
 /**
- * Execute a tool with truncation and error containment. Never throws —
- * failures surface to the model as an error string inside the
- * `<tool_result>` block so the model can recover or apologize.
+ * Parse arguments JSON and execute the tool with truncation + error
+ * containment. Never throws — failures surface to the model as a tool-result
+ * error string so the model can recover or apologize.
  */
-async function executeToolSafely(tool: Tool, args: string, ctx: ToolContext): Promise<string> {
+async function executeToolSafely(tool: Tool, argumentsJson: string, ctx: ToolContext): Promise<string> {
     try {
         if (ctx.signal?.aborted) return 'Error: aborted before tool execution.';
+
+        // Parse the arguments JSON the model emitted. Tolerant of empty
+        // arguments (treat as empty object) — some models emit `{}` or `""`.
+        let args: Record<string, unknown>;
+        try {
+            const trimmed = argumentsJson.trim();
+            args = trimmed.length === 0 ? {} : (JSON.parse(trimmed) as Record<string, unknown>);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return `Error: invalid JSON arguments: ${msg}. You emitted: ${argumentsJson.slice(0, 200)}`;
+        }
+
         const result = await tool.execute(args, ctx);
         const maxChars = tool.maxResultTokens * 4; // rough tokens → chars
         if (result.length > maxChars) {

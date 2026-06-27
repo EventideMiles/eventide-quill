@@ -25,9 +25,8 @@ import { EmbeddingCache, rankBySimilarity } from './embedding-cache';
 import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
 import { ChangeSet } from '../core/change-set';
-import { parseLoreType } from '../core/dashboard/lorebook-scanner';
-import type { LoreEntryType } from '../core/dashboard/lorebook-types';
-import { createInternalToolRegistry, streamWithTools, type ToolContext } from './tools';
+import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
+import { createLoreCoachToolRegistry, streamWithTools, type ToolContext } from './tools';
 import {
     clearDiffEdits,
     diffEditsField,
@@ -421,15 +420,10 @@ export interface LoreCoachSession {
     rounds: number;
 }
 
-/** A proposed lore entry draft extracted from the AI's response. */
-export interface LoreDraftEntry {
-    /** Display name (also used as the proposed filename, sanitized on save). */
-    name: string;
-    /** Entry type from the draft's `<lore_draft type="...">` attribute, if any. */
-    entryType: LoreEntryType | null;
-    /** Full markdown body (frontmatter is reconstructed at save time). */
-    content: string;
-}
+// Re-export LoreDraftEntry from its canonical home in lorebook-types so
+// existing call sites (panel, review UI, main.ts) keep importing from here
+// without churn. New code should import from '../core/dashboard/lorebook-types'.
+export type { LoreDraftEntry } from '../core/dashboard/lorebook-types';
 
 /** A single continuation option suggested by the AI. */
 export interface CoWriterOption {
@@ -1484,12 +1478,17 @@ export class CoWriterSession {
     // ── Lorebook coach ──────────────────────────────────────────────────────
 
     /**
-     * Send a message to the lorebook coach. The coach uses the pseudo-tool
-     * framework ({@link streamWithTools}) so the model can call the internal
-     * tools (`manuscript_mentions`, `lore_siblings`, `vault_lookup`) mid-
-     * generation. When the model is ready to propose an entry, it emits a
-     * `<lore_draft>` block which is detected post-stream and surfaced as a
-     * review card via {@link onLoreDraftReady}.
+     * Send a message to the lorebook coach. Uses the provider's native
+     * tool-calling API ({@link streamWithTools}) so the model can invoke
+     * `manuscript_mentions`, `lore_siblings`, `vault_lookup`, and
+     * `propose_entry` via its own tool-call mechanism — no prompt-time
+     * syntax to teach, no pseudo-XML tags to parse out of the stream.
+     *
+     * When the model is ready to propose an entry, it calls `propose_entry`
+     * as a normal tool call; that tool writes the draft to
+     * {@link currentLoreDraft} and fires {@link onLoreDraftReady} as a side
+     * effect, so this method doesn't need to detect draft markers in the
+     * response text.
      *
      * Unlike the prose coach, this does NOT lock the editor or require an
      * active manuscript — lorebook development is independent of any open
@@ -1515,8 +1514,9 @@ export class CoWriterSession {
         // Add user message to display history (same pattern as sendDiscussion).
         this.chatHistory.push({ role: 'user', content: message });
 
-        // Initialize session on first turn. The system prompt includes the
-        // tool catalog so the model knows which tags it may emit.
+        // Initialize session on first turn. The provider injects the tool
+        // definitions natively via the `tools` request-body field; the system
+        // prompt just establishes the role and working agreements.
         if (!this.loreCoachSession) {
             this.loreCoachSession = {
                 phase: 'discover',
@@ -1527,9 +1527,7 @@ export class CoWriterSession {
             this.loreCoachActive = true;
             this.currentLoreDraft = null;
 
-            const registry = createInternalToolRegistry();
-            const catalog = registry.renderCatalog();
-            const systemPrompt = getLoreCoachSystemPrompt(catalog, null);
+            const systemPrompt = getLoreCoachSystemPrompt();
             this.loreCoachMessages = [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: getLoreCoachUserPrompt(message) }
@@ -1540,8 +1538,10 @@ export class CoWriterSession {
         }
 
         // Build a fresh tool registry + context per turn. The registry is
-        // cheap (three tool descriptors); the context carries the abort signal.
-        const registry = createInternalToolRegistry();
+        // cheap (four tool descriptors including propose_entry); the context
+        // carries the abort signal and gives propose_entry access to the
+        // session for its side effects.
+        const registry = createLoreCoachToolRegistry();
         const ctx: ToolContext = { plugin };
 
         // Compaction: mirror the discuss/coach pattern so a long lore dev
@@ -1576,7 +1576,8 @@ export class CoWriterSession {
                 phase: this.loreCoachSession.phase,
                 rounds: this.loreCoachSession.rounds,
                 conversationTokens: estimateTokens(this.loreCoachMessages),
-                maxTokens
+                maxTokens,
+                toolCount: registry.size
             });
         }
 
@@ -1613,28 +1614,23 @@ export class CoWriterSession {
                 }
             }
 
-            // Detect a `<lore_draft>` block in the response. The block is
-            // stripped from the displayed message and surfaced as a review
-            // card via currentLoreDraft + onLoreDraftReady.
-            const draft = this.parseLoreDraft(response);
-            const cleanResponse = draft ? this.stripLoreDraftTag(response) : response;
-
-            if (draft) {
-                this.currentLoreDraft = draft;
-                if (this.loreCoachSession) {
-                    this.loreCoachSession.entryType = draft.entryType;
-                    this.loreCoachSession.phase = 'refine';
-                }
-            } else if (this.loreCoachSession && this.loreCoachSession.phase === 'discover') {
-                // No draft this turn — advance from discover to develop after the first response.
+            // Phase advance: discover → develop after the first response.
+            // If the model called propose_entry this turn, the tool already
+            // advanced phase to 'refine' as a side effect, so only advance
+            // when we're still in discover.
+            if (this.loreCoachSession && this.loreCoachSession.phase === 'discover') {
                 this.loreCoachSession.phase = 'develop';
             }
 
+            // Display history: the prose the model emitted (no draft markers to
+            // strip — drafts arrive via the propose_entry tool, not the text).
+            // If a draft was produced this turn, currentLoreDraft is set and
+            // the panel will render the review card on this message.
             this.chatHistory.push({
                 role: 'assistant',
-                content: cleanResponse,
+                content: response,
                 thought: thought || undefined,
-                loreDraft: draft ?? undefined
+                loreDraft: this.currentLoreDraft ?? undefined
             });
             this.loreCoachMessages.push({ role: 'assistant', content: response });
 
@@ -1643,8 +1639,6 @@ export class CoWriterSession {
             this.onOptionsLoading?.(false);
             this.onTokenEstimate?.(estimateTokens(this.loreCoachMessages), maxTokens);
             this.onChatUpdate?.();
-
-            if (draft) this.onLoreDraftReady?.();
             this.onLoreCoachUpdate?.();
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') {
@@ -1668,43 +1662,6 @@ export class CoWriterSession {
         this.loreCoachMessages = [];
         this.currentLoreDraft = null;
         this.onLoreCoachUpdate?.();
-    }
-
-    /**
-     * Extract a `<lore_draft>` block from the model's response. Returns null
-     * if no well-formed block is present. Tolerant of attribute order and
-     * optional attributes; falls back to the first H1 in the body as the
-     * entry name if the `name=` attribute is missing.
-     */
-    private parseLoreDraft(response: string): LoreDraftEntry | null {
-        const match = response.match(/<lore_draft((?:\s+(?:type|name)="[^"]*")*)>([\s\S]*?)<\/lore_draft>/);
-        if (!match) return null;
-
-        const [, attrBlock, body] = match;
-        const typeMatch = attrBlock?.match(/type="([^"]*)"/);
-        const nameMatch = attrBlock?.match(/name="([^"]*)"/);
-
-        const parsedType = typeMatch?.[1] ? parseLoreType(typeMatch[1]) : 'untyped';
-        const entryType = parsedType === 'untyped' ? null : parsedType;
-
-        // `body` is the third capture group; guaranteed present by the regex
-        // above, but noUncheckedIndexedAccess types it as possibly undefined.
-        const content = (body ?? '').trim();
-        let name = (nameMatch?.[1] ?? '').trim();
-        if (!name) {
-            const h1 = content.match(/^#\s+(.+)$/m);
-            if (h1?.[1]) name = h1[1].trim();
-        }
-        if (!name) return null;
-
-        return { name, entryType, content };
-    }
-
-    /** Remove the `<lore_draft>...</lore_draft>` block from a response. */
-    private stripLoreDraftTag(response: string): string {
-        return response
-            .replace(/<lore_draft(?:\s(?:[^>"<>]|"[^"]*")*)?>[\s\S]*?<\/lore_draft>/, '')
-            .replace(/^\s+|\s+$/g, '');
     }
 
     /**

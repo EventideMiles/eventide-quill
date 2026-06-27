@@ -97,3 +97,19 @@ export interface LoreCoverage {
  * a mention is treated as incidental noise rather than a missing entry.
  */
 export const LORE_COVERAGE_GAP_MIN_OCCURRENCES = 3;
+
+/**
+ * A proposed lore entry draft produced by the Lorebook Coach (or, in future
+ * PRs, by the sweep action) and awaiting the writer's review before being
+ * saved as a {@link LoreEntry} on disk. Lives here (alongside `LoreEntry`)
+ * rather than on the co-writer session so that coach, panel, review UI, and
+ * the eventual sweep can all reference it without crossing module boundaries.
+ */
+export interface LoreDraftEntry {
+    /** Display name (also used as the proposed filename, sanitized on save). */
+    name: string;
+    /** Entry type from the draft's `entry_type` argument, if any. */
+    entryType: LoreEntryType | null;
+    /** Full markdown body (frontmatter is reconstructed at save time). */
+    content: string;
+}
