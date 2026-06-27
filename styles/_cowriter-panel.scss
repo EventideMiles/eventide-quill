@@ -745,6 +745,41 @@
         font-style: italic;
     }
 
+    /* Tool-call indicator — a muted entry that shows when the model used a
+       tool, rendered as its own turn in the chat so tool consumption is
+       visible. */
+    &__tool-call {
+        display: flex;
+        align-items: center;
+        gap: $space-xs;
+        padding: $space-xs $space-md;
+        margin: $space-xs 0;
+        font-size: var(--font-smallest);
+        color: var(--text-faint, var(--text-muted));
+        border-left: 2px solid var(--background-modifier-border);
+        font-style: italic;
+    }
+
+    &__tool-call-icon {
+        opacity: 0.7;
+    }
+
+    &__tool-call-text {
+        font-weight: 500;
+    }
+
+    &__tool-call-args {
+        opacity: 0.8;
+
+        &::before {
+            content: '(';
+        }
+
+        &::after {
+            content: ')';
+        }
+    }
+
     /* Compact button for co-writer panel */
     &__compact-btn {
         cursor: pointer;

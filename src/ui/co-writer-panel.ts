@@ -446,6 +446,26 @@ export class CoWriterPanel extends AbstractChatPanel {
         }
     }
 
+    /**
+     * Clear the streaming text display and the last assistant message's
+     * accumulated content. Used by the Lorebook Coach to discard "draft" text
+     * the model emitted before its reasoning block — reasoning models
+     * sometimes preface their `<think>` tag with a partial response that they
+     * repeat verbatim after reasoning concludes, and without this clear the
+     * two copies concatenate into a duplicated block.
+     */
+    discussClearStreaming(): void {
+        const last = this.chatHistory[this.chatHistory.length - 1];
+        if (last && last.role === 'assistant') {
+            last.content = '';
+        }
+        if (!this.containerEl) return;
+        const el = this.containerEl.querySelector('.quill-cowriter-panel__response-text--streaming');
+        if (el) {
+            el.setText('');
+        }
+    }
+
     /** Mark the discuss response as complete; re-render with markdown. */
     async discussFinished(): Promise<void> {
         this.discussStreaming = false;
@@ -588,6 +608,30 @@ export class CoWriterPanel extends AbstractChatPanel {
                     });
                     bubble.setText(msg.content);
                 } else if (msg.role === 'assistant') {
+                    // Tool-use indicator: render as a distinct muted entry, not a
+                    // normal chat bubble, so tool calls are visible as their own
+                    // turns in the conversation.
+                    if (msg.toolCall) {
+                        const indicator = scroll.createEl('div', {
+                            cls: 'quill-cowriter-panel__tool-call'
+                        });
+                        indicator.createEl('span', {
+                            cls: 'quill-cowriter-panel__tool-call-icon',
+                            text: '\u29c9'
+                        });
+                        indicator.createEl('span', {
+                            cls: 'quill-cowriter-panel__tool-call-text',
+                            text: `Used ${msg.toolCall.name}`
+                        });
+                        if (msg.toolCall.argsSummary) {
+                            indicator.createEl('span', {
+                                cls: 'quill-cowriter-panel__tool-call-args',
+                                text: msg.toolCall.argsSummary
+                            });
+                        }
+                        continue;
+                    }
+
                     const bubble = scroll.createEl('div', {
                         cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--assistant'
                     });

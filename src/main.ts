@@ -1726,6 +1726,9 @@ export default class EventideQuillPlugin extends Plugin {
         session.onDiscussChunk = (text: string) => {
             this.lintPanel?.coWriterDiscussAppendChunk(text);
         };
+        session.onDiscussClear = () => {
+            this.lintPanel?.coWriterDiscussClearStreaming();
+        };
         session.onDiscussFinished = () => {
             void this.lintPanel?.coWriterDiscussFinished();
         };

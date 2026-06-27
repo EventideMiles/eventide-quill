@@ -88,6 +88,8 @@ export interface EventideQuillSettings {
     lorebookFolderTypes: Record<string, LoreEntryType>;
     coWriterLoreContext: boolean;
     reviewLoreContext: boolean;
+    /** Whether the Lorebook Coach may use AI tool-calling. Default: on. */
+    loreCoachToolsEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -176,7 +178,8 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     lorebookFolders: [],
     lorebookFolderTypes: {},
     coWriterLoreContext: true,
-    reviewLoreContext: true
+    reviewLoreContext: true,
+    loreCoachToolsEnabled: true
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -867,6 +870,19 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(content)
+            .setName('Lorebook coach tool use')
+            .setDesc(
+                'Let the Lorebook Coach call tools (manuscript mentions, lore siblings, vault lookup, propose entry) via the model\u2019s native tool-calling API. ' +
+                    'Turn off if your model doesn\u2019t support tool calling or you want to avoid the extra turn consumption. Default: on.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.loreCoachToolsEnabled).onChange(async (value) => {
+                    this.plugin.settings.loreCoachToolsEnabled = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
             .setName('Lorebook folders')
             .setDesc(
                 'Folders scanned for lore entries. Any Markdown file under one of these folders is treated as a lore entry. Set a per-folder type default so every file inherits it without frontmatter; leave as mixed to type files individually via the quill-type key.'
@@ -1006,6 +1022,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookFolderTypes = { ...DEFAULT_SETTINGS.lorebookFolderTypes };
                     this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
                     this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
+                    this.plugin.settings.loreCoachToolsEnabled = DEFAULT_SETTINGS.loreCoachToolsEnabled;
                     await this.plugin.saveSettings();
                     this.display();
                 })

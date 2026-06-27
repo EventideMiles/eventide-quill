@@ -26,7 +26,7 @@ import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
 import { ChangeSet } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
-import { createLoreCoachToolRegistry, streamWithTools, type ToolContext } from './tools';
+import { createLoreCoachToolRegistry, type ToolContext } from './tools';
 import {
     clearDiffEdits,
     diffEditsField,
@@ -40,6 +40,29 @@ import {
  *  Preserves content inside wiki links ([[...]]) so linked targets are not broken. */
 function sanitizeProse(text: string): string {
     return text.replace(/\[\[[^\]]*\]\]|\u2014/g, (match) => (match.startsWith('[[') ? match : ', '));
+}
+
+/**
+ * Produce a short human-readable summary of a tool call's arguments for the
+ * chat indicator ("Used manuscript_mentions("Sarah Connor")"). The raw
+ * arguments are a JSON string from the model; this extracts the most
+ * relevant field (varies by tool) and truncates for display.
+ */
+function summarizeToolArgs(toolName: string, argumentsJson: string): string {
+    try {
+        const args = argumentsJson.trim().length === 0 ? {} : (JSON.parse(argumentsJson) as Record<string, unknown>);
+        // Pick the most descriptive field based on common tool arg names.
+        const value =
+            (typeof args.name === 'string' && args.name) ||
+            (typeof args.path === 'string' && args.path) ||
+            (typeof args.query === 'string' && args.query) ||
+            (typeof args.type === 'string' && args.type) ||
+            '';
+        if (!value) return '';
+        return value.length > 60 ? `${value.slice(0, 57)}...` : value;
+    } catch {
+        return '';
+    }
 }
 
 /**
@@ -442,6 +465,13 @@ export interface CoWriterChatMessage {
     showAccept?: boolean;
     /** Lore draft attached to this message (lorebook coach mode only). */
     loreDraft?: LoreDraftEntry;
+    /**
+     * If set, this assistant message is a tool-use indicator (e.g., "Used
+     * manuscript_mentions"), not a prose response. The panel renders it as a
+     * distinct, muted entry so tool calls are visible as their own turns in
+     * the chat history.
+     */
+    toolCall?: { name: string; argsSummary: string };
 }
 
 /**
@@ -509,6 +539,12 @@ export class CoWriterSession {
     onDiscussStartStreaming: (() => void) | null = null;
     /** Called when a discuss response chunk arrives during streaming. */
     onDiscussChunk: ((text: string) => void) | null = null;
+    /**
+     * Called to clear the streaming text display (discard draft text the
+     * model emitted before its reasoning block). Used by the Lorebook Coach
+     * to prevent duplicated response content around `<think>` tags.
+     */
+    onDiscussClear: (() => void) | null = null;
     /** Called when the discuss response is complete (triggers markdown render). */
     onDiscussFinished: (() => void) | null = null;
     /** Called when the discuss response encounters an error. */
@@ -1479,20 +1515,23 @@ export class CoWriterSession {
 
     /**
      * Send a message to the lorebook coach. Uses the provider's native
-     * tool-calling API ({@link streamWithTools}) so the model can invoke
-     * `manuscript_mentions`, `lore_siblings`, `vault_lookup`, and
-     * `propose_entry` via its own tool-call mechanism — no prompt-time
-     * syntax to teach, no pseudo-XML tags to parse out of the stream.
+     * tool-calling API so the model can invoke `manuscript_mentions`,
+     * `lore_siblings`, `vault_lookup`, and `propose_entry` via its own
+     * tool-call mechanism.
      *
-     * When the model is ready to propose an entry, it calls `propose_entry`
-     * as a normal tool call; that tool writes the draft to
-     * {@link currentLoreDraft} and fires {@link onLoreDraftReady} as a side
-     * effect, so this method doesn't need to detect draft markers in the
-     * response text.
+     * Unlike the prose coach, this method manages the multi-round tool-calling
+     * loop ITSELF (not via the transparent `streamWithTools` wrapper) so that:
+     *   - Each round is its own chat message with its own reasoning section.
+     *   - Tool calls are visible as distinct "Used X" turns in the chat history.
+     *   - "Draft" text emitted before a reasoning block is discarded so the
+     *     response isn't duplicated around `<think>` tags.
      *
-     * Unlike the prose coach, this does NOT lock the editor or require an
-     * active manuscript — lorebook development is independent of any open
-     * chapter. It does require at least one configured lorebook folder.
+     * Turn off tools via `loreCoachToolsEnabled` (settings → lorebook) when
+     * the model doesn't support tool calling or to avoid extra turn consumption.
+     *
+     * Does NOT lock the editor or require an active manuscript — lorebook
+     * development is independent of any open chapter. Does require at least
+     * one configured lorebook folder.
      */
     async sendLoreCoach(plugin: EventideQuillPlugin, message: string): Promise<void> {
         const chat = plugin.getDefaultChatProvider();
@@ -1511,12 +1550,10 @@ export class CoWriterSession {
         this.optionsLoading = true;
         this.onOptionsLoading?.(true);
 
-        // Add user message to display history (same pattern as sendDiscussion).
+        // Add user message to display history.
         this.chatHistory.push({ role: 'user', content: message });
 
-        // Initialize session on first turn. The provider injects the tool
-        // definitions natively via the `tools` request-body field; the system
-        // prompt just establishes the role and working agreements.
+        // Initialize session on first turn.
         if (!this.loreCoachSession) {
             this.loreCoachSession = {
                 phase: 'discover',
@@ -1527,9 +1564,8 @@ export class CoWriterSession {
             this.loreCoachActive = true;
             this.currentLoreDraft = null;
 
-            const systemPrompt = getLoreCoachSystemPrompt();
             this.loreCoachMessages = [
-                { role: 'system', content: systemPrompt },
+                { role: 'system', content: getLoreCoachSystemPrompt() },
                 { role: 'user', content: getLoreCoachUserPrompt(message) }
             ];
         } else {
@@ -1537,16 +1573,11 @@ export class CoWriterSession {
             this.loreCoachMessages.push({ role: 'user', content: getLoreCoachUserPrompt(message) });
         }
 
-        // Build a fresh tool registry + context per turn. The registry is
-        // cheap (four tool descriptors including propose_entry); the context
-        // carries the abort signal and gives propose_entry access to the
-        // session for its side effects.
-        const registry = createLoreCoachToolRegistry();
+        const toolsEnabled = plugin.settings.loreCoachToolsEnabled;
+        const registry = toolsEnabled ? createLoreCoachToolRegistry() : null;
+        const toolDefs = registry?.toToolDefinitions();
         const ctx: ToolContext = { plugin };
 
-        // Compaction: mirror the discuss/coach pattern so a long lore dev
-        // session doesn't blow the context window. The lore-specific messages
-        // are compacted in place.
         const maxTokens = chat.provider.config.maxContextTokens;
         const compactPct = Math.max(50, Math.min(95, this.settingsOrDefault(plugin).contextCompactAtPercent)) / 100;
         const conversationTokens = estimateTokens(this.loreCoachMessages);
@@ -1575,64 +1606,193 @@ export class CoWriterSession {
                 scope: this.loreCoachSession.scope,
                 phase: this.loreCoachSession.phase,
                 rounds: this.loreCoachSession.rounds,
+                toolsEnabled,
                 conversationTokens: estimateTokens(this.loreCoachMessages),
-                maxTokens,
-                toolCount: registry.size
+                maxTokens
             });
         }
 
-        let response = '';
-        let thought = '';
-        this.onDiscussStartStreaming?.();
-        this.onDiscussChunk?.('');
+        const MAX_TOOL_ROUNDS = 5;
 
         try {
-            this.abortController = new AbortController();
-            ctx.signal = this.abortController.signal;
+            for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+                this.abortController = new AbortController();
+                ctx.signal = this.abortController.signal;
 
-            const stream = streamWithTools(
-                chat.provider,
-                {
+                // Each round starts a fresh streaming placeholder so the user
+                // sees each model turn (and its reasoning) as its own message.
+                this.thoughtBuffer = '';
+                this.onDiscussStartStreaming?.();
+                this.onDiscussChunk?.('');
+
+                let response = '';
+                let thought = '';
+                let sawReasoning = false;
+                const fragmentBuffer = new Map<number, { id?: string; name?: string; arguments: string }>();
+
+                const stream = chat.provider.chatCompletion({
                     messages: this.loreCoachMessages,
                     model: chat.modelId,
-                    temperature: 0.7, // a touch more creative than prose coach — character dev benefits from range
+                    temperature: 0.7,
                     maxTokens: 2048,
-                    signal: this.abortController.signal
-                },
-                registry,
-                ctx
-            );
+                    signal: this.abortController.signal,
+                    tools: toolDefs,
+                    toolChoice: toolDefs ? 'auto' : undefined
+                });
 
-            for await (const chunk of stream) {
-                if (chunk.done) break;
-                response += chunk.text;
-                if (chunk.text) this.onDiscussChunk?.(chunk.text);
-                if (chunk.thought) {
-                    thought += chunk.thought;
-                    this.thoughtBuffer = thought;
-                    this.onThought?.(thought);
+                for await (const chunk of stream) {
+                    if (chunk.done) break;
+
+                    if (chunk.thought) {
+                        // Reasoning models sometimes emit a "draft" response
+                        // before their reasoning block, then repeat it verbatim
+                        // after. Discard any text accumulated before the first
+                        // reasoning chunk so the two copies don't concatenate
+                        // into a duplicated block.
+                        if (!sawReasoning) {
+                            sawReasoning = true;
+                            response = '';
+                            this.onDiscussClear?.();
+                        }
+                        thought += chunk.thought;
+                        this.thoughtBuffer = thought;
+                        this.onThought?.(thought);
+                    }
+
+                    if (chunk.text) {
+                        response += chunk.text;
+                        this.onDiscussChunk?.(chunk.text);
+                    }
+
+                    if (chunk.toolCalls) {
+                        for (const frag of chunk.toolCalls) {
+                            const existing = fragmentBuffer.get(frag.index);
+                            if (existing) {
+                                if (frag.id !== undefined) existing.id = frag.id;
+                                if (frag.name !== undefined) existing.name = frag.name;
+                                if (frag.arguments !== undefined) existing.arguments += frag.arguments;
+                            } else {
+                                fragmentBuffer.set(frag.index, {
+                                    id: frag.id,
+                                    name: frag.name,
+                                    arguments: frag.arguments ?? ''
+                                });
+                            }
+                        }
+                    }
                 }
-            }
 
-            // Phase advance: discover → develop after the first response.
-            // If the model called propose_entry this turn, the tool already
-            // advanced phase to 'refine' as a side effect, so only advance
-            // when we're still in discover.
-            if (this.loreCoachSession && this.loreCoachSession.phase === 'discover') {
-                this.loreCoachSession.phase = 'develop';
-            }
+                // Materialize accumulated tool-call fragments into complete calls.
+                const toolCalls = [...fragmentBuffer.entries()]
+                    .sort(([a], [b]) => a - b)
+                    .map(([idx, acc]) => ({
+                        id: acc.id ?? `call_${idx}`,
+                        name: acc.name ?? '',
+                        arguments: acc.arguments
+                    }));
 
-            // Display history: the prose the model emitted (no draft markers to
-            // strip — drafts arrive via the propose_entry tool, not the text).
-            // If a draft was produced this turn, currentLoreDraft is set and
-            // the panel will render the review card on this message.
-            this.chatHistory.push({
-                role: 'assistant',
-                content: response,
-                thought: thought || undefined,
-                loreDraft: this.currentLoreDraft ?? undefined
-            });
-            this.loreCoachMessages.push({ role: 'assistant', content: response });
+                // Phase advance: discover → develop after the first response
+                // (unless propose_entry advanced to 'refine' below).
+                if (this.loreCoachSession && this.loreCoachSession.phase === 'discover') {
+                    this.loreCoachSession.phase = 'develop';
+                }
+
+                // Push the assistant message to BOTH the display history and
+                // the API-level conversation. toolCalls are included on the API
+                // copy so the model sees its prior tool invocations next round.
+                const draftForMessage = this.currentLoreDraft;
+                this.chatHistory.push({
+                    role: 'assistant',
+                    content: response,
+                    thought: thought || undefined,
+                    loreDraft: draftForMessage ?? undefined
+                });
+                this.loreCoachMessages.push({
+                    role: 'assistant',
+                    content: response,
+                    toolCalls: toolCalls.length > 0 ? toolCalls : undefined
+                });
+
+                // No tools called (or tools disabled) → this round is final.
+                if (toolCalls.length === 0 || !registry) {
+                    break;
+                }
+
+                // Execute each tool: push a visible "Used X" indicator to the
+                // chat, execute, and push a role:'tool' result to the API history.
+                for (const call of toolCalls) {
+                    this.chatHistory.push({
+                        role: 'assistant',
+                        content: '',
+                        toolCall: {
+                            name: call.name,
+                            argsSummary: summarizeToolArgs(call.name, call.arguments)
+                        }
+                    });
+
+                    const tool = registry.get(call.name);
+                    let resultText: string;
+                    if (!tool) {
+                        resultText = `Error: tool "${call.name}" is not registered.`;
+                    } else {
+                        let parsedArgs: Record<string, unknown>;
+                        try {
+                            parsedArgs =
+                                call.arguments.trim().length === 0
+                                    ? {}
+                                    : (JSON.parse(call.arguments) as Record<string, unknown>);
+                        } catch (err) {
+                            const msg = err instanceof Error ? err.message : String(err);
+                            resultText = `Error: invalid JSON arguments: ${msg}`;
+                            this.loreCoachMessages.push({
+                                role: 'tool',
+                                content: resultText,
+                                toolCallId: call.id,
+                                name: call.name
+                            });
+                            continue;
+                        }
+                        try {
+                            if (ctx.signal?.aborted) {
+                                resultText = 'Error: aborted before tool execution.';
+                            } else {
+                                resultText = await tool.execute(parsedArgs, ctx);
+                                const maxChars = tool.maxResultTokens * 4;
+                                if (resultText.length > maxChars) {
+                                    resultText =
+                                        resultText.slice(0, maxChars) +
+                                        `\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
+                                }
+                            }
+                        } catch (err) {
+                            const msg = err instanceof Error ? err.message : String(err);
+                            resultText = `Error executing tool "${call.id}": ${msg}`;
+                        }
+                    }
+                    this.loreCoachMessages.push({
+                        role: 'tool',
+                        content: resultText,
+                        toolCallId: call.id,
+                        name: call.name
+                    });
+                }
+
+                // If propose_entry was called, advance the session phase and
+                // fire the draft-ready callback so the panel renders the review
+                // card on the message we just pushed.
+                if (this.currentLoreDraft && this.loreCoachSession) {
+                    this.loreCoachSession.entryType = this.currentLoreDraft.entryType;
+                    this.loreCoachSession.phase = 'refine';
+                    this.onLoreDraftReady?.();
+                }
+
+                // Sync the chat so the user sees the model's text, the tool
+                // indicators, and can watch progress before the next round.
+                this.onChatUpdate?.();
+
+                // Continue to next round — the model will see its tool_calls
+                // and the tool results and continue the conversation.
+            }
 
             this.onDiscussFinished?.();
             this.optionsLoading = false;

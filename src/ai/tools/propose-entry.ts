@@ -1,5 +1,4 @@
 import { parseLoreType } from '../../core/dashboard/lorebook-scanner';
-import type { LoreDraftEntry } from '../../core/dashboard/lorebook-types';
 import type { Tool, ToolContext } from './tool';
 
 /**
@@ -70,21 +69,12 @@ export const proposeEntryTool: Tool = {
         const parsed = parseLoreType(typeRaw);
         const entryType = parsed === 'untyped' ? null : parsed;
 
-        const draft: LoreDraftEntry = { name, entryType, content };
-
-        // Side effects: surface the draft + advance the session. The coach
-        // registered these callbacks when it wired the panel; calling them
-        // here triggers the review-card render and phase indicator update
-        // without the coach needing to parse the model's output.
-        const session = ctx.plugin.coWriterSession;
-        session.currentLoreDraft = draft;
-        if (session.loreCoachSession) {
-            session.loreCoachSession.entryType = entryType;
-            session.loreCoachSession.phase = 'refine';
-        }
-        session.onLoreDraftReady?.();
-        session.onLoreCoachUpdate?.();
-        session.onChatUpdate?.();
+        // Construct and stash the draft on the session. The coach reads
+        // currentLoreDraft after this tool returns and attaches it to the
+        // round's chat message + fires onLoreDraftReady. Side-effecting ONLY
+        // the data (not firing chat/panel callbacks) avoids corrupting the
+        // streaming display mid-round.
+        ctx.plugin.coWriterSession.currentLoreDraft = { name, entryType, content };
 
         const typeLabel = entryType ?? 'untyped';
         return `Draft received: "${name}" (${typeLabel}). The writer will review it. Continue with follow-up notes or wait for their feedback.`;

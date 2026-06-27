@@ -914,6 +914,11 @@ export class QuillSidebarView extends ItemView {
         this.coWriterPanel?.discussAppendChunk(text);
     }
 
+    /** Clear the streaming text (discard draft text emitted before reasoning). */
+    coWriterDiscussClearStreaming(): void {
+        this.coWriterPanel?.discussClearStreaming();
+    }
+
     /** Mark the discuss response as complete; re-render with markdown. */
     async coWriterDiscussFinished(): Promise<void> {
         await this.coWriterPanel?.discussFinished();
