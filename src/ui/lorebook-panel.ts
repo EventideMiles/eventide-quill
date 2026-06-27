@@ -36,8 +36,12 @@ export function renderLorebookTab(
     if (doc && plugin.settings.lorebookFolders.length > 0) {
         renderActiveEntryEditor(container, plugin, component, doc.file);
     }
-    // The pending type has been consumed (or is stale for this file); clear it.
-    plugin.pendingLoreEntryType = null;
+    // Only clear the pending value once the active-entry editor for that file
+    // has had a chance to consume it; otherwise a render for a different file
+    // would wipe a value still meant for the pending file.
+    if (plugin.pendingLoreEntryType && plugin.pendingLoreEntryType.path === doc?.file.path) {
+        plugin.pendingLoreEntryType = null;
+    }
 
     // Refresh button row — dispatches to the subtab-appropriate refresh.
     const actionBar = container.createEl('div', { cls: 'quill-lorebook-panel__actions' });

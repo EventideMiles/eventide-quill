@@ -1570,6 +1570,26 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
+     * Resolve lorebook `embed:` reference paths into ChatMessages, gated on the
+     * `reviewLoreContext` setting. Used by the initial review/analysis request
+     * builders so the first payload — not just follow-up chat — receives lore
+     * context. Mirrors the prepend pattern used by the chat follow-up flows.
+     * Returns empty when the toggle is off, no folders are configured, or no
+     * embed provider is available.
+     */
+    private async loreReferenceMessages(documentText: string): Promise<ChatMessage[]> {
+        const lorePaths = this.loreReferencePaths();
+        if (lorePaths.length === 0) return [];
+        const { messages } = await this.resolveEmbedPathsToMessages(
+            lorePaths,
+            'Reference file',
+            documentText,
+            this.settings.contextMaxCharsPerFile
+        );
+        return messages;
+    }
+
+    /**
      * Resolve embed-prefixed paths into ChatMessages. Regular file paths are
      * returned for the caller to pass to readVaultFiles.
      */
@@ -2576,7 +2596,14 @@ export default class EventideQuillPlugin extends Plugin {
             signal: this.manuscriptAnalysisAbort.signal,
             compacted: wasCompacted
         });
-        this.manuscriptAnalysisCurrentMessages = [...initialMessages];
+        // Lore reference embeds (gated on reviewLoreContext) injected between the
+        // system prompt and user instruction so the first manuscript-analysis
+        // payload receives lore context, mirroring the follow-up chat flow.
+        const loreReferenceMessages = await this.loreReferenceMessages(manuscriptText);
+        const initialWithLore = loreReferenceMessages.length
+            ? [initialMessages[0]!, ...loreReferenceMessages, ...initialMessages.slice(1)]
+            : initialMessages;
+        this.manuscriptAnalysisCurrentMessages = [...initialWithLore];
 
         try {
             const stream = getManuscriptAnalysis(chat.provider, mode, {
@@ -2590,7 +2617,7 @@ export default class EventideQuillPlugin extends Plugin {
                 signal: this.manuscriptAnalysisAbort.signal,
                 temperature: this.settings.manuscriptAnalysisTemperature,
                 maxTokens: this.settings.manuscriptAnalysisMaxOutputTokens,
-                existingMessages: initialMessages,
+                existingMessages: initialWithLore,
                 compacted: wasCompacted
             });
             let fullResponse = '';
@@ -3251,7 +3278,14 @@ export default class EventideQuillPlugin extends Plugin {
             plotThreads,
             customInstruction
         });
-        this.analysisCurrentMessages = [...initialMessages];
+        // Lore reference embeds (gated on reviewLoreContext) injected between the
+        // system prompt and user instruction so the first analysis payload
+        // receives lore context, mirroring the follow-up chat flow.
+        const loreReferenceMessages = await this.loreReferenceMessages(resolved.text);
+        const initialWithLore = loreReferenceMessages.length
+            ? [initialMessages[0]!, ...loreReferenceMessages, ...initialMessages.slice(1)]
+            : initialMessages;
+        this.analysisCurrentMessages = [...initialWithLore];
 
         try {
             const stream = getAnalysis(chat.provider, mode, {
@@ -3269,7 +3303,7 @@ export default class EventideQuillPlugin extends Plugin {
                 customInstruction,
                 temperature: this.settings.analysisTemperature,
                 maxTokens: this.settings.analysisMaxOutputTokens,
-                existingMessages: initialMessages
+                existingMessages: initialWithLore
             });
 
             let fullResponse = '';
@@ -3442,7 +3476,12 @@ export default class EventideQuillPlugin extends Plugin {
      */
     private async updateCoWriterAdditionalTokens(): Promise<void> {
         const files = this.coWriterSession.getContextFiles();
-        if (files.length === 0) {
+        // Mirror loadAdditionalContext's combined source (lore embeds + context
+        // files) so the emptiness check doesn't skip counting when lore is
+        // auto-injected but no manual context files are selected.
+        const lorePaths = this.settings.coWriterLoreContext ? loreFolderEmbedPaths(this.settings.lorebookFolders) : [];
+        const allPaths = [...lorePaths, ...files];
+        if (allPaths.length === 0) {
             this.lintPanel?.coWriterSetAdditionalContextTokens(0);
             return;
         }
@@ -3669,9 +3708,14 @@ export default class EventideQuillPlugin extends Plugin {
         }
 
         const activeFile = this.app.workspace.getActiveFile();
+        const activePath = activeFile?.path ?? null;
         const docText = activeFile && activeFile.extension === 'md' ? await this.getFileText(activeFile.path) : '';
+        // The user may have switched files during the read. Discard the update
+        // if the active file no longer matches so stale coverage is never
+        // published (the active-leaf-change path can trigger overlapping reads).
+        if (activePath !== (this.app.workspace.getActiveFile()?.path ?? null)) return;
         const loreEntries = scanLorebook(this.app, this.settings.lorebookFolders, this.settings.lorebookFolderTypes);
-        this.currentLoreDocumentCoverage = computeDocumentCoverage(docText, loreEntries, activeFile?.path ?? null);
+        this.currentLoreDocumentCoverage = computeDocumentCoverage(docText, loreEntries, activePath);
         this.lintPanel?.refreshLorebookPanel();
     }
 
@@ -3692,14 +3736,20 @@ export default class EventideQuillPlugin extends Plugin {
 
         const activeFile = this.app.workspace.getActiveFile();
 
-        // Auto-refresh the dashboard if no cached data exists and we're in a
-        // manuscript folder (not a lorebook folder).
+        // Auto-refresh the dashboard when no cached manuscript data exists and
+        // we're in a manuscript folder (not a lorebook folder), OR when the
+        // active manuscript folder has changed since the last refresh —
+        // otherwise switching folders would reuse the previous manuscript's
+        // stale coverage.
+        const activeFolder = activeFile?.parent?.path ?? '';
+        const manuscriptFolderChanged =
+            this.currentManuscriptFolder !== null && this.currentManuscriptFolder !== activeFolder;
         if (
             autoRefresh &&
-            (!this.currentManuscriptText || !this.currentManuscriptEntities.length) &&
             activeFile &&
             activeFile.extension === 'md' &&
-            !findLoreFolder(activeFile.path, this.settings.lorebookFolders)
+            !findLoreFolder(activeFile.path, this.settings.lorebookFolders) &&
+            (!this.currentManuscriptText || !this.currentManuscriptEntities.length || manuscriptFolderChanged)
         ) {
             await this.refreshDashboard();
         }
@@ -3758,6 +3808,10 @@ export default class EventideQuillPlugin extends Plugin {
             }
         });
         await this.refreshLorebook();
+        // Also refresh manuscript-scoped coverage: typing an entry can move it
+        // in/out of the mapped set, changing referenced/orphaned/gaps when the
+        // Manuscript subtab is active.
+        await this.refreshLorebookManuscriptCoverage();
     }
 
     /**
@@ -4034,6 +4088,11 @@ export default class EventideQuillPlugin extends Plugin {
             return;
         }
 
+        // Lore reference embeds (gated on reviewLoreContext) — prepended here so
+        // the first editorial-review payload receives lore context immediately,
+        // mirroring the follow-up chat flow.
+        const loreReferenceMessages = await this.loreReferenceMessages(documentText);
+
         const vaultContext = contextParts.length > 0 ? contextParts.join('\n\n') : '';
 
         // Build and store the initial conversation messages (system prompt + user
@@ -4048,6 +4107,7 @@ export default class EventideQuillPlugin extends Plugin {
         // Build the full API payload: system prompt + manuscripts + user instruction.
         const apiMessages: ChatMessage[] = [
             this.feedbackCurrentMessages[0]!, // system prompt
+            ...loreReferenceMessages,
             ...manuscriptMessages,
             this.feedbackCurrentMessages[1]! // user instruction
         ];

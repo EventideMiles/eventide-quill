@@ -49,20 +49,23 @@ export function parseAliases(raw: unknown): string[] {
 /**
  * Whether a file lives under one of the configured lorebook folders.
  * Folder membership is the gate for lore-entry detection (frontmatter only
- * classifies). A file under multiple lore folders is reported under the first
- * match to keep the entry count honest.
+ * classifies). A file under multiple lore folders is reported under the
+ * deepest (most specific) match so folder typing does not depend on the order
+ * of `loreFolders` — e.g. "Lore/Characters" wins over "Lore".
  *
  * Exported so the Lorebook panel can detect when the active file is an entry
  * and offer inline editing of its type.
  */
 export function findLoreFolder(filePath: string, loreFolders: string[]): string | null {
+    let best: string | null = null;
     for (const folder of loreFolders) {
         const prefix = folder.length > 0 ? `${folder}/` : '';
-        if (prefix === '' || filePath.startsWith(prefix) || filePath === folder) {
-            return folder;
+        if (!(prefix === '' || filePath.startsWith(prefix) || filePath === folder)) continue;
+        if (best === null || folder.length > best.length) {
+            best = folder;
         }
     }
-    return null;
+    return best;
 }
 
 /**
@@ -163,18 +166,20 @@ function matchNamesInText(names: string[], text: string): boolean {
  * "Howlington Academy". The entity name must appear at a word boundary
  * within at least one of the entry's match names.
  */
-function isLikelyCovered(normalizedName: string, entries: LoreEntry[]): boolean {
+function isLikelyCovered(normalizedName: string, entries: LoreEntry[], type?: LoreEntryType): boolean {
     if (!normalizedName) return false;
-    return entries.some((e) =>
-        e.matchNames.some((n) => {
-            if (n === normalizedName) return true;
-            const idx = n.indexOf(normalizedName);
-            if (idx === -1) return false;
-            const before = idx === 0 || n[idx - 1] === ' ';
-            const afterEnd = idx + normalizedName.length;
-            const after = afterEnd === n.length || n[afterEnd] === ' ';
-            return before && after;
-        })
+    return entries.some(
+        (e) =>
+            (type === undefined || e.type === type) &&
+            e.matchNames.some((n) => {
+                if (n === normalizedName) return true;
+                const idx = n.indexOf(normalizedName);
+                if (idx === -1) return false;
+                const before = idx === 0 || n[idx - 1] === ' ';
+                const afterEnd = idx + normalizedName.length;
+                const after = afterEnd === n.length || n[afterEnd] === ' ';
+                return before && after;
+            })
     );
 }
 
@@ -192,11 +197,14 @@ function computeGaps(entities: ExtractedEntity[], entries: LoreEntry[], dismisse
         if (dismissedIds.has(entity.id)) continue;
         if (entity.occurrences < LORE_COVERAGE_GAP_MIN_OCCURRENCES) continue;
         if (entity.removed) continue;
-        if (isLikelyCovered(normalizeName(entity.name), entries)) continue;
+        // Only an entry of the same lore type can cover an entity — a location
+        // note must not suppress a character gap (and an untyped note never can).
+        const loreType = entityTypeToLoreType(entity.type);
+        if (isLikelyCovered(normalizeName(entity.name), entries, loreType)) continue;
         gaps.push({
             entityId: entity.id,
             entityName: entity.name,
-            entityType: entityTypeToLoreType(entity.type),
+            entityType: loreType,
             occurrences: entity.occurrences
         });
     }
@@ -262,9 +270,14 @@ export function computeManuscriptCoverage(
     activeFilePath: string | null,
     dismissedIds: Set<string>
 ): LoreCoverage {
+    // Only typed entries participate in coverage mapping — untyped entries
+    // still count toward totals (and surface in the panel) but cannot be
+    // referenced/orphaned and cannot suppress manuscript gaps.
+    const mappedEntries = entries.filter((e) => e.type !== 'untyped');
+
     const referencedSet = new Set<string>();
 
-    for (const entry of entries) {
+    for (const entry of mappedEntries) {
         if (activeFilePath && entry.filePath === activeFilePath) continue;
         if (matchNamesInText(entry.matchNames, manuscriptText)) {
             referencedSet.add(entry.filePath);
@@ -272,10 +285,10 @@ export function computeManuscriptCoverage(
     }
 
     const isExcluded = (e: LoreEntry) => activeFilePath != null && e.filePath === activeFilePath;
-    const referenced = entries.filter((e) => !isExcluded(e) && referencedSet.has(e.filePath));
-    const orphaned = entries.filter((e) => !isExcluded(e) && !referencedSet.has(e.filePath));
+    const referenced = mappedEntries.filter((e) => !isExcluded(e) && referencedSet.has(e.filePath));
+    const orphaned = mappedEntries.filter((e) => !isExcluded(e) && !referencedSet.has(e.filePath));
 
-    const gaps = computeGaps(entities, entries, dismissedIds);
+    const gaps = computeGaps(entities, mappedEntries, dismissedIds);
     const folderCount = new Set(entries.map((e) => e.folder)).size;
 
     return { totalEntries: entries.length, folderCount, referenced, orphaned, gaps };

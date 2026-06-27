@@ -588,6 +588,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 dropdown.addOption('context', 'Context');
                 dropdown.addOption('review', 'Review');
                 dropdown.addOption('cowriter', 'Co-writer');
+                dropdown.addOption('lorebook', 'Lorebook');
                 dropdown.setValue(this.plugin.settings.defaultTab).onChange(async (value) => {
                     this.plugin.settings.defaultTab = value as DefaultTab;
                     await this.plugin.saveSettings();
@@ -762,11 +763,19 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 button.setButtonText('Build').onClick(() => {
                     button.setDisabled(true);
                     button.setButtonText('Building\u2026');
-                    void this.plugin.warmAllEmbeddingCaches().finally(() => {
-                        button.setDisabled(false);
-                        button.setButtonText('Build');
-                        new Notice('Quill: Embedding caches rebuilt.');
-                    });
+                    void this.plugin
+                        .warmAllEmbeddingCaches()
+                        .then(() => {
+                            new Notice('Quill: Embedding caches rebuilt.');
+                        })
+                        .catch((err: unknown) => {
+                            const msg = err instanceof Error ? err.message : String(err);
+                            new Notice(`Quill: Embedding build failed. ${msg}`);
+                        })
+                        .finally(() => {
+                            button.setDisabled(false);
+                            button.setButtonText('Build');
+                        });
                 })
             );
 
@@ -2192,7 +2201,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
                     this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
                     this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
-                    this.plugin.settings.lorebookFolderTypes = { ...DEFAULT_SETTINGS.lorebookFolderTypes };
                     this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                     this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
                     this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;
