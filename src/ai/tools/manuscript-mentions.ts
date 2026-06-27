@@ -1,0 +1,78 @@
+import { extractAllEntities } from '../../core/context-engine';
+import type { ExtractedEntity } from '../../core/context-engine/types';
+import type { Tool, ToolContext } from './tool';
+
+/**
+ * Find every mention of an entity (character, location, item, plot thread,
+ * theme) in the active manuscript. Returns occurrence count, line numbers,
+ * and known aliases.
+ *
+ * Source priority:
+ *   1. `plugin.currentManuscriptEntities` (cached from the last dashboard
+ *      refresh — shared with the Dashboard and Lorebook coverage views).
+ *   2. If the cache is empty, extract on the fly from the active document.
+ *
+ * Matching is case-insensitive substring against the entity's name OR any
+ * of its aliases, so the model can pass a nickname ("Dripsy") and match the
+ * canonical entity ("Freddy Lupin") when aliases are present.
+ */
+export const manuscriptMentionsTool: Tool = {
+    id: 'manuscript_mentions',
+    description:
+        'Find every mention of an entity in the active manuscript. ' +
+        'Returns occurrence count, line numbers, and known aliases. ' +
+        'Matches against entity names AND aliases (case-insensitive).',
+    argSchema: 'entity_name',
+    maxResultTokens: 500,
+    requiresNetwork: false,
+
+    async execute(args: string, ctx: ToolContext): Promise<string> {
+        const name = args.trim();
+        if (!name)
+            return 'Error: no entity name supplied. Usage: <manuscript_mentions>Sarah Connor</manuscript_mentions>';
+
+        const entities = await resolveEntities(ctx);
+        if (entities.length === 0) {
+            return (
+                'No manuscript entities available. Open a manuscript file and run ' +
+                'a Dashboard refresh first, or ensure the active document is a chapter.'
+            );
+        }
+
+        const needle = name.toLowerCase();
+        const matches = entities.filter(
+            (e) =>
+                !e.removed &&
+                (e.name.toLowerCase().includes(needle) || e.aliases.some((a) => a.toLowerCase().includes(needle)))
+        );
+
+        if (matches.length === 0) {
+            return `No entity matching "${name}" was found in the manuscript.`;
+        }
+
+        return matches.map(formatEntity).join('\n');
+    }
+};
+
+/**
+ * Resolve the entity list to query. Prefer the dashboard's cached entities
+ * (shared with the Lorebook coverage view); fall back to a single-file
+ * extraction when no dashboard refresh has run for this session.
+ */
+async function resolveEntities(ctx: ToolContext): Promise<ExtractedEntity[]> {
+    const cached = ctx.plugin.currentManuscriptEntities;
+    if (cached.length > 0) return cached;
+
+    const activeFile = ctx.plugin.app.workspace.getActiveFile();
+    if (!activeFile || activeFile.extension !== 'md') return [];
+
+    const text = await ctx.plugin.app.vault.cachedRead(activeFile);
+    return extractAllEntities(text);
+}
+
+function formatEntity(e: ExtractedEntity): string {
+    const lines = e.lines.length > 0 ? ` at line${e.lines.length === 1 ? '' : 's'} ${e.lines.join(', ')}` : '';
+    const aliases = e.aliases.length > 0 ? `; aliases: ${e.aliases.join(', ')}` : '';
+    const occ = `${e.occurrences} occurrence${e.occurrences === 1 ? '' : 's'}`;
+    return `${e.name} (${e.type}): ${occ}${lines}${aliases}`;
+}
