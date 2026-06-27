@@ -11,7 +11,7 @@ import { CoWriterPanel } from './co-writer-panel';
 import { renderDashboardTab, renderDashboardSettingsTab } from './dashboard-panel';
 import { renderLorebookTab } from './lorebook-panel';
 import type { InputMode } from './co-writer-panel';
-import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase } from '../ai/co-writer';
+import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase, LoreCoachPhase } from '../ai/co-writer';
 import type { ProposedEdit } from '../core/change-set';
 import type EventideQuillPlugin from '../main';
 import type { ContextAssembly } from '../core/context-engine/types';
@@ -719,6 +719,15 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setRejectDirectHandler((id: number) => {
                 this.plugin.rejectDirectChange(id);
             });
+            this.coWriterPanel.setLoreCoachMessageHandler((message: string) => {
+                void this.plugin.sendCoWriterLoreCoach(message);
+            });
+            this.coWriterPanel.setEndLoreCoachHandler(() => {
+                this.plugin.endCoWriterLoreCoach();
+            });
+            this.coWriterPanel.setDiscardLoreDraftHandler((draft) => {
+                this.plugin.discardLoreDraft(draft);
+            });
         }
 
         // Sync current state from the session
@@ -731,6 +740,8 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setOptionsLoading(session.optionsLoading);
             this.coWriterPanel.setCoachPhase(session.coachSession?.phase ?? 'discern');
             this.coWriterPanel.setCoachActive(session.coachActive);
+            this.coWriterPanel.setLoreCoachPhase(session.loreCoachSession?.phase ?? 'discover');
+            this.coWriterPanel.setLoreCoachActive(session.loreCoachActive);
             this.coWriterPanel.setFulfillState(session.fulfillChanges.edits, session.fulfillActive);
             this.coWriterPanel.setDirectChange(session.directChanges.edits[0] ?? null);
         }
@@ -926,6 +937,16 @@ export class QuillSidebarView extends ItemView {
     /** Set whether coach mode is active. */
     coWriterSetCoachActive(active: boolean): void {
         this.coWriterPanel?.setCoachActive(active);
+    }
+
+    /** Set the lorebook coach phase. */
+    coWriterSetLoreCoachPhase(phase: LoreCoachPhase): void {
+        this.coWriterPanel?.setLoreCoachPhase(phase);
+    }
+
+    /** Set whether lorebook coach mode is active. */
+    coWriterSetLoreCoachActive(active: boolean): void {
+        this.coWriterPanel?.setLoreCoachActive(active);
     }
 
     /** Set the plot map link path shown in the co-writer panel. */

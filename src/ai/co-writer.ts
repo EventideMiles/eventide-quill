@@ -13,6 +13,8 @@ import {
     getCoWriterCoachToOptions,
     getCoWriterOptionPrompt,
     getCoWriterVoicePrompt,
+    getLoreCoachSystemPrompt,
+    getLoreCoachUserPrompt,
     type ActiveSteering
 } from './prompts';
 import { compactConversation } from './compaction';
@@ -23,6 +25,9 @@ import { EmbeddingCache, rankBySimilarity } from './embedding-cache';
 import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
 import { ChangeSet } from '../core/change-set';
+import { parseLoreType } from '../core/dashboard/lorebook-scanner';
+import type { LoreEntryType } from '../core/dashboard/lorebook-types';
+import { createInternalToolRegistry, streamWithTools, type ToolContext } from './tools';
 import {
     clearDiffEdits,
     diffEditsField,
@@ -393,6 +398,39 @@ export interface CoachSession {
     clarifyRound: number;
 }
 
+/**
+ * Lorebook coach phase — a simpler state machine than the prose coach because
+ * the conversation drives the flow. The phase is mostly a UI indicator; the
+ * model decides when to ask questions vs. emit a draft.
+ *
+ *  - `discover` — first turn; the user names what they want to develop.
+ *  - `develop` — interactive Q&A; the model uses tools and asks probing questions.
+ *  - `refine`  — a draft has been produced; subsequent turns refine it.
+ */
+export type LoreCoachPhase = 'discover' | 'develop' | 'refine';
+
+/** A lorebook coach session. */
+export interface LoreCoachSession {
+    /** Current phase — drives the bottom-bar indicator. */
+    phase: LoreCoachPhase;
+    /** What the user is working on (the initial scope message). Free-form. */
+    scope: string;
+    /** Detected/declared entry type, populated when the first draft is produced. */
+    entryType: LoreEntryType | null;
+    /** Turn counter; bounds the conversation against runaway loops. */
+    rounds: number;
+}
+
+/** A proposed lore entry draft extracted from the AI's response. */
+export interface LoreDraftEntry {
+    /** Display name (also used as the proposed filename, sanitized on save). */
+    name: string;
+    /** Entry type from the draft's `<lore_draft type="...">` attribute, if any. */
+    entryType: LoreEntryType | null;
+    /** Full markdown body (frontmatter is reconstructed at save time). */
+    content: string;
+}
+
 /** A single continuation option suggested by the AI. */
 export interface CoWriterOption {
     label: string;
@@ -408,6 +446,8 @@ export interface CoWriterChatMessage {
     thought?: string;
     /** Whether to show an accept button below this message for plan revision. */
     showAccept?: boolean;
+    /** Lore draft attached to this message (lorebook coach mode only). */
+    loreDraft?: LoreDraftEntry;
 }
 
 /**
@@ -487,6 +527,24 @@ export class CoWriterSession {
     coachActive = false;
     /** Whether option cards have been auto-generated for the current coach session. */
     private coachOptionsGenerated = false;
+
+    // ── Lorebook coach state ────────────────────────────────────────────────
+    /** Current lorebook coach session, if lorebook coach mode is active. */
+    loreCoachSession: LoreCoachSession | null = null;
+    /** Whether lorebook coach mode is currently active. */
+    loreCoachActive = false;
+    /**
+     * API-level conversation history for the lorebook coach. Kept separate
+     * from {@link discussCurrentMessages} so the two modes don't cross-pollute
+     * (system prompts, tool result messages, and phase instructions differ).
+     */
+    loreCoachMessages: ChatMessage[] = [];
+    /** The most recent lore draft produced this session, awaiting review. */
+    currentLoreDraft: LoreDraftEntry | null = null;
+    /** Called when lorebook coach state changes (phase advance, end coach). */
+    onLoreCoachUpdate: (() => void) | null = null;
+    /** Called when a new lore draft is ready for the review card. */
+    onLoreDraftReady: (() => void) | null = null;
 
     /** Fulfill-mode proposed edits (one per directive), in document order. */
     fulfillChanges: ChangeSet = new ChangeSet();
@@ -1423,6 +1481,232 @@ export class CoWriterSession {
         this.discussCurrentMessages = [];
     }
 
+    // ── Lorebook coach ──────────────────────────────────────────────────────
+
+    /**
+     * Send a message to the lorebook coach. The coach uses the pseudo-tool
+     * framework ({@link streamWithTools}) so the model can call the internal
+     * tools (`manuscript_mentions`, `lore_siblings`, `vault_lookup`) mid-
+     * generation. When the model is ready to propose an entry, it emits a
+     * `<lore_draft>` block which is detected post-stream and surfaced as a
+     * review card via {@link onLoreDraftReady}.
+     *
+     * Unlike the prose coach, this does NOT lock the editor or require an
+     * active manuscript — lorebook development is independent of any open
+     * chapter. It does require at least one configured lorebook folder.
+     */
+    async sendLoreCoach(plugin: EventideQuillPlugin, message: string): Promise<void> {
+        const chat = plugin.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: No AI provider configured. Set one up in settings.');
+            return;
+        }
+        if (plugin.settings.lorebookFolders.length === 0) {
+            new Notice('Quill: Add at least one lorebook folder in settings → lorebook first.');
+            return;
+        }
+
+        this.cancelGeneration();
+        this.app = plugin.app;
+        this.currentOptions = [];
+        this.optionsLoading = true;
+        this.onOptionsLoading?.(true);
+
+        // Add user message to display history (same pattern as sendDiscussion).
+        this.chatHistory.push({ role: 'user', content: message });
+
+        // Initialize session on first turn. The system prompt includes the
+        // tool catalog so the model knows which tags it may emit.
+        if (!this.loreCoachSession) {
+            this.loreCoachSession = {
+                phase: 'discover',
+                scope: message,
+                entryType: null,
+                rounds: 0
+            };
+            this.loreCoachActive = true;
+            this.currentLoreDraft = null;
+
+            const registry = createInternalToolRegistry();
+            const catalog = registry.renderCatalog();
+            const systemPrompt = getLoreCoachSystemPrompt(catalog, null);
+            this.loreCoachMessages = [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: getLoreCoachUserPrompt(message) }
+            ];
+        } else {
+            this.loreCoachSession.rounds++;
+            this.loreCoachMessages.push({ role: 'user', content: getLoreCoachUserPrompt(message) });
+        }
+
+        // Build a fresh tool registry + context per turn. The registry is
+        // cheap (three tool descriptors); the context carries the abort signal.
+        const registry = createInternalToolRegistry();
+        const ctx: ToolContext = { plugin };
+
+        // Compaction: mirror the discuss/coach pattern so a long lore dev
+        // session doesn't blow the context window. The lore-specific messages
+        // are compacted in place.
+        const maxTokens = chat.provider.config.maxContextTokens;
+        const compactPct = Math.max(50, Math.min(95, this.settingsOrDefault(plugin).contextCompactAtPercent)) / 100;
+        const conversationTokens = estimateTokens(this.loreCoachMessages);
+        this.onTokenEstimate?.(conversationTokens, maxTokens);
+
+        if (conversationTokens / maxTokens >= compactPct) {
+            const sentenceCount = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
+            try {
+                const result = await compactConversation(chat.provider, this.loreCoachMessages, sentenceCount);
+                if (result) {
+                    this.loreCoachMessages = result.messages;
+                    this.onTokenEstimate?.(estimateTokens(this.loreCoachMessages), maxTokens);
+                }
+            } catch (err: unknown) {
+                if (err instanceof Error && err.name === 'AbortError') {
+                    this.optionsLoading = false;
+                    this.onOptionsLoading?.(false);
+                    return;
+                }
+                console.warn('Quill: Lore coach compaction failed; continuing without compaction.', err);
+            }
+        }
+
+        if (__DEV__ && plugin.settings.enableDebugLogging) {
+            console.warn('[Quill Co-writer] Lore coach context', {
+                scope: this.loreCoachSession.scope,
+                phase: this.loreCoachSession.phase,
+                rounds: this.loreCoachSession.rounds,
+                conversationTokens: estimateTokens(this.loreCoachMessages),
+                maxTokens
+            });
+        }
+
+        let response = '';
+        let thought = '';
+        this.onDiscussStartStreaming?.();
+        this.onDiscussChunk?.('');
+
+        try {
+            this.abortController = new AbortController();
+            ctx.signal = this.abortController.signal;
+
+            const stream = streamWithTools(
+                chat.provider,
+                {
+                    messages: this.loreCoachMessages,
+                    model: chat.modelId,
+                    temperature: 0.7, // a touch more creative than prose coach — character dev benefits from range
+                    maxTokens: 2048,
+                    signal: this.abortController.signal
+                },
+                registry,
+                ctx
+            );
+
+            for await (const chunk of stream) {
+                if (chunk.done) break;
+                response += chunk.text;
+                if (chunk.text) this.onDiscussChunk?.(chunk.text);
+                if (chunk.thought) {
+                    thought += chunk.thought;
+                    this.thoughtBuffer = thought;
+                    this.onThought?.(thought);
+                }
+            }
+
+            // Detect a `<lore_draft>` block in the response. The block is
+            // stripped from the displayed message and surfaced as a review
+            // card via currentLoreDraft + onLoreDraftReady.
+            const draft = this.parseLoreDraft(response);
+            const cleanResponse = draft ? this.stripLoreDraftTag(response) : response;
+
+            if (draft) {
+                this.currentLoreDraft = draft;
+                if (this.loreCoachSession) {
+                    this.loreCoachSession.entryType = draft.entryType;
+                    this.loreCoachSession.phase = 'refine';
+                }
+            } else if (this.loreCoachSession && this.loreCoachSession.phase === 'discover') {
+                // No draft this turn — advance from discover to develop after the first response.
+                this.loreCoachSession.phase = 'develop';
+            }
+
+            this.chatHistory.push({
+                role: 'assistant',
+                content: cleanResponse,
+                thought: thought || undefined,
+                loreDraft: draft ?? undefined
+            });
+            this.loreCoachMessages.push({ role: 'assistant', content: response });
+
+            this.onDiscussFinished?.();
+            this.optionsLoading = false;
+            this.onOptionsLoading?.(false);
+            this.onTokenEstimate?.(estimateTokens(this.loreCoachMessages), maxTokens);
+            this.onChatUpdate?.();
+
+            if (draft) this.onLoreDraftReady?.();
+            this.onLoreCoachUpdate?.();
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') {
+                this.optionsLoading = false;
+                this.onOptionsLoading?.(false);
+                return;
+            }
+            const msg = err instanceof Error ? err.message : String(err);
+            this.onDiscussError?.(msg);
+            new Notice(`Quill: Lore coach failed — ${msg}`);
+            this.optionsLoading = false;
+            this.onOptionsLoading?.(false);
+            this.onChatUpdate?.();
+        }
+    }
+
+    /** Clear lorebook coach session state. Used by the "End coaching" button. */
+    endLoreCoachSession(): void {
+        this.loreCoachSession = null;
+        this.loreCoachActive = false;
+        this.loreCoachMessages = [];
+        this.currentLoreDraft = null;
+        this.onLoreCoachUpdate?.();
+    }
+
+    /**
+     * Extract a `<lore_draft>` block from the model's response. Returns null
+     * if no well-formed block is present. Tolerant of attribute order and
+     * optional attributes; falls back to the first H1 in the body as the
+     * entry name if the `name=` attribute is missing.
+     */
+    private parseLoreDraft(response: string): LoreDraftEntry | null {
+        const match = response.match(/<lore_draft((?:\s+(?:type|name)="[^"]*")*)>([\s\S]*?)<\/lore_draft>/);
+        if (!match) return null;
+
+        const [, attrBlock, body] = match;
+        const typeMatch = attrBlock?.match(/type="([^"]*)"/);
+        const nameMatch = attrBlock?.match(/name="([^"]*)"/);
+
+        const parsedType = typeMatch?.[1] ? parseLoreType(typeMatch[1]) : 'untyped';
+        const entryType = parsedType === 'untyped' ? null : parsedType;
+
+        // `body` is the third capture group; guaranteed present by the regex
+        // above, but noUncheckedIndexedAccess types it as possibly undefined.
+        const content = (body ?? '').trim();
+        let name = (nameMatch?.[1] ?? '').trim();
+        if (!name) {
+            const h1 = content.match(/^#\s+(.+)$/m);
+            if (h1?.[1]) name = h1[1].trim();
+        }
+        if (!name) return null;
+
+        return { name, entryType, content };
+    }
+
+    /** Remove the `<lore_draft>...</lore_draft>` block from a response. */
+    private stripLoreDraftTag(response: string): string {
+        return response
+            .replace(/<lore_draft(?:\s(?:[^>"<>]|"[^"]*")*)?>[\s\S]*?<\/lore_draft>/, '')
+            .replace(/^\s+|\s+$/g, '');
+    }
+
     /**
      * Fulfill mode: scan the active document for every `<!-- quill: -->` directive
      * and generate a fulfillment for each, in document order. Each completed
@@ -2283,6 +2567,7 @@ export class CoWriterSession {
         this.unlockEditor();
         this.cancelGeneration();
         this.endCoachSession();
+        this.endLoreCoachSession();
         this.clearFulfill();
         this.clearDirect();
         this.manuscriptPath = null;
@@ -2312,6 +2597,7 @@ export class CoWriterSession {
         this.unlockEditor();
         this.cancelGeneration();
         this.endCoachSession();
+        this.endLoreCoachSession();
         this.clearFulfill();
         this.clearDirect();
         this.originalText = '';

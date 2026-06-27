@@ -47,6 +47,7 @@ import {
 import type { ChatMessage } from './ai/provider';
 
 import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
+import type { LoreDraftEntry } from './ai/co-writer';
 import {
     getManuscriptAnalysis,
     getManuscriptAnalysisModeById,
@@ -1708,6 +1709,8 @@ export default class EventideQuillPlugin extends Plugin {
                 this.lintPanel.coWriterSetOptionsLoading(session.optionsLoading);
                 this.lintPanel.coWriterSetCoachPhase(session.coachSession?.phase ?? 'discern');
                 this.lintPanel.coWriterSetCoachActive(session.coachActive);
+                this.lintPanel.coWriterSetLoreCoachPhase(session.loreCoachSession?.phase ?? 'discover');
+                this.lintPanel.coWriterSetLoreCoachActive(session.loreCoachActive);
             }
         };
         session.onOptionsLoading = (loading: boolean) => {
@@ -1743,6 +1746,16 @@ export default class EventideQuillPlugin extends Plugin {
         session.onDirectChangeUpdate = () => {
             this.lintPanel?.coWriterSetDirectChange(session.directChanges.edits[0] ?? null);
         };
+        session.onLoreCoachUpdate = () => {
+            if (!this.lintPanel) return;
+            this.lintPanel.coWriterSetLoreCoachPhase(session.loreCoachSession?.phase ?? 'discover');
+            this.lintPanel.coWriterSetLoreCoachActive(session.loreCoachActive);
+        };
+        // `onLoreDraftReady` is intentionally a no-op here — the draft card
+        // is rendered inline on the chat message that produced it (driven by
+        // `onChatUpdate`), so there's nothing to push to the panel separately.
+        // The hook exists for future use (e.g., auto-scroll to the draft).
+        session.onLoreDraftReady = () => {};
     }
 
     /**
@@ -1870,6 +1883,35 @@ export default class EventideQuillPlugin extends Plugin {
     /** Reject the pending Direct continuation: discard it (nothing was written). */
     rejectDirectChange(id: number): void {
         this.coWriterSession.rejectDirectChange(id);
+    }
+
+    /**
+     * Send a message to the Lorebook Coach.
+     * The coach uses the pseudo-tool framework to pull manuscript mentions,
+     * lore siblings, and vault notes mid-generation, then proposes a draft
+     * entry for the writer to review and save as a note.
+     */
+    async sendCoWriterLoreCoach(message: string): Promise<void> {
+        await this.openCoWriterPanel();
+        this.wireCoWriterPanel();
+        await this.coWriterSession.sendLoreCoach(this, message);
+    }
+
+    /** End the current Lorebook Coach session. */
+    endCoWriterLoreCoach(): void {
+        this.coWriterSession.endLoreCoachSession();
+        this.lintPanel?.coWriterSetLoreCoachActive(false);
+        this.lintPanel?.coWriterSetLoreCoachPhase('discover');
+    }
+
+    /**
+     * Discard the pending lore draft. The chat message that produced it
+     * stays in history (so the writer can see what was proposed) but the
+     * session's `currentLoreDraft` is cleared so the review card's actions
+     * no longer fire.
+     */
+    discardLoreDraft(_draft: LoreDraftEntry): void {
+        this.coWriterSession.currentLoreDraft = null;
     }
 
     /** Resolve the CodeMirror view of the active markdown editor, if any. */

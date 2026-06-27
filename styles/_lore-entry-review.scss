@@ -1,0 +1,124 @@
+@use 'base' as *;
+
+/**
+ * Lore draft review card — surfaced by the Lorebook Coach when the model emits
+ * a `<lore_draft>` block. Renders the proposed entry's name + type, a markdown
+ * preview of its body, and Save / Discard actions. Save writes the entry as a
+ * new note via `vault.create(normalizePath(...))` with a `quill-type` key.
+ *
+ * Block is `quill-lore-draft-card` (BEM with the `quill-` vendor prefix per
+ * project convention). Currently rendered inline on a co-writer chat bubble;
+ * C3's lorebook sweep will reuse it from the Lorebook tab.
+ */
+
+.quill-lore-draft-card {
+    margin-top: $space-md;
+    padding: $space-md;
+    border: 1px solid var(--background-modifier-border);
+    border-left: 3px solid var(--interactive-accent);
+    border-radius: $radius-sm;
+    background: var(--background-secondary);
+
+    &__header {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        margin-bottom: $space-xs;
+    }
+
+    &__title {
+        font-weight: 600;
+        color: var(--text-normal);
+        font-size: var(--font-small);
+    }
+
+    &__type-badge {
+        font-size: var(--font-smallest);
+        color: var(--text-muted);
+        background: var(--background-modifier-border);
+        padding: 2px $space-sm;
+        border-radius: $radius-sm;
+        text-transform: capitalize;
+    }
+
+    &__preview-label {
+        font-size: var(--font-smallest);
+        color: var(--text-faint, var(--text-muted));
+        font-style: italic;
+        margin-bottom: $space-xs;
+    }
+
+    &__preview {
+        font-size: var(--font-small);
+        color: var(--text-normal);
+        max-height: 280px;
+        overflow-y: auto;
+        padding-right: $space-xs;
+
+        // Constrain rendered markdown so long drafts don't blow out the chat.
+        & > :first-child {
+            margin-top: 0;
+        }
+
+        & > :last-child {
+            margin-bottom: 0;
+        }
+
+        h1,
+        h2,
+        h3 {
+            font-size: var(--font-small);
+            margin: $space-sm 0 $space-xs;
+        }
+
+        p {
+            margin: 0 0 $space-xs;
+        }
+
+        ul,
+        ol {
+            margin: 0 0 $space-xs;
+            padding-left: $space-lg;
+        }
+    }
+
+    &__actions {
+        display: flex;
+        gap: $space-sm;
+        margin-top: $space-md;
+    }
+
+    &__save {
+        background: var(--interactive-accent);
+        color: var(--text-on-accent);
+        border: none;
+        border-radius: $radius-sm;
+        padding: $space-xs $space-md;
+        font-size: var(--font-small);
+        font-weight: 500;
+        cursor: pointer;
+        transition: opacity $transition-fast;
+
+        &:hover {
+            opacity: 0.85;
+        }
+    }
+
+    &__discard {
+        background: transparent;
+        color: var(--text-muted);
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-xs $space-md;
+        font-size: var(--font-small);
+        cursor: pointer;
+        transition:
+            background $transition-fast,
+            color $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-border);
+            color: var(--text-normal);
+        }
+    }
+}

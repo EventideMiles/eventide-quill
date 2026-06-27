@@ -705,6 +705,46 @@
         }
     }
 
+    /* Lorebook coach mode UI — mirrors the coach bar pattern. */
+    &__lore-bar {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        padding: $space-sm $space-md;
+        font-size: var(--font-smallest);
+        color: var(--text-muted);
+        border-top: 1px solid var(--background-modifier-border);
+        margin-top: $space-xs;
+    }
+
+    &__lore-phase {
+        font-style: italic;
+        color: var(--text-accent);
+        font-weight: 500;
+    }
+
+    &__lore-end-btn {
+        background: var(--background-modifier-form-field);
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: 2px $space-md;
+        font-size: var(--font-smallest);
+        color: var(--text-muted);
+        cursor: pointer;
+        transition: background $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-border);
+            color: var(--text-normal);
+        }
+    }
+
+    /* Inline lore-draft review card attached to a coach chat message. */
+    &__init-sub--warn {
+        color: var(--text-warning, var(--text-accent));
+        font-style: italic;
+    }
+
     /* Compact button for co-writer panel */
     &__compact-btn {
         cursor: pointer;

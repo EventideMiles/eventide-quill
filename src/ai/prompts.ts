@@ -5,6 +5,7 @@ import type { ManuscriptAnalysisMode } from './manuscript-analysis';
 import type { ExtractedEntity, VoiceMarker } from '../core/context-engine/types';
 import { type LintResult, RULE_INFO } from '../core/linter/types';
 import { type NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS, type VoiceProfile } from '../types';
+import type { LoreEntryType } from '../core/dashboard/lorebook-types';
 
 /** Wiki link behavior modes for AI prompt instructions. */
 export type WikiLinkBehavior = 'preserve' | 'adaptive';
@@ -907,4 +908,89 @@ function getManuscriptModeFocus(mode: ManuscriptAnalysisMode): string {
                 '  drift (error). Flag as "review" not "fix."'
             ].join('\n');
     }
+}
+
+// ── Lorebook coach ───────────────────────────────────────────────────────────
+
+/**
+ * Build the system prompt for the Lorebook Coach. Establishes the role
+ * (developmental editor for fiction lore, NOT a prose writer), splices in
+ * the tool catalog from the registry, and documents the `<lore_draft>` tag
+ * the model emits when it's ready to propose an entry.
+ *
+ * @param toolCatalog   Output of `registry.renderCatalog()` — may be empty.
+ * @param entryTypeHint Optional declared type for the first entry.
+ */
+export function getLoreCoachSystemPrompt(toolCatalog: string, entryTypeHint?: LoreEntryType | null): string {
+    const typeLine = entryTypeHint ? `\nThe writer has indicated they're developing a ${entryTypeHint}.` : '';
+    const catalog = toolCatalog.trim();
+    const catalogBlock = catalog ? `\n${catalog}\n` : '\n(No tools are currently registered.)\n';
+
+    return [
+        'You are a developmental editor for fiction lore — characters, locations,',
+        'factions, items, events, plot threads, and themes. You help a novelist',
+        'flesh out the world around their manuscript.',
+        '',
+        'You are NOT a prose writer. Do not generate scenes, dialogue, or narrative',
+        'continuation. Your output is worldbuilding: backstories, motivations,',
+        'relationships, sensory details, internal consistency, and lore structure.',
+        '',
+        '## How to work',
+        '',
+        '1. Use the tools available to you to gather context before proposing anything.',
+        '   Pull siblings for consistency, look up mentions in the manuscript, and',
+        '   read existing notes the writer has authored. Never invent facts that',
+        '   contradict what the tools return.',
+        '2. Ask probing worldbuilding questions. Push the writer on motivations,',
+        '   contradictions, gaps, voice, and specificity. Do not accept the first',
+        '   answer — dig until the entry has real depth.',
+        '3. When you have enough (or when the writer asks), draft the entry by',
+        '   emitting a `<lore_draft>` block (see below). The writer will review',
+        '   and save it.',
+        '4. Refine on request. Treat every follow-up as a chance to deepen the',
+        '   entry, not just polish its prose.',
+        '',
+        '## Proposing a draft',
+        '',
+        'When you are ready to propose an entry, emit EXACTLY ONE block:',
+        '',
+        '  <lore_draft type="character" name="Sarah Connor">',
+        '  # Sarah Connor',
+        '',
+        '  ## Background',
+        '  ...markdown body...',
+        '  </lore_draft>',
+        '',
+        '`type` is one of: character, location, event, item, faction, plot-thread, theme.',
+        'It may be omitted if unclear. `name` is the entry display name. The body is',
+        'markdown — use headings, lists, and paragraphs. Do NOT include frontmatter;',
+        'the system adds `quill-type` from the type attribute at save time.',
+        '',
+        'Outside the draft block, you may speak freely — narrate your reasoning,',
+        'summarize what you found via tools, ask follow-up questions, or note',
+        'open issues for the writer to decide.',
+        '',
+        '## Tools',
+        catalogBlock,
+        'Call a tool by emitting its opening tag, the arguments, and the closing tag.',
+        'The system executes it and replies with a `<tool_result>` block. Continue',
+        'your response after each result. You may call multiple tools in one response.',
+        typeLine
+    ].join('\n');
+}
+
+/**
+ * Wrap the user's message for the lorebook coach. Adds a small reminder to
+ * consult tools before drafting. The system prompt carries the bulk of the
+ * instructions; this just frames each turn.
+ */
+export function getLoreCoachUserPrompt(message: string): string {
+    return [
+        'Writer:',
+        message,
+        '',
+        '(Before drafting, use the available tools to ground your response in the',
+        "writer's existing lore and manuscript. Ask clarifying questions if the",
+        'request is vague.)'
+    ].join('\n');
 }

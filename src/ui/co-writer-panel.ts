@@ -5,18 +5,32 @@ import { ConfirmModal } from './confirm-modal';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
 import { buildEmbedFolderPath, embedFolderLabel, parseEmbedFolderPath } from '../utils/vault-files';
 import { renderChangeBulkBar, renderChangeCard } from './change-card';
+import { renderLoreDraftCard } from './lore-entry-review';
 import type EventideQuillPlugin from '../main';
-import type { DraftState, CoWriterChatMessage, CoWriterOption, CoachPhase } from '../ai/co-writer';
+import type {
+    DraftState,
+    CoWriterChatMessage,
+    CoWriterOption,
+    CoachPhase,
+    LoreCoachPhase,
+    LoreDraftEntry
+} from '../ai/co-writer';
 import type { ProposedEdit } from '../core/change-set';
 
-export type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill';
+export type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill' | 'lorebook';
 
 /** The co-writer modes, in cycle/picker order, with icon, label, and a one-line descriptor. */
 const COWRITER_MODES: { mode: InputMode; icon: string; label: string; desc: string }[] = [
     { mode: 'direct', icon: '\u2192', label: 'Direct', desc: 'Type a direction and the AI continues from the cursor' },
     { mode: 'discuss', icon: '\u2194', label: 'Discuss', desc: 'AI responds with thoughts and analysis' },
     { mode: 'coach', icon: '\u2728', label: 'Coach', desc: 'AI helps you figure out what to do next' },
-    { mode: 'fulfill', icon: '\u2726', label: 'Fulfill', desc: 'Sweep every inline directive and review as a diff' }
+    { mode: 'fulfill', icon: '\u2726', label: 'Fulfill', desc: 'Sweep every inline directive and review as a diff' },
+    {
+        mode: 'lorebook',
+        icon: '\u{1f4d6}',
+        label: 'Lorebook',
+        desc: 'Develop characters and lore entries with AI tools'
+    }
 ];
 
 /** Extract a display name from a vault path. */
@@ -73,6 +87,10 @@ export class CoWriterPanel extends AbstractChatPanel {
     private directChange: ProposedEdit | null = null;
     /** Whether the mode picker is open (replaces the mode-cycle-on-click behavior). */
     private modePickerOpen = false;
+    /** Current lorebook coach phase, if lorebook coach mode is active. */
+    private loreCoachPhase: LoreCoachPhase = 'discover';
+    /** Whether lorebook coach mode is currently active. */
+    private loreCoachActive = false;
 
     private onSendMessage: ((direction: string) => void) | null = null;
     private onDiscussMessage: ((message: string) => void) | null = null;
@@ -95,6 +113,9 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onRejectAllFulfill: (() => void) | null = null;
     private onApproveDirect: ((id: number) => void) | null = null;
     private onRejectDirect: ((id: number) => void) | null = null;
+    private onLoreCoachMessage: ((message: string) => void) | null = null;
+    private onEndLoreCoach: (() => void) | null = null;
+    private onDiscardLoreDraft: ((draft: LoreDraftEntry) => void) | null = null;
 
     /**
      * Conversation token estimate pushed from the plugin layer.
@@ -267,7 +288,13 @@ export class CoWriterPanel extends AbstractChatPanel {
         const oldMode = this.inputMode;
         this.inputMode = mode;
         this.modePickerOpen = false;
-        if (oldMode !== mode && (oldMode === 'fulfill' || mode === 'fulfill')) {
+        // Entering or leaving a stateful mode resets the chat so the new mode
+        // starts fresh: fulfill holds its own ChangeSet, lorebook holds its
+        // own session state, and neither should inherit the other's history.
+        if (
+            oldMode !== mode &&
+            (oldMode === 'fulfill' || mode === 'fulfill' || oldMode === 'lorebook' || mode === 'lorebook')
+        ) {
             this.onNewChat?.(false);
         }
         this.scheduleRender();
@@ -282,6 +309,33 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Set whether coach mode is active. */
     setCoachActive(active: boolean): void {
         this.coachActive = active;
+        this.render();
+    }
+
+    /** Set the handler invoked when the user sends a message in lorebook coach mode. */
+    setLoreCoachMessageHandler(handler: (message: string) => void): void {
+        this.onLoreCoachMessage = handler;
+    }
+
+    /** Set the handler invoked to end the lorebook coach session. */
+    setEndLoreCoachHandler(handler: () => void): void {
+        this.onEndLoreCoach = handler;
+    }
+
+    /** Set the handler invoked when the user discards a proposed lore draft. */
+    setDiscardLoreDraftHandler(handler: (draft: LoreDraftEntry) => void): void {
+        this.onDiscardLoreDraft = handler;
+    }
+
+    /** Replace the lorebook coach phase (drives the bottom-bar indicator). */
+    setLoreCoachPhase(phase: LoreCoachPhase): void {
+        this.loreCoachPhase = phase;
+        this.render();
+    }
+
+    /** Set whether lorebook coach mode is active. */
+    setLoreCoachActive(active: boolean): void {
+        this.loreCoachActive = active;
         this.render();
     }
 
@@ -602,6 +656,15 @@ export class CoWriterPanel extends AbstractChatPanel {
                             this.onAcceptPlan?.();
                         });
                     }
+
+                    // Lorebook coach draft card — rendered under the message
+                    // that produced it. Save writes the entry to the vault via
+                    // the helper; Discard clears it from the session.
+                    if (msg.loreDraft) {
+                        renderLoreDraftCard(bubble, msg.loreDraft, this.app, this.plugin, this.renderEvents, {
+                            onDiscard: (draft) => this.onDiscardLoreDraft?.(draft)
+                        });
+                    }
                 }
             }
 
@@ -731,6 +794,25 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.renderEvents.registerDomEvent(startBtn, 'click', () => {
                 this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-panel__input')?.focus();
             });
+        } else if (this.inputMode === 'lorebook') {
+            prompt.createEl('div', { cls: 'quill-cowriter-panel__init-heading', text: 'Lorebook coach' });
+            prompt.createEl('div', {
+                cls: 'quill-cowriter-panel__init-desc',
+                text: 'Develop a character, location, faction, or other lore entry. The coach reads your existing lore and manuscript, asks probing questions, and proposes a draft you can save as a note.'
+            });
+            const startBtn = prompt.createEl('button', {
+                cls: 'quill-cowriter-panel__init-btn mod-cta',
+                text: 'Start coaching'
+            });
+            this.renderEvents.registerDomEvent(startBtn, 'click', () => {
+                this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-panel__input')?.focus();
+            });
+            if (this.plugin.settings.lorebookFolders.length === 0) {
+                prompt.createEl('div', {
+                    cls: 'quill-cowriter-panel__init-sub quill-cowriter-panel__init-sub--warn',
+                    text: 'Configure at least one lorebook folder in settings → lorebook first.'
+                });
+            }
         } else {
             prompt.createEl('div', { cls: 'quill-cowriter-panel__init-heading', text: 'Direct' });
             prompt.createEl('div', {
@@ -848,6 +930,36 @@ export class CoWriterPanel extends AbstractChatPanel {
                         this.onCoachToOptions?.();
                     });
                 }
+            }
+        }
+
+        // Lorebook coach mode UI — phase indicator + end coaching
+        if (this.inputMode === 'lorebook') {
+            const generating = this.optionsLoading || this.draftState === 'generating';
+            const loreBar = bottom.createEl('div', { cls: 'quill-cowriter-panel__lore-bar' });
+            const phaseNames: Record<LoreCoachPhase, string> = {
+                discover: 'Discovering what to develop\u2026',
+                develop: 'Developing the entry\u2026',
+                refine: 'Refining the draft\u2026'
+            };
+            loreBar.createEl('span', {
+                cls: 'quill-cowriter-panel__lore-phase',
+                text: this.loreCoachActive
+                    ? phaseNames[this.loreCoachPhase]
+                    : 'Lorebook coach \u2014 describe an entry to develop'
+            });
+
+            if (this.loreCoachActive) {
+                loreBar.createEl('span', { text: ' ' });
+                const endBtn = loreBar.createEl('button', {
+                    cls: 'quill-cowriter-panel__lore-end-btn',
+                    text: 'End coaching'
+                });
+                if (generating) endBtn.disabled = true;
+                this.renderEvents.registerDomEvent(endBtn, 'click', () => {
+                    if (this.optionsLoading) return;
+                    this.onEndLoreCoach?.();
+                });
             }
         }
 
@@ -1089,7 +1201,9 @@ export class CoWriterPanel extends AbstractChatPanel {
                       ? "Describe your intent or answer the AI's questions\u2026"
                       : this.inputMode === 'fulfill'
                         ? 'Not used in Fulfill mode \u2014 use Run sweep'
-                        : 'Discuss the scene, ask questions, brainstorm\u2026'
+                        : this.inputMode === 'lorebook'
+                          ? 'Describe an entry to develop (e.g. "a character named Sarah")\u2026'
+                          : 'Discuss the scene, ask questions, brainstorm\u2026'
         });
         if (this.inputMode === 'fulfill') {
             input.disabled = true;
@@ -1125,6 +1239,8 @@ export class CoWriterPanel extends AbstractChatPanel {
                 this.renderEvents.register(() => window.clearTimeout(timeoutId));
             } else if (this.inputMode === 'coach') {
                 this.onCoachMessage?.(text);
+            } else if (this.inputMode === 'lorebook') {
+                this.onLoreCoachMessage?.(text);
             } else {
                 this.onDiscussMessage?.(text);
             }
