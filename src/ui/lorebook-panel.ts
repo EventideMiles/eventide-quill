@@ -1,7 +1,7 @@
 import { Component, type TFile } from 'obsidian';
 import type EventideQuillPlugin from '../main';
 import { LORE_TYPE_LABELS, LORE_COVERAGE_GAP_MIN_OCCURRENCES } from '../core/dashboard/lorebook-types';
-import type { LoreEntry, LoreEntryType } from '../core/dashboard/lorebook-types';
+import type { LoreCoverage, LoreEntry, LoreEntryType } from '../core/dashboard/lorebook-types';
 import { findLoreFolder, parseLoreType } from '../core/dashboard/lorebook-scanner';
 import { LORE_ENTRY_TYPES } from '../core/dashboard/lorebook-types';
 import { getActiveDocument, renderDocumentHeader } from './document-header';
@@ -13,11 +13,19 @@ import { getActiveDocument, renderDocumentHeader } from './document-header';
  * The container is a fresh scroll div created by `QuillSidebarView` on each
  * render; the `component` owns DOM event teardown.
  *
- * Coverage data comes from `plugin.currentLoreCoverage`, populated by
- * `refreshDashboard` (shared entity base) or `refreshLorebook` (standalone).
- * The refresh button triggers `plugin.refreshLorebook()`.
+ * Coverage data comes from the appropriate plugin field depending on `subtab`:
+ * `currentLoreDocumentCoverage` (document-scoped substring matching) or
+ * `currentLoreManuscriptCoverage` (manuscript text substring + entity gaps).
+ * The refresh button triggers the subtab-appropriate refresh method.
+ *
+ * @param subtab Active Lorebook subtab — 'document' or 'manuscript'.
  */
-export function renderLorebookTab(container: HTMLElement, plugin: EventideQuillPlugin, component: Component): void {
+export function renderLorebookTab(
+    container: HTMLElement,
+    plugin: EventideQuillPlugin,
+    component: Component,
+    subtab: 'document' | 'manuscript'
+): void {
     container.empty();
 
     const doc = getActiveDocument(plugin.app);
@@ -28,15 +36,21 @@ export function renderLorebookTab(container: HTMLElement, plugin: EventideQuillP
     if (doc && plugin.settings.lorebookFolders.length > 0) {
         renderActiveEntryEditor(container, plugin, component, doc.file);
     }
+    // The pending type has been consumed (or is stale for this file); clear it.
+    plugin.pendingLoreEntryType = null;
 
-    // Refresh button row.
+    // Refresh button row — dispatches to the subtab-appropriate refresh.
     const actionBar = container.createEl('div', { cls: 'quill-lorebook-panel__actions' });
     const refreshBtn = actionBar.createEl('button', {
         cls: 'quill-lorebook-panel__refresh-btn',
         text: 'Scan lorebook'
     });
     component.registerDomEvent(refreshBtn, 'click', () => {
-        void plugin.refreshLorebook();
+        if (subtab === 'manuscript') {
+            void plugin.refreshLorebookManuscriptCoverage(true);
+        } else {
+            void plugin.refreshLorebookDocumentCoverage();
+        }
     });
 
     if (plugin.settings.lorebookFolders.length === 0) {
@@ -47,7 +61,9 @@ export function renderLorebookTab(container: HTMLElement, plugin: EventideQuillP
         return;
     }
 
-    const coverage = plugin.currentLoreCoverage;
+    const coverage =
+        subtab === 'manuscript' ? plugin.currentLoreManuscriptCoverage : plugin.currentLoreDocumentCoverage;
+
     if (!coverage) {
         container.createEl('p', {
             cls: 'quill-lorebook-panel__empty',
@@ -63,6 +79,85 @@ export function renderLorebookTab(container: HTMLElement, plugin: EventideQuillP
             text: `No lore entries found under ${folderCount} folder${folderCount === 1 ? '' : 's'}.`
         });
         return;
+    }
+
+    if (subtab === 'manuscript') {
+        renderLorebookManuscriptTab(container, plugin, component, coverage);
+    } else {
+        renderLorebookDocumentTab(container, plugin, component, coverage);
+    }
+}
+
+/**
+ * Document-scoped coverage: shows entries referenced in the active document
+ * (via substring matching) and entries that don't appear. No gap section
+ * — gaps require entity extraction and are handled by the Manuscript subtab.
+ */
+function renderLorebookDocumentTab(
+    container: HTMLElement,
+    plugin: EventideQuillPlugin,
+    component: Component,
+    coverage: LoreCoverage
+): void {
+    // Coverage summary.
+    const summary = container.createEl('div', { cls: 'quill-lorebook-panel__summary' });
+    summary.createEl('span', { cls: 'quill-lorebook-panel__stat', text: `${coverage.totalEntries} entries` });
+    summary.createEl('span', {
+        cls: 'quill-lorebook-panel__stat',
+        text: `${coverage.folderCount} folder${coverage.folderCount === 1 ? '' : 's'}`
+    });
+    summary.createEl('span', {
+        cls: 'quill-lorebook-panel__stat quill-lorebook-panel__stat--good',
+        text: `${coverage.referenced.length} referenced`
+    });
+    summary.createEl('span', {
+        cls: 'quill-lorebook-panel__stat quill-lorebook-panel__stat--muted',
+        text: `${coverage.orphaned.length} not referenced`
+    });
+
+    // Orphaned entries (defined but not found in this document).
+    if (coverage.orphaned.length > 0) {
+        container.createEl('div', {
+            cls: 'quill-lorebook-panel__subheading',
+            text: 'Not referenced in this document'
+        });
+        const list = container.createEl('div', { cls: 'quill-lorebook-panel__entries' });
+        for (const entry of coverage.orphaned) {
+            renderLoreEntryRow(list, entry, false);
+        }
+    }
+
+    // Referenced entries.
+    if (coverage.referenced.length > 0) {
+        container.createEl('div', {
+            cls: 'quill-lorebook-panel__subheading',
+            text: 'Referenced in this document'
+        });
+        const list = container.createEl('div', { cls: 'quill-lorebook-panel__entries' });
+        for (const entry of coverage.referenced) {
+            renderLoreEntryRow(list, entry, true);
+        }
+    }
+}
+
+/**
+ * Manuscript-scoped coverage: shows entries referenced in the full manuscript
+ * text, orphaned entries, plus entity-based gaps (mentioned but undocumented).
+ */
+function renderLorebookManuscriptTab(
+    container: HTMLElement,
+    plugin: EventideQuillPlugin,
+    component: Component,
+    coverage: LoreCoverage
+): void {
+    // Manuscript provenance — shows which folder this coverage was built
+    // from, so the user can tell which manuscript they're looking at when
+    // working across multiple projects.
+    if (plugin.currentManuscriptFolder) {
+        container.createEl('div', {
+            cls: 'quill-lorebook-panel__manuscript-source',
+            text: `Manuscript: ${plugin.currentManuscriptFolder}`
+        });
     }
 
     // Coverage summary line.
@@ -105,10 +200,6 @@ export function renderLorebookTab(container: HTMLElement, plugin: EventideQuillP
             });
             row.createEl('span', { cls: 'quill-lorebook-panel__gap-name', text: gap.entityName });
             row.createEl('span', { cls: 'quill-lorebook-panel__gap-count', text: `${gap.occurrences}\u00D7` });
-            // Dismiss a false-positive entity (e.g. a sentence-capitalized word
-            // the extractor misread as a name). Dismissal persists to the
-            // manuscript sidecar and is shared with the Dashboard character list,
-            // so it survives refreshes and never resurfaces as a gap.
             const dismissBtn = row.createEl('button', {
                 cls: 'quill-lorebook-panel__gap-btn',
                 text: 'Dismiss',
@@ -183,7 +274,11 @@ function renderActiveEntryEditor(
     row.createEl('span', { cls: 'quill-lorebook-panel__active-entry-label', text: 'Type' });
 
     const frontmatter = plugin.app.metadataCache.getFileCache(file)?.frontmatter ?? {};
-    const rawType = parseLoreType(frontmatter['quill-type']);
+    // Prefer the pending type (just-written value) when the cache hasn't caught
+    // up yet — processFrontMatter resolves before metadataCache propagates.
+    const pending = plugin.pendingLoreEntryType;
+    const rawType =
+        pending?.path === file.path ? (pending.type ?? 'untyped') : parseLoreType(frontmatter['quill-type']);
     const folderDefault = plugin.settings.lorebookFolderTypes[folder];
     const effective = rawType !== 'untyped' ? rawType : (folderDefault ?? 'untyped');
 

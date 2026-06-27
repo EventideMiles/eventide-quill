@@ -57,7 +57,7 @@ export interface LoreEntry {
     folder: string;
     /** Entry type from `quill-type` frontmatter, or `untyped`. */
     type: LoreEntryTypeOrUntyped;
-    /** Aliases from `quill-aliases` frontmatter (normalized for matching). */
+    /** Aliases from Obsidian's `aliases` frontmatter (normalized for matching). */
     aliases: string[];
     /**
      * All names that should match this entry during coverage analysis:

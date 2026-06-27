@@ -37,6 +37,7 @@ export class QuillSidebarView extends ItemView {
     private activeTopTab: TopTab = 'linter';
     private activeLinterSubTab: LinterSubTab = 'results';
     private dashboardSubTab: 'overview' | 'pending' | 'settings' = 'overview';
+    private lorebookSubTab: 'document' | 'manuscript' = 'document';
     private container!: HTMLElement;
     private tabBar!: HTMLElement;
     private content!: HTMLElement;
@@ -90,15 +91,16 @@ export class QuillSidebarView extends ItemView {
         this.content = this.container.createDiv({ cls: 'quill-sidebar__content' });
         this.render();
 
-        // Observe the content element for width changes to toggle responsive modes:
-        //   >= 480px → normal (icon + label side by side)
-        //   380-480px → watermark (icon behind text as ghost, no layout space)
-        //   < 380px  → compact (icons only, labels hidden)
+        // Observe the content element for width changes to toggle responsive modes.
+        // Thresholds account for six top-level tabs (~75px each with icon + label):
+        //   >= 540px → normal (icon + label side by side)
+        //   440-540px → watermark (icon behind text as ghost, no layout space)
+        //   < 440px  → compact (icons only, labels hidden)
         this.resizeObserver = new ResizeObserver((entries) => {
             for (const entry of entries) {
                 const width = entry.contentRect.width;
-                const compact = width < 380;
-                const watermark = !compact && width < 480;
+                const compact = width < 440;
+                const watermark = !compact && width < 540;
                 this.container.classList.toggle('quill-sidebar--compact', compact);
                 this.container.classList.toggle('quill-sidebar--watermark', watermark);
             }
@@ -117,6 +119,12 @@ export class QuillSidebarView extends ItemView {
                     this.activeTopTab === 'lorebook'
                 ) {
                     this.render();
+                    // The Document subtab matches against the active document's
+                    // text, so it must re-compute on file switch (the Manuscript
+                    // subtab uses cached manuscript-wide data and is stable).
+                    if (this.activeTopTab === 'lorebook' && this.lorebookSubTab === 'document') {
+                        void this.plugin.refreshLorebookDocumentCoverage();
+                    }
                 }
             })
         );
@@ -346,8 +354,9 @@ export class QuillSidebarView extends ItemView {
             this.renderCoWriterTab();
         } else if (this.activeTopTab === 'lorebook') {
             this.renderHeader();
+            this.renderLorebookSubTabBar();
             const loreScroll = this.content.createDiv({ cls: 'quill-lorebook-panel__scroll' });
-            renderLorebookTab(loreScroll, this.plugin, this.renderEvents);
+            renderLorebookTab(loreScroll, this.plugin, this.renderEvents, this.lorebookSubTab);
         } else {
             this.renderHeader();
             this.renderReviewTab();
@@ -431,6 +440,32 @@ export class QuillSidebarView extends ItemView {
                 }
                 this.dashboardSubTab = tab.id;
                 this.render();
+            });
+        }
+    }
+
+    /** Render the Lorebook sub-tab bar (Document / Manuscript). */
+    private renderLorebookSubTabBar() {
+        const subTabBar = this.content.createDiv({ cls: 'quill-sidebar__subtab-bar' });
+
+        const tabs: { id: 'document' | 'manuscript'; label: string }[] = [
+            { id: 'document', label: 'Document' },
+            { id: 'manuscript', label: 'Manuscript' }
+        ];
+
+        for (const tab of tabs) {
+            const btn = subTabBar.createEl('button', {
+                cls: `quill-sidebar__subtab${this.lorebookSubTab === tab.id ? ' quill-sidebar__subtab--active' : ''}`,
+                text: tab.label
+            });
+            this.renderEvents!.registerDomEvent(btn, 'click', () => {
+                this.lorebookSubTab = tab.id;
+                this.render();
+                if (tab.id === 'manuscript') {
+                    void this.plugin.refreshLorebookManuscriptCoverage(true);
+                } else {
+                    void this.plugin.refreshLorebookDocumentCoverage();
+                }
             });
         }
     }

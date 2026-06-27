@@ -60,6 +60,12 @@
         font-style: italic;
     }
 
+    &__manuscript-source {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-faint, var(--text-muted));
+        margin-bottom: $space-sm;
+    }
+
     &__summary {
         display: flex;
         flex-wrap: wrap;

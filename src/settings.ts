@@ -303,7 +303,7 @@ class AddProviderModal extends SuggestModal<{ type: ProviderType; label: string;
 
 export class EventideQuillSettingTab extends PluginSettingTab {
     plugin: EventideQuillPlugin;
-    private activeTab: SettingsTab = 'general';
+    private activeTab: SettingsTab = 'welcome';
 
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app, plugin);
@@ -377,6 +377,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 el.removeClass('quill-settings__tab--active');
             }
         });
+
+        // Reset scroll so the user starts at the top of the new tab.
+        const scrollArea = this.containerEl.querySelector('.quill-settings__scroll-area');
+        if (scrollArea instanceof HTMLElement) {
+            scrollArea.scrollTop = 0;
+        }
     }
 
     /** Collect unique folder paths from the vault's markdown files. */
@@ -744,6 +750,24 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             new Notice('Value must be a number between 5 and 600');
                         }
                     })
+            );
+
+        new Setting(content)
+            .setName('Build embeddings now')
+            .setDesc(
+                'Immediately pre-compute and cache embeddings for all folders with Markdown files. ' +
+                    'Useful after adding new material or when warming is turned off.'
+            )
+            .addButton((button) =>
+                button.setButtonText('Build').onClick(() => {
+                    button.setDisabled(true);
+                    button.setButtonText('Building\u2026');
+                    void this.plugin.warmAllEmbeddingCaches().finally(() => {
+                        button.setDisabled(false);
+                        button.setButtonText('Build');
+                        new Notice('Quill: Embedding caches rebuilt.');
+                    });
+                })
             );
 
         new Setting(content)
@@ -1661,11 +1685,18 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         async () => {
                             await this.plugin.invalidateAllEmbeddingCaches();
                             this.plugin.settings.aiDefaultEmbedProvider = value;
+                            // Auto-enable embedding warming — otherwise caches won't
+                            // stay fresh and the model serves no purpose on its own.
+                            if (!this.plugin.settings.enableEmbeddingWarming) {
+                                this.plugin.settings.enableEmbeddingWarming = true;
+                                new Notice(
+                                    'Quill: Embedding warming enabled to keep caches fresh. ' +
+                                        'Turn it off in settings if you prefer manual control.'
+                                );
+                            }
                             await this.plugin.saveSettings();
                             // Re-warm caches with the new model.
-                            if (this.plugin.settings.enableEmbeddingWarming) {
-                                void this.plugin.warmAllEmbeddingCaches();
-                            }
+                            void this.plugin.warmAllEmbeddingCaches();
                             // Update dropdown to reflect the confirmed value.
                             dropdown.setValue(value);
                             new Notice('Quill: Embed model changed. Caches will rebuild in the background.');

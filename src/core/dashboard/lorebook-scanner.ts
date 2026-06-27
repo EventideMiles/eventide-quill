@@ -26,8 +26,8 @@ export function parseLoreType(raw: unknown): LoreEntryTypeOrUntyped {
     return (LORE_ENTRY_TYPES as string[]).includes(trimmed) ? (trimmed as LoreEntryType) : 'untyped';
 }
 
-/** Parse `quill-aliases` frontmatter (string or string[]) into a normalized alias list. */
-function parseAliases(raw: unknown): string[] {
+/** Parse `aliases` frontmatter (string or string[]) into a normalized alias list. */
+export function parseAliases(raw: unknown): string[] {
     const list: string[] = [];
     if (Array.isArray(raw)) {
         for (const item of raw) {
@@ -108,7 +108,7 @@ export function scanLorebook(
             if (folderType) type = folderType;
         }
 
-        const aliases = parseAliases(frontmatter['quill-aliases']);
+        const aliases = parseAliases(frontmatter['aliases']);
 
         const baseName = file.basename;
         const matchSet = new Set<string>([normalizeName(baseName), ...aliases]);
@@ -132,78 +132,151 @@ export function scanLorebook(
     return entries;
 }
 
-/**
- * Find the lore entry (if any) whose names include the given normalized name.
- * Case-insensitive, whitespace-collapsed (see {@link normalizeName}).
- */
-function findEntry(entries: LoreEntry[], normalizedName: string): LoreEntry | undefined {
-    return entries.find((e) => e.matchNames.includes(normalizedName));
+// ── Substring matching ──────────────────────────────────────────────────────
+
+/** Escape regex metacharacters in a user-provided name string. */
+function escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
- * Compute lorebook coverage against the entities extracted from a manuscript.
- *
- * - `referenced`: entries with at least one matching manuscript entity.
- * - `orphaned`: entries with no matching entity.
- * - `gaps`: entities appearing at least {@link LORE_COVERAGE_GAP_MIN_OCCURRENCES}
- *   times in the manuscript that have no matching lore entry.
- *
- * Matching is by normalized name across the entity's name+aliases and the
- * entry's basename+aliases. Entity type is not required to match the entry
- * type — a name match counts regardless of classification, since the writer
- * may have typed the entry differently than the extractor classified it.
- *
- * @param entries       The scanned lore entries.
- * @param entities      Entities extracted from the active manuscript.
- * @param dismissedIds  Entity IDs the user dismissed in the Dashboard (false
- *                       positives). Excluded from gap detection so a one-time
- *                       dismissal in the character list also clears lorebook noise.
+ * True if any of the given names appear in `text` as a whole-word match
+ * (case-insensitive). Multi-word names are matched as phrases.
  */
-export function computeCoverage(
+function matchNamesInText(names: string[], text: string): boolean {
+    for (const name of names) {
+        if (!name) continue;
+        try {
+            const re = new RegExp(`\\b${escapeRegExp(name)}\\b`, 'i');
+            if (re.test(text)) return true;
+        } catch {
+            continue;
+        }
+    }
+    return false;
+}
+
+/**
+ * True if any entry's {@link LoreEntry.matchNames} contains the normalized
+ * entity name as a word-level substring. Catches cases where the extractor
+ * yields a single token — e.g. "Howlington" — while the entry is named
+ * "Howlington Academy". The entity name must appear at a word boundary
+ * within at least one of the entry's match names.
+ */
+function isLikelyCovered(normalizedName: string, entries: LoreEntry[]): boolean {
+    if (!normalizedName) return false;
+    return entries.some((e) =>
+        e.matchNames.some((n) => {
+            if (n === normalizedName) return true;
+            const idx = n.indexOf(normalizedName);
+            if (idx === -1) return false;
+            const before = idx === 0 || n[idx - 1] === ' ';
+            const afterEnd = idx + normalizedName.length;
+            const after = afterEnd === n.length || n[afterEnd] === ' ';
+            return before && after;
+        })
+    );
+}
+
+// ── Gap detection ───────────────────────────────────────────────────────────
+
+/**
+ * Compute coverage gaps from extracted entities. An entity is a gap when it
+ * appears at least {@link LORE_COVERAGE_GAP_MIN_OCCURRENCES} times, is not
+ * dismissed, and its name is not a token of any existing lore entry
+ * (see {@link isLikelyCovered}).
+ */
+function computeGaps(entities: ExtractedEntity[], entries: LoreEntry[], dismissedIds: Set<string>): LoreCoverageGap[] {
+    const gaps: LoreCoverageGap[] = [];
+    for (const entity of entities) {
+        if (dismissedIds.has(entity.id)) continue;
+        if (entity.occurrences < LORE_COVERAGE_GAP_MIN_OCCURRENCES) continue;
+        if (entity.removed) continue;
+        if (isLikelyCovered(normalizeName(entity.name), entries)) continue;
+        gaps.push({
+            entityId: entity.id,
+            entityName: entity.name,
+            entityType: entityTypeToLoreType(entity.type),
+            occurrences: entity.occurrences
+        });
+    }
+    gaps.sort((a, b) => b.occurrences - a.occurrences);
+    return gaps;
+}
+
+// ── Coverage computation ────────────────────────────────────────────────────
+
+/**
+ * Document-scoped coverage: tells which lore entries are referenced in the
+ * active document's text and which are orphaned, using direct substring
+ * matching of each entry's names.
+ *
+ * The active entry (the file being viewed, if it IS a lore entry) is excluded
+ * from both lists — it has its own "Active entry" card in the panel.
+ *
+ * Gaps are not computed here (they require entity extraction); the Manuscript
+ * subtab handles gaps.
+ *
+ * @param docText         Text content of the active document.
+ * @param entries         Scanned lore entries.
+ * @param activeFilePath  Path of the active file (excluded from lists), or null.
+ */
+export function computeDocumentCoverage(
+    docText: string,
     entries: LoreEntry[],
-    entities: ExtractedEntity[],
-    dismissedIds: Set<string> = new Set()
+    activeFilePath: string | null
 ): LoreCoverage {
     const referencedSet = new Set<string>();
-    const gaps: LoreCoverageGap[] = [];
 
-    for (const entity of entities) {
-        // Respect Dashboard dismissals — a dismissed false positive should not
-        // resurface as a missing lore entry.
-        if (dismissedIds.has(entity.id)) continue;
-
-        const candidateNames = [entity.name, ...entity.aliases].map(normalizeName).filter((n) => n.length > 0);
-        const matched = candidateNames.some((n) => {
-            const entry = findEntry(entries, n);
-            if (entry) {
-                referencedSet.add(entry.filePath);
-                return true;
-            }
-            return false;
-        });
-
-        if (!matched && entity.occurrences >= LORE_COVERAGE_GAP_MIN_OCCURRENCES && !entity.removed) {
-            gaps.push({
-                entityId: entity.id,
-                entityName: entity.name,
-                entityType: entityTypeToLoreType(entity.type),
-                occurrences: entity.occurrences
-            });
+    for (const entry of entries) {
+        if (activeFilePath && entry.filePath === activeFilePath) continue;
+        if (matchNamesInText(entry.matchNames, docText)) {
+            referencedSet.add(entry.filePath);
         }
     }
 
-    const referenced = entries.filter((e) => referencedSet.has(e.filePath));
-    const orphaned = entries.filter((e) => !referencedSet.has(e.filePath));
-
-    gaps.sort((a, b) => b.occurrences - a.occurrences);
+    const isExcluded = (e: LoreEntry) => activeFilePath != null && e.filePath === activeFilePath;
+    const referenced = entries.filter((e) => !isExcluded(e) && referencedSet.has(e.filePath));
+    const orphaned = entries.filter((e) => !isExcluded(e) && !referencedSet.has(e.filePath));
 
     const folderCount = new Set(entries.map((e) => e.folder)).size;
 
-    return {
-        totalEntries: entries.length,
-        folderCount,
-        referenced,
-        orphaned,
-        gaps
-    };
+    return { totalEntries: entries.length, folderCount, referenced, orphaned, gaps: [] };
+}
+
+/**
+ * Manuscript-scoped coverage: substring matches entry names against the full
+ * combined manuscript text for referenced/orphaned, and uses extracted entities
+ * (with token-substring suppression) for gap detection.
+ *
+ * @param manuscriptText  Combined text of all manuscript chapters.
+ * @param entries         Scanned lore entries.
+ * @param entities        Entities extracted from the manuscript (from dashboard refresh).
+ * @param activeFilePath  Path of the active file (excluded from lists), or null.
+ * @param dismissedIds    Entity IDs the user dismissed in the Dashboard.
+ */
+export function computeManuscriptCoverage(
+    manuscriptText: string,
+    entries: LoreEntry[],
+    entities: ExtractedEntity[],
+    activeFilePath: string | null,
+    dismissedIds: Set<string>
+): LoreCoverage {
+    const referencedSet = new Set<string>();
+
+    for (const entry of entries) {
+        if (activeFilePath && entry.filePath === activeFilePath) continue;
+        if (matchNamesInText(entry.matchNames, manuscriptText)) {
+            referencedSet.add(entry.filePath);
+        }
+    }
+
+    const isExcluded = (e: LoreEntry) => activeFilePath != null && e.filePath === activeFilePath;
+    const referenced = entries.filter((e) => !isExcluded(e) && referencedSet.has(e.filePath));
+    const orphaned = entries.filter((e) => !isExcluded(e) && !referencedSet.has(e.filePath));
+
+    const gaps = computeGaps(entities, entries, dismissedIds);
+    const folderCount = new Set(entries.map((e) => e.folder)).size;
+
+    return { totalEntries: entries.length, folderCount, referenced, orphaned, gaps };
 }
