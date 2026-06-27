@@ -3,7 +3,7 @@ import { EditorView } from '@codemirror/view';
 import type EventideQuillPlugin from '../main';
 import { type VoiceProfile } from '../types';
 import { findEditorView } from '../utils/find-editor';
-import { AiProvider, type ChatMessage } from './provider';
+import { AiProvider, type ChatMessage, type ToolCallRequest, type ToolDefinition } from './provider';
 import {
     getCoWriterDiscussPrompt,
     getCoWriterGenerationPrompt,
@@ -26,7 +26,7 @@ import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
 import { ChangeSet } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
-import { createLoreCoachToolRegistry, type ToolContext } from './tools';
+import { createInternalToolRegistry, createLoreCoachToolRegistry, type ToolContext, type ToolRegistry } from './tools';
 import {
     clearDiffEdits,
     diffEditsField,
@@ -835,6 +835,127 @@ export class CoWriterSession {
         }
     }
 
+    // ── Shared tool-calling helpers (used by discuss, coach, and lorebook) ────
+
+    /**
+     * Stream one round of chat completion with tool-call fragment accumulation.
+     * Handles text + thought streaming, the reasoning-clear-on-first-thought
+     * pattern (discards draft text emitted before `<think>`), and tool-call
+     * fragment accumulation. Does NOT handle multi-round looping, chat history,
+     * or tool execution — the caller orchestrates those.
+     *
+     * @returns Accumulated response text, thought, and materialized tool calls.
+     */
+    private async streamToolAwareRound(
+        provider: AiProvider,
+        options: {
+            messages: ChatMessage[];
+            model?: string;
+            maxTokens?: number;
+            temperature?: number;
+            signal?: AbortSignal;
+            tools?: ToolDefinition[];
+        },
+        callbacks: {
+            onChunk: (text: string) => void;
+            onThoughtChange: (thought: string) => void;
+            onClear: () => void;
+        }
+    ): Promise<{ response: string; thought: string; toolCalls: ToolCallRequest[] }> {
+        let response = '';
+        let thought = '';
+        let sawReasoning = false;
+        const fragmentBuffer = new Map<number, { id?: string; name?: string; arguments: string }>();
+
+        const stream = provider.chatCompletion({
+            ...options,
+            toolChoice: options.tools && options.tools.length > 0 ? 'auto' : undefined
+        });
+
+        for await (const chunk of stream) {
+            if (chunk.done) break;
+
+            if (chunk.thought) {
+                if (!sawReasoning) {
+                    sawReasoning = true;
+                    response = '';
+                    callbacks.onClear();
+                }
+                thought += chunk.thought;
+                this.thoughtBuffer = thought;
+                callbacks.onThoughtChange(thought);
+            }
+
+            if (chunk.text) {
+                response += chunk.text;
+                callbacks.onChunk(chunk.text);
+            }
+
+            if (chunk.toolCalls) {
+                for (const frag of chunk.toolCalls) {
+                    const existing = fragmentBuffer.get(frag.index);
+                    if (existing) {
+                        if (frag.id !== undefined) existing.id = frag.id;
+                        if (frag.name !== undefined) existing.name = frag.name;
+                        if (frag.arguments !== undefined) existing.arguments += frag.arguments;
+                    } else {
+                        fragmentBuffer.set(frag.index, {
+                            id: frag.id,
+                            name: frag.name,
+                            arguments: frag.arguments ?? ''
+                        });
+                    }
+                }
+            }
+        }
+
+        const toolCalls: ToolCallRequest[] = [...fragmentBuffer.entries()]
+            .sort(([a], [b]) => a - b)
+            .map(([idx, acc]) => ({
+                id: acc.id ?? `call_${idx}`,
+                name: acc.name ?? '',
+                arguments: acc.arguments
+            }));
+
+        return { response, thought, toolCalls };
+    }
+
+    /**
+     * Execute one tool call with JSON argument parsing, result truncation,
+     * and full error containment. Never throws — failures surface to the
+     * model as an error string so it can recover.
+     */
+    private async executeToolCallSafely(
+        call: ToolCallRequest,
+        registry: ToolRegistry,
+        ctx: ToolContext
+    ): Promise<string> {
+        const tool = registry.get(call.name);
+        if (!tool) return `Error: tool "${call.name}" is not registered.`;
+
+        let parsedArgs: Record<string, unknown>;
+        try {
+            parsedArgs =
+                call.arguments.trim().length === 0 ? {} : (JSON.parse(call.arguments) as Record<string, unknown>);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return `Error: invalid JSON arguments: ${msg}`;
+        }
+
+        try {
+            if (ctx.signal?.aborted) return 'Error: aborted before tool execution.';
+            const result = await tool.execute(parsedArgs, ctx);
+            const maxChars = tool.maxResultTokens * 4;
+            if (result.length > maxChars) {
+                return result.slice(0, maxChars) + `\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
+            }
+            return result;
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return `Error executing tool "${call.name}": ${msg}`;
+        }
+    }
+
     /**
      * Send a discussion message to the AI.
      * Unlike generateOptions, this does not produce continuation options —
@@ -971,13 +1092,6 @@ export class CoWriterSession {
         // Append the user message after compaction so it's always below any new context head
         this.discussCurrentMessages.push({ role: 'user', content: prompt });
 
-        // Build the full API payload: system prompt + injected context + conversation
-        const baseMessages: ChatMessage[] = [
-            this.discussCurrentMessages[0]!, // system prompt
-            ...injectedContext,
-            ...this.discussCurrentMessages.slice(1) // context heads + chat turns
-        ];
-
         if (__DEV__ && plugin.settings.enableDebugLogging) {
             console.warn('[Quill Co-writer] Discuss context', {
                 manuscriptExcerptChars: proseForContext.length,
@@ -990,60 +1104,106 @@ export class CoWriterSession {
             });
         }
 
-        let thought = '';
-        let response = '';
-
-        // Notify panel that streaming is starting
-        this.onDiscussStartStreaming?.();
-        this.onDiscussChunk?.('');
+        // Tool setup: when enabled, the model can call internal tools
+        // (manuscript_mentions, lore_siblings, vault_lookup) to look up
+        // details mid-conversation. Each tool call produces a visible
+        // round in the chat and consumes a model turn.
+        const toolsEnabled = plugin.settings.coWriterToolsEnabled;
+        const registry = toolsEnabled ? createInternalToolRegistry() : null;
+        const toolDefs = registry?.toToolDefinitions();
+        const ctx: ToolContext = { plugin };
+        const MAX_TOOL_ROUNDS = 5;
 
         try {
             this.abortController = new AbortController();
-            const stream = chat.provider.chatCompletion({
-                messages: baseMessages,
-                model: chat.modelId,
-                temperature: plugin.settings.coWriterTemperature,
-                maxTokens: 1024,
-                signal: this.abortController.signal
-            });
+            ctx.signal = this.abortController.signal;
 
-            for await (const chunk of stream) {
-                if (chunk.done) break;
-                response += chunk.text;
-                if (chunk.text) {
-                    this.onDiscussChunk?.(chunk.text);
-                }
-                if (chunk.thought) {
-                    thought += chunk.thought;
-                    this.thoughtBuffer = thought;
-                    this.onThought?.(thought);
-                }
-            }
+            for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+                // Rebuild baseMessages each round — discussCurrentMessages may
+                // have grown with tool-call + tool-result messages.
+                const roundBaseMessages: ChatMessage[] = [
+                    this.discussCurrentMessages[0]!,
+                    ...injectedContext,
+                    ...this.discussCurrentMessages.slice(1)
+                ];
 
-            // Replace the streaming placeholder with the complete message
-            const lastIdx = this.chatHistory.length - 1;
-            if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
-                this.chatHistory[lastIdx] = {
+                // Push a fresh draft before discussStartStreaming so the
+                // panel's placeholder-check (last message already assistant?)
+                // is a no-op — we own the message we'll replace post-stream.
+                this.chatHistory.push({ role: 'assistant', content: '' });
+                this.onDiscussStartStreaming?.();
+                this.onDiscussChunk?.('');
+
+                const result = await this.streamToolAwareRound(
+                    chat.provider,
+                    {
+                        messages: roundBaseMessages,
+                        model: chat.modelId,
+                        temperature: plugin.settings.coWriterTemperature,
+                        maxTokens: 1024,
+                        signal: this.abortController.signal,
+                        tools: toolDefs
+                    },
+                    {
+                        onChunk: (text) => this.onDiscussChunk?.(text),
+                        onThoughtChange: (thought) => this.onThought?.(thought),
+                        onClear: () => this.onDiscussClear?.()
+                    }
+                );
+
+                // Replace the draft with the finalized message (never push a
+                // second assistant message — the draft and final would both
+                // render and duplicate the response text).
+                const lastIdx = this.chatHistory.length - 1;
+                if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
+                    this.chatHistory[lastIdx] = {
+                        role: 'assistant',
+                        content: result.response,
+                        thought: result.thought || undefined,
+                        toolUses:
+                            result.toolCalls.length > 0
+                                ? result.toolCalls.map((c) => ({
+                                      name: c.name,
+                                      argsSummary: summarizeToolArgs(c.name, c.arguments)
+                                  }))
+                                : undefined
+                    };
+                }
+
+                // Push to API-level conversation (with tool_calls so the model
+                // sees its prior invocations on the next round).
+                this.discussCurrentMessages.push({
                     role: 'assistant',
-                    content: response,
-                    thought: thought || undefined
-                };
-            } else {
-                this.chatHistory.push({
-                    role: 'assistant',
-                    content: response,
-                    thought: thought || undefined
+                    content: result.response,
+                    toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined
                 });
+
+                // Update token estimate so the indicator reflects tool-result
+                // growth — tool results stay in the conversation and keep
+                // getting re-sent, so the user needs to see their cost.
+                this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+
+                // No tools called (or tools disabled) → this round is final.
+                if (result.toolCalls.length === 0 || !registry) break;
+
+                // Execute tools and push role:'tool' result messages.
+                for (const call of result.toolCalls) {
+                    const toolResult = await this.executeToolCallSafely(call, registry, ctx);
+                    this.discussCurrentMessages.push({
+                        role: 'tool',
+                        content: toolResult,
+                        toolCallId: call.id,
+                        name: call.name
+                    });
+                }
+
+                // Re-estimate after tool results were appended.
+                this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+                // Sync chat so the user sees the response + tool indicators.
+                this.onChatUpdate?.();
             }
-            this.discussCurrentMessages.push({ role: 'assistant', content: response });
 
-            // Push conversation-only token estimate after response
-            const conversationTokens = estimateTokens(this.discussCurrentMessages);
-            this.onTokenEstimate?.(conversationTokens, maxTokens);
-
-            // Mark the response as complete (triggers markdown render)
             this.onDiscussFinished?.();
-
             this.unlockEditor();
             this.optionsLoading = false;
             this.onOptionsLoading?.(false);
@@ -1215,12 +1375,6 @@ export class CoWriterSession {
             }
         }
 
-        const baseMessages: ChatMessage[] = [
-            this.discussCurrentMessages[0]!,
-            ...injectedContext,
-            ...this.discussCurrentMessages.slice(1)
-        ];
-
         if (__DEV__ && plugin.settings.enableDebugLogging) {
             console.warn('[Quill Co-writer] Coach context', {
                 manuscriptExcerptChars: proseForContext.length,
@@ -1233,36 +1387,92 @@ export class CoWriterSession {
             });
         }
 
-        let thought = '';
-        let response = '';
+        // Tool setup: same internal tools as discuss mode.
+        const toolsEnabled = plugin.settings.coWriterToolsEnabled;
+        const registry = toolsEnabled ? createInternalToolRegistry() : null;
+        const toolDefs = registry?.toToolDefinitions();
+        const ctx: ToolContext = { plugin };
+        const MAX_TOOL_ROUNDS = 5;
 
-        this.onDiscussStartStreaming?.();
-        this.onDiscussChunk?.('');
+        let response = '';
 
         try {
             this.abortController = new AbortController();
-            const stream = chat.provider.chatCompletion({
-                messages: baseMessages,
-                model: chat.modelId,
-                temperature: plugin.settings.coWriterTemperature,
-                maxTokens: 1024,
-                signal: this.abortController.signal
-            });
+            ctx.signal = this.abortController.signal;
 
-            for await (const chunk of stream) {
-                if (chunk.done) break;
-                response += chunk.text;
-                if (chunk.text) {
-                    this.onDiscussChunk?.(chunk.text);
+            for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+                const roundBaseMessages: ChatMessage[] = [
+                    this.discussCurrentMessages[0]!,
+                    ...injectedContext,
+                    ...this.discussCurrentMessages.slice(1)
+                ];
+
+                this.chatHistory.push({ role: 'assistant', content: '' });
+                this.onDiscussStartStreaming?.();
+                this.onDiscussChunk?.('');
+
+                const result = await this.streamToolAwareRound(
+                    chat.provider,
+                    {
+                        messages: roundBaseMessages,
+                        model: chat.modelId,
+                        temperature: plugin.settings.coWriterTemperature,
+                        maxTokens: 1024,
+                        signal: this.abortController.signal,
+                        tools: toolDefs
+                    },
+                    {
+                        onChunk: (text) => this.onDiscussChunk?.(text),
+                        onThoughtChange: (t) => this.onThought?.(t),
+                        onClear: () => this.onDiscussClear?.()
+                    }
+                );
+
+                response = result.response;
+
+                // Replace the draft with the finalized message.
+                const lastIdx = this.chatHistory.length - 1;
+                if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
+                    this.chatHistory[lastIdx] = {
+                        role: 'assistant',
+                        content: result.response,
+                        thought: result.thought || undefined,
+                        toolUses:
+                            result.toolCalls.length > 0
+                                ? result.toolCalls.map((c) => ({
+                                      name: c.name,
+                                      argsSummary: summarizeToolArgs(c.name, c.arguments)
+                                  }))
+                                : undefined
+                    };
                 }
-                if (chunk.thought) {
-                    thought += chunk.thought;
-                    this.thoughtBuffer = thought;
-                    this.onThought?.(thought);
+
+                this.discussCurrentMessages.push({
+                    role: 'assistant',
+                    content: result.response,
+                    toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined
+                });
+
+                this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+
+                if (result.toolCalls.length === 0 || !registry) break;
+
+                for (const call of result.toolCalls) {
+                    const toolResult = await this.executeToolCallSafely(call, registry, ctx);
+                    this.discussCurrentMessages.push({
+                        role: 'tool',
+                        content: toolResult,
+                        toolCallId: call.id,
+                        name: call.name
+                    });
                 }
+
+                this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+                this.onChatUpdate?.();
             }
 
-            // Update coach session
+            // Update coach session — runs after all tool rounds complete,
+            // using the final round's response.
             if (this.coachSession) {
                 this.coachSession.response = response;
                 this.coachSession.isFirstTurn = false;
@@ -1294,27 +1504,14 @@ export class CoWriterSession {
                 (this.coachSession.phase === 'plan' || this.coachSession.phase === 'direction') &&
                 !this.coachSession.isFirstTurn;
 
-            // Update chat history
-            const lastIdx = this.chatHistory.length - 1;
-            if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
-                this.chatHistory[lastIdx] = {
-                    role: 'assistant',
-                    content: response,
-                    thought: thought || undefined,
-                    showAccept: isRevision || undefined
-                };
-            } else {
-                this.chatHistory.push({
-                    role: 'assistant',
-                    content: response,
-                    thought: thought || undefined,
-                    showAccept: isRevision || undefined
-                });
+            // Add showAccept to the last assistant message if this is a revision.
+            if (isRevision) {
+                const lastIdx = this.chatHistory.length - 1;
+                const lastMsg = lastIdx >= 0 ? this.chatHistory[lastIdx] : undefined;
+                if (lastMsg && lastMsg.role === 'assistant') {
+                    lastMsg.showAccept = true;
+                }
             }
-            this.discussCurrentMessages.push({ role: 'assistant', content: response });
-
-            const conversationTokens = estimateTokens(this.discussCurrentMessages);
-            this.onTokenEstimate?.(conversationTokens, maxTokens);
 
             this.onDiscussFinished?.();
 
@@ -1527,7 +1724,7 @@ export class CoWriterSession {
      *   - "Draft" text emitted before a reasoning block is discarded so the
      *     response isn't duplicated around `<think>` tags.
      *
-     * Turn off tools via `loreCoachToolsEnabled` (settings → lorebook) when
+     * Turn off tools via `coWriterToolsEnabled` (settings → lorebook) when
      * the model doesn't support tool calling or to avoid extra turn consumption.
      *
      * Does NOT lock the editor or require an active manuscript — lorebook
@@ -1574,7 +1771,7 @@ export class CoWriterSession {
             this.loreCoachMessages.push({ role: 'user', content: getLoreCoachUserPrompt(message) });
         }
 
-        const toolsEnabled = plugin.settings.loreCoachToolsEnabled;
+        const toolsEnabled = plugin.settings.coWriterToolsEnabled;
         const registry = toolsEnabled ? createLoreCoachToolRegistry() : null;
         const toolDefs = registry?.toToolDefinitions();
         const ctx: ToolContext = { plugin };
@@ -1796,8 +1993,9 @@ export class CoWriterSession {
                     this.onLoreDraftReady?.();
                 }
 
-                // Sync the chat so the user sees the finalized message + tool
-                // annotations before the next round starts.
+                // Update token estimate so the indicator reflects tool-result
+                // growth, then sync the chat so the user sees progress.
+                this.onTokenEstimate?.(estimateTokens(this.loreCoachMessages), maxTokens);
                 this.onChatUpdate?.();
 
                 // Continue to next round — the model will see its tool_calls
