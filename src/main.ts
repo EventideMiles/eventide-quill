@@ -70,9 +70,17 @@ import {
     toDiffSnapshots
 } from './ui/change-diff-extension';
 import { ChangeSet } from './core/change-set';
-import { parseEmbedFolderPath, readVaultFiles } from './utils/vault-files';
+import { parseEmbedFolderPath, readVaultFiles, loreFolderEmbedPaths } from './utils/vault-files';
 import type { ManuscriptMetrics, ManuscriptSnapshot, ChapterRange } from './core/dashboard/types';
 import { listChaptersInFile, manuscriptMetrics } from './core/dashboard/metrics';
+import {
+    scanLorebook,
+    findLoreFolder,
+    computeDocumentCoverage,
+    computeManuscriptCoverage,
+    parseAliases
+} from './core/dashboard/lorebook-scanner';
+import type { LoreCoverage, LoreEntryType } from './core/dashboard/lorebook-types';
 import {
     loadManuscriptFile,
     saveManuscriptFile,
@@ -285,6 +293,24 @@ export default class EventideQuillPlugin extends Plugin {
     lintBatchChangeSet: ChangeSet = new ChangeSet();
     /** Current dashboard metrics for the active manuscript, or null when not yet computed. */
     currentDashboardMetrics: ManuscriptMetrics | null = null;
+    /** Document-scoped lorebook coverage (substring-matching against active doc), or null. */
+    currentLoreDocumentCoverage: LoreCoverage | null = null;
+    /** Manuscript-scoped lorebook coverage (substring + entity-based), or null. */
+    currentLoreManuscriptCoverage: LoreCoverage | null = null;
+    /**
+     * The just-written lore entry type from `setLoreEntryType`, used to
+     * re-render the active-entry dropdown before `metadataCache` catches up.
+     * Cleared after the panel consumes it. Null when no pending write.
+     */
+    pendingLoreEntryType: { path: string; type: LoreEntryType | null } | null = null;
+    /** Entities extracted during the last dashboard refresh, retained so the
+     *  Lorebook tab can recompute coverage without re-running extraction. */
+    currentManuscriptEntities: ExtractedEntity[] = [];
+    /** Combined manuscript chapter text from the last dashboard refresh, used for
+     *  substring-based lore matching in the Manuscript subtab. */
+    currentManuscriptText: string | null = null;
+    /** Folder path of the last dashboard refresh, used to detect staleness. */
+    currentManuscriptFolder: string | null = null;
     /** Historical snapshots for the active manuscript, or null when not yet loaded. */
     currentDashboardSnapshots: ManuscriptSnapshot[] | null = null;
     /** Per-manuscript dashboard data loaded from the sidecar file, or null when not yet loaded. */
@@ -782,6 +808,22 @@ export default class EventideQuillPlugin extends Plugin {
         });
 
         this.addCommand({
+            id: 'quill-lorebook-open',
+            name: 'Quill: Open lorebook',
+            callback: () => {
+                void this.openLorebookPanel();
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-lorebook-refresh',
+            name: 'Quill: Scan lorebook',
+            callback: () => {
+                void this.refreshLorebook();
+            }
+        });
+
+        this.addCommand({
             id: 'quill-analyze-plot-logic',
             name: 'Quill: Analyze plot logic',
             editorCallback: async (editor) => {
@@ -822,6 +864,14 @@ export default class EventideQuillPlugin extends Plugin {
             name: 'Quill: Insert inline directive',
             editorCallback: (editor) => {
                 this.insertInlineDirective(editor);
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-build-embeddings',
+            name: 'Quill: Build embeddings for all folders',
+            callback: () => {
+                void this.warmAllEmbeddingCaches();
             }
         });
 
@@ -1506,6 +1556,37 @@ export default class EventideQuillPlugin extends Plugin {
                 // Best-effort resolution — keep existing excerpt.
             }
         }
+    }
+
+    /**
+     * Lorebook folders as `embed:` reference paths, gated on the
+     * `reviewLoreContext` setting. Prepended to reference-context resolution
+     * for editorial feedback, critical analysis, and manuscript analysis so
+     * relevant lore entries ride the same top-K retrieval as manual context.
+     * Returns empty when the toggle is off or no folders are configured.
+     */
+    private loreReferencePaths(): string[] {
+        return this.settings.reviewLoreContext ? loreFolderEmbedPaths(this.settings.lorebookFolders) : [];
+    }
+
+    /**
+     * Resolve lorebook `embed:` reference paths into ChatMessages, gated on the
+     * `reviewLoreContext` setting. Used by the initial review/analysis request
+     * builders so the first payload — not just follow-up chat — receives lore
+     * context. Mirrors the prepend pattern used by the chat follow-up flows.
+     * Returns empty when the toggle is off, no folders are configured, or no
+     * embed provider is available.
+     */
+    private async loreReferenceMessages(documentText: string): Promise<ChatMessage[]> {
+        const lorePaths = this.loreReferencePaths();
+        if (lorePaths.length === 0) return [];
+        const { messages } = await this.resolveEmbedPathsToMessages(
+            lorePaths,
+            'Reference file',
+            documentText,
+            this.settings.contextMaxCharsPerFile
+        );
+        return messages;
     }
 
     /**
@@ -2515,7 +2596,14 @@ export default class EventideQuillPlugin extends Plugin {
             signal: this.manuscriptAnalysisAbort.signal,
             compacted: wasCompacted
         });
-        this.manuscriptAnalysisCurrentMessages = [...initialMessages];
+        // Lore reference embeds (gated on reviewLoreContext) injected between the
+        // system prompt and user instruction so the first manuscript-analysis
+        // payload receives lore context, mirroring the follow-up chat flow.
+        const loreReferenceMessages = await this.loreReferenceMessages(manuscriptText);
+        const initialWithLore = loreReferenceMessages.length
+            ? [initialMessages[0]!, ...loreReferenceMessages, ...initialMessages.slice(1)]
+            : initialMessages;
+        this.manuscriptAnalysisCurrentMessages = [...initialWithLore];
 
         try {
             const stream = getManuscriptAnalysis(chat.provider, mode, {
@@ -2529,7 +2617,7 @@ export default class EventideQuillPlugin extends Plugin {
                 signal: this.manuscriptAnalysisAbort.signal,
                 temperature: this.settings.manuscriptAnalysisTemperature,
                 maxTokens: this.settings.manuscriptAnalysisMaxOutputTokens,
-                existingMessages: initialMessages,
+                existingMessages: initialWithLore,
                 compacted: wasCompacted
             });
             let fullResponse = '';
@@ -2795,7 +2883,16 @@ export default class EventideQuillPlugin extends Plugin {
                 const { text: bodyText } = stripFrontmatter(raw);
                 if (!bodyText.trim()) continue;
 
-                const chunks = chunkManuscript(bodyText, {
+                // Prepend Obsidian's built-in aliases as a header so the AI
+                // can connect nicknames to the character/entry when retrieved
+                // via embedding similarity. Without this, "Dripsy" in the
+                // manuscript text won't match the "Freddy Lupin" lore chunk.
+                const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+                const aliases = parseAliases(frontmatter?.['aliases']);
+                const textForChunking =
+                    aliases.length > 0 ? `Also known as: ${aliases.join(', ')}\n\n${bodyText}` : bodyText;
+
+                const chunks = chunkManuscript(textForChunking, {
                     targetTokenSize: Math.floor(this.settings.embeddingChunkTokenSize * 0.85),
                     overlap: 0.1
                 });
@@ -2837,7 +2934,6 @@ export default class EventideQuillPlugin extends Plugin {
      */
     async warmAllEmbeddingCaches(): Promise<void> {
         if (!this.getDefaultEmbedProvider()) return;
-        if (!this.settings.enableEmbeddingWarming) return;
 
         const allMarkdown = this.app.vault.getMarkdownFiles();
         const folders = new Set<string>();
@@ -2918,7 +3014,7 @@ export default class EventideQuillPlugin extends Plugin {
 
         // Resolve any embed-prefixed paths in chat context files.
         const { regularPaths: resolvedRefPaths, messages: refEmbedMessages } = await this.resolveEmbedPathsToMessages(
-            chatContextPaths,
+            [...this.loreReferencePaths(), ...chatContextPaths],
             'Reference file',
             documentText,
             this.settings.contextMaxCharsPerFile
@@ -3182,7 +3278,14 @@ export default class EventideQuillPlugin extends Plugin {
             plotThreads,
             customInstruction
         });
-        this.analysisCurrentMessages = [...initialMessages];
+        // Lore reference embeds (gated on reviewLoreContext) injected between the
+        // system prompt and user instruction so the first analysis payload
+        // receives lore context, mirroring the follow-up chat flow.
+        const loreReferenceMessages = await this.loreReferenceMessages(resolved.text);
+        const initialWithLore = loreReferenceMessages.length
+            ? [initialMessages[0]!, ...loreReferenceMessages, ...initialMessages.slice(1)]
+            : initialMessages;
+        this.analysisCurrentMessages = [...initialWithLore];
 
         try {
             const stream = getAnalysis(chat.provider, mode, {
@@ -3200,7 +3303,7 @@ export default class EventideQuillPlugin extends Plugin {
                 customInstruction,
                 temperature: this.settings.analysisTemperature,
                 maxTokens: this.settings.analysisMaxOutputTokens,
-                existingMessages: initialMessages
+                existingMessages: initialWithLore
             });
 
             let fullResponse = '';
@@ -3255,7 +3358,7 @@ export default class EventideQuillPlugin extends Plugin {
 
         // Resolve any embed-prefixed paths in chat context files.
         const { regularPaths: resolvedRefPaths, messages: refEmbedMessages } = await this.resolveEmbedPathsToMessages(
-            chatContextPaths,
+            [...this.loreReferencePaths(), ...chatContextPaths],
             'Reference file',
             documentText,
             this.settings.contextMaxCharsPerFile
@@ -3373,7 +3476,12 @@ export default class EventideQuillPlugin extends Plugin {
      */
     private async updateCoWriterAdditionalTokens(): Promise<void> {
         const files = this.coWriterSession.getContextFiles();
-        if (files.length === 0) {
+        // Mirror loadAdditionalContext's combined source (lore embeds + context
+        // files) so the emptiness check doesn't skip counting when lore is
+        // auto-injected but no manual context files are selected.
+        const lorePaths = this.settings.coWriterLoreContext ? loreFolderEmbedPaths(this.settings.lorebookFolders) : [];
+        const allPaths = [...lorePaths, ...files];
+        if (allPaths.length === 0) {
             this.lintPanel?.coWriterSetAdditionalContextTokens(0);
             return;
         }
@@ -3450,6 +3558,12 @@ export default class EventideQuillPlugin extends Plugin {
         this.lintPanel?.switchToDashboardTab();
     }
 
+    /** Activate the sidebar and switch to the Lorebook tab. */
+    async openLorebookPanel(): Promise<void> {
+        await this.openLintPanel();
+        this.lintPanel?.switchToLorebookTab();
+    }
+
     /**
      * Refresh dashboard metrics for the active manuscript.
      *
@@ -3467,6 +3581,15 @@ export default class EventideQuillPlugin extends Plugin {
         }
 
         const folder = activeFile.parent?.path ?? '';
+
+        // Refuse to treat a lorebook folder as a manuscript — its files are
+        // reference entries, not chapters. Computing metrics from them would
+        // contaminate currentManuscriptText and produce meaningless coverage.
+        // Silent bail: auto-triggers (save, periodic, open) fire from any
+        // markdown file and must not spam notices.
+        if (findLoreFolder(activeFile.path, this.settings.lorebookFolders)) {
+            return;
+        }
 
         // Load per-manuscript data from the sidecar file.
         const msFile = await loadManuscriptFile(this.app.vault, folder);
@@ -3526,6 +3649,16 @@ export default class EventideQuillPlugin extends Plugin {
             const metrics = manuscriptMetrics(chapters, entities, dismissedIds);
             this.currentDashboardMetrics = metrics;
 
+            // Cache the combined manuscript text and folder for the Lorebook
+            // Manuscript subtab, which uses substring matching rather than entities.
+            this.currentManuscriptText = fullText;
+            this.currentManuscriptFolder = folder;
+
+            // Scan lorebook folders and cache entries for the Lorebook tab.
+            // The Lorebook tab computes its own coverage per subtab (document
+            // or manuscript) when the panel renders, so we only cache entries here.
+            this.currentManuscriptEntities = entities;
+
             // Append snapshot to the manuscript file.
             const snapshot: ManuscriptSnapshot = {
                 takenAt: Date.now(),
@@ -3548,6 +3681,7 @@ export default class EventideQuillPlugin extends Plugin {
 
             // Re-render the panel if the Dashboard tab is active.
             this.lintPanel?.refreshDashboardPanel();
+            this.lintPanel?.refreshLorebookPanel();
 
             // Fire-and-forget embedding cache warming for the manuscript folder.
             if (this.settings.enableEmbeddingWarming && folder) {
@@ -3557,6 +3691,127 @@ export default class EventideQuillPlugin extends Plugin {
             const message = err instanceof Error ? err.message : String(err);
             new Notice(`Quill: dashboard refresh failed (${message}).`);
         }
+    }
+
+    /**
+     * Refresh document-scoped lorebook coverage.
+     *
+     * Reads the active document's text and runs substring matching against
+     * all lore entries (excluding the active file if it IS a lore entry).
+     * Used by the Document subtab and after `setLoreEntryType`.
+     */
+    async refreshLorebookDocumentCoverage(): Promise<void> {
+        if (this.settings.lorebookFolders.length === 0) {
+            this.currentLoreDocumentCoverage = null;
+            this.lintPanel?.refreshLorebookPanel();
+            return;
+        }
+
+        const activeFile = this.app.workspace.getActiveFile();
+        const activePath = activeFile?.path ?? null;
+        const docText = activeFile && activeFile.extension === 'md' ? await this.getFileText(activeFile.path) : '';
+        // The user may have switched files during the read. Discard the update
+        // if the active file no longer matches so stale coverage is never
+        // published (the active-leaf-change path can trigger overlapping reads).
+        if (activePath !== (this.app.workspace.getActiveFile()?.path ?? null)) return;
+        const loreEntries = scanLorebook(this.app, this.settings.lorebookFolders, this.settings.lorebookFolderTypes);
+        this.currentLoreDocumentCoverage = computeDocumentCoverage(docText, loreEntries, activePath);
+        this.lintPanel?.refreshLorebookPanel();
+    }
+
+    /**
+     * Refresh manuscript-scoped lorebook coverage.
+     *
+     * Uses the cached manuscript text and entities from the last dashboard
+     * refresh for substring matching + entity-based gap detection. When
+     * `autoRefresh` is true and no cached data exists (or the active folder
+     * doesn't match), triggers a full dashboard refresh first.
+     */
+    async refreshLorebookManuscriptCoverage(autoRefresh = true): Promise<void> {
+        if (this.settings.lorebookFolders.length === 0) {
+            this.currentLoreManuscriptCoverage = null;
+            this.lintPanel?.refreshLorebookPanel();
+            return;
+        }
+
+        const activeFile = this.app.workspace.getActiveFile();
+
+        // Auto-refresh the dashboard when no cached manuscript data exists and
+        // we're in a manuscript folder (not a lorebook folder), OR when the
+        // active manuscript folder has changed since the last refresh —
+        // otherwise switching folders would reuse the previous manuscript's
+        // stale coverage.
+        const activeFolder = activeFile?.parent?.path ?? '';
+        const manuscriptFolderChanged =
+            this.currentManuscriptFolder !== null && this.currentManuscriptFolder !== activeFolder;
+        if (
+            autoRefresh &&
+            activeFile &&
+            activeFile.extension === 'md' &&
+            !findLoreFolder(activeFile.path, this.settings.lorebookFolders) &&
+            (!this.currentManuscriptText || !this.currentManuscriptEntities.length || manuscriptFolderChanged)
+        ) {
+            await this.refreshDashboard();
+        }
+
+        const manuscriptText = this.currentManuscriptText ?? '';
+        const entities = this.currentManuscriptEntities;
+        const dismissedIds = new Set(this.currentManuscriptFileData?.dismissedEntities ?? []);
+
+        if (!manuscriptText || !entities.length) {
+            this.currentLoreManuscriptCoverage = null;
+            this.lintPanel?.refreshLorebookPanel();
+            return;
+        }
+
+        const loreEntries = scanLorebook(this.app, this.settings.lorebookFolders, this.settings.lorebookFolderTypes);
+        this.currentLoreManuscriptCoverage = computeManuscriptCoverage(
+            manuscriptText,
+            loreEntries,
+            entities,
+            // Never exclude by active file — manuscript coverage is about the
+            // full manuscript text, independent of which file is open. Baking
+            // the active file path in here would make entries vanish when the
+            // coverage was last computed while viewing a lore entry.
+            null,
+            dismissedIds
+        );
+        this.lintPanel?.refreshLorebookPanel();
+    }
+
+    /**
+     * General lorebook refresh — delegates to the document-scoped method.
+     * Used by the `quill-lorebook-refresh` command and `setLoreEntryType`.
+     * The Manuscript subtab manages its own refresh lifecycle.
+     */
+    async refreshLorebook(): Promise<void> {
+        await this.refreshLorebookDocumentCoverage();
+    }
+
+    /**
+     * Set (or clear) the `quill-type` frontmatter on a lore entry file.
+     *
+     * Writes the flat `quill-type` key via Obsidian's `processFrontMatter` API
+     * (non-destructive — other frontmatter is preserved). Pass `null` to clear
+     * the per-file type so the entry inherits its folder's default. Refreshes
+     * lorebook coverage so the change is reflected immediately.
+     */
+    async setLoreEntryType(file: TFile, type: LoreEntryType | null): Promise<void> {
+        // Record the value we're about to write so the panel can render it
+        // immediately, before the metadataCache propagates the change.
+        this.pendingLoreEntryType = { path: file.path, type };
+        await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+            if (type === null) {
+                delete fm['quill-type'];
+            } else {
+                fm['quill-type'] = type;
+            }
+        });
+        await this.refreshLorebook();
+        // Also refresh manuscript-scoped coverage: typing an entry can move it
+        // in/out of the mapped set, changing referenced/orphaned/gaps when the
+        // Manuscript subtab is active.
+        await this.refreshLorebookManuscriptCoverage();
     }
 
     /**
@@ -3833,6 +4088,11 @@ export default class EventideQuillPlugin extends Plugin {
             return;
         }
 
+        // Lore reference embeds (gated on reviewLoreContext) — prepended here so
+        // the first editorial-review payload receives lore context immediately,
+        // mirroring the follow-up chat flow.
+        const loreReferenceMessages = await this.loreReferenceMessages(documentText);
+
         const vaultContext = contextParts.length > 0 ? contextParts.join('\n\n') : '';
 
         // Build and store the initial conversation messages (system prompt + user
@@ -3847,6 +4107,7 @@ export default class EventideQuillPlugin extends Plugin {
         // Build the full API payload: system prompt + manuscripts + user instruction.
         const apiMessages: ChatMessage[] = [
             this.feedbackCurrentMessages[0]!, // system prompt
+            ...loreReferenceMessages,
             ...manuscriptMessages,
             this.feedbackCurrentMessages[1]! // user instruction
         ];
@@ -3945,7 +4206,7 @@ export default class EventideQuillPlugin extends Plugin {
         const { regularPaths: resolvedManuscriptPaths, messages: manuscriptEmbedMessages } =
             await this.resolveEmbedPathsToMessages(manuscriptPaths, 'Manuscript', documentText);
         const { regularPaths: resolvedRefPaths, messages: refEmbedMessages } = await this.resolveEmbedPathsToMessages(
-            chatContextFilePaths,
+            [...this.loreReferencePaths(), ...chatContextFilePaths],
             'Reference file',
             documentText,
             this.settings.contextMaxCharsPerFile

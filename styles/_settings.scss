@@ -284,6 +284,10 @@ div[class*='quill-settings-content-'].is-hidden {
         text-align: center;
     }
 
+    &__select {
+        flex-shrink: 0;
+    }
+
     &__remove {
         flex-shrink: 0;
         width: 24px;
@@ -302,4 +306,15 @@ div[class*='quill-settings-content-'].is-hidden {
             background: var(--background-modifier-hover);
         }
     }
+}
+
+// =========================================================================
+// Empty-state hint (shared)
+// =========================================================================
+
+.quill-settings__empty-hint {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    font-style: italic;
+    padding: $space-sm 0;
 }

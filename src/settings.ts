@@ -5,12 +5,14 @@ import { createProvider, generateModelId, generateProviderId } from './ai/provid
 import { NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS } from './types';
 import { ConfirmModal } from './ui/confirm-modal';
 import type { ReadabilityFormula } from './core/dashboard/types';
+import type { LoreEntryType } from './core/dashboard/lorebook-types';
+import { LORE_ENTRY_TYPES, LORE_TYPE_LABELS } from './core/dashboard/lorebook-types';
 import type { WikiLinkBehavior } from './ai/prompts';
 
 export type LinterMode = 'all' | 'prose' | 'ai';
 export type SettingsTab = 'welcome' | 'general' | 'linter' | 'ai-providers' | 'model-behaviors';
 /** Which sidebar tab opens by default. Mirrors the dropdown options in the General settings. */
-export type DefaultTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard';
+export type DefaultTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard' | 'lorebook';
 
 export interface EventideQuillSettings {
     linterMode: LinterMode;
@@ -81,6 +83,11 @@ export interface EventideQuillSettings {
     dashboardAutoSnapshotOnSave: boolean;
     dashboardMaxSnapshots: number;
     readabilityFormula: ReadabilityFormula;
+    lorebookFolders: string[];
+    /** Per-folder entry-type default. Absent key = "mixed" (use per-file quill-type). */
+    lorebookFolderTypes: Record<string, LoreEntryType>;
+    coWriterLoreContext: boolean;
+    reviewLoreContext: boolean;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -165,7 +172,11 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     dashboardAutoRefreshMinutes: 10,
     dashboardAutoSnapshotOnSave: false,
     dashboardMaxSnapshots: 100,
-    readabilityFormula: 'reweighted-flesch'
+    readabilityFormula: 'reweighted-flesch',
+    lorebookFolders: [],
+    lorebookFolderTypes: {},
+    coWriterLoreContext: true,
+    reviewLoreContext: true
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -292,7 +303,7 @@ class AddProviderModal extends SuggestModal<{ type: ProviderType; label: string;
 
 export class EventideQuillSettingTab extends PluginSettingTab {
     plugin: EventideQuillPlugin;
-    private activeTab: SettingsTab = 'general';
+    private activeTab: SettingsTab = 'welcome';
 
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app, plugin);
@@ -366,6 +377,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 el.removeClass('quill-settings__tab--active');
             }
         });
+
+        // Reset scroll so the user starts at the top of the new tab.
+        const scrollArea = this.containerEl.querySelector('.quill-settings__scroll-area');
+        if (scrollArea instanceof HTMLElement) {
+            scrollArea.scrollTop = 0;
+        }
     }
 
     /** Collect unique folder paths from the vault's markdown files. */
@@ -416,6 +433,56 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 delete this.plugin.settings.folderTopKOverrides[folder];
                 void this.plugin.saveSettings();
                 this.renderFolderOverrides(container);
+            });
+        }
+    }
+
+    /** Render the list of lorebook folder rows. */
+    private renderLorebookFolders(container: HTMLElement): void {
+        container.empty();
+        const folders = [...this.plugin.settings.lorebookFolders].sort((a, b) => a.localeCompare(b));
+
+        if (folders.length === 0) {
+            container.createEl('div', {
+                cls: 'quill-settings__empty-hint',
+                text: 'No lorebook folders configured. Add one to begin scanning for lore entries.'
+            });
+            return;
+        }
+
+        for (const folder of folders) {
+            const row = container.createDiv({ cls: 'quill-folder-override-row' });
+            row.createEl('span', { cls: 'quill-folder-override-row__name', text: folder });
+
+            // Folder entry-type default. "Mixed" (absent from the map) means each
+            // file is typed by its own `quill-type` frontmatter; any other choice
+            // makes every file in the folder that type unless overridden per-file.
+            const typeSelect = row.createEl('select', { cls: 'quill-folder-override-row__select' });
+            typeSelect.createEl('option', { value: '', text: 'Mixed' });
+            for (const t of LORE_ENTRY_TYPES) {
+                typeSelect.createEl('option', { value: t, text: LORE_TYPE_LABELS[t] });
+            }
+            const currentType = this.plugin.settings.lorebookFolderTypes[folder];
+            typeSelect.value = currentType ?? '';
+            typeSelect.addEventListener('change', () => {
+                const v = typeSelect.value as LoreEntryType | '';
+                if (v === '') {
+                    delete this.plugin.settings.lorebookFolderTypes[folder];
+                } else {
+                    this.plugin.settings.lorebookFolderTypes[folder] = v;
+                }
+                void this.plugin.saveSettings();
+            });
+
+            const removeBtn = row.createEl('button', {
+                cls: 'quill-folder-override-row__remove',
+                text: '\u00d7'
+            });
+            removeBtn.addEventListener('click', () => {
+                this.plugin.settings.lorebookFolders = this.plugin.settings.lorebookFolders.filter((f) => f !== folder);
+                delete this.plugin.settings.lorebookFolderTypes[folder];
+                void this.plugin.saveSettings();
+                this.renderLorebookFolders(container);
             });
         }
     }
@@ -521,6 +588,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 dropdown.addOption('context', 'Context');
                 dropdown.addOption('review', 'Review');
                 dropdown.addOption('cowriter', 'Co-writer');
+                dropdown.addOption('lorebook', 'Lorebook');
                 dropdown.setValue(this.plugin.settings.defaultTab).onChange(async (value) => {
                     this.plugin.settings.defaultTab = value as DefaultTab;
                     await this.plugin.saveSettings();
@@ -686,6 +754,32 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(content)
+            .setName('Build embeddings now')
+            .setDesc(
+                'Immediately pre-compute and cache embeddings for all folders with Markdown files. ' +
+                    'Useful after adding new material or when warming is turned off.'
+            )
+            .addButton((button) =>
+                button.setButtonText('Build').onClick(() => {
+                    button.setDisabled(true);
+                    button.setButtonText('Building\u2026');
+                    void this.plugin
+                        .warmAllEmbeddingCaches()
+                        .then(() => {
+                            new Notice('Quill: Embedding caches rebuilt.');
+                        })
+                        .catch((err: unknown) => {
+                            const msg = err instanceof Error ? err.message : String(err);
+                            new Notice(`Quill: Embedding build failed. ${msg}`);
+                        })
+                        .finally(() => {
+                            button.setDisabled(false);
+                            button.setButtonText('Build');
+                        });
+                })
+            );
+
+        new Setting(content)
             .setName('Embedding chunk size (tokens)')
             .setDesc(
                 "Target tokens per chunk when embedding. Must not exceed your embedding model's context window. Many local embedding models (e.g. Nomic-embed-text) support 512; cloud models may support more. Default: 512."
@@ -741,6 +835,59 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.folderTopKOverrides[folder] = this.plugin.settings.embeddingsTopKChunks;
                     void this.plugin.saveSettings();
                     this.renderFolderOverrides(overridesContainer);
+                }).open();
+            })
+        );
+
+        // --- Lorebook ---
+        new Setting(content).setName('Lorebook').setHeading();
+
+        new Setting(content)
+            .setName('Feed lore into co-writer')
+            .setDesc(
+                'Automatically include relevant lore entries as context when generating with the co-writer. Retrieved via the embedding cache. Default: on.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.coWriterLoreContext).onChange(async (value) => {
+                    this.plugin.settings.coWriterLoreContext = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
+            .setName('Feed lore into review engines')
+            .setDesc(
+                'Automatically include relevant lore entries as context for editorial feedback, critical analysis, and manuscript analysis. Default: on.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.reviewLoreContext).onChange(async (value) => {
+                    this.plugin.settings.reviewLoreContext = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
+            .setName('Lorebook folders')
+            .setDesc(
+                'Folders scanned for lore entries. Any Markdown file under one of these folders is treated as a lore entry. Set a per-folder type default so every file inherits it without frontmatter; leave as mixed to type files individually via the quill-type key.'
+            )
+            .setHeading();
+
+        const loreFoldersContainer = content.createDiv({ cls: 'quill-folder-overrides-list' });
+        this.renderLorebookFolders(loreFoldersContainer);
+
+        new Setting(content).addButton((button) =>
+            button.setButtonText('+ add folder').onClick(() => {
+                const folders = this.getVaultFolders().filter((f) => !this.plugin.settings.lorebookFolders.includes(f));
+                new FolderSuggestModal(this.app, folders, (folder) => {
+                    if (this.plugin.settings.lorebookFolders.includes(folder)) {
+                        new Notice('Folder already in lorebook.');
+                        return;
+                    }
+                    this.plugin.settings.lorebookFolders.push(folder);
+                    this.plugin.settings.lorebookFolders.sort((a, b) => a.localeCompare(b));
+                    void this.plugin.saveSettings();
+                    this.renderLorebookFolders(loreFoldersContainer);
                 }).open();
             })
         );
@@ -855,6 +1002,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.dashboardAutoSnapshotOnSave = DEFAULT_SETTINGS.dashboardAutoSnapshotOnSave;
                     this.plugin.settings.dashboardMaxSnapshots = DEFAULT_SETTINGS.dashboardMaxSnapshots;
                     this.plugin.settings.readabilityFormula = DEFAULT_SETTINGS.readabilityFormula;
+                    this.plugin.settings.lorebookFolders = [...DEFAULT_SETTINGS.lorebookFolders];
+                    this.plugin.settings.lorebookFolderTypes = { ...DEFAULT_SETTINGS.lorebookFolderTypes };
+                    this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
+                    this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
                     await this.plugin.saveSettings();
                     this.display();
                 })
@@ -1543,11 +1694,18 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         async () => {
                             await this.plugin.invalidateAllEmbeddingCaches();
                             this.plugin.settings.aiDefaultEmbedProvider = value;
+                            // Auto-enable embedding warming — otherwise caches won't
+                            // stay fresh and the model serves no purpose on its own.
+                            if (!this.plugin.settings.enableEmbeddingWarming) {
+                                this.plugin.settings.enableEmbeddingWarming = true;
+                                new Notice(
+                                    'Quill: Embedding warming enabled to keep caches fresh. ' +
+                                        'Turn it off in settings if you prefer manual control.'
+                                );
+                            }
                             await this.plugin.saveSettings();
                             // Re-warm caches with the new model.
-                            if (this.plugin.settings.enableEmbeddingWarming) {
-                                void this.plugin.warmAllEmbeddingCaches();
-                            }
+                            void this.plugin.warmAllEmbeddingCaches();
                             // Update dropdown to reflect the confirmed value.
                             dropdown.setValue(value);
                             new Notice('Quill: Embed model changed. Caches will rebuild in the background.');
@@ -2041,6 +2199,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.coWriterTemperature = DEFAULT_SETTINGS.coWriterTemperature;
                     this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
                     this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
+                    this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
+                    this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
                     this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                     this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
                     this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;

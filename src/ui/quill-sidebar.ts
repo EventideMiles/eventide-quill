@@ -9,6 +9,7 @@ import { renderContextTab } from './context-panel';
 import { ReviewPanel } from './review-panel';
 import { CoWriterPanel } from './co-writer-panel';
 import { renderDashboardTab, renderDashboardSettingsTab } from './dashboard-panel';
+import { renderLorebookTab } from './lorebook-panel';
 import type { InputMode } from './co-writer-panel';
 import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase } from '../ai/co-writer';
 import type { ProposedEdit } from '../core/change-set';
@@ -17,11 +18,18 @@ import type { ContextAssembly } from '../core/context-engine/types';
 
 export const QUILL_VIEW_TYPE = 'quill-sidebar';
 
-type TopTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard';
+type TopTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard' | 'lorebook';
 type LinterSubTab = 'results' | 'details' | 'pending';
 
 /** Allow-list of valid TopTab values, used to validate persisted settings. */
-const VALID_TOP_TABS: ReadonlySet<TopTab> = new Set<TopTab>(['linter', 'context', 'review', 'cowriter', 'dashboard']);
+const VALID_TOP_TABS: ReadonlySet<TopTab> = new Set<TopTab>([
+    'linter',
+    'context',
+    'review',
+    'cowriter',
+    'dashboard',
+    'lorebook'
+]);
 
 export class QuillSidebarView extends ItemView {
     private results: LintResult[] = [];
@@ -29,6 +37,7 @@ export class QuillSidebarView extends ItemView {
     private activeTopTab: TopTab = 'linter';
     private activeLinterSubTab: LinterSubTab = 'results';
     private dashboardSubTab: 'overview' | 'pending' | 'settings' = 'overview';
+    private lorebookSubTab: 'document' | 'manuscript' = 'document';
     private container!: HTMLElement;
     private tabBar!: HTMLElement;
     private content!: HTMLElement;
@@ -82,15 +91,16 @@ export class QuillSidebarView extends ItemView {
         this.content = this.container.createDiv({ cls: 'quill-sidebar__content' });
         this.render();
 
-        // Observe the content element for width changes to toggle responsive modes:
-        //   >= 480px → normal (icon + label side by side)
-        //   380-480px → watermark (icon behind text as ghost, no layout space)
-        //   < 380px  → compact (icons only, labels hidden)
+        // Observe the content element for width changes to toggle responsive modes.
+        // Thresholds account for six top-level tabs (~75px each with icon + label):
+        //   >= 540px → normal (icon + label side by side)
+        //   440-540px → watermark (icon behind text as ghost, no layout space)
+        //   < 440px  → compact (icons only, labels hidden)
         this.resizeObserver = new ResizeObserver((entries) => {
             for (const entry of entries) {
                 const width = entry.contentRect.width;
-                const compact = width < 380;
-                const watermark = !compact && width < 480;
+                const compact = width < 440;
+                const watermark = !compact && width < 540;
                 this.container.classList.toggle('quill-sidebar--compact', compact);
                 this.container.classList.toggle('quill-sidebar--watermark', watermark);
             }
@@ -105,9 +115,16 @@ export class QuillSidebarView extends ItemView {
                     this.activeTopTab === 'context' ||
                     this.activeTopTab === 'cowriter' ||
                     this.activeTopTab === 'review' ||
-                    this.activeTopTab === 'dashboard'
+                    this.activeTopTab === 'dashboard' ||
+                    this.activeTopTab === 'lorebook'
                 ) {
                     this.render();
+                    // The Document subtab matches against the active document's
+                    // text, so it must re-compute on file switch (the Manuscript
+                    // subtab uses cached manuscript-wide data and is stable).
+                    if (this.activeTopTab === 'lorebook' && this.lorebookSubTab === 'document') {
+                        void this.plugin.refreshLorebookDocumentCoverage();
+                    }
                 }
             })
         );
@@ -335,6 +352,11 @@ export class QuillSidebarView extends ItemView {
         } else if (this.activeTopTab === 'cowriter') {
             this.renderHeader();
             this.renderCoWriterTab();
+        } else if (this.activeTopTab === 'lorebook') {
+            this.renderHeader();
+            this.renderLorebookSubTabBar();
+            const loreScroll = this.content.createDiv({ cls: 'quill-lorebook-panel__scroll' });
+            renderLorebookTab(loreScroll, this.plugin, this.renderEvents, this.lorebookSubTab);
         } else {
             this.renderHeader();
             this.renderReviewTab();
@@ -345,6 +367,7 @@ export class QuillSidebarView extends ItemView {
     private renderTopTabBar() {
         const tabs: { id: TopTab; label: string; icon: string }[] = [
             { id: 'dashboard', label: 'Dashboard', icon: 'gauge' },
+            { id: 'lorebook', label: 'Lorebook', icon: 'book-open' },
             { id: 'linter', label: 'Linter', icon: 'list-checks' },
             { id: 'context', label: 'Context', icon: 'file-stack' },
             { id: 'review', label: 'Review', icon: 'message-square-text' },
@@ -367,6 +390,7 @@ export class QuillSidebarView extends ItemView {
     private renderHeader(): void {
         const labels: Record<TopTab, string> = {
             dashboard: 'Dashboard',
+            lorebook: 'Lorebook',
             linter: 'Linter',
             context: 'Context',
             review: 'Review',
@@ -416,6 +440,32 @@ export class QuillSidebarView extends ItemView {
                 }
                 this.dashboardSubTab = tab.id;
                 this.render();
+            });
+        }
+    }
+
+    /** Render the Lorebook sub-tab bar (Document / Manuscript). */
+    private renderLorebookSubTabBar() {
+        const subTabBar = this.content.createDiv({ cls: 'quill-sidebar__subtab-bar' });
+
+        const tabs: { id: 'document' | 'manuscript'; label: string }[] = [
+            { id: 'document', label: 'Document' },
+            { id: 'manuscript', label: 'Manuscript' }
+        ];
+
+        for (const tab of tabs) {
+            const btn = subTabBar.createEl('button', {
+                cls: `quill-sidebar__subtab${this.lorebookSubTab === tab.id ? ' quill-sidebar__subtab--active' : ''}`,
+                text: tab.label
+            });
+            this.renderEvents!.registerDomEvent(btn, 'click', () => {
+                this.lorebookSubTab = tab.id;
+                this.render();
+                if (tab.id === 'manuscript') {
+                    void this.plugin.refreshLorebookManuscriptCoverage(true);
+                } else {
+                    void this.plugin.refreshLorebookDocumentCoverage();
+                }
             });
         }
     }
@@ -550,9 +600,22 @@ export class QuillSidebarView extends ItemView {
         this.render();
     }
 
+    /** Switch to the Lorebook tab. */
+    switchToLorebookTab(): void {
+        this.activeTopTab = 'lorebook';
+        this.render();
+    }
+
     /** Re-render the Dashboard panel if it's the active tab. */
     refreshDashboardPanel(): void {
         if (this.activeTopTab === 'dashboard') {
+            this.render();
+        }
+    }
+
+    /** Re-render the Lorebook panel if it's the active tab. */
+    refreshLorebookPanel(): void {
+        if (this.activeTopTab === 'lorebook') {
             this.render();
         }
     }
