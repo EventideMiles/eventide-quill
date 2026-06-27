@@ -368,12 +368,14 @@ export default class EventideQuillPlugin extends Plugin {
                     else if (owner === 'transform') this.approveTransformChange(id);
                     else if (owner === 'direct') this.approveDirectChange(id);
                     else if (owner === 'lint-batch') this.approveLintBatchChange(id);
+                    else if (owner === 'lore_edit') this.approveLoreEdit(id);
                 },
                 onReject: (owner: string, id: number) => {
                     if (owner === 'fulfill') this.rejectCoWriterFulfill(id);
                     else if (owner === 'transform') this.rejectTransformChange(id);
                     else if (owner === 'direct') this.rejectDirectChange(id);
                     else if (owner === 'lint-batch') this.rejectLintBatchChange(id);
+                    else if (owner === 'lore_edit') this.rejectLoreEdit();
                 }
             })
         );
@@ -1759,6 +1761,9 @@ export default class EventideQuillPlugin extends Plugin {
         // `onChatUpdate`), so there's nothing to push to the panel separately.
         // The hook exists for future use (e.g., auto-scroll to the draft).
         session.onLoreDraftReady = () => {};
+        session.onLoreEditUpdate = () => {
+            this.lintPanel?.coWriterSetLoreEdit(session.loreEditChanges.edits[0] ?? null);
+        };
     }
 
     /**
@@ -1915,6 +1920,16 @@ export default class EventideQuillPlugin extends Plugin {
      */
     discardLoreDraft(_draft: LoreDraftEntry): void {
         this.coWriterSession.currentLoreDraft = null;
+    }
+
+    /** Approve the pending lore edit (from edit_note / append_to_note tool). */
+    approveLoreEdit(id: number): void {
+        this.coWriterSession.approveLoreEdit(id);
+    }
+
+    /** Reject the pending lore edit. */
+    rejectLoreEdit(): void {
+        this.coWriterSession.rejectLoreEdit();
     }
 
     /** Resolve the CodeMirror view of the active markdown editor, if any. */

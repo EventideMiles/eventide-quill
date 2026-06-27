@@ -577,6 +577,13 @@ export class CoWriterSession {
     /** Called when a new lore draft is ready for the review card. */
     onLoreDraftReady: (() => void) | null = null;
 
+    /** Proposed note edit (from edit_note / append_to_note tools), one at a time. */
+    loreEditChanges: ChangeSet = new ChangeSet();
+    /** Path of the note whose edit is pending review, or null when none. */
+    loreEditPath: string | null = null;
+    /** Called when a lore edit is proposed, approved, or rejected. */
+    onLoreEditUpdate: (() => void) | null = null;
+
     /** Fulfill-mode proposed edits (one per directive), in document order. */
     fulfillChanges: ChangeSet = new ChangeSet();
     /** Direct-mode proposed continuation (pure insertion at the cursor), awaiting review. */
@@ -2307,6 +2314,62 @@ export class CoWriterSession {
         this.onDirectChangeUpdate?.();
     }
 
+    // ── Lore edit (edit_note / append_to_note tools) ─────────────────────
+
+    /**
+     * Approve the pending lore edit: commit the ChangeSet edit to the target
+     * note's editor and clear the diff. The editor handles saving via
+     * Obsidian's normal auto-save.
+     */
+    approveLoreEdit(id: number): void {
+        if (!this.app || !this.loreEditPath) return;
+        const view = findEditorView(this.app, this.loreEditPath);
+        if (!view) return;
+        const cm = (view.editor as unknown as { cm: EditorView }).cm;
+        if (!cm) return;
+
+        const change = this.loreEditChanges.approve(id);
+        if (!change) return;
+
+        const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'lore_edit');
+        cm.dispatch({
+            changes: change,
+            effects: setDiffEdits.of(preserved),
+            selection: { anchor: change.from + change.insert.length }
+        });
+
+        this.loreEditChanges.clear();
+        this.loreEditPath = null;
+        this.onLoreEditUpdate?.();
+    }
+
+    /** Reject the pending lore edit: discard the diff without writing. */
+    rejectLoreEdit(): void {
+        if (this.app && this.loreEditPath) {
+            const view = findEditorView(this.app, this.loreEditPath);
+            if (view) {
+                const cm = (view.editor as unknown as { cm: EditorView }).cm;
+                if (cm) clearDiffEdits(cm, 'lore_edit');
+            }
+        }
+        this.loreEditChanges.clear();
+        this.loreEditPath = null;
+        this.onLoreEditUpdate?.();
+    }
+
+    /** Clear lore edit state (e.g., on reset / new chat). */
+    clearLoreEdit(): void {
+        if (this.app && this.loreEditPath) {
+            const view = findEditorView(this.app, this.loreEditPath);
+            if (view) {
+                const cm = (view.editor as unknown as { cm: EditorView }).cm;
+                if (cm) clearDiffEdits(cm, 'lore_edit');
+            }
+        }
+        this.loreEditChanges.clear();
+        this.loreEditPath = null;
+    }
+
     /**
      * Force an immediate compaction of the conversation history,
      * regardless of the token threshold. Summarizes older turns into
@@ -2895,6 +2958,7 @@ export class CoWriterSession {
         this.endLoreCoachSession();
         this.clearFulfill();
         this.clearDirect();
+        this.clearLoreEdit();
         this.manuscriptPath = null;
         this.originalText = '';
         this.insertionStart = -1;
@@ -2925,6 +2989,7 @@ export class CoWriterSession {
         this.endLoreCoachSession();
         this.clearFulfill();
         this.clearDirect();
+        this.clearLoreEdit();
         this.originalText = '';
         this.insertionStart = -1;
         this.insertionLength = 0;

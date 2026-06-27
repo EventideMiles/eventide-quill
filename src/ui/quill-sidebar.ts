@@ -728,6 +728,12 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setDiscardLoreDraftHandler((draft) => {
                 this.plugin.discardLoreDraft(draft);
             });
+            this.coWriterPanel.setApproveLoreEditHandler((id) => {
+                this.plugin.approveLoreEdit(id);
+            });
+            this.coWriterPanel.setRejectLoreEditHandler(() => {
+                this.plugin.rejectLoreEdit();
+            });
         }
 
         // Sync current state from the session
@@ -744,6 +750,7 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setLoreCoachActive(session.loreCoachActive);
             this.coWriterPanel.setFulfillState(session.fulfillChanges.edits, session.fulfillActive);
             this.coWriterPanel.setDirectChange(session.directChanges.edits[0] ?? null);
+            this.coWriterPanel.setLoreEdit(session.loreEditChanges.edits[0] ?? null);
         }
 
         // Sync plot map link from the active manuscript's frontmatter
@@ -972,6 +979,11 @@ export class QuillSidebarView extends ItemView {
     /** Push the current Direct continuation edit (or null) to the co-writer panel. */
     coWriterSetDirectChange(edit: ProposedEdit | null): void {
         this.coWriterPanel?.setDirectChange(edit);
+    }
+
+    /** Push the current lore edit (or null) to the co-writer panel. */
+    coWriterSetLoreEdit(edit: ProposedEdit | null): void {
+        this.coWriterPanel?.setLoreEdit(edit);
     }
 
     /** Switch to the pending subtab on whichever tab initiated the batch fix. */

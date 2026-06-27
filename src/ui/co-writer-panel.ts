@@ -85,6 +85,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private fulfillActive = false;
     /** Direct-mode proposed continuation (mirrored from the session), rendered as a review card. */
     private directChange: ProposedEdit | null = null;
+    /** Pending lore edit (from edit_note / append_to_note tools), rendered as a review card. */
+    private loreEdit: ProposedEdit | null = null;
     /** Whether the mode picker is open (replaces the mode-cycle-on-click behavior). */
     private modePickerOpen = false;
     /** Current lorebook coach phase, if lorebook coach mode is active. */
@@ -116,6 +118,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onLoreCoachMessage: ((message: string) => void) | null = null;
     private onEndLoreCoach: (() => void) | null = null;
     private onDiscardLoreDraft: ((draft: LoreDraftEntry) => void) | null = null;
+    private onApproveLoreEdit: ((id: number) => void) | null = null;
+    private onRejectLoreEdit: (() => void) | null = null;
 
     /**
      * Conversation token estimate pushed from the plugin layer.
@@ -274,6 +278,22 @@ export class CoWriterPanel extends AbstractChatPanel {
     setDirectChange(edit: ProposedEdit | null): void {
         this.directChange = edit;
         this.scheduleRender();
+    }
+
+    /** Replace the pending lore edit (null = none pending) and re-render. */
+    setLoreEdit(edit: ProposedEdit | null): void {
+        this.loreEdit = edit;
+        this.scheduleRender();
+    }
+
+    /** Set the handler invoked to approve the pending lore edit by id. */
+    setApproveLoreEditHandler(handler: (id: number) => void): void {
+        this.onApproveLoreEdit = handler;
+    }
+
+    /** Set the handler invoked to reject the pending lore edit. */
+    setRejectLoreEditHandler(handler: () => void): void {
+        this.onRejectLoreEdit = handler;
     }
 
     /** Replace the Fulfill section list and/or active flag and re-render. */
@@ -728,6 +748,18 @@ export class CoWriterPanel extends AbstractChatPanel {
         // continuation exists, independent of chat state (empty prompt, etc.).
         if (this.directChange) {
             this.renderDirectChangeCard(scroll);
+        }
+
+        // Lore edit card — rendered when a tool (edit_note / append_to_note)
+        // proposed a change to a note. Same review-card pattern as Direct.
+        if (this.loreEdit) {
+            const p = renderChangeCard(scroll, this.loreEdit, null, this.app, this.renderEvents, {
+                onApprove: (id: number) => this.onApproveLoreEdit?.(id),
+                onReject: () => this.onRejectLoreEdit?.()
+            });
+            if (p) {
+                this.renderPromises.push(p);
+            }
         }
     }
 
