@@ -425,8 +425,24 @@ export function openAiSseDataToChunk(parsed: OpenAiSseData): ChatChunk | null {
     if (!firstChoice) return null;
 
     const delta = firstChoice.delta;
-    const text = delta?.content ?? '';
     const reasoning = delta?.reasoning_content ?? delta?.thinking ?? '';
+
+    // Per the OpenAI reasoning-model spec, `reasoning_content` (or `thinking`)
+    // and `content` are mutually exclusive: during the reasoning phase content
+    // is empty and reasoning_content carries the chain-of-thought; during the
+    // response phase content carries the answer and reasoning_content is empty.
+    //
+    // Some providers (notably certain LM Studio configurations) mirror the
+    // reasoning into BOTH fields simultaneously. Without this guard the
+    // reasoning text gets streamed into the chat response AND the reasoning
+    // toggle, producing a confusing [response][reasoning][response] visual
+    // where the first "response" is actually the duplicated reasoning.
+    //
+    // Fix: when reasoning_content is present, drop content for this chunk —
+    // the reasoning is captured in `thought`, and the real response will
+    // arrive in subsequent chunks where reasoning_content is absent.
+    const text = reasoning ? '' : (delta?.content ?? '');
+
     const finishReason = firstChoice.finish_reason;
 
     const chunk: ChatChunk = {
