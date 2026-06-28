@@ -15,6 +15,7 @@ export class VaultFileSuggestModal extends SuggestModal<VaultSuggestionItem> {
     private exclude: Set<string>;
     private embeddedFolders: Array<{ path: string; name: string }>;
     private showFullEmbed: boolean;
+    private filesOnly: boolean;
 
     /**
      * Create a vault file suggest modal.
@@ -24,20 +25,24 @@ export class VaultFileSuggestModal extends SuggestModal<VaultSuggestionItem> {
      * @param excludePaths  Paths to exclude from the suggestion list.
      * @param placeholder   Placeholder text for the search input.
      * @param showFullEmbed Whether to show the "full embed" option for folders alongside top-K.
+     * @param filesOnly     When true, only suggest files (no embedded-folder entries). Use for
+     *                      callers that only handle file selections (e.g. "open a file").
      */
     constructor(
         app: App,
         onChoose: (item: VaultSuggestionItem) => void,
         excludePaths: string[] = [],
         placeholder = 'Select a file to include as context...',
-        showFullEmbed = false
+        showFullEmbed = false,
+        filesOnly = false
     ) {
         super(app);
         this.onChoose = onChoose;
         this.exclude = new Set(excludePaths);
         this.setPlaceholder(placeholder);
         this.showFullEmbed = showFullEmbed;
-        this.embeddedFolders = this.discoverEmbeddedFolders();
+        this.filesOnly = filesOnly;
+        this.embeddedFolders = this.filesOnly ? [] : this.discoverEmbeddedFolders();
     }
 
     /** Synchronously find all folders with quill-embeddings.json. */
@@ -64,20 +69,24 @@ export class VaultFileSuggestModal extends SuggestModal<VaultSuggestionItem> {
             items.push({ kind: 'file', file });
         }
 
-        // Add embedded folders (filtered by exclude and query).
-        for (const folder of this.embeddedFolders) {
-            const embedPath = buildEmbedFolderPath(folder.path, 'top-k');
-            const fullPath = buildEmbedFolderPath(folder.path, 'full');
-            const matchesQuery = !q || folder.name.toLowerCase().includes(q) || folder.path.toLowerCase().includes(q);
+        // Add embedded folders (filtered by exclude and query). Skipped
+        // entirely when filesOnly is set — those callers only handle files.
+        if (!this.filesOnly) {
+            for (const folder of this.embeddedFolders) {
+                const embedPath = buildEmbedFolderPath(folder.path, 'top-k');
+                const fullPath = buildEmbedFolderPath(folder.path, 'full');
+                const matchesQuery =
+                    !q || folder.name.toLowerCase().includes(q) || folder.path.toLowerCase().includes(q);
 
-            if (!matchesQuery) continue;
+                if (!matchesQuery) continue;
 
-            if (!this.exclude.has(embedPath)) {
-                items.push({ kind: 'folder', folderPath: folder.path, folderName: folder.name, mode: 'top-k' });
-            }
+                if (!this.exclude.has(embedPath)) {
+                    items.push({ kind: 'folder', folderPath: folder.path, folderName: folder.name, mode: 'top-k' });
+                }
 
-            if (this.showFullEmbed && !this.exclude.has(fullPath)) {
-                items.push({ kind: 'folder', folderPath: folder.path, folderName: folder.name, mode: 'full' });
+                if (this.showFullEmbed && !this.exclude.has(fullPath)) {
+                    items.push({ kind: 'folder', folderPath: folder.path, folderName: folder.name, mode: 'full' });
+                }
             }
         }
 

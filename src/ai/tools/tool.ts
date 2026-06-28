@@ -70,6 +70,22 @@ export interface ToolContext {
 }
 
 /**
+ * Thrown by {@link ToolRegistry.register} when a tool with the same id is
+ * registered twice. Lets higher layers distinguish registry wiring failures
+ * from runtime tool-execution failures.
+ */
+export class DuplicateToolError extends Error {
+    /** The conflicting tool id. */
+    readonly toolId: string;
+
+    constructor(toolId: string) {
+        super(`Tool "${toolId}" is already registered`);
+        this.name = 'DuplicateToolError';
+        this.toolId = toolId;
+    }
+}
+
+/**
  * Registry of available tools. Tools are registered once at session start
  * (filtered by settings — e.g., network tools only when `lorebookNetworkTools`
  * is on), then the same registry instance is reused across every generation
@@ -82,7 +98,7 @@ export class ToolRegistry {
 
     register(tool: Tool): void {
         if (this.tools.has(tool.id)) {
-            throw new Error(`Tool "${tool.id}" is already registered`);
+            throw new DuplicateToolError(tool.id);
         }
         this.tools.set(tool.id, tool);
     }

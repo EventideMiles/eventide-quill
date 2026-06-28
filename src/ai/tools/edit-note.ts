@@ -56,12 +56,15 @@ export const editNoteTool: Tool = {
     async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
         const path = typeof args.path === 'string' ? args.path.trim() : '';
         const oldText = typeof args.old_text === 'string' ? args.old_text : '';
-        const newText = typeof args.new_text === 'string' ? args.new_text : '';
 
         if (!path) return 'Error: "path" is required.';
         if (!oldText) return 'Error: "old_text" is required.';
-        if (newText === '')
-            return 'Error: "new_text" is required (use empty string explicitly to delete, but the field must be present).';
+        // Distinguish an absent new_text (error) from an explicit empty
+        // string (valid — used to delete the old_text excerpt entirely).
+        if (args.new_text === undefined) {
+            return 'Error: "new_text" is required (pass an empty string to delete the excerpt).';
+        }
+        const newText = typeof args.new_text === 'string' ? args.new_text : '';
 
         const { plugin } = ctx;
         const file = resolveNoteFile(plugin, path);
@@ -75,6 +78,11 @@ export const editNoteTool: Tool = {
             // Help the model recover: show what's actually in the note.
             const preview = content.slice(0, 300).trim();
             return `Error: old_text not found in "${file.path}". The note starts with:\n${preview}${content.length > 300 ? '\n...' : ''}`;
+        }
+        // Reject non-unique matches so the edit doesn't silently hit the
+        // wrong occurrence when the excerpt appears more than once.
+        if (content.indexOf(oldText, idx + 1) !== -1) {
+            return `Error: old_text matches multiple places in "${file.path}". Pass a larger excerpt that uniquely identifies the section to change.`;
         }
 
         // Open the note and push the diff.

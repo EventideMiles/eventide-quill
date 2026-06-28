@@ -4,6 +4,20 @@ import { ChatChunk, type ToolCallFragment } from './provider';
 const SSE_DONE_SENTINEL = '[DONE]';
 
 /**
+ * FNV-1a string hash (hex). Used to synthesize Ollama tool-call ids that are
+ * deterministic for a given call but unique across separate assistant turns.
+ * Not cryptographic — just a stable, well-distributed short digest.
+ */
+function fnv1aHex(text: string): string {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+/**
  * Extract thought/reasoning content from a text string by detecting common
  * thinking tag patterns. Currently supports:
  *   - DeepSeek R1 / local models: `<think>...</think>`
@@ -499,10 +513,17 @@ export function ollamaNdjsonLineToChunk(raw: Record<string, unknown>): ChatChunk
         chunk.toolCalls = message.tool_calls.map((tc, i) => {
             const args = tc.function.arguments;
             const argsString = typeof args === 'string' ? args : JSON.stringify(args ?? {});
+            // Ollama doesn't assign ids — synthesize one stable per call that
+            // is unique across turns. A bare index (`ollama_call_${i}`) repeats
+            // across assistant turns and collides with history kept by the
+            // co-writer, confusing tool-result routing. The content hash of
+            // name + arguments is deterministic for the same response and
+            // varies across distinct tool-using turns; the index keeps the id
+            // stable within a single response.
+            const contentHash = fnv1aHex(`${tc.function.name}:${argsString}`);
             return {
                 index: i,
-                // Ollama doesn't assign ids — synthesize one stable per call.
-                id: `ollama_call_${i}`,
+                id: `ollama_call_${i}_${contentHash}`,
                 name: tc.function.name,
                 arguments: argsString
             };

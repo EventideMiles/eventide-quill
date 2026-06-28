@@ -724,10 +724,20 @@ export class CoWriterPanel extends AbstractChatPanel {
 
                     // Lorebook coach draft card — rendered under the message
                     // that produced it. Save writes the entry to the vault via
-                    // the helper; Discard clears it from the session.
+                    // the helper; Discard clears it from the session. Both
+                    // clear the message-level draft so resolved cards drop
+                    // their actionable Save/Discard (no stale live actions).
                     if (msg.loreDraft) {
                         renderLoreDraftCard(bubble, msg.loreDraft, this.app, this.plugin, this.renderEvents, {
-                            onDiscard: (draft) => this.onDiscardLoreDraft?.(draft)
+                            onSave: () => {
+                                msg.loreDraft = undefined;
+                                this.render();
+                            },
+                            onDiscard: (draft) => {
+                                msg.loreDraft = undefined;
+                                this.onDiscardLoreDraft?.(draft);
+                                this.render();
+                            }
                         });
                     }
                 }
@@ -1360,7 +1370,10 @@ export class CoWriterPanel extends AbstractChatPanel {
                             void this.app.workspace.openLinkText(item.file.path, '', false);
                         }
                     },
-                    []
+                    [],
+                    'Select a manuscript file to open...',
+                    false,
+                    true
                 ).open();
                 return;
             }

@@ -62,7 +62,7 @@ export const calculateFileSizesTool: Tool = {
             const content = await plugin.app.vault.cachedRead(file);
             totalChars += content.length;
             found++;
-            details.push(`- ${file.name} (${content.length.toLocaleString()} chars)`);
+            details.push(`- ${file.path} (${content.length.toLocaleString()} chars)`);
         }
 
         if (found === 0) return 'None of the specified files were found in the vault.';

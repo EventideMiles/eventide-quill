@@ -2,10 +2,12 @@ import type { AiProvider, ChatChunk, ChatMessage, ToolCallRequest } from '../pro
 import type { Tool, ToolContext, ToolRegistry } from './tool';
 
 /**
- * Maximum number of tool rounds before the loop gives up and emits a final
- * `done` chunk. A "round" is one model completion possibly containing tool
- * calls plus the execution of those tools. Five rounds means the model can
- * call up to five sequential batches of tools before being told to wrap up.
+ * Maximum number of tool rounds before the loop forces a final response. A
+ * "round" is one model completion possibly containing tool calls plus the
+ * execution of those tools. Five rounds means the model can call up to five
+ * sequential batches of tools; after that, one more completion runs with
+ * `toolChoice: 'none'` so the model answers using the tool results rather
+ * than being cut off mid-thought.
  *
  * High enough to support a real research-and-draft flow (gather context
  * across multiple sources, then draft) but low enough to prevent runaway
@@ -67,7 +69,11 @@ export async function* streamWithTools(
     let lastUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
     let lastModel: string | undefined;
 
-    for (let round = 0; round < maxRounds; round++) {
+    for (let round = 0; round <= maxRounds; round++) {
+        // After the last allowed tool round, run one forced final pass
+        // (toolChoice: 'none') so the model can answer using the tool results
+        // instead of being cut off mid-thought by the round cap.
+        const forceFinal = round === maxRounds;
         const fragmentBuffer = new Map<number, { id?: string; name?: string; arguments: string }>();
         let assistantText = '';
 
@@ -75,7 +81,7 @@ export async function* streamWithTools(
             ...options,
             messages,
             tools,
-            toolChoice: 'auto'
+            toolChoice: forceFinal ? 'none' : 'auto'
         });
 
         for await (const chunk of stream) {
@@ -115,8 +121,11 @@ export async function* streamWithTools(
             }
         }
 
-        // No fragments means no tool calls — the model's response is final.
-        if (fragmentBuffer.size === 0) {
+        // Either the model produced no tool calls (its response is final), or
+        // this was the forced final pass after the round cap. toolChoice:
+        // 'none' normally prevents tool calls, but guard against models that
+        // ignore it so we never execute past the allowed round budget.
+        if (fragmentBuffer.size === 0 || forceFinal) {
             const doneChunk: ChatChunk = { text: '', done: true };
             if (lastModel) doneChunk.model = lastModel;
             if (lastUsage) doneChunk.usage = lastUsage;
@@ -166,7 +175,8 @@ export async function* streamWithTools(
         // Loop continues: a new completion starts with the extended messages.
     }
 
-    // Exceeded maxRounds — emit a final done so the consumer's stream ends cleanly.
+    // Defensive fallback: only reachable if maxRounds <= 0 (the loop body
+    // otherwise always returns on its forced final pass).
     const doneChunk: ChatChunk = { text: '', done: true };
     if (lastModel) doneChunk.model = lastModel;
     if (lastUsage) doneChunk.usage = lastUsage;

@@ -55,6 +55,8 @@ export const grepNotesTool: Tool = {
         let filesWithMatches = 0;
 
         for (const file of scoped) {
+            // Respect cancellation so an aborted request stops reading files.
+            if (ctx.signal?.aborted) break;
             if (filesWithMatches >= MAX_FILES) break;
 
             const content = await plugin.app.vault.cachedRead(file);

@@ -47,8 +47,14 @@ export const appendToNoteTool: Tool = {
         const existing = await readNoteContent(plugin, file.path);
         if (existing === null) return `Error: could not read "${file.path}".`;
 
-        // Ensure a blank line between existing content and the append.
-        const sep = existing.length > 0 && !existing.endsWith('\n') ? '\n\n' : '';
+        // Ensure a blank line between existing content and the append. Count
+        // trailing newlines so a single trailing newline still gets a gap
+        // (otherwise the append would start immediately after that newline).
+        let sep = '';
+        if (existing.length > 0) {
+            const trailing = existing.length - existing.replace(/\n+$/, '').length;
+            sep = trailing >= 2 ? '' : '\n'.repeat(2 - trailing);
+        }
         const newText = sep + content;
 
         const opened = await openNoteForEdit(plugin.app, file.path);

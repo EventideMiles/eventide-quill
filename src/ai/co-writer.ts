@@ -3,7 +3,7 @@ import { EditorView } from '@codemirror/view';
 import type EventideQuillPlugin from '../main';
 import { type VoiceProfile } from '../types';
 import { findEditorView } from '../utils/find-editor';
-import { AiProvider, type ChatMessage, type ToolCallRequest, type ToolDefinition } from './provider';
+import { type AiProvider, type ChatMessage, type ToolCallRequest, type ToolDefinition } from './provider';
 import {
     getCoWriterDiscussPrompt,
     getCoWriterGenerationPrompt,
@@ -1284,13 +1284,18 @@ export class CoWriterSession {
                 if (estimateTokens(this.discussCurrentMessages) / maxTokens >= compactPct) {
                     const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
                     try {
-                        const cResult = await compactConversation(chat.provider, this.discussCurrentMessages, sc);
+                        const cResult = await compactConversation(chat.provider, this.discussCurrentMessages, sc, {
+                            signal: this.abortController?.signal
+                        });
                         if (cResult) {
                             this.discussCurrentMessages = cResult.messages;
                             this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
                         }
                     } catch (compErr: unknown) {
-                        if (compErr instanceof Error && compErr.name === 'AbortError') return;
+                        // Propagate aborts to the outer catch so the normal
+                        // loading-state/editor-unlock cleanup runs (don't return
+                        // from inside the tool loop, which would skip it).
+                        if (compErr instanceof Error && compErr.name === 'AbortError') throw compErr;
                         console.warn('Quill: Mid-loop compaction failed; continuing.', compErr);
                     }
                 }
@@ -1567,13 +1572,17 @@ export class CoWriterSession {
                 if (estimateTokens(this.discussCurrentMessages) / maxTokens >= compactPct) {
                     const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
                     try {
-                        const cResult = await compactConversation(chat.provider, this.discussCurrentMessages, sc);
+                        const cResult = await compactConversation(chat.provider, this.discussCurrentMessages, sc, {
+                            signal: this.abortController?.signal
+                        });
                         if (cResult) {
                             this.discussCurrentMessages = cResult.messages;
                             this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
                         }
                     } catch (compErr: unknown) {
-                        if (compErr instanceof Error && compErr.name === 'AbortError') return;
+                        // Propagate aborts to the outer catch so the normal
+                        // loading-state/editor-unlock cleanup runs.
+                        if (compErr instanceof Error && compErr.name === 'AbortError') throw compErr;
                         console.warn('Quill: Mid-loop compaction failed; continuing.', compErr);
                     }
                 }
@@ -2028,14 +2037,15 @@ export class CoWriterSession {
                 // placeholder and the final would both render and duplicate
                 // the response text. Tool calls are annotated on the message
                 // as `toolUses` (rendered within the bubble by the panel).
-                const draftForMessage = this.currentLoreDraft;
+                // loreDraft is attached AFTER tool execution below, so the
+                // draft comes from the post-tool state (propose_entry's
+                // output) rather than a pre-tool snapshot.
                 const lastIdx = this.chatHistory.length - 1;
                 if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
                     this.chatHistory[lastIdx] = {
                         role: 'assistant',
                         content: response,
                         thought: thought || undefined,
-                        loreDraft: draftForMessage ?? undefined,
                         toolUses:
                             toolCalls.length > 0
                                 ? toolCalls.map((c) => ({
@@ -2108,6 +2118,18 @@ export class CoWriterSession {
                     });
                 }
 
+                // Attach the lore draft from the POST-tool state so the
+                // assistant turn that actually invoked propose_entry owns the
+                // review card. Only this round's message carries the draft — a
+                // later, non-proposing round gets undefined so an outdated
+                // actionable card can't resurface.
+                const proposedThisRound = toolCalls.some((c) => c.name === 'propose_entry');
+                const draftIdx = this.chatHistory.length - 1;
+                if (draftIdx >= 0 && this.chatHistory[draftIdx]?.role === 'assistant') {
+                    this.chatHistory[draftIdx].loreDraft =
+                        proposedThisRound && this.currentLoreDraft ? this.currentLoreDraft : undefined;
+                }
+
                 // If propose_entry was called, advance phase and fire the
                 // draft-ready callback.
                 if (this.currentLoreDraft && this.loreCoachSession) {
@@ -2125,13 +2147,17 @@ export class CoWriterSession {
                 if (estimateTokens(this.loreCoachMessages) / maxTokens >= compactPct) {
                     const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
                     try {
-                        const cResult = await compactConversation(chat.provider, this.loreCoachMessages, sc);
+                        const cResult = await compactConversation(chat.provider, this.loreCoachMessages, sc, {
+                            signal: this.abortController?.signal
+                        });
                         if (cResult) {
                             this.loreCoachMessages = cResult.messages;
                             this.onTokenEstimate?.(estimateTokens(this.loreCoachMessages), maxTokens);
                         }
                     } catch (compErr: unknown) {
-                        if (compErr instanceof Error && compErr.name === 'AbortError') return;
+                        // Propagate aborts to the outer catch so the normal
+                        // loading-state cleanup runs.
+                        if (compErr instanceof Error && compErr.name === 'AbortError') throw compErr;
                         console.warn('Quill: Mid-loop compaction failed; continuing.', compErr);
                     }
                 }
@@ -2462,33 +2488,54 @@ export class CoWriterSession {
         const entry = this.loreEdits.get(filePath);
         if (!entry) return;
 
-        const change = entry.changeSet.approve(id);
-        if (!change) return;
+        const view = this.app ? findEditorView(this.app, filePath) : null;
+        const cm = view ? (view.editor as unknown as { cm: EditorView }).cm : null;
 
+        if (cm) {
+            // File is open — reconcile any drift from manual edits during
+            // review (same sync the other approval flows do), then dispatch.
+            syncChangeSetPositions(cm, entry.changeSet, 'lore_edit');
+            const change = entry.changeSet.approve(id);
+            if (!change) return;
+            const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'lore_edit');
+            cm.dispatch({
+                changes: change,
+                effects: setDiffEdits.of(preserved),
+                selection: { anchor: change.from + change.insert.length }
+            });
+            this.closeLoreEditTabIfOpenedByTool(filePath);
+            this.loreEdits.delete(filePath);
+            this.onLoreEditUpdate?.();
+            return;
+        }
+
+        // File isn't open — apply the change directly via the vault. Don't
+        // close the tab, delete the entry, or fire updates until the write
+        // has actually succeeded, so a failed write keeps the edit reviewable.
         if (this.app) {
-            const view = findEditorView(this.app, filePath);
-            if (view) {
-                // File is open — dispatch via CodeMirror.
-                const cm = (view.editor as unknown as { cm: EditorView }).cm;
-                if (cm) {
-                    const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'lore_edit');
-                    cm.dispatch({
-                        changes: change,
-                        effects: setDiffEdits.of(preserved),
-                        selection: { anchor: change.from + change.insert.length }
+            const file = this.app.vault.getAbstractFileByPath(filePath);
+            if (file instanceof TFile) {
+                const edit = entry.changeSet.get(id);
+                if (!edit || edit.state !== 'pending') return;
+                void this.app.vault
+                    .process(file, (content) => content.slice(0, edit.from) + edit.newText + content.slice(edit.to))
+                    .then(() => {
+                        entry.changeSet.approve(id);
+                        this.closeLoreEditTabIfOpenedByTool(filePath);
+                        this.loreEdits.delete(filePath);
+                        this.onLoreEditUpdate?.();
+                    })
+                    .catch((err: unknown) => {
+                        console.warn('Quill: Lore edit write failed; keeping the edit pending.', err);
+                        this.onLoreEditUpdate?.();
                     });
-                }
-            } else {
-                // File isn't open — apply the change directly to the file.
-                const file = this.app.vault.getAbstractFileByPath(filePath);
-                if (file instanceof TFile) {
-                    void this.app.vault.process(file, (content) => {
-                        return content.slice(0, change.from) + change.insert + content.slice(change.to);
-                    });
-                }
+                return;
             }
         }
 
+        // Fallback (no app, no open editor, or file vanished) — just clear.
+        const change = entry.changeSet.approve(id);
+        if (!change) return;
         this.closeLoreEditTabIfOpenedByTool(filePath);
         this.loreEdits.delete(filePath);
         this.onLoreEditUpdate?.();

@@ -3,9 +3,9 @@ import type { ExtractedEntity } from '../../core/context-engine/types';
 import type { Tool, ToolContext } from './tool';
 
 /**
- * Find every mention of an entity (character, location, item, plot thread,
- * theme) in the active manuscript. Returns occurrence count, line numbers,
- * and known aliases.
+ * Find every mention of an entity (character, location, or plot thread) in
+ * the active manuscript. Returns occurrence count, line numbers, and known
+ * aliases.
  *
  * Source priority:
  *   1. `plugin.currentManuscriptEntities` (cached from the last dashboard

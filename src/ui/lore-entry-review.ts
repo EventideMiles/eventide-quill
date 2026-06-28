@@ -106,6 +106,10 @@ async function saveDraftToVault(draft: LoreDraftEntry, plugin: EventideQuillPlug
     const frontmatter = draft.entryType ? `---\nquill-type: ${draft.entryType}\n---\n\n` : '';
     const content = `${frontmatter}${draft.content.trim()}\n`;
 
+    // The create call is the point that determines success. Post-save UI
+    // actions (opening the note, refreshing coverage) are handled separately
+    // so a failure there doesn't undo a successful save or surface a
+    // misleading "Failed to save entry" notice.
     try {
         const file = plugin.app.vault.getAbstractFileByPath(targetPath);
         if (file instanceof TFile) {
@@ -114,19 +118,29 @@ async function saveDraftToVault(draft: LoreDraftEntry, plugin: EventideQuillPlug
             return false;
         }
         await plugin.app.vault.create(targetPath, content);
-        new Notice(`Quill: Saved "${draft.name}" to ${folder || '(vault root)'}.`);
-
-        // Open the new note so the writer can see and edit it immediately.
-        await plugin.app.workspace.openLinkText(targetPath, '', false);
-
-        // Refresh lorebook coverage so the new entry shows up in the Lorebook tab.
-        await plugin.refreshLorebook();
-        return true;
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         new Notice(`Quill: Failed to save entry — ${message}`);
         return false;
     }
+
+    new Notice(`Quill: Saved "${draft.name}" to ${folder || '(vault root)'}.`);
+
+    // Open the new note so the writer can see and edit it immediately.
+    try {
+        await plugin.app.workspace.openLinkText(targetPath, '', false);
+    } catch {
+        // Non-fatal: the note was created; opening is best-effort.
+    }
+
+    // Refresh lorebook coverage so the new entry shows up in the Lorebook tab.
+    try {
+        await plugin.refreshLorebook();
+    } catch {
+        // Non-fatal: the note was created; coverage refresh is best-effort.
+    }
+
+    return true;
 }
 
 /**
@@ -159,17 +173,20 @@ function sanitizeFileName(name: string): string {
 
 /**
  * Resolve a base path to a non-colliding one by appending " (N)" before the
- * extension when a file already exists at the target path.
+ * extension when a file already exists at the target path. Normalizes the
+ * candidate before each vault probe so redundant separators don't defeat the
+ * existence check.
  */
 async function resolveUniquePath(basePath: string, plugin: EventideQuillPlugin): Promise<string> {
-    const dotIdx = basePath.lastIndexOf('.');
-    const stem = dotIdx > 0 ? basePath.slice(0, dotIdx) : basePath;
-    const ext = dotIdx > 0 ? basePath.slice(dotIdx) : '';
+    const normalizedBase = normalizePath(basePath);
+    const dotIdx = normalizedBase.lastIndexOf('.');
+    const stem = dotIdx > 0 ? normalizedBase.slice(0, dotIdx) : normalizedBase;
+    const ext = dotIdx > 0 ? normalizedBase.slice(dotIdx) : '';
 
-    let candidate = basePath;
+    let candidate = normalizedBase;
     let n = 2;
     while (plugin.app.vault.getAbstractFileByPath(candidate)) {
-        candidate = `${stem} (${n})${ext}`;
+        candidate = normalizePath(`${stem} (${n})${ext}`);
         n++;
     }
     return candidate;

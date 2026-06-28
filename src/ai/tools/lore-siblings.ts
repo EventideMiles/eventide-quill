@@ -45,9 +45,20 @@ export const loreSiblingsTool: Tool = {
         }
 
         const typeFilter = parseTypeFilter(typeof args.type === 'string' ? args.type : '');
-        const filtered = typeFilter === null ? entries : entries.filter((e) => e.type === typeFilter);
+        if (typeFilter.kind === 'invalid') {
+            return (
+                `Error: "${typeFilter.raw}" is not a recognized entry type. ` +
+                'Valid types: character, location, event, item, faction, plot-thread, theme.'
+            );
+        }
+        // No-filter path returns only typed entries — untyped notes clutter
+        // sibling context without adding canon to compare against.
+        const filtered =
+            typeFilter.kind === 'none'
+                ? entries.filter((e) => e.type !== 'untyped')
+                : entries.filter((e) => e.type === typeFilter.type);
         if (filtered.length === 0) {
-            const label = typeFilter === null ? '' : ` of type "${LORE_TYPE_LABELS[typeFilter]}"`;
+            const label = typeFilter.kind === 'type' ? ` of type "${LORE_TYPE_LABELS[typeFilter.type]}"` : '';
             return `No lore entries${label} found.`;
         }
 
@@ -56,13 +67,17 @@ export const loreSiblingsTool: Tool = {
 };
 
 /**
- * Parse the optional type filter. Returns `null` for empty/unrecognized args
- * (treat as "all types" rather than erroring — the model may pass an empty
- * string to mean "no filter").
+ * Parse the optional type filter into three distinct outcomes:
+ *   - `{ kind: 'none' }`     → empty input: no filter (caller lists typed entries).
+ *   - `{ kind: 'invalid' }`  → unrecognized input: caller errors rather than
+ *                              falling back to returning everything.
+ *   - `{ kind: 'type' }`     → a recognized type: caller filters to that type.
  */
-function parseTypeFilter(args: string): LoreEntryType | null {
+type TypeFilterResult = { kind: 'none' } | { kind: 'invalid'; raw: string } | { kind: 'type'; type: LoreEntryType };
+
+function parseTypeFilter(args: string): TypeFilterResult {
     const trimmed = args.trim().toLowerCase();
-    if (!trimmed) return null;
+    if (!trimmed) return { kind: 'none' };
     const validTypes: LoreEntryTypeOrUntyped[] = [
         'character',
         'location',
@@ -72,7 +87,9 @@ function parseTypeFilter(args: string): LoreEntryType | null {
         'plot-thread',
         'theme'
     ];
-    return (validTypes as string[]).includes(trimmed) ? (trimmed as LoreEntryType) : null;
+    return (validTypes as string[]).includes(trimmed)
+        ? { kind: 'type', type: trimmed as LoreEntryType }
+        : { kind: 'invalid', raw: args.trim() };
 }
 
 function formatEntry(entry: {
