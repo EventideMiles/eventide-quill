@@ -14,7 +14,8 @@ export const appendToNoteTool: Tool = {
         'Propose appending content to an existing note that is NOT currently open. ' +
         'The note opens in a new tab with the new content shown as a diff. The writer ' +
         'reviews and approves or rejects it. For the file the writer currently has open, ' +
-        'recommend they use Direct or Fulfill mode instead.',
+        'recommend they use Direct or Fulfill mode instead. ' +
+        'Work ONE file at a time: read it, append to it, then move to the next.',
     parameters: {
         type: 'object',
         properties: {

@@ -27,7 +27,10 @@ export const vaultLookupTool: Tool = {
     description:
         'Read the text content of a note in the vault. Pass a vault-relative ' +
         'path (e.g., "Lore/Characters/Sarah Connor.md") or a note name ' +
-        '(e.g., "Sarah Connor"). Returns the body text without frontmatter.',
+        '(e.g., "Sarah Connor"). Returns the body text without frontmatter. ' +
+        'IMPORTANT: results stay in context for ALL subsequent turns — read ' +
+        'files judiciously, especially during multi-file edits. Read one file, ' +
+        'make your edit, then move to the next.',
     parameters: {
         type: 'object',
         properties: {

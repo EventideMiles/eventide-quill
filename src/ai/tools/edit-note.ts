@@ -20,7 +20,10 @@ export const editNoteTool: Tool = {
         'The note opens in a new tab with the change shown as a diff. The writer reviews ' +
         'and approves or rejects it. Provide the exact old_text to find and the new_text ' +
         'to replace it with. For the file the writer currently has open, recommend they ' +
-        'use Direct or Fulfill mode instead — those stream changes live.',
+        'use Direct or Fulfill mode instead. ' +
+        'Work ONE file at a time: read it, edit it, then move to the next. ' +
+        'Do not read all target files at once — each result stays in context ' +
+        'for all subsequent rounds.',
     parameters: {
         type: 'object',
         properties: {
