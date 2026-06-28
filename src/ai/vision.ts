@@ -85,6 +85,54 @@ export async function resolveImageInjection(
 }
 
 /**
+ * Route images collected from tool output (or any source) into a conversation
+ * array using the two vision regimes from {@link resolveImageInjection}:
+ *
+ * - **Native** (chat model is vision-capable): attach the images as image
+ *   content on a new user message.
+ * - **Described** (chat model text-only + image model configured): splice in
+ *   the proxy caption text.
+ * - **Unsupported**: inject a placeholder note so the model knows an image
+ *   came back but couldn't be interpreted.
+ *
+ * Never throws — on proxy-call failure a placeholder is injected instead, so
+ * the caller's tool loop keeps going. No-op when `images` is empty. This is
+ * the single image-injection path shared by the co-writer tool loops and
+ * `streamWithTools`; keep behavior here authoritative.
+ */
+export async function injectImagesIntoMessages(
+    plugin: EventideQuillPlugin,
+    images: string[],
+    messages: ChatMessage[],
+    signal?: AbortSignal
+): Promise<void> {
+    if (images.length === 0) return;
+    try {
+        const injection = await resolveImageInjection(plugin, images, { signal });
+        if (injection.kind === 'native') {
+            messages.push({
+                role: 'user',
+                content: '[Attached image(s) from tool output]',
+                images: injection.images
+            });
+        } else if (injection.kind === 'described') {
+            messages.push({
+                role: 'user',
+                content: `[Image description from the vision model]: ${injection.text}`
+            });
+        } else {
+            messages.push({
+                role: 'user',
+                content: `[An image was returned but cannot be interpreted: ${injection.reason}]`
+            });
+        }
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        messages.push({ role: 'user', content: `[Image could not be described: ${msg}]` });
+    }
+}
+
+/**
  * Call the image model with a caption request and return its text. Throws on
  * failure so callers can surface a Notice and inject a placeholder.
  */

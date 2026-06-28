@@ -1,6 +1,6 @@
 import type { AiProvider, ChatChunk, ChatMessage, ToolCallRequest } from '../provider';
 import type { Tool, ToolContext, ToolRegistry, ToolResult } from './tool';
-import { resolveImageInjection } from '../vision';
+import { injectImagesIntoMessages } from '../vision';
 
 /**
  * Maximum number of tool rounds before the loop forces a final response. A
@@ -185,9 +185,7 @@ export async function* streamWithTools(
         // through the vision layer. Native: attach as image content. Proxy:
         // translate to a text caption. Either way the model receives the image
         // information as a user turn before it continues.
-        if (collectedImages.length > 0) {
-            await injectToolImages(collectedImages, messages, ctx, options.signal);
-        }
+        await injectImagesIntoMessages(ctx.plugin, collectedImages, messages, options.signal);
         // Loop continues: a new completion starts with the extended messages.
     }
 
@@ -229,41 +227,5 @@ async function executeToolSafely(tool: Tool, argumentsJson: string, ctx: ToolCon
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return { text: `Error executing tool "${tool.id}": ${message}` };
-    }
-}
-
-/**
- * Route images collected from tool results into the conversation. Handles the
- * two vision regimes (see `resolveImageInjection`) and never throws — failures
- * inject a placeholder so the tool-loop keeps going.
- */
-async function injectToolImages(
-    images: string[],
-    messages: ChatMessage[],
-    ctx: ToolContext,
-    signal?: AbortSignal
-): Promise<void> {
-    try {
-        const injection = await resolveImageInjection(ctx.plugin, images, { signal });
-        if (injection.kind === 'native') {
-            messages.push({
-                role: 'user',
-                content: '[Attached image(s) from tool output]',
-                images: injection.images
-            });
-        } else if (injection.kind === 'described') {
-            messages.push({
-                role: 'user',
-                content: `[Image description from the vision model]: ${injection.text}`
-            });
-        } else {
-            messages.push({
-                role: 'user',
-                content: `[An image was returned but cannot be interpreted: ${injection.reason}]`
-            });
-        }
-    } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        messages.push({ role: 'user', content: `[Image could not be described: ${msg}]` });
     }
 }

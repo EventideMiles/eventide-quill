@@ -27,7 +27,7 @@ import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files
 import { ChangeSet } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
 import { createToolRegistry, type ToolContext, type ToolRegistry, type ToolResult } from './tools';
-import { resolveImageInjection } from './vision';
+import { injectImagesIntoMessages } from './vision';
 import {
     clearDiffEdits,
     diffEditsField,
@@ -1094,45 +1094,6 @@ export class CoWriterSession {
     }
 
     /**
-     * Route images collected from tool results into a conversation array.
-     * Mirrors the vision routing in `streamWithTools`: native when the chat
-     * model is vision-capable (role "Chat + image"), proxy (text caption)
-     * otherwise. Never throws — failures inject a placeholder so the loop
-     * keeps going.
-     */
-    private async injectToolImagesInto(
-        images: string[],
-        messages: ChatMessage[],
-        plugin: EventideQuillPlugin,
-        signal?: AbortSignal
-    ): Promise<void> {
-        if (images.length === 0) return;
-        try {
-            const injection = await resolveImageInjection(plugin, images, { signal });
-            if (injection.kind === 'native') {
-                messages.push({
-                    role: 'user',
-                    content: '[Attached image(s) from tool output]',
-                    images: injection.images
-                });
-            } else if (injection.kind === 'described') {
-                messages.push({
-                    role: 'user',
-                    content: `[Image description from the vision model]: ${injection.text}`
-                });
-            } else {
-                messages.push({
-                    role: 'user',
-                    content: `[An image was returned but cannot be interpreted: ${injection.reason}]`
-                });
-            }
-        } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            messages.push({ role: 'user', content: `[Image could not be described: ${msg}]` });
-        }
-    }
-
-    /**
      * Annotate the last assistant message's toolUses with error info for
      * failed tool calls, so the panel can render them red and show the
      * reason on hover / right-click copy. Called after the execution loop
@@ -1402,7 +1363,7 @@ export class CoWriterSession {
                         collectedImages.push(...toolResult.images);
                     }
                 }
-                await this.injectToolImagesInto(collectedImages, this.discussCurrentMessages, plugin, ctx.signal);
+                await injectImagesIntoMessages(plugin, collectedImages, this.discussCurrentMessages, ctx.signal);
 
                 // Annotate toolUses with error info so the panel can style
                 // failed calls red and show the reason on hover / right-click copy.
@@ -1708,7 +1669,7 @@ export class CoWriterSession {
                         coachCollectedImages.push(...toolResult.images);
                     }
                 }
-                await this.injectToolImagesInto(coachCollectedImages, this.discussCurrentMessages, plugin, ctx.signal);
+                await injectImagesIntoMessages(plugin, coachCollectedImages, this.discussCurrentMessages, ctx.signal);
 
                 this.annotateToolUseErrors(coachExecResults);
                 this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
@@ -2230,7 +2191,7 @@ export class CoWriterSession {
                         loreCollectedImages.push(...toolResult.images);
                     }
                 }
-                await this.injectToolImagesInto(loreCollectedImages, this.loreCoachMessages, plugin, ctx.signal);
+                await injectImagesIntoMessages(plugin, loreCollectedImages, this.loreCoachMessages, ctx.signal);
 
                 this.annotateToolUseErrors(loreExecResults);
 
