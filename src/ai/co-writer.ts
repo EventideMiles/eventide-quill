@@ -26,7 +26,7 @@ import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
 import { ChangeSet } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
-import { createInternalToolRegistry, createLoreCoachToolRegistry, type ToolContext, type ToolRegistry } from './tools';
+import { createToolRegistry, type ToolContext, type ToolRegistry } from './tools';
 import {
     clearDiffEdits,
     diffEditsField,
@@ -1180,8 +1180,7 @@ export class CoWriterSession {
         // (manuscript_mentions, lore_siblings, vault_lookup) to look up
         // details mid-conversation. Each tool call produces a visible
         // round in the chat and consumes a model turn.
-        const toolsEnabled = plugin.settings.coWriterToolsEnabled;
-        const registry = toolsEnabled ? createInternalToolRegistry() : null;
+        const registry = createToolRegistry(plugin, false);
         const toolDefs = registry?.toToolDefinitions();
         const ctx: ToolContext = { plugin };
         // 0 = unlimited (the model calls as many rounds as it needs; use Stop
@@ -1485,8 +1484,7 @@ export class CoWriterSession {
         }
 
         // Tool setup: same internal tools as discuss mode.
-        const toolsEnabled = plugin.settings.coWriterToolsEnabled;
-        const registry = toolsEnabled ? createInternalToolRegistry() : null;
+        const registry = createToolRegistry(plugin, false);
         const toolDefs = registry?.toToolDefinitions();
         const ctx: ToolContext = { plugin };
         const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
@@ -1890,8 +1888,7 @@ export class CoWriterSession {
             this.loreCoachMessages.push({ role: 'user', content: getLoreCoachUserPrompt(message) });
         }
 
-        const toolsEnabled = plugin.settings.coWriterToolsEnabled;
-        const registry = toolsEnabled ? createLoreCoachToolRegistry() : null;
+        const registry = createToolRegistry(plugin, true);
         const toolDefs = registry?.toToolDefinitions();
         const ctx: ToolContext = { plugin };
 
@@ -1923,7 +1920,7 @@ export class CoWriterSession {
                 scope: this.loreCoachSession.scope,
                 phase: this.loreCoachSession.phase,
                 rounds: this.loreCoachSession.rounds,
-                toolsEnabled,
+                toolsEnabled: plugin.settings.coWriterToolsEnabled,
                 conversationTokens: estimateTokens(this.loreCoachMessages),
                 maxTokens
             });
