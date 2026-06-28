@@ -50,16 +50,27 @@ function sanitizeProse(text: string): string {
  */
 function summarizeToolArgs(toolName: string, argumentsJson: string): string {
     try {
-        const args = argumentsJson.trim().length === 0 ? {} : (JSON.parse(argumentsJson) as Record<string, unknown>);
-        // Pick the most descriptive field based on common tool arg names.
-        const value =
-            (typeof args.name === 'string' && args.name) ||
-            (typeof args.path === 'string' && args.path) ||
-            (typeof args.query === 'string' && args.query) ||
-            (typeof args.type === 'string' && args.type) ||
-            '';
-        if (!value) return '';
-        return value.length > 60 ? `${value.slice(0, 57)}...` : value;
+        const args = JSON.parse(argumentsJson) as Record<string, unknown>;
+        // Build a summary from the most relevant field(s) for each tool type.
+        const parts: string[] = [];
+        const wiki = typeof args.wiki === 'string' ? args.wiki : '';
+        const query = typeof args.query === 'string' ? args.query : '';
+        const url = typeof args.url === 'string' ? args.url : '';
+        const name = typeof args.name === 'string' ? args.name : '';
+        const path = typeof args.path === 'string' ? args.path : '';
+        const type = typeof args.type === 'string' ? args.type : '';
+
+        // fandom_lookup: show "wiki: query"
+        if (wiki && query) parts.push(`${wiki}: ${query}`);
+        else if (query) parts.push(query);
+        else if (url) parts.push(url);
+        else if (name) parts.push(name);
+        else if (path) parts.push(path);
+        else if (type) parts.push(type);
+
+        if (parts.length === 0) return '';
+        const summary = parts.join(' ');
+        return summary.length > 60 ? `${summary.slice(0, 57)}...` : summary;
     } catch {
         return '';
     }
@@ -417,6 +428,28 @@ function buildContextBudgetMessage(
             `file(s) in this round. Batch your tool calls — read and edit multiple files per response ` +
             `to minimize total rounds.`
     };
+}
+
+/**
+ * Build a system message telling the model which network tools are available,
+ * when enabled. Returns null when network tools are off.
+ */
+function buildNetworkToolsMessage(plugin: EventideQuillPlugin): ChatMessage | null {
+    if (!plugin.settings.lorebookNetworkTools) return null;
+    const wikis = plugin.settings.lorebookFandomWikis;
+    const lang = plugin.settings.lorebookWikipediaLang;
+    const lines = [
+        'You have network tools available:',
+        '- fandom_lookup: search a Fandom wiki for canon details.',
+        `- wikipedia_lookup: search Wikipedia (${lang}).`,
+        '- fetch_url: fetch any web page and return its text.',
+        'Use these when the writer asks about external canon, references, research,',
+        'or real-world topics. Results count toward context — be judicious.'
+    ];
+    if (wikis.length > 0) {
+        lines[1] = `- fandom_lookup: search a Fandom wiki for canon details (configured: ${wikis.join(', ')}).`;
+    }
+    return { role: 'system', content: lines.join('\n') };
 }
 
 /**
@@ -1110,6 +1143,10 @@ export class CoWriterSession {
         if (activeFileMsg) {
             injectedContext.push(activeFileMsg);
         }
+        const discussNetworkMsg = buildNetworkToolsMessage(plugin);
+        if (discussNetworkMsg) {
+            injectedContext.push(discussNetworkMsg);
+        }
 
         const prompt = getCoWriterDiscussPrompt(proseForContext || '(empty document)', message);
 
@@ -1394,6 +1431,10 @@ export class CoWriterSession {
         const coachActiveFileMsg = buildActiveFileMessage(plugin);
         if (coachActiveFileMsg) {
             injectedContext.push(coachActiveFileMsg);
+        }
+        const coachNetworkMsg = buildNetworkToolsMessage(plugin);
+        if (coachNetworkMsg) {
+            injectedContext.push(coachNetworkMsg);
         }
 
         // Initialize coach session on first call
@@ -1954,9 +1995,11 @@ export class CoWriterSession {
                 // which file is open.
                 const activeFileMsg = buildActiveFileMessage(plugin);
                 const budgetMsg = buildContextBudgetMessage(plugin, this.loreCoachMessages, maxTokens);
+                const networkMsg = buildNetworkToolsMessage(plugin);
                 const injected: ChatMessage[] = [];
                 if (activeFileMsg) injected.push(activeFileMsg);
                 if (budgetMsg) injected.push(budgetMsg);
+                if (networkMsg) injected.push(networkMsg);
                 const messagesForCall =
                     injected.length > 0 && this.loreCoachMessages.length > 0
                         ? [this.loreCoachMessages[0]!, ...injected, ...this.loreCoachMessages.slice(1)]
