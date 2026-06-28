@@ -1288,7 +1288,7 @@ export class CoWriterPanel extends AbstractChatPanel {
                     ? 'Run'
                     : 'Send'
         });
-        if (noActiveFile) actionBtn.disabled = true;
+        if (noActiveFile) actionBtn.disabled = false;
 
         // Textarea row — below the buttons, ~10 lines tall
         const taRow = container.createEl('div', { cls: 'quill-cowriter-panel__ta-row' });
@@ -1352,6 +1352,18 @@ export class CoWriterPanel extends AbstractChatPanel {
         };
 
         this.renderEvents.registerDomEvent(actionBtn, 'click', () => {
+            if (noActiveFile) {
+                new VaultFileSuggestModal(
+                    this.app,
+                    (item) => {
+                        if (item.kind === 'file') {
+                            void this.app.workspace.openLinkText(item.file.path, '', false);
+                        }
+                    },
+                    []
+                ).open();
+                return;
+            }
             if (generating) {
                 doStop();
             } else {
