@@ -157,12 +157,18 @@ export class ToolRegistry {
     /**
      * Rough token cost of this registry's tool definitions as serialized to the
      * request `tools` field. The bulk of the cost is each tool's description +
-     * JSON-schema parameters. Empirical: stringifies the definitions and applies
-     * the chars/4 heuristic, so it self-adjusts to any tool add/remove or
-     * description edit — no hardcoded constants. Used to fold the fixed tools
-     * overhead into context-budget estimates so compaction reflects real size.
+     * JSON-schema parameters. Empirical: stringifies the definitions wrapped in
+     * the `{ type: 'function', function: ... }` shape the providers actually
+     * send (see {@link ToolDefinition}) and applies the chars/4 heuristic, so it
+     * self-adjusts to any tool add/remove or description edit — no hardcoded
+     * constants. Used to fold the fixed tools overhead into context-budget
+     * estimates so compaction reflects real size.
      */
     estimateTokens(): number {
-        return Math.ceil(JSON.stringify(this.toToolDefinitions()).length / 4);
+        const wrapped = this.toToolDefinitions().map((t) => ({
+            type: 'function' as const,
+            function: { name: t.name, description: t.description, parameters: t.parameters }
+        }));
+        return Math.ceil(JSON.stringify(wrapped).length / 4);
     }
 }

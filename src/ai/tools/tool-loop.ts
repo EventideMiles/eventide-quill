@@ -199,12 +199,15 @@ export async function* streamWithTools(
 
 /**
  * Parse arguments JSON and execute the tool with truncation + error
- * containment. Never throws — failures surface to the model as a tool-result
- * error string so the model can recover or apologize.
+ * containment. Non-abort failures surface to the model as a tool-result
+ * error string so the model can recover or apologize; aborts (`AbortError`
+ * or an already-aborted signal) are rethrown so the consumer of
+ * {@link streamWithTools} can run its abort cleanup — the same channel the
+ * underlying stream uses to signal cancellation.
  */
 async function executeToolSafely(tool: Tool, argumentsJson: string, ctx: ToolContext): Promise<ToolResult> {
     try {
-        if (ctx.signal?.aborted) return { text: 'Error: aborted before tool execution.' };
+        if (ctx.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
         // Parse the arguments JSON the model emitted. Tolerant of empty
         // arguments (treat as empty object) — some models emit `{}` or `""`.
@@ -225,6 +228,9 @@ async function executeToolSafely(tool: Tool, argumentsJson: string, ctx: ToolCon
         }
         return normalized;
     } catch (err) {
+        // Rethrow aborts — including tools that surface a generic Error after
+        // the signal has already fired (checked via signal.aborted).
+        if (ctx.signal?.aborted || (err instanceof Error && err.name === 'AbortError')) throw err;
         const message = err instanceof Error ? err.message : String(err);
         return { text: `Error executing tool "${tool.id}": ${message}` };
     }

@@ -1101,8 +1101,9 @@ export class CoWriterSession {
 
     /**
      * Execute one tool call with JSON argument parsing, result truncation,
-     * and full error containment. Never throws — failures surface to the
-     * model as an error string so it can recover.
+     * and full error containment. Non-abort failures surface to the model as
+     * an error string so it can recover; aborts (`AbortError` or an already-
+     * aborted signal) are rethrown so the outer tool loop's cleanup runs.
      */
     private async executeToolCallSafely(
         call: ToolCallRequest,
@@ -1122,7 +1123,13 @@ export class CoWriterSession {
         }
 
         try {
-            if (ctx.signal?.aborted) return { text: 'Error: aborted before tool execution.' };
+            // Propagate aborts so the outer tool loop's abort handling takes
+            // over (loading-state reset + editor unlock). Without this, a
+            // cancellation mid-tool-execution would be swallowed as model-visible
+            // error text and the loop would keep running. The outer catches in
+            // each mode recognize AbortError by name and run the same cleanup
+            // path used for aborted streams.
+            if (ctx.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
             const result = await tool.execute(parsedArgs, ctx);
             const normalized: ToolResult = typeof result === 'string' ? { text: result } : result;
             const maxChars = tool.maxResultTokens * 4;
@@ -1131,6 +1138,9 @@ export class CoWriterSession {
             }
             return normalized;
         } catch (err) {
+            // Rethrow aborts — including tools that surface a generic Error
+            // after the signal has already fired (checked via signal.aborted).
+            if (ctx.signal?.aborted || (err instanceof Error && err.name === 'AbortError')) throw err;
             const msg = err instanceof Error ? err.message : String(err);
             return { text: `Error executing tool "${call.name}": ${msg}` };
         }
