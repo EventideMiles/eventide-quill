@@ -1,5 +1,6 @@
 import type { AiProvider, ChatChunk, ChatMessage, ToolCallRequest } from '../provider';
-import type { Tool, ToolContext, ToolRegistry } from './tool';
+import type { Tool, ToolContext, ToolRegistry, ToolResult } from './tool';
+import { resolveImageInjection } from '../vision';
 
 /**
  * Maximum number of tool rounds before the loop forces a final response. A
@@ -157,20 +158,35 @@ export async function* streamWithTools(
 
         // Execute each tool and append a result message. Execution happens
         // sequentially to preserve order and avoid concurrent vault access.
+        // Images returned by a tool are collected and injected once after all
+        // tool results, so message ordering stays valid (assistant tool_calls
+        // → tool results → user image message → assistant).
+        const collectedImages: string[] = [];
         for (const call of toolCalls) {
             const tool = registry.get(call.name);
-            let resultText: string;
+            let result: ToolResult;
             if (!tool) {
-                resultText = `Error: tool "${call.name}" is not registered.`;
+                result = { text: `Error: tool "${call.name}" is not registered.` };
             } else {
-                resultText = await executeToolSafely(tool, call.arguments, ctx);
+                result = await executeToolSafely(tool, call.arguments, ctx);
             }
             messages.push({
                 role: 'tool',
-                content: resultText,
+                content: result.text,
                 toolCallId: call.id,
                 name: call.name
             });
+            if (result.images && result.images.length > 0) {
+                collectedImages.push(...result.images);
+            }
+        }
+
+        // After all tool results for this round, route any collected images
+        // through the vision layer. Native: attach as image content. Proxy:
+        // translate to a text caption. Either way the model receives the image
+        // information as a user turn before it continues.
+        if (collectedImages.length > 0) {
+            await injectToolImages(collectedImages, messages, ctx, options.signal);
         }
         // Loop continues: a new completion starts with the extended messages.
     }
@@ -188,9 +204,9 @@ export async function* streamWithTools(
  * containment. Never throws — failures surface to the model as a tool-result
  * error string so the model can recover or apologize.
  */
-async function executeToolSafely(tool: Tool, argumentsJson: string, ctx: ToolContext): Promise<string> {
+async function executeToolSafely(tool: Tool, argumentsJson: string, ctx: ToolContext): Promise<ToolResult> {
     try {
-        if (ctx.signal?.aborted) return 'Error: aborted before tool execution.';
+        if (ctx.signal?.aborted) return { text: 'Error: aborted before tool execution.' };
 
         // Parse the arguments JSON the model emitted. Tolerant of empty
         // arguments (treat as empty object) — some models emit `{}` or `""`.
@@ -200,17 +216,54 @@ async function executeToolSafely(tool: Tool, argumentsJson: string, ctx: ToolCon
             args = trimmed.length === 0 ? {} : (JSON.parse(trimmed) as Record<string, unknown>);
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            return `Error: invalid JSON arguments: ${msg}. You emitted: ${argumentsJson.slice(0, 200)}`;
+            return { text: `Error: invalid JSON arguments: ${msg}. You emitted: ${argumentsJson.slice(0, 200)}` };
         }
 
         const result = await tool.execute(args, ctx);
+        const normalized: ToolResult = typeof result === 'string' ? { text: result } : result;
         const maxChars = tool.maxResultTokens * 4; // rough tokens → chars
-        if (result.length > maxChars) {
-            return `${result.slice(0, maxChars)}\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
+        if (normalized.text.length > maxChars) {
+            normalized.text = `${normalized.text.slice(0, maxChars)}\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
         }
-        return result;
+        return normalized;
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        return `Error executing tool "${tool.id}": ${message}`;
+        return { text: `Error executing tool "${tool.id}": ${message}` };
+    }
+}
+
+/**
+ * Route images collected from tool results into the conversation. Handles the
+ * two vision regimes (see `resolveImageInjection`) and never throws — failures
+ * inject a placeholder so the tool-loop keeps going.
+ */
+async function injectToolImages(
+    images: string[],
+    messages: ChatMessage[],
+    ctx: ToolContext,
+    signal?: AbortSignal
+): Promise<void> {
+    try {
+        const injection = await resolveImageInjection(ctx.plugin, images, { signal });
+        if (injection.kind === 'native') {
+            messages.push({
+                role: 'user',
+                content: '[Attached image(s) from tool output]',
+                images: injection.images
+            });
+        } else if (injection.kind === 'described') {
+            messages.push({
+                role: 'user',
+                content: `[Image description from the vision model]: ${injection.text}`
+            });
+        } else {
+            messages.push({
+                role: 'user',
+                content: `[An image was returned but cannot be interpreted: ${injection.reason}]`
+            });
+        }
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        messages.push({ role: 'user', content: `[Image could not be described: ${msg}]` });
     }
 }

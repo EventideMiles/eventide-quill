@@ -1,4 +1,4 @@
-import { AiProvider, ModelConfig, ProviderConfig } from './provider';
+import { AiProvider, ModelConfig, ModelRole, ProviderConfig } from './provider';
 import { OpenAiCompatibleProvider } from './openai-provider';
 import { OllamaProvider } from './ollama-provider';
 
@@ -76,6 +76,6 @@ export function generateProviderId(name: string): string {
 /**
  * Generate a model ID from a model string and role.
  */
-export function generateModelId(model: string, role: 'chat' | 'embed' | 'both'): string {
+export function generateModelId(model: string, role: ModelRole): string {
     return `${generateSlug(model)}-${role}`;
 }

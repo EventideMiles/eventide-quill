@@ -1106,6 +1106,20 @@ export default class EventideQuillPlugin extends Plugin {
         return this.getProvider(key.providerId);
     }
 
+    /**
+     * Get the default image provider and model based on settings. Used by the
+     * vision proxy (Regime B) to caption images for a text-only chat model.
+     * May live on a different provider than chat — the proxy call is fully
+     * isolated (image + prompt → text), so it shares no state with the chat
+     * conversation. Returns `{ provider, modelId }` or `{ provider: null }`.
+     */
+    getDefaultImageProvider(): { provider: AiProvider | null; modelId?: string } {
+        const key = parseProviderKey(this.settings.aiDefaultImageProvider);
+        if (!key) return { provider: null };
+        const provider = this.getProvider(key.providerId);
+        return { provider, modelId: key.modelId || undefined };
+    }
+
     /** Open the Fix with AI modal for a lint result triggered from an in-editor tooltip. */
     private openInlineAiFix(result: LintResult, _view: EditorView): void {
         const view = findEditorView(this.app, this.lintActiveFile);

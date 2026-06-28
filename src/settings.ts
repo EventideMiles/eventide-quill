@@ -1,7 +1,8 @@
 import { App, Modal, Notice, PluginSettingTab, Setting, SuggestModal } from 'obsidian';
 import EventideQuillPlugin from './main';
-import { ModelInfo, ProviderConfig, ProviderType } from './ai/provider';
+import { ModelInfo, ModelRole, ProviderConfig, ProviderType, roleSatisfies } from './ai/provider';
 import { createProvider, generateModelId, generateProviderId } from './ai/provider-registry';
+import { DEFAULT_IMAGE_PROXY_PROMPT } from './ai/vision';
 import { NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS } from './types';
 import { ConfirmModal } from './ui/confirm-modal';
 import type { ReadabilityFormula } from './core/dashboard/types';
@@ -40,6 +41,8 @@ export interface EventideQuillSettings {
     aiProviders: ProviderConfig[];
     aiDefaultChatProvider: string;
     aiDefaultEmbedProvider: string;
+    /** Composite "providerId/modelId" for the default image (vision) model. Empty = none. */
+    aiDefaultImageProvider: string;
     transformTemperature: number;
     transformVaultContext: boolean;
     transformMaxOutputTokens: number;
@@ -92,7 +95,7 @@ export interface EventideQuillSettings {
     reviewLoreContext: boolean;
     /** Whether the co-writer may use AI tool-calling. Default: on. */
     coWriterToolsEnabled: boolean;
-    /** Master gate for network tools (fetch_url, fandom_lookup, wikipedia_lookup). Default: off. */
+    /** Master gate for network tools (fetch_url, fandom_lookup, wikipedia_lookup). Default: on. */
     lorebookNetworkTools: boolean;
     /** Fandom wiki subdomains the model may query (e.g., ['starwars', 'memory-alpha']). */
     lorebookFandomWikis: string[];
@@ -100,6 +103,16 @@ export interface EventideQuillSettings {
     lorebookWikipediaLang: string;
     /** Per-tool result truncation cap (approximate tokens). */
     lorebookToolMaxTokens: number;
+    /** Gate for the fetch_image_url tool (downloads an image for the model to see). Default: on. */
+    lorebookImageTools: boolean;
+    /** Max image dimension (longest side, px) before downscale. Keeps vision payloads small. */
+    lorebookImageMaxDimension: number;
+    /**
+     * Proxy prompt for Regime B (text-only chat model + dedicated image model):
+     * how the image model should caption images it translates to text for the
+     * chat model. Customizable per-writer focus.
+     */
+    lorebookImageProxyPrompt: string;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -142,6 +155,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     ] as ProviderConfig[],
     aiDefaultChatProvider: 'local-default/local-chat',
     aiDefaultEmbedProvider: 'local-default/local-embed',
+    aiDefaultImageProvider: '',
     transformTemperature: 1.0,
     transformVaultContext: true,
     transformMaxOutputTokens: 4096,
@@ -194,7 +208,10 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     lorebookNetworkTools: true,
     lorebookFandomWikis: [],
     lorebookWikipediaLang: 'en',
-    lorebookToolMaxTokens: 2000
+    lorebookToolMaxTokens: 2000,
+    lorebookImageTools: true,
+    lorebookImageMaxDimension: 512,
+    lorebookImageProxyPrompt: DEFAULT_IMAGE_PROXY_PROMPT
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -963,6 +980,55 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(content)
+            .setName('Image tools')
+            .setDesc(
+                'Allow the co-writer to call fetch_image_url (download an image for the model ' +
+                    'to see). Images are downscaled before delivery. Requires a vision-capable ' +
+                    'chat model (role "Chat + image") or a dedicated image model (role "Image") ' +
+                    'to have any effect. Default: on.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.lorebookImageTools).onChange(async (value) => {
+                    this.plugin.settings.lorebookImageTools = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
+            .setName('Image max dimension (px)')
+            .setDesc('Longest-side cap before downscale. Smaller values save context budget. Default: 512.')
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.lorebookImageMaxDimension))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 64 && n <= 2048) {
+                            this.plugin.settings.lorebookImageMaxDimension = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.lorebookImageMaxDimension));
+                            new Notice('Value must be a number between 64 and 2048');
+                        }
+                    })
+            );
+
+        new Setting(content)
+            .setName('Image proxy prompt')
+            .setDesc(
+                'When your chat model is text-only and a separate image model is configured, ' +
+                    'this tells the image model how to describe images into text. Edit to focus ' +
+                    'on what matters for your fiction (clothing, architecture, mood, etc.).'
+            )
+            .addTextArea((text) =>
+                text.setValue(this.plugin.settings.lorebookImageProxyPrompt).inputEl.addEventListener('blur', () => {
+                    const value = text.inputEl.value.trim();
+                    this.plugin.settings.lorebookImageProxyPrompt =
+                        value.length > 0 ? value : DEFAULT_IMAGE_PROXY_PROMPT;
+                    void this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
             .setName('Lorebook folders')
             .setDesc(
                 'Folders scanned for lore entries. Any Markdown file under one of these folders is treated as a lore entry. Set a per-folder type default so every file inherits it without frontmatter; leave as mixed to type files individually via the quill-type key.'
@@ -1107,6 +1173,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookFandomWikis = [...DEFAULT_SETTINGS.lorebookFandomWikis];
                     this.plugin.settings.lorebookWikipediaLang = DEFAULT_SETTINGS.lorebookWikipediaLang;
                     this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
+                    this.plugin.settings.lorebookImageTools = DEFAULT_SETTINGS.lorebookImageTools;
+                    this.plugin.settings.lorebookImageMaxDimension = DEFAULT_SETTINGS.lorebookImageMaxDimension;
+                    this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
                     await this.plugin.saveSettings();
                     this.display();
                 })
@@ -1604,19 +1673,27 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         for (const [mIdx, model] of provider.models.entries()) {
             const modelCard = containerEl.createEl('div', { cls: 'quill-provider-card__model' });
 
-            new Setting(modelCard).setName(`Model ${mIdx + 1}`).addDropdown((dropdown) =>
-                dropdown
-                    .addOption('chat', 'Chat')
-                    .addOption('embed', 'Embed')
-                    .addOption('both', 'Both')
-                    .setValue(model.role)
-                    .onChange(async (value) => {
-                        model.role = value as 'chat' | 'embed' | 'both';
-                        this.validateDefaultProviders();
-                        await this.plugin.saveSettings();
-                        this.display();
-                    })
-            );
+            new Setting(modelCard)
+                .setName(`Model ${mIdx + 1}`)
+                .setDesc(
+                    'Use "Chat + image" for a vision-capable chat model (e.g. Gemma 4), or ' +
+                        '"Image" for a dedicated model that describes images when your chat model is text-only.'
+                )
+                .addDropdown((dropdown) =>
+                    dropdown
+                        .addOption('chat', 'Chat')
+                        .addOption('embed', 'Embed')
+                        .addOption('both', 'Both')
+                        .addOption('chat-image', 'Chat + image')
+                        .addOption('image', 'Image')
+                        .setValue(model.role)
+                        .onChange(async (value) => {
+                            model.role = value as ModelRole;
+                            this.validateDefaultProviders();
+                            await this.plugin.saveSettings();
+                            this.display();
+                        })
+                );
 
             new Setting(modelCard)
                 .setName('Model ID')
@@ -1719,21 +1796,27 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
     }
 
-    /** Render the default chat/embed model dropdowns. */
+    /** Render the default chat/embed/image model dropdowns. */
     private renderDefaultModelSettings(containerEl: HTMLElement): void {
-        // Collect all chat-capable and embed-capable models
+        // Collect chat-, embed-, and image-capable models across providers.
+        // Image models may live on a different provider than chat — the proxy
+        // caption call is fully isolated, so cross-provider routing is fine.
         const chatModels: { key: string; name: string }[] = [];
         const embedModels: { key: string; name: string }[] = [];
+        const imageModels: { key: string; name: string }[] = [];
 
         for (const provider of this.plugin.settings.aiProviders) {
             for (const model of provider.models) {
                 const key = `${provider.id}/${model.id}`;
                 const name = `${provider.name} — ${model.model}`;
-                if (model.role === 'chat' || model.role === 'both') {
+                if (roleSatisfies(model.role, 'chat')) {
                     chatModels.push({ key, name });
                 }
-                if (model.role === 'embed' || model.role === 'both') {
+                if (roleSatisfies(model.role, 'embed')) {
                     embedModels.push({ key, name });
+                }
+                if (roleSatisfies(model.role, 'image')) {
+                    imageModels.push({ key, name });
                 }
             }
         }
@@ -1813,6 +1896,33 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         },
                         'Change model'
                     ).open();
+                });
+            });
+
+        new Setting(containerEl)
+            .setName('Default image model')
+            .setDesc(
+                'The model used to interpret images (character art, maps, reference photos). ' +
+                    'When your chat model is vision-capable (role "Chat + image"), images go ' +
+                    'directly to it and this is unused. Otherwise this model describes images ' +
+                    'into text for the chat model — it may live on a different provider.'
+            )
+            .addDropdown((dropdown) => {
+                if (imageModels.length === 0) {
+                    dropdown.addOption('', 'No image models configured');
+                } else {
+                    for (const m of imageModels) {
+                        dropdown.addOption(m.key, m.name);
+                    }
+                }
+                dropdown.setValue(
+                    imageModels.some((m) => m.key === this.plugin.settings.aiDefaultImageProvider)
+                        ? this.plugin.settings.aiDefaultImageProvider
+                        : ''
+                );
+                dropdown.onChange(async (value) => {
+                    this.plugin.settings.aiDefaultImageProvider = value;
+                    await this.plugin.saveSettings();
                 });
             });
     }
@@ -2330,6 +2440,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookFandomWikis = [...DEFAULT_SETTINGS.lorebookFandomWikis];
                     this.plugin.settings.lorebookWikipediaLang = DEFAULT_SETTINGS.lorebookWikipediaLang;
                     this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
+                    this.plugin.settings.lorebookImageTools = DEFAULT_SETTINGS.lorebookImageTools;
+                    this.plugin.settings.lorebookImageMaxDimension = DEFAULT_SETTINGS.lorebookImageMaxDimension;
+                    this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
                     this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                     this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
                     this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;
@@ -2366,7 +2479,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 
     /**
-     * Ensure aiDefaultChatProvider and aiDefaultEmbedProvider still reference
+     * Ensure aiDefaultChatProvider, aiDefaultEmbedProvider, and aiDefaultImageProvider still reference
      * valid provider+model keys. Clears any key whose provider or model has
      * been removed. Call after mutating aiProviders and before saveSettings().
      */
@@ -2386,6 +2499,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         }
         if (this.plugin.settings.aiDefaultEmbedProvider && !isValid(this.plugin.settings.aiDefaultEmbedProvider)) {
             this.plugin.settings.aiDefaultEmbedProvider = '';
+        }
+        if (this.plugin.settings.aiDefaultImageProvider && !isValid(this.plugin.settings.aiDefaultImageProvider)) {
+            this.plugin.settings.aiDefaultImageProvider = '';
         }
     }
 

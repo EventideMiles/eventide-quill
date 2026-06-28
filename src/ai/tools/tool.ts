@@ -2,6 +2,20 @@ import type EventideQuillPlugin from '../../main';
 import type { ToolDefinition } from '../provider';
 
 /**
+ * Structured tool result. `text` is always shown to the model as the tool's
+ * textual output; `images` (base64, no `data:` prefix) are routed through
+ * `resolveImageInjection` — attached directly when the chat model is
+ * vision-capable, or translated to a text caption when it isn't. A tool that
+ * only produces text can return a plain string instead.
+ */
+export interface ToolResult {
+    /** Textual result, always delivered to the model. */
+    text: string;
+    /** Optional image attachments (base64, no `data:` prefix). */
+    images?: string[];
+}
+
+/**
  * A tool the AI may invoke via the provider's native tool-calling API.
  *
  * The provider serializes the {@link parameters} JSON Schema into the
@@ -43,14 +57,18 @@ export interface Tool {
      */
     readonly requiresNetwork: boolean;
     /**
-     * Execute the tool and return its result as a string for the model.
-     * Throw on unrecoverable errors — the loop catches and surfaces them
-     * to the model as a tool-result error string, so the model can recover.
+     * Execute the tool and return its result. Most tools return a plain string;
+     * tools that produce images (e.g. `fetch_image_url`) return a
+     * {@link ToolResult} carrying base64 image data, which the tool-loop routes
+     * through `resolveImageInjection` before the model sees it.
+     *
+     * Throw on unrecoverable errors — the loop catches and surfaces them to the
+     * model as a tool-result error string, so the model can recover.
      *
      * @param args  The parsed arguments object emitted by the model.
      * @param ctx   Runtime context (plugin, abort signal, etc.).
      */
-    execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string>;
+    execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string | ToolResult>;
 }
 
 /**

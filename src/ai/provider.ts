@@ -21,12 +21,51 @@ export interface ProviderConfig {
     maxOutputTokens: number;
 }
 
+/**
+ * A model's configured role(s) on its provider. Determines which capability
+ * requests (`ModelCapability`) the model satisfies — see {@link roleSatisfies}.
+ *
+ * - `chat`       — text chat only.
+ * - `embed`      — embeddings only.
+ * - `both`       — chat + embeddings (legacy combined role).
+ * - `chat-image` — chat + vision. One model handles text and images (the
+ *                  recommended setup for vision-capable chat models such as
+ *                  Gemma 4 / LLaVA). Avoids model-swapping mid-conversation.
+ * - `image`      — vision only. A dedicated image model used as a stateless
+ *                  translator when the chat model is text-only (Regime B).
+ */
+export type ModelRole = 'chat' | 'embed' | 'both' | 'chat-image' | 'image';
+
+/**
+ * A capability being requested of a model (the "request" side of
+ * {@link roleSatisfies}). Multi-capability roles (`both`, `chat-image`) are
+ * never requested directly — callers request a single capability and
+ * `roleSatisfies` decides which roles fill it.
+ */
+export type ModelCapability = 'chat' | 'embed' | 'image';
+
+/**
+ * Whether a model with the given role satisfies the requested capability.
+ *
+ * - `chat`  ← `chat`, `both`, `chat-image`
+ * - `embed` ← `embed`, `both`
+ * - `image` ← `image`, `chat-image`
+ *
+ * Replaces the older `m.role === role || m.role === 'both'` checks so that the
+ * new vision roles participate in resolution without each call site branching.
+ */
+export function roleSatisfies(role: ModelRole, capability: ModelCapability): boolean {
+    if (capability === 'chat') return role === 'chat' || role === 'both' || role === 'chat-image';
+    if (capability === 'embed') return role === 'embed' || role === 'both';
+    return role === 'image' || role === 'chat-image'; // capability === 'image'
+}
+
 /** Configuration for a single model on a provider endpoint. */
 export interface ModelConfig {
     /** Unique identifier for this model within its provider. */
     id: string;
-    /** What this model is used for: chat, embeddings, or both. */
-    role: 'chat' | 'embed' | 'both';
+    /** What this model is used for. See {@link ModelRole} for the meaning of each value. */
+    role: ModelRole;
     /** Model identifier sent to the API, e.g. "llama-3.3-70b". */
     model: string;
 }
@@ -45,6 +84,16 @@ export interface ModelInfo {
 export interface ChatMessage {
     role: 'system' | 'user' | 'assistant' | 'tool';
     content: string;
+    /**
+     * Base64-encoded image data (no `data:` prefix) attached to a user or
+     * assistant turn. Providers serialize this into their native vision format:
+     * OpenAI-compatible endpoints receive an `image_url` content array; Ollama
+     * receives a sibling `images` field. Ignored on `system`/`tool` messages
+     * (neither API accepts images there). Only reaches a provider when the
+     * resolved chat model is vision-capable; otherwise {@link resolveImageInjection}
+     * translates the image to a text description before it gets here.
+     */
+    images?: string[];
     /**
      * Present on assistant messages that requested one or more tool calls.
      * The provider formats these as `tool_calls` in the request body so the
@@ -201,10 +250,13 @@ export class ProviderError extends Error {
 
 /**
  * Resolve a model identifier from a provider's models list.
- * If modelId is provided, looks up that specific model. Otherwise returns the
- * first model with a role matching the given role (or 'both').
+ * If modelId is provided, returns that specific model (the caller's choice is
+ * trusted — the capability filter does not apply, which lets callers route to
+ * a model whose role doesn't match `role`, e.g. the vision proxy addressing an
+ * `image`-role model via chatCompletion). Otherwise returns the first model
+ * whose role satisfies the requested capability via {@link roleSatisfies}.
  * @param models - The provider's models array.
- * @param role   - The required model role.
+ * @param role   - The required capability ('chat', 'embed', or 'image').
  * @param modelId - Optional specific model ID to look up.
  * @param name   - Provider display name (used in error messages).
  * @returns The resolved ModelConfig.
@@ -212,22 +264,22 @@ export class ProviderError extends Error {
  */
 export function resolveModel(
     models: ModelConfig[],
-    role: ModelConfig['role'],
+    role: ModelCapability,
     modelId: string | undefined,
     name: string
 ): ModelConfig {
     if (modelId) {
+        // Explicit id: trust the caller's choice. The capability filter below
+        // only governs the default (no-id) selection. This lets callers route
+        // to a model whose role doesn't satisfy `role` but which they have a
+        // specific reason to use — notably the vision proxy addressing an
+        // `image`-role model through chatCompletion.
         const found = models.find((m) => m.id === modelId);
-        if (found && (found.role === role || found.role === 'both')) return found;
-        throw new ProviderError(
-            `No ${role} model with id "${modelId}" configured for provider "${name}". ` +
-                'Check the model role in settings.',
-            0,
-            ''
-        );
+        if (found) return found;
+        throw new ProviderError(`No model with id "${modelId}" configured for provider "${name}".`, 0, '');
     }
 
-    const fallback = models.find((m) => m.role === role || m.role === 'both');
+    const fallback = models.find((m) => roleSatisfies(m.role, role));
     if (!fallback) {
         throw new ProviderError(
             `No ${role} model configured for provider "${name}". ` +

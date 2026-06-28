@@ -26,7 +26,8 @@ import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
 import { ChangeSet } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
-import { createToolRegistry, type ToolContext, type ToolRegistry } from './tools';
+import { createToolRegistry, type ToolContext, type ToolRegistry, type ToolResult } from './tools';
+import { resolveImageInjection } from './vision';
 import {
     clearDiffEdits,
     diffEditsField,
@@ -1054,9 +1055,9 @@ export class CoWriterSession {
         call: ToolCallRequest,
         registry: ToolRegistry,
         ctx: ToolContext
-    ): Promise<string> {
+    ): Promise<ToolResult> {
         const tool = registry.get(call.name);
-        if (!tool) return `Error: tool "${call.name}" is not registered.`;
+        if (!tool) return { text: `Error: tool "${call.name}" is not registered.` };
 
         let parsedArgs: Record<string, unknown>;
         try {
@@ -1064,20 +1065,60 @@ export class CoWriterSession {
                 call.arguments.trim().length === 0 ? {} : (JSON.parse(call.arguments) as Record<string, unknown>);
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            return `Error: invalid JSON arguments: ${msg}`;
+            return { text: `Error: invalid JSON arguments: ${msg}` };
         }
 
         try {
-            if (ctx.signal?.aborted) return 'Error: aborted before tool execution.';
+            if (ctx.signal?.aborted) return { text: 'Error: aborted before tool execution.' };
             const result = await tool.execute(parsedArgs, ctx);
+            const normalized: ToolResult = typeof result === 'string' ? { text: result } : result;
             const maxChars = tool.maxResultTokens * 4;
-            if (result.length > maxChars) {
-                return result.slice(0, maxChars) + `\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
+            if (normalized.text.length > maxChars) {
+                normalized.text = `${normalized.text.slice(0, maxChars)}\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
             }
-            return result;
+            return normalized;
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            return `Error executing tool "${call.name}": ${msg}`;
+            return { text: `Error executing tool "${call.name}": ${msg}` };
+        }
+    }
+
+    /**
+     * Route images collected from tool results into a conversation array.
+     * Mirrors the vision routing in `streamWithTools`: native when the chat
+     * model is vision-capable (role "Chat + image"), proxy (text caption)
+     * otherwise. Never throws — failures inject a placeholder so the loop
+     * keeps going.
+     */
+    private async injectToolImagesInto(
+        images: string[],
+        messages: ChatMessage[],
+        plugin: EventideQuillPlugin,
+        signal?: AbortSignal
+    ): Promise<void> {
+        if (images.length === 0) return;
+        try {
+            const injection = await resolveImageInjection(plugin, images, { signal });
+            if (injection.kind === 'native') {
+                messages.push({
+                    role: 'user',
+                    content: '[Attached image(s) from tool output]',
+                    images: injection.images
+                });
+            } else if (injection.kind === 'described') {
+                messages.push({
+                    role: 'user',
+                    content: `[Image description from the vision model]: ${injection.text}`
+                });
+            } else {
+                messages.push({
+                    role: 'user',
+                    content: `[An image was returned but cannot be interpreted: ${injection.reason}]`
+                });
+            }
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            messages.push({ role: 'user', content: `[Image could not be described: ${msg}]` });
         }
     }
 
@@ -1337,16 +1378,21 @@ export class CoWriterSession {
 
                 // Execute tools and push role:'tool' result messages.
                 const execResults: { failed: boolean; result: string }[] = [];
+                const collectedImages: string[] = [];
                 for (const call of result.toolCalls) {
                     const toolResult = await this.executeToolCallSafely(call, registry, ctx);
-                    execResults.push({ failed: toolResult.startsWith('Error'), result: toolResult });
+                    execResults.push({ failed: toolResult.text.startsWith('Error'), result: toolResult.text });
                     this.discussCurrentMessages.push({
                         role: 'tool',
-                        content: toolResult,
+                        content: toolResult.text,
                         toolCallId: call.id,
                         name: call.name
                     });
+                    if (toolResult.images && toolResult.images.length > 0) {
+                        collectedImages.push(...toolResult.images);
+                    }
                 }
+                await this.injectToolImagesInto(collectedImages, this.discussCurrentMessages, plugin, ctx.signal);
 
                 // Annotate toolUses with error info so the panel can style
                 // failed calls red and show the reason on hover / right-click copy.
@@ -1638,16 +1684,21 @@ export class CoWriterSession {
                 if (result.toolCalls.length === 0 || !registry) break;
 
                 const coachExecResults: { failed: boolean; result: string }[] = [];
+                const coachCollectedImages: string[] = [];
                 for (const call of result.toolCalls) {
                     const toolResult = await this.executeToolCallSafely(call, registry, ctx);
-                    coachExecResults.push({ failed: toolResult.startsWith('Error'), result: toolResult });
+                    coachExecResults.push({ failed: toolResult.text.startsWith('Error'), result: toolResult.text });
                     this.discussCurrentMessages.push({
                         role: 'tool',
-                        content: toolResult,
+                        content: toolResult.text,
                         toolCallId: call.id,
                         name: call.name
                     });
+                    if (toolResult.images && toolResult.images.length > 0) {
+                        coachCollectedImages.push(...toolResult.images);
+                    }
                 }
+                await this.injectToolImagesInto(coachCollectedImages, this.discussCurrentMessages, plugin, ctx.signal);
 
                 this.annotateToolUseErrors(coachExecResults);
                 this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
@@ -2155,16 +2206,21 @@ export class CoWriterSession {
                 // Execute each tool via the shared helper (handles JSON parse,
                 // execution errors, truncation uniformly across all modes).
                 const loreExecResults: { failed: boolean; result: string }[] = [];
+                const loreCollectedImages: string[] = [];
                 for (const call of toolCalls) {
                     const toolResult = await this.executeToolCallSafely(call, registry, ctx);
-                    loreExecResults.push({ failed: toolResult.startsWith('Error'), result: toolResult });
+                    loreExecResults.push({ failed: toolResult.text.startsWith('Error'), result: toolResult.text });
                     this.loreCoachMessages.push({
                         role: 'tool',
-                        content: toolResult,
+                        content: toolResult.text,
                         toolCallId: call.id,
                         name: call.name
                     });
+                    if (toolResult.images && toolResult.images.length > 0) {
+                        loreCollectedImages.push(...toolResult.images);
+                    }
                 }
+                await this.injectToolImagesInto(loreCollectedImages, this.loreCoachMessages, plugin, ctx.signal);
 
                 this.annotateToolUseErrors(loreExecResults);
 

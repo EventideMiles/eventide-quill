@@ -2,6 +2,7 @@ import { ToolRegistry } from './tool';
 import { appendToNoteTool } from './append-to-note';
 import { calculateFileSizesTool } from './calculate-file-sizes';
 import { createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
+import { createFetchImageUrlTool } from './fetch-image-url';
 import { createFetchUrlTool } from './fetch-url';
 import { createWikipediaLookupTool, createWikipediaPageTool } from './wikipedia-lookup';
 import { editNoteTool } from './edit-note';
@@ -14,11 +15,12 @@ import { vaultLookupTool } from './vault-lookup';
 import type EventideQuillPlugin from '../../main';
 
 export { ToolRegistry } from './tool';
-export type { Tool, ToolContext } from './tool';
+export type { Tool, ToolContext, ToolResult } from './tool';
 export { streamWithTools } from './tool-loop';
 export { appendToNoteTool } from './append-to-note';
 export { calculateFileSizesTool } from './calculate-file-sizes';
 export { createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
+export { createFetchImageUrlTool } from './fetch-image-url';
 export { createFetchUrlTool } from './fetch-url';
 export { createWikipediaLookupTool, createWikipediaPageTool } from './wikipedia-lookup';
 export { editNoteTool } from './edit-note';
@@ -83,6 +85,15 @@ export function createToolRegistry(plugin: EventideQuillPlugin, includeProposeEn
             registry.register(createFandomLookupTool(maxTokens, plugin.settings.lorebookFandomWikis));
             registry.register(createFandomPageTool(maxTokens, plugin.settings.lorebookFandomWikis));
         }
+    }
+
+    // Image tool: gated independently of the network-tools toggle. Downloads
+    // and downscales an image, then the tool-loop routes it through the vision
+    // layer (native or proxy depending on the configured models).
+    if (plugin.settings.lorebookImageTools) {
+        registry.register(
+            createFetchImageUrlTool(plugin.settings.lorebookToolMaxTokens, plugin.settings.lorebookImageMaxDimension)
+        );
     }
 
     return registry;

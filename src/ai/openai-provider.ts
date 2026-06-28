@@ -9,7 +9,8 @@ import {
     ModelInfo,
     ProviderConfig,
     ProviderError,
-    resolveModel
+    resolveModel,
+    roleSatisfies
 } from './provider';
 import {
     extractThoughtContent,
@@ -102,7 +103,27 @@ export class OpenAiCompatibleProvider implements AiProvider {
             model: modelConfig.model,
             messages: options.messages.map((m) => {
                 const out: Record<string, unknown> = { role: m.role };
-                if (m.content !== undefined) out.content = m.content;
+                if (m.images && m.images.length > 0) {
+                    // Vision content: OpenAI-compatible endpoints (LM Studio,
+                    // OpenAI, etc.) accept an array of typed content parts.
+                    // Only vision-capable chat models reach here — a text-only
+                    // model would have received a text description via
+                    // resolveImageInjection instead, so this branch never
+                    // sends pixels to a model that can't handle them.
+                    const parts: Array<Record<string, unknown>> = [];
+                    if (m.content !== undefined && m.content !== '') {
+                        parts.push({ type: 'text', text: m.content });
+                    }
+                    for (const img of m.images) {
+                        parts.push({
+                            type: 'image_url',
+                            image_url: { url: img.startsWith('data:') ? img : `data:image/jpeg;base64,${img}` }
+                        });
+                    }
+                    out.content = parts;
+                } else if (m.content !== undefined) {
+                    out.content = m.content;
+                }
                 if (m.toolCalls && m.toolCalls.length > 0) {
                     out.tool_calls = m.toolCalls.map((tc) => ({
                         id: tc.id,
@@ -280,7 +301,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
         const url = buildUrl(this.config.endpoint, '/chat/completions');
         const headers = this.buildHeaders();
 
-        const chatModel = this.config.models.find((m) => m.role === 'chat' || m.role === 'both');
+        const chatModel = this.config.models.find((m) => roleSatisfies(m.role, 'chat'));
         const modelName = chatModel?.model ?? 'test';
 
         const body = JSON.stringify({
