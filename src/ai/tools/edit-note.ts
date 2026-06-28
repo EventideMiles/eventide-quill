@@ -73,6 +73,9 @@ export const editNoteTool: Tool = {
         if (!opened) return `Error: could not open "${file.path}" for review.`;
 
         const session = plugin.coWriterSession;
+        if (!opened.wasAlreadyOpen) {
+            session.loreEditOpenedByTool.add(file.path);
+        }
         // One edit per file at a time — clearing the file's own ChangeSet
         // doesn't affect edits pending for other files.
         const entry = session.getOrCreateLoreEdit(file.path, file.basename);

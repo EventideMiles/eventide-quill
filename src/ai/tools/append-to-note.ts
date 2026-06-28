@@ -54,6 +54,9 @@ export const appendToNoteTool: Tool = {
         if (!opened) return `Error: could not open "${file.path}" for review.`;
 
         const session = plugin.coWriterSession;
+        if (!opened.wasAlreadyOpen) {
+            session.loreEditOpenedByTool.add(file.path);
+        }
         const entry = session.getOrCreateLoreEdit(file.path, file.basename);
         entry.changeSet.clear();
 

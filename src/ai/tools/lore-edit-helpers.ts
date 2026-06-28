@@ -6,9 +6,13 @@ import type { ChangeSet } from '../../core/change-set';
 import type EventideQuillPlugin from '../../main';
 
 /**
- * Open a note in a new tab, wait for its editor to be ready, and return the
- * view + CodeMirror instance. Polls briefly because Obsidian creates the
- * editor view asynchronously after `openLinkText`.
+ * Open a note for editing. If the file is already open in a tab, switch to
+ * that tab and reuse it. If not, open a NEW tab (so multi-file edits don't
+ * close each other's diffs). Returns whether the file was already open so
+ * the caller can track which tabs to close on approve/reject.
+ *
+ * Polls briefly for the editor because Obsidian creates the view
+ * asynchronously after `openLinkText`.
  *
  * Raw setTimeout: the editor view isn't available synchronously after
  * openLinkText, and there's no callback/promise for "editor ready." Polling
@@ -17,16 +21,30 @@ import type EventideQuillPlugin from '../../main';
 export async function openNoteForEdit(
     app: App,
     filePath: string
-): Promise<{ view: MarkdownView; cm: EditorView } | null> {
+): Promise<{ view: MarkdownView; cm: EditorView; wasAlreadyOpen: boolean } | null> {
     const normalized = normalizePath(filePath);
-    await app.workspace.openLinkText(normalized, '', false);
 
-    // Poll for the editor view to be ready.
+    // If the file is already open, switch to its tab and reuse it.
+    const existing = findEditorView(app, normalized);
+    if (existing && existing.editor) {
+        const cm = (existing.editor as unknown as { cm: EditorView }).cm;
+        if (cm) {
+            // Activate the leaf so the user sees the file.
+            if (existing.leaf) {
+                app.workspace.setActiveLeaf(existing.leaf, { focus: true });
+            }
+            return { view: existing, cm, wasAlreadyOpen: true };
+        }
+    }
+
+    // Not open — open in a NEW tab so existing diffs aren't destroyed.
+    await app.workspace.openLinkText(normalized, '', true);
+
     for (let i = 0; i < 10; i++) {
         const view = findEditorView(app, normalized);
         if (view && view.editor) {
             const cm = (view.editor as unknown as { cm: EditorView }).cm;
-            if (cm) return { view, cm };
+            if (cm) return { view, cm, wasAlreadyOpen: false };
         }
         // Raw timer — see JSDoc above for justification.
         await new Promise((r) => window.setTimeout(r, 50));

@@ -1,4 +1,4 @@
-import { App, Editor, Notice, Platform } from 'obsidian';
+import { App, Editor, MarkdownView, Notice, Platform, TFile } from 'obsidian';
 import { EditorView } from '@codemirror/view';
 import type EventideQuillPlugin from '../main';
 import { type VoiceProfile } from '../types';
@@ -601,6 +601,13 @@ export class CoWriterSession {
 
     /** Pending note edits keyed by vault path (from edit_note / append_to_note tools). */
     loreEdits: Map<string, { changeSet: ChangeSet; fileBasename: string }> = new Map();
+    /**
+     * Files that the tool opened in a new tab (not previously open). These
+     * tabs are closed when the edit is approved or rejected so multi-file
+     * edits don't leave a trail of tabs behind. Files the writer already had
+     * open are NOT tracked here — their tabs are left alone.
+     */
+    loreEditOpenedByTool: Set<string> = new Set();
     /** Called when a lore edit is proposed, approved, or rejected. */
     onLoreEditUpdate: (() => void) | null = null;
 
@@ -2354,29 +2361,45 @@ export class CoWriterSession {
 
     /**
      * Approve a pending lore edit: commit the ChangeSet edit to the target
-     * note's editor and clear the diff. The editor handles saving via
-     * Obsidian's normal auto-save.
+     * note. If the file is open in an editor, dispatches via CodeMirror (the
+     * normal path). If the file was closed (the writer tabbed away or it was
+     * never open), falls back to reading + modifying the file directly.
+     *
+     * If the tool opened the file in a new tab, the tab is closed after
+     * applying the change so multi-file edits don't leave a trail of tabs.
      */
     approveLoreEdit(filePath: string, id: number): void {
-        if (!this.app) return;
         const entry = this.loreEdits.get(filePath);
         if (!entry) return;
-
-        const view = findEditorView(this.app, filePath);
-        if (!view) return;
-        const cm = (view.editor as unknown as { cm: EditorView }).cm;
-        if (!cm) return;
 
         const change = entry.changeSet.approve(id);
         if (!change) return;
 
-        const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'lore_edit');
-        cm.dispatch({
-            changes: change,
-            effects: setDiffEdits.of(preserved),
-            selection: { anchor: change.from + change.insert.length }
-        });
+        if (this.app) {
+            const view = findEditorView(this.app, filePath);
+            if (view) {
+                // File is open — dispatch via CodeMirror.
+                const cm = (view.editor as unknown as { cm: EditorView }).cm;
+                if (cm) {
+                    const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'lore_edit');
+                    cm.dispatch({
+                        changes: change,
+                        effects: setDiffEdits.of(preserved),
+                        selection: { anchor: change.from + change.insert.length }
+                    });
+                }
+            } else {
+                // File isn't open — apply the change directly to the file.
+                const file = this.app.vault.getAbstractFileByPath(filePath);
+                if (file instanceof TFile) {
+                    void this.app.vault.process(file, (content) => {
+                        return content.slice(0, change.from) + change.insert + content.slice(change.to);
+                    });
+                }
+            }
+        }
 
+        this.closeLoreEditTabIfOpenedByTool(filePath);
         this.loreEdits.delete(filePath);
         this.onLoreEditUpdate?.();
     }
@@ -2390,6 +2413,7 @@ export class CoWriterSession {
                 if (cm) clearDiffEdits(cm, 'lore_edit');
             }
         }
+        this.closeLoreEditTabIfOpenedByTool(filePath);
         this.loreEdits.delete(filePath);
         this.onLoreEditUpdate?.();
     }
@@ -2403,9 +2427,26 @@ export class CoWriterSession {
                     const cm = (view.editor as unknown as { cm: EditorView }).cm;
                     if (cm) clearDiffEdits(cm, 'lore_edit');
                 }
+                this.closeLoreEditTabIfOpenedByTool(filePath);
             }
         }
         this.loreEdits.clear();
+    }
+
+    /**
+     * Close the tab for a file IF the tool opened it (not if the writer had
+     * it open already). Prevents a "full lorebook edit" from leaving a trail
+     * of tabs behind while respecting tabs the writer opened themselves.
+     */
+    private closeLoreEditTabIfOpenedByTool(filePath: string): void {
+        if (!this.app || !this.loreEditOpenedByTool.has(filePath)) return;
+        this.loreEditOpenedByTool.delete(filePath);
+        for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+            if (leaf.view instanceof MarkdownView && leaf.view.file?.path === filePath) {
+                leaf.detach();
+                break;
+            }
+        }
     }
 
     /**
