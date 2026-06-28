@@ -16,18 +16,14 @@ import { openNoteForEdit, pushLoreEditDiff, readNoteContent, resolveNoteFile } f
 export const editNoteTool: Tool = {
     id: 'edit_note',
     description:
-        'Propose a change to an existing note that is NOT currently open in the editor. ' +
-        'The note opens in a new tab with the change shown as a diff; the writer reviews ' +
-        'and approves or rejects it AFTER you finish. For the file the writer currently ' +
-        'has open, recommend Direct or Fulfill mode instead. Two modes: ' +
-        '(1) REPLACE — pass old_text (the SMALLEST excerpt that uniquely identifies the ' +
-        'section) and new_text (its replacement). old_text must match character-for-character ' +
-        'and be unique in the note. Do NOT pass the whole file. ' +
-        '(2) INSERT — pass anchor (an exact excerpt already in the note) and new_text ' +
-        '(the content to add); new_text is inserted right after the anchor, or before it ' +
-        'with position: "before". The anchor is KEPT — nothing is replaced — so use this ' +
-        'to add a new section, paragraph, or line without any risk of clobbering existing ' +
-        'text. Include any needed line breaks in new_text.',
+        'Propose a change to a note that is NOT currently open (it opens in a new tab ' +
+        'as a diff; the writer approves or rejects it after you finish). For the open ' +
+        'file, recommend Direct or Fulfill mode instead. Two modes — ' +
+        'REPLACE: old_text (the smallest excerpt that uniquely identifies the section; ' +
+        'must match character-for-character) + new_text. ' +
+        'INSERT: anchor (an exact excerpt already in the note — it is KEPT, nothing is ' +
+        'replaced) + new_text, inserted right after the anchor or before it with ' +
+        'position: "before". Never pass the whole file as old_text.',
     parameters: {
         type: 'object',
         properties: {
@@ -39,9 +35,8 @@ export const editNoteTool: Tool = {
             old_text: {
                 type: 'string',
                 description:
-                    'REPLACE mode: the SMALLEST excerpt that uniquely identifies the section to change ' +
-                    '(one sentence, one paragraph, or a heading + its body). Must match character-for-character ' +
-                    'and be unique. Omit to use INSERT mode.'
+                    'REPLACE mode: the smallest excerpt that uniquely identifies the section. ' +
+                    'Must match character-for-character and be unique. Omit to use INSERT mode.'
             },
             new_text: {
                 type: 'string',
@@ -51,9 +46,8 @@ export const editNoteTool: Tool = {
             anchor: {
                 type: 'string',
                 description:
-                    'INSERT mode: an exact excerpt already in the note. new_text is inserted right after it ' +
-                    '(or before it, with position). The anchor is kept, nothing is replaced. Must be unique. ' +
-                    'Omit to use REPLACE mode.'
+                    'INSERT mode: an exact excerpt already in the note. The anchor is kept (nothing is ' +
+                    'replaced); must be unique. Omit to use REPLACE mode.'
             },
             position: {
                 type: 'string',

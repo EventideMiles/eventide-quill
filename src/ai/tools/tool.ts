@@ -153,4 +153,16 @@ export class ToolRegistry {
             parameters: t.parameters
         }));
     }
+
+    /**
+     * Rough token cost of this registry's tool definitions as serialized to the
+     * request `tools` field. The bulk of the cost is each tool's description +
+     * JSON-schema parameters. Empirical: stringifies the definitions and applies
+     * the chars/4 heuristic, so it self-adjusts to any tool add/remove or
+     * description edit — no hardcoded constants. Used to fold the fixed tools
+     * overhead into context-budget estimates so compaction reflects real size.
+     */
+    estimateTokens(): number {
+        return Math.ceil(JSON.stringify(this.toToolDefinitions()).length / 4);
+    }
 }

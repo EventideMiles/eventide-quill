@@ -191,10 +191,10 @@ export function createFandomImageTool(
     return {
         id: 'fandom_image',
         description:
-            'Fetch an image from a Fandom wiki and return it so you can see it. By default fetches ' +
-            'the lead image for a topic AND lists the other images on that page; pass `image` (an ' +
-            'exact filename from that list) to fetch a specific gallery image instead. Use for ' +
-            'character appearance, cover art, or scene art. Requires a vision-capable model to be useful.',
+            'Fetch an image from a Fandom wiki so you can see it (character art, cover art, scene ' +
+            "reference). With `query`: returns the topic's lead image plus a list of other images on " +
+            'the page. With `image` (an exact filename from a prior list): fetches that specific file. ' +
+            'Requires a vision-capable model.',
         parameters: {
             type: 'object',
             properties: {

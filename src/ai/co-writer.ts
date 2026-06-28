@@ -482,6 +482,30 @@ function buildNetworkToolsMessage(plugin: EventideQuillPlugin): ChatMessage | nu
 }
 
 /**
+ * Build a system message telling the model which internal vault tools are
+ * available, when enabled. Returns null when tools are disabled. Discuss and
+ * coach modes inject this so the model proactively grounds its feedback in the
+ * manuscript and vault rather than relying only on the open excerpt. Not used
+ * by the lorebook coach, which already covers these tools in its own prompt.
+ */
+function buildInternalToolsMessage(plugin: EventideQuillPlugin): ChatMessage | null {
+    // Mirror createToolRegistry(): no tools at all when tools are disabled, so
+    // the prompt never advertises tools the model can't actually call.
+    if (!plugin.settings.coWriterToolsEnabled) return null;
+    return {
+        role: 'system',
+        content: [
+            'You have internal vault tools to ground your feedback in the manuscript and notes:',
+            '- manuscript_mentions: where a character, place, or plot thread appears in the active manuscript (pass empty to list every entity).',
+            "- vault_lookup: read a note's full text by path or name (frontmatter stripped).",
+            '- grep_notes: search for text across vault files to find where something is mentioned.',
+            '- lore_siblings: list other lore entries near a given one.',
+            'Reach for these when a question of fact about the manuscript or vault would sharpen your answer. Tool results stay in context — read judiciously.'
+        ].join('\n')
+    };
+}
+
+/**
  * Build a system message informing the model which file the writer currently
  * has open. This lets the model distinguish between edits to the active file
  * (where Direct/Fulfill mode provides a streaming live-edit UX) and edits to
@@ -660,6 +684,13 @@ export class CoWriterSession {
     /** Called when the discuss-mode token estimate changes (conversation tokens only;
      * the panel adds vault context item tokens on top to compute the total). */
     onTokenEstimate: ((conversationTokens: number, maxTokens: number) => void) | null = null;
+    /**
+     * Fixed per-request token overhead of the active mode's tool definitions
+     * (the serialized `tools` field). Set when a mode builds its registry so
+     * {@link estimateRequestTokens} can fold it into budget math; 0 when no
+     * tools are registered.
+     */
+    private toolTokenOverhead = 0;
     /** Called when a discuss response starts streaming. */
     onDiscussStartStreaming: (() => void) | null = null;
     /** Called when a discuss response chunk arrives during streaming. */
@@ -1057,6 +1088,18 @@ export class CoWriterSession {
     }
 
     /**
+     * Conversation token estimate including the active mode's fixed
+     * tool-definition overhead ({@link toolTokenOverhead}). Use this anywhere
+     * a token estimate drives the panel indicator or a compaction decision so
+     * the serialized `tools` field is counted. For raw text that is NOT part
+     * of the per-request message set (e.g. measuring injected context on its
+     * own), use {@link estimateTokens} directly.
+     */
+    private estimateRequestTokens(messages: ChatMessage[]): number {
+        return estimateTokens(messages) + this.toolTokenOverhead;
+    }
+
+    /**
      * Execute one tool call with JSON argument parsing, result truncation,
      * and full error containment. Never throws — failures surface to the
      * model as an error string so it can recover.
@@ -1195,6 +1238,10 @@ export class CoWriterSession {
         if (discussNetworkMsg) {
             injectedContext.push(discussNetworkMsg);
         }
+        const discussInternalMsg = buildInternalToolsMessage(plugin);
+        if (discussInternalMsg) {
+            injectedContext.push(discussInternalMsg);
+        }
 
         const prompt = getCoWriterDiscussPrompt(proseForContext || '(empty document)', message);
 
@@ -1208,13 +1255,19 @@ export class CoWriterSession {
             this.discussCurrentMessages = [systemPrompt];
         }
 
+        // Build the tool registry up front so its fixed per-request overhead
+        // (the serialized `tools` field) is known before the budget math below.
+        const registry = createToolRegistry(plugin, false);
+        const toolDefs = registry?.toToolDefinitions();
+        this.toolTokenOverhead = registry?.estimateTokens() ?? 0;
+
         const injectedTokens = estimateTokens(injectedContext);
         const maxTokens = chat.provider.config.maxContextTokens;
         const compactPct = Math.max(50, Math.min(95, this.settingsOrDefault(plugin).contextCompactAtPercent)) / 100;
 
         // Compute total tokens INCLUDING the new message to decide whether to compact
         const hypotheticalConversation = [...this.discussCurrentMessages, { role: 'user' as const, content: prompt }];
-        const conversationTokens = estimateTokens(hypotheticalConversation);
+        const conversationTokens = this.estimateRequestTokens(hypotheticalConversation);
         const totalTokens = conversationTokens + injectedTokens;
 
         // Push conversation-only token estimate to the panel.
@@ -1231,7 +1284,10 @@ export class CoWriterSession {
                 if (result) {
                     this.discussCurrentMessages = result.messages;
                     this.onTokenEstimate?.(
-                        estimateTokens([...this.discussCurrentMessages, { role: 'user' as const, content: prompt }]),
+                        this.estimateRequestTokens([
+                            ...this.discussCurrentMessages,
+                            { role: 'user' as const, content: prompt }
+                        ]),
                         maxTokens
                     );
                 }
@@ -1264,9 +1320,9 @@ export class CoWriterSession {
         // Tool setup: when enabled, the model can call internal tools
         // (manuscript_mentions, lore_siblings, vault_lookup) to look up
         // details mid-conversation. Each tool call produces a visible
-        // round in the chat and consumes a model turn.
-        const registry = createToolRegistry(plugin, false);
-        const toolDefs = registry?.toToolDefinitions();
+        // round in the chat and consumes a model turn. The registry is built
+        // above (before the budget math) so its `tools`-field overhead is
+        // counted in toolTokenOverhead.
         const ctx: ToolContext = { plugin };
         // 0 = unlimited (the model calls as many rounds as it needs; use Stop
         // to cancel). A positive number caps turn consumption.
@@ -1342,7 +1398,7 @@ export class CoWriterSession {
                 // Update token estimate so the indicator reflects tool-result
                 // growth — tool results stay in the conversation and keep
                 // getting re-sent, so the user needs to see their cost.
-                this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+                this.onTokenEstimate?.(this.estimateRequestTokens(this.discussCurrentMessages), maxTokens);
 
                 // No tools called (or tools disabled) → this round is final.
                 if (result.toolCalls.length === 0 || !registry) break;
@@ -1370,13 +1426,13 @@ export class CoWriterSession {
                 this.annotateToolUseErrors(execResults);
 
                 // Re-estimate after tool results were appended.
-                this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+                this.onTokenEstimate?.(this.estimateRequestTokens(this.discussCurrentMessages), maxTokens);
 
                 // Mid-loop compaction: if tool results have filled the context
                 // past the compaction threshold, summarize older turns to free
                 // room for the next batch. Keeps batch sizes high instead of
                 // degrading as the conversation grows.
-                if (estimateTokens(this.discussCurrentMessages) / maxTokens >= compactPct) {
+                if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens >= compactPct) {
                     const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
                     try {
                         const cResult = await compactConversation(chat.provider, this.discussCurrentMessages, sc, {
@@ -1384,7 +1440,7 @@ export class CoWriterSession {
                         });
                         if (cResult) {
                             this.discussCurrentMessages = cResult.messages;
-                            this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+                            this.onTokenEstimate?.(this.estimateRequestTokens(this.discussCurrentMessages), maxTokens);
                         }
                     } catch (compErr: unknown) {
                         // Propagate aborts to the outer catch so the normal
@@ -1495,6 +1551,10 @@ export class CoWriterSession {
         if (coachNetworkMsg) {
             injectedContext.push(coachNetworkMsg);
         }
+        const coachInternalMsg = buildInternalToolsMessage(plugin);
+        if (coachInternalMsg) {
+            injectedContext.push(coachInternalMsg);
+        }
 
         // Initialize coach session on first call
         if (!this.coachSession || (this.coachSession.phase === 'discern' && message)) {
@@ -1540,11 +1600,16 @@ export class CoWriterSession {
             }
         }
 
+        // Build the tool registry up front so its fixed per-request overhead
+        // (the serialized `tools` field) is known before the budget math below.
+        const registry = createToolRegistry(plugin, false);
+        const toolDefs = registry?.toToolDefinitions();
+        this.toolTokenOverhead = registry?.estimateTokens() ?? 0;
+
         const injectedTokens = estimateTokens(injectedContext);
         const maxTokens = chat.provider.config.maxContextTokens;
         const compactPct = Math.max(50, Math.min(95, this.settingsOrDefault(plugin).contextCompactAtPercent)) / 100;
-
-        const conversationTokens = estimateTokens(this.discussCurrentMessages);
+        const conversationTokens = this.estimateRequestTokens(this.discussCurrentMessages);
         const totalTokens = conversationTokens + injectedTokens;
 
         this.onTokenEstimate?.(conversationTokens, maxTokens);
@@ -1558,7 +1623,7 @@ export class CoWriterSession {
                 });
                 if (result) {
                     this.discussCurrentMessages = result.messages;
-                    this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+                    this.onTokenEstimate?.(this.estimateRequestTokens(this.discussCurrentMessages), maxTokens);
                 }
             } catch (err: unknown) {
                 if (err instanceof Error && err.name === 'AbortError') {
@@ -1583,9 +1648,9 @@ export class CoWriterSession {
             });
         }
 
-        // Tool setup: same internal tools as discuss mode.
-        const registry = createToolRegistry(plugin, false);
-        const toolDefs = registry?.toToolDefinitions();
+        // Tool setup: same internal tools as discuss mode. The registry is
+        // built above (before the budget math) so its `tools`-field overhead is
+        // counted in toolTokenOverhead.
         const ctx: ToolContext = { plugin };
         const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
 
@@ -1650,7 +1715,7 @@ export class CoWriterSession {
                     toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined
                 });
 
-                this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+                this.onTokenEstimate?.(this.estimateRequestTokens(this.discussCurrentMessages), maxTokens);
 
                 if (result.toolCalls.length === 0 || !registry) break;
 
@@ -1672,10 +1737,10 @@ export class CoWriterSession {
                 await injectImagesIntoMessages(plugin, coachCollectedImages, this.discussCurrentMessages, ctx.signal);
 
                 this.annotateToolUseErrors(coachExecResults);
-                this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+                this.onTokenEstimate?.(this.estimateRequestTokens(this.discussCurrentMessages), maxTokens);
 
                 // Mid-loop compaction (same as discuss).
-                if (estimateTokens(this.discussCurrentMessages) / maxTokens >= compactPct) {
+                if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens >= compactPct) {
                     const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
                     try {
                         const cResult = await compactConversation(chat.provider, this.discussCurrentMessages, sc, {
@@ -1683,7 +1748,7 @@ export class CoWriterSession {
                         });
                         if (cResult) {
                             this.discussCurrentMessages = cResult.messages;
-                            this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+                            this.onTokenEstimate?.(this.estimateRequestTokens(this.discussCurrentMessages), maxTokens);
                         }
                     } catch (compErr: unknown) {
                         // Propagate aborts to the outer catch so the normal
@@ -1998,11 +2063,12 @@ export class CoWriterSession {
 
         const registry = createToolRegistry(plugin, true);
         const toolDefs = registry?.toToolDefinitions();
+        this.toolTokenOverhead = registry?.estimateTokens() ?? 0;
         const ctx: ToolContext = { plugin };
 
         const maxTokens = chat.provider.config.maxContextTokens;
         const compactPct = Math.max(50, Math.min(95, this.settingsOrDefault(plugin).contextCompactAtPercent)) / 100;
-        const conversationTokens = estimateTokens(this.loreCoachMessages);
+        const conversationTokens = this.estimateRequestTokens(this.loreCoachMessages);
         this.onTokenEstimate?.(conversationTokens, maxTokens);
 
         if (conversationTokens / maxTokens >= compactPct) {
@@ -2011,7 +2077,7 @@ export class CoWriterSession {
                 const result = await compactConversation(chat.provider, this.loreCoachMessages, sentenceCount);
                 if (result) {
                     this.loreCoachMessages = result.messages;
-                    this.onTokenEstimate?.(estimateTokens(this.loreCoachMessages), maxTokens);
+                    this.onTokenEstimate?.(this.estimateRequestTokens(this.loreCoachMessages), maxTokens);
                 }
             } catch (err: unknown) {
                 if (err instanceof Error && err.name === 'AbortError') {
@@ -2029,7 +2095,7 @@ export class CoWriterSession {
                 phase: this.loreCoachSession.phase,
                 rounds: this.loreCoachSession.rounds,
                 toolsEnabled: plugin.settings.coWriterToolsEnabled,
-                conversationTokens: estimateTokens(this.loreCoachMessages),
+                conversationTokens: this.estimateRequestTokens(this.loreCoachMessages),
                 maxTokens
             });
         }
@@ -2217,11 +2283,11 @@ export class CoWriterSession {
 
                 // Update token estimate so the indicator reflects tool-result
                 // growth, then sync the chat so the user sees progress.
-                this.onTokenEstimate?.(estimateTokens(this.loreCoachMessages), maxTokens);
+                this.onTokenEstimate?.(this.estimateRequestTokens(this.loreCoachMessages), maxTokens);
 
                 // Mid-loop compaction: if tool results have filled the context,
                 // summarize older turns to free room for the next batch.
-                if (estimateTokens(this.loreCoachMessages) / maxTokens >= compactPct) {
+                if (this.estimateRequestTokens(this.loreCoachMessages) / maxTokens >= compactPct) {
                     const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
                     try {
                         const cResult = await compactConversation(chat.provider, this.loreCoachMessages, sc, {
@@ -2229,7 +2295,7 @@ export class CoWriterSession {
                         });
                         if (cResult) {
                             this.loreCoachMessages = cResult.messages;
-                            this.onTokenEstimate?.(estimateTokens(this.loreCoachMessages), maxTokens);
+                            this.onTokenEstimate?.(this.estimateRequestTokens(this.loreCoachMessages), maxTokens);
                         }
                     } catch (compErr: unknown) {
                         // Propagate aborts to the outer catch so the normal
@@ -2248,7 +2314,7 @@ export class CoWriterSession {
             this.onDiscussFinished?.();
             this.optionsLoading = false;
             this.onOptionsLoading?.(false);
-            this.onTokenEstimate?.(estimateTokens(this.loreCoachMessages), maxTokens);
+            this.onTokenEstimate?.(this.estimateRequestTokens(this.loreCoachMessages), maxTokens);
             this.onChatUpdate?.();
             this.onLoreCoachUpdate?.();
         } catch (err: unknown) {
@@ -2698,7 +2764,7 @@ export class CoWriterSession {
             });
             if (result) {
                 this.discussCurrentMessages = result.messages;
-                this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+                this.onTokenEstimate?.(this.estimateRequestTokens(this.discussCurrentMessages), maxTokens);
                 this.onChatUpdate?.();
             }
         } catch (err: unknown) {
