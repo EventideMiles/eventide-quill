@@ -99,6 +99,8 @@ export interface EventideQuillSettings {
     lorebookNetworkTools: boolean;
     /** Fandom wiki subdomains the model may query (e.g., ['starwars', 'memory-alpha']). */
     lorebookFandomWikis: string[];
+    /** Danger setting: when on, the model may query ANY Fandom wiki, ignoring the allowlist. Default: off. */
+    lorebookFandomAllowAllWikis: boolean;
     /** Wikipedia language subdomain (e.g., 'en', 'fr', 'de'). */
     lorebookWikipediaLang: string;
     /** Per-tool result truncation cap (approximate tokens). */
@@ -207,6 +209,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     coWriterToolsEnabled: true,
     lorebookNetworkTools: true,
     lorebookFandomWikis: [],
+    lorebookFandomAllowAllWikis: false,
     lorebookWikipediaLang: 'en',
     lorebookToolMaxTokens: 2000,
     lorebookImageTools: true,
@@ -672,7 +675,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         content.createEl('div', {
             cls: 'quill-settings__welcome-privacy',
             text:
-                'Fandom queries respect an allowlist (empty = Fandom disabled everywhere). AI providers you ' +
+                'Fandom queries respect an allowlist by default (empty = Fandom disabled); the ' +
+                '"Allow any Fandom wiki" danger toggle overrides this. AI providers you ' +
                 'configure receive the manuscript text you send them — pick local providers (Ollama, LM Studio) ' +
                 'to keep everything on your machine. Full per-tool controls live on the General tab.'
         });
@@ -1021,6 +1025,22 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(content)
+            .setName('Allow any wiki')
+            .setDesc(
+                'Caution: lets the co-writer query ANY Fandom wiki subdomain it chooses, ' +
+                    'not just the allowlist above. Prefer the allowlist unless you specifically need this.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.lorebookFandomAllowAllWikis).onChange(async (value) => {
+                    this.plugin.settings.lorebookFandomAllowAllWikis = value;
+                    await this.plugin.saveSettings();
+                    if (value) {
+                        new Notice('Quill: Fandom is now unrestricted — the co-writer can query any wiki it chooses.');
+                    }
+                })
+            );
+
+        new Setting(content)
             .setName('Wikipedia language')
             .setDesc('Wikipedia language subdomain (e.g., "en", "fr", "de"). Default: en.')
             .addText((text) =>
@@ -1241,6 +1261,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.coWriterToolsEnabled = DEFAULT_SETTINGS.coWriterToolsEnabled;
                     this.plugin.settings.lorebookNetworkTools = DEFAULT_SETTINGS.lorebookNetworkTools;
                     this.plugin.settings.lorebookFandomWikis = [...DEFAULT_SETTINGS.lorebookFandomWikis];
+                    this.plugin.settings.lorebookFandomAllowAllWikis = DEFAULT_SETTINGS.lorebookFandomAllowAllWikis;
                     this.plugin.settings.lorebookWikipediaLang = DEFAULT_SETTINGS.lorebookWikipediaLang;
                     this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
                     this.plugin.settings.lorebookImageTools = DEFAULT_SETTINGS.lorebookImageTools;
@@ -2513,6 +2534,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
                     this.plugin.settings.lorebookNetworkTools = DEFAULT_SETTINGS.lorebookNetworkTools;
                     this.plugin.settings.lorebookFandomWikis = [...DEFAULT_SETTINGS.lorebookFandomWikis];
+                    this.plugin.settings.lorebookFandomAllowAllWikis = DEFAULT_SETTINGS.lorebookFandomAllowAllWikis;
                     this.plugin.settings.lorebookWikipediaLang = DEFAULT_SETTINGS.lorebookWikipediaLang;
                     this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
                     this.plugin.settings.lorebookImageTools = DEFAULT_SETTINGS.lorebookImageTools;

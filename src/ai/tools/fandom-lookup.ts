@@ -2,13 +2,15 @@ import type { Tool, ToolContext } from './tool';
 import { mediawikiExtract, mediawikiLookup } from './mediawiki';
 
 /**
- * Validate the wiki subdomain against the allowed list (if configured).
- * Returns an error string on failure, or null on success. An empty
- * `allowedWikis` list means Fandom lookups are disabled (matching the
+ * Validate the wiki subdomain against the allowed list. Returns an error
+ * string on failure, or null on success. When `allowAll` is true (the danger
+ * setting), any subdomain is accepted and the allowlist is ignored. Otherwise
+ * an empty `allowedWikis` list means Fandom lookups are disabled (matching the
  * settings UI: "Leave empty to disable Fandom lookups").
  */
-function validateWiki(wiki: string, allowedWikis: string[]): string | null {
+function validateWiki(wiki: string, allowedWikis: string[], allowAll: boolean): string | null {
     if (!wiki) return 'Error: "wiki" (subdomain) is required. Example: "starwars".';
+    if (allowAll) return null; // danger mode: any Fandom wiki allowed
     if (allowedWikis.length === 0) {
         return 'Error: Fandom lookups are disabled. Add wiki subdomains in Settings → Lorebook.';
     }
@@ -16,6 +18,15 @@ function validateWiki(wiki: string, allowedWikis: string[]): string | null {
         return `Error: wiki "${wiki}" is not in the allowed list. Allowed: ${allowedWikis.join(', ')}.`;
     }
     return null;
+}
+
+/** Build the `wiki` parameter description reflecting the active allow mode. */
+function fandomWikiDescription(allowedWikis: string[], allowAll: boolean): string {
+    const base = 'Fandom wiki subdomain (e.g., "starwars", "memory-alpha", "lotr").';
+    if (allowAll) return `${base} Any subdomain is allowed.`;
+    return allowedWikis.length > 0
+        ? `${base} Allowed: ${allowedWikis.join(', ')}.`
+        : `${base} Any subdomain is allowed.`;
 }
 
 /**
@@ -27,9 +38,11 @@ function validateWiki(wiki: string, allowedWikis: string[]): string | null {
  *
  * @param maxResultTokens  Truncation cap for the extract.
  * @param allowedWikis     Subdomains the writer has approved (e.g., ['starwars']).
- *                         Empty array = Fandom disabled (tool is not registered).
+ *                         Ignored when `allowAll` is true.
+ * @param allowAll         Danger setting: when true, any Fandom subdomain is
+ *                         accepted and `allowedWikis` is ignored.
  */
-export function createFandomLookupTool(maxResultTokens: number, allowedWikis: string[]): Tool {
+export function createFandomLookupTool(maxResultTokens: number, allowedWikis: string[], allowAll: boolean): Tool {
     return {
         id: 'fandom_lookup',
         description:
@@ -42,11 +55,7 @@ export function createFandomLookupTool(maxResultTokens: number, allowedWikis: st
             properties: {
                 wiki: {
                     type: 'string',
-                    description:
-                        'Fandom wiki subdomain (e.g., "starwars", "memory-alpha", "lotr").' +
-                        (allowedWikis.length > 0
-                            ? ` Allowed: ${allowedWikis.join(', ')}.`
-                            : ' Any subdomain is allowed.')
+                    description: fandomWikiDescription(allowedWikis, allowAll)
                 },
                 query: {
                     type: 'string',
@@ -62,7 +71,7 @@ export function createFandomLookupTool(maxResultTokens: number, allowedWikis: st
             const wiki = typeof args.wiki === 'string' ? args.wiki.trim().toLowerCase() : '';
             const query = typeof args.query === 'string' ? args.query.trim() : '';
 
-            const err = validateWiki(wiki, allowedWikis);
+            const err = validateWiki(wiki, allowedWikis, allowAll);
             if (err) return err;
             if (!query) return 'Error: "query" is required.';
 
@@ -85,9 +94,11 @@ export function createFandomLookupTool(maxResultTokens: number, allowedWikis: st
  *
  * @param maxResultTokens  Truncation cap for the extract.
  * @param allowedWikis     Subdomains the writer has approved (e.g., ['starwars']).
- *                         Empty array = Fandom disabled (tool is not registered).
+ *                         Ignored when `allowAll` is true.
+ * @param allowAll         Danger setting: when true, any Fandom subdomain is
+ *                         accepted and `allowedWikis` is ignored.
  */
-export function createFandomPageTool(maxResultTokens: number, allowedWikis: string[]): Tool {
+export function createFandomPageTool(maxResultTokens: number, allowedWikis: string[], allowAll: boolean): Tool {
     return {
         id: 'fandom_page',
         description:
@@ -99,11 +110,7 @@ export function createFandomPageTool(maxResultTokens: number, allowedWikis: stri
             properties: {
                 wiki: {
                     type: 'string',
-                    description:
-                        'Fandom wiki subdomain (e.g., "starwars", "memory-alpha", "lotr").' +
-                        (allowedWikis.length > 0
-                            ? ` Allowed: ${allowedWikis.join(', ')}.`
-                            : ' Any subdomain is allowed.')
+                    description: fandomWikiDescription(allowedWikis, allowAll)
                 },
                 title: {
                     type: 'string',
@@ -119,7 +126,7 @@ export function createFandomPageTool(maxResultTokens: number, allowedWikis: stri
             const wiki = typeof args.wiki === 'string' ? args.wiki.trim().toLowerCase() : '';
             const title = typeof args.title === 'string' ? args.title.trim() : '';
 
-            const err = validateWiki(wiki, allowedWikis);
+            const err = validateWiki(wiki, allowedWikis, allowAll);
             if (err) return err;
             if (!title) return 'Error: "title" is required.';
 

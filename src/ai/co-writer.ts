@@ -444,16 +444,19 @@ function buildNetworkToolsMessage(plugin: EventideQuillPlugin): ChatMessage | nu
     if (!plugin.settings.coWriterToolsEnabled) return null;
     if (!plugin.settings.lorebookNetworkTools) return null;
     const wikis = plugin.settings.lorebookFandomWikis;
+    const allowAll = plugin.settings.lorebookFandomAllowAllWikis;
     const lang = plugin.settings.lorebookWikipediaLang;
     const lines = [
         'You have network tools available — USE THEM PROACTIVELY when the topic',
         'involves canon, history, science, places, or real-world references:'
     ];
-    // Fandom tools are only registered when a non-empty allowlist is set, so
-    // advertise them only then — empty list means Fandom is disabled.
-    if (wikis.length > 0) {
+    // Mirror createToolRegistry(): advertise Fandom when the allowlist is
+    // non-empty OR the "allow any wiki" danger toggle is on. When allow-all is
+    // on with an empty allowlist, the model may query any Fandom wiki.
+    if (wikis.length > 0 || allowAll) {
+        const wikiDesc = allowAll ? 'any wiki' : wikis.join(', ');
         lines.push(
-            `- fandom_lookup / fandom_page: search Fandom (${wikis.join(', ')}); use fandom_page with an exact title to get content.`
+            `- fandom_lookup / fandom_page: search Fandom (${wikiDesc}); use fandom_page with an exact title to get content.`
         );
     }
     lines.push(
