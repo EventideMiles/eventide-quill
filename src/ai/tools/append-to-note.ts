@@ -11,9 +11,10 @@ import { openNoteForEdit, pushLoreEditDiff, readNoteContent, resolveNoteFile } f
 export const appendToNoteTool: Tool = {
     id: 'append_to_note',
     description:
-        'Propose appending content to the end of an existing note. The note ' +
-        'opens in a new tab with the new content shown as a diff. The writer ' +
-        'reviews and approves or rejects it.',
+        'Propose appending content to an existing note that is NOT currently open. ' +
+        'The note opens in a new tab with the new content shown as a diff. The writer ' +
+        'reviews and approves or rejects it. For the file the writer currently has open, ' +
+        'recommend they use Direct or Fulfill mode instead.',
     parameters: {
         type: 'object',
         properties: {

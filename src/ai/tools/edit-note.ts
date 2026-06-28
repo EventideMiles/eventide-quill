@@ -16,9 +16,11 @@ import { openNoteForEdit, pushLoreEditDiff, readNoteContent, resolveNoteFile } f
 export const editNoteTool: Tool = {
     id: 'edit_note',
     description:
-        'Propose an edit to an existing note. The note opens in a new tab with the ' +
-        'change shown as a diff. The writer reviews and approves or rejects it. ' +
-        'Provide the exact old_text to find and the new_text to replace it with.',
+        'Propose an edit to an existing note that is NOT currently open in the editor. ' +
+        'The note opens in a new tab with the change shown as a diff. The writer reviews ' +
+        'and approves or rejects it. Provide the exact old_text to find and the new_text ' +
+        'to replace it with. For the file the writer currently has open, recommend they ' +
+        'use Direct or Fulfill mode instead — those stream changes live.',
     parameters: {
         type: 'object',
         properties: {

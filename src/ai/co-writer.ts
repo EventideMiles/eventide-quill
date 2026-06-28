@@ -379,6 +379,28 @@ async function buildPlotMapMessage(plugin: EventideQuillPlugin): Promise<ChatMes
 }
 
 /**
+ * Build a system message informing the model which file the writer currently
+ * has open. This lets the model distinguish between edits to the active file
+ * (where Direct/Fulfill mode provides a streaming live-edit UX) and edits to
+ * other notes (where the edit_note / append_to_note tools are the right path).
+ *
+ * Returns null when no markdown file is active (e.g., the sidebar has focus
+ * or a non-markdown file is open).
+ */
+function buildActiveFileMessage(plugin: EventideQuillPlugin): ChatMessage | null {
+    const activeFile = plugin.app.workspace.getActiveFile();
+    if (!activeFile || activeFile.extension !== 'md') return null;
+    return {
+        role: 'system',
+        content:
+            `The writer currently has "${activeFile.path}" open in the editor.\n` +
+            'For edits to THIS file, recommend the writer use Direct or Fulfill mode ' +
+            '(which stream changes live into the editor). Use edit_note / append_to_note ' +
+            'tools for any OTHER note that is not currently open.'
+    };
+}
+
+/**
  * Compute active inline-directive steering for the cursor position.
  * Returns one `inline`-source entry per directive in the contiguous trailing
  * run. Empty when directive processing is disabled or no directives are active.
@@ -1045,6 +1067,10 @@ export class CoWriterSession {
         if (discussDirective) {
             injectedContext.push(discussDirective);
         }
+        const activeFileMsg = buildActiveFileMessage(plugin);
+        if (activeFileMsg) {
+            injectedContext.push(activeFileMsg);
+        }
 
         const prompt = getCoWriterDiscussPrompt(proseForContext || '(empty document)', message);
 
@@ -1305,6 +1331,10 @@ export class CoWriterSession {
         const coachDirective = buildDirectiveMessage(plugin, proseForContext);
         if (coachDirective) {
             injectedContext.push(coachDirective);
+        }
+        const coachActiveFileMsg = buildActiveFileMessage(plugin);
+        if (coachActiveFileMsg) {
+            injectedContext.push(coachActiveFileMsg);
         }
 
         // Initialize coach session on first call
@@ -1840,8 +1870,16 @@ export class CoWriterSession {
                 let sawReasoning = false;
                 const fragmentBuffer = new Map<number, { id?: string; name?: string; arguments: string }>();
 
+                // Inject the active-file awareness message fresh each round
+                // (the writer may have switched files between rounds).
+                const activeFileMsg = buildActiveFileMessage(plugin);
+                const messagesForCall =
+                    activeFileMsg && this.loreCoachMessages.length > 0
+                        ? [this.loreCoachMessages[0]!, activeFileMsg, ...this.loreCoachMessages.slice(1)]
+                        : this.loreCoachMessages;
+
                 const stream = chat.provider.chatCompletion({
-                    messages: this.loreCoachMessages,
+                    messages: messagesForCall,
                     model: chat.modelId,
                     temperature: 0.7,
                     maxTokens: 2048,
