@@ -600,11 +600,81 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             row.createEl('span', { cls: 'quill-settings__welcome-feature-text', text: item.text });
         }
 
-        // --- Privacy ---
+        // --- Privacy & network tools ---
+
+        new Setting(content).setName('Privacy & network tools').setHeading();
+
+        content.createEl('div', {
+            cls: 'quill-settings__welcome-privacy-intro',
+            text:
+                'No telemetry. Your manuscript stays yours. The co-writer can call the tools ' +
+                'below, which send requests to external sites — they are on by default so you ' +
+                'do not have to hunt for them. Turn any off here to keep the AI working only ' +
+                'with your local vault.'
+        });
+
+        // Inventory: what each outbound tool does and where the request goes.
+        const netTools = content.createEl('div', { cls: 'quill-settings__welcome-net-tools' });
+        const netToolItems: { name: string; desc: string }[] = [
+            {
+                name: 'fetch_url',
+                desc: 'Fetches a web page you or the model specify and returns its text.'
+            },
+            {
+                name: 'fandom_lookup / fandom_page',
+                desc: 'Queries a Fandom wiki in your allowlist (e.g., starwars.fandom.com) for canon.'
+            },
+            {
+                name: 'wikipedia_lookup / wikipedia_page',
+                desc: 'Queries Wikipedia (configurable language) for reference material.'
+            },
+            {
+                name: 'fetch_image_url',
+                desc: 'Downloads an image from a URL so a vision model can interpret it.'
+            }
+        ];
+        for (const t of netToolItems) {
+            const row = netTools.createEl('div', { cls: 'quill-settings__welcome-net-tool' });
+            row.createEl('code', { cls: 'quill-settings__welcome-net-tool-name', text: t.name });
+            row.createEl('span', { cls: 'quill-settings__welcome-net-tool-desc', text: t.desc });
+        }
+
+        new Setting(content)
+            .setName('Co-writer tools')
+            .setDesc('Master switch for all co-writer tool-calling. Turning it off disables every tool above.')
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.coWriterToolsEnabled).onChange(async (value) => {
+                    this.plugin.settings.coWriterToolsEnabled = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
+            .setName('Network research tools')
+            .setDesc('Sends requests to external websites when the co-writer researches references.')
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.lorebookNetworkTools).onChange(async (value) => {
+                    this.plugin.settings.lorebookNetworkTools = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
+            .setName('Image tool')
+            .setDesc('Downloads images from a URL for a vision model. No effect unless one is configured.')
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.lorebookImageTools).onChange(async (value) => {
+                    this.plugin.settings.lorebookImageTools = value;
+                    await this.plugin.saveSettings();
+                })
+            );
 
         content.createEl('div', {
             cls: 'quill-settings__welcome-privacy',
-            text: 'No telemetry. Your manuscript stays yours. All processing is local unless you configure a cloud provider.'
+            text:
+                'Fandom queries respect an allowlist (empty = Fandom disabled everywhere). AI providers you ' +
+                'configure receive the manuscript text you send them — pick local providers (Ollama, LM Studio) ' +
+                'to keep everything on your machine. Full per-tool controls live on the General tab.'
         });
     }
 
