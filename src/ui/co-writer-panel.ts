@@ -802,15 +802,27 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the initialize prompt with a big button. */
     private renderInitializePrompt(container: HTMLElement): void {
-        // Direct and Fulfill need an active document because they insert into
-        // the editor. Discuss, Coach, and Lorebook work without one — tools
-        // can gather context via lookups instead.
-        if (this.inputMode === 'direct' || this.inputMode === 'fulfill') {
-            if (!this.requireActiveDocument(container, 'the co-writer')) return;
-        }
-
         const prompt = container.createEl('div', { cls: 'quill-cowriter-panel__init' });
         prompt.createEl('div', { cls: 'quill-cowriter-panel__init-icon', text: '\u270e' });
+
+        // Direct and Fulfill need an active file. Show a warning but DON'T
+        // bail — the bottom area renders below with a disabled input row so
+        // the user can still switch modes.
+        const activeFile = this.app.workspace.getActiveFile();
+        if ((this.inputMode === 'direct' || this.inputMode === 'fulfill') && !activeFile) {
+            prompt.createEl('div', {
+                cls: 'quill-cowriter-panel__init-heading',
+                text: this.inputMode === 'direct' ? 'Direct' : 'Fulfill'
+            });
+            prompt.createEl('div', {
+                cls: 'quill-cowriter-panel__init-desc',
+                text:
+                    this.inputMode === 'direct'
+                        ? 'Open a manuscript file to use Direct mode — the AI continues from your cursor.'
+                        : 'Open a manuscript with inline directives to use Fulfill mode.'
+            });
+            return;
+        }
 
         if (this.inputMode === 'coach') {
             prompt.createEl('div', { cls: 'quill-cowriter-panel__init-heading', text: 'Coach' });
@@ -955,16 +967,6 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the pinned bottom area (draft status, context pills, input row). */
     private renderBottomArea(): void {
-        // Direct and Fulfill need an active file. Other modes (discuss, coach,
-        // lorebook) work without one.
-        const activeFile = this.app.workspace.getActiveFile();
-        if (
-            !activeFile &&
-            this.chatHistory.length === 0 &&
-            (this.inputMode === 'direct' || this.inputMode === 'fulfill')
-        )
-            return;
-
         const bottom = this.containerEl!.createEl('div', { cls: 'quill-cowriter-panel__bottom' });
 
         // Coach mode UI
@@ -1172,6 +1174,11 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Render the input row with mode toggle, textarea, and send button. */
     private renderInputRow(container: HTMLElement): void {
         const generating = this.optionsLoading || this.draftState === 'generating' || this.fulfillActive;
+        // Direct and Fulfill need an active file. When none is open, disable
+        // text entry and submission but leave the mode picker enabled so the
+        // user can switch to a mode that doesn't need a file.
+        const noActiveFile =
+            (this.inputMode === 'direct' || this.inputMode === 'fulfill') && !this.app.workspace.getActiveFile();
 
         // Mode picker — shown above the button row when open.
         if (this.modePickerOpen) {
@@ -1221,9 +1228,9 @@ export class CoWriterPanel extends AbstractChatPanel {
             text: '\u21bb',
             title: 'Refresh suggestions'
         });
-        if (generating) refreshBtn.disabled = true;
+        if (generating || noActiveFile) refreshBtn.disabled = true;
         this.renderEvents.registerDomEvent(refreshBtn, 'click', () => {
-            if (this.optionsLoading || this.draftState === 'generating') return;
+            if (this.optionsLoading || this.draftState === 'generating' || noActiveFile) return;
             this.userScrolledUp = false;
             this.optionsLoading = true;
             this.scheduleRender();
@@ -1271,31 +1278,35 @@ export class CoWriterPanel extends AbstractChatPanel {
 
         const actionBtn = btnRow.createEl('button', {
             cls: `quill-cowriter-panel__send-btn mod-cta${generating ? ' quill-cowriter-panel__send-btn--stop' : ''}`,
-            text: generating
-                ? this.inputMode === 'fulfill'
-                    ? 'Running\u2026'
-                    : 'Stop'
-                : this.inputMode === 'fulfill'
-                  ? 'Run'
-                  : 'Send'
+            text: noActiveFile
+                ? 'Open a file'
+                : generating
+                  ? this.inputMode === 'fulfill'
+                      ? 'Running\u2026'
+                      : 'Stop'
+                  : this.inputMode === 'fulfill'
+                    ? 'Run'
+                    : 'Send'
         });
+        if (noActiveFile) actionBtn.disabled = true;
 
         // Textarea row — below the buttons, ~10 lines tall
         const taRow = container.createEl('div', { cls: 'quill-cowriter-panel__ta-row' });
         const input = taRow.createEl('textarea', {
             cls: 'quill-cowriter-panel__input',
-            placeholder:
-                this.inputMode === 'direct'
-                    ? 'Describe what should happen next\u2026'
-                    : this.inputMode === 'coach'
-                      ? "Describe your intent or answer the AI's questions\u2026"
-                      : this.inputMode === 'fulfill'
-                        ? 'Not used in Fulfill mode \u2014 use Run sweep'
-                        : this.inputMode === 'lorebook'
-                          ? 'Describe an entry to develop (e.g. "a character named Sarah")\u2026'
-                          : 'Discuss the scene, ask questions, brainstorm\u2026'
+            placeholder: noActiveFile
+                ? 'Open a manuscript file to use this mode\u2026'
+                : this.inputMode === 'direct'
+                  ? 'Describe what should happen next\u2026'
+                  : this.inputMode === 'coach'
+                    ? "Describe your intent or answer the AI's questions\u2026"
+                    : this.inputMode === 'fulfill'
+                      ? 'Not used in Fulfill mode \u2014 use Run sweep'
+                      : this.inputMode === 'lorebook'
+                        ? 'Describe an entry to develop (e.g. "a character named Sarah")\u2026'
+                        : 'Discuss the scene, ask questions, brainstorm\u2026'
         });
-        if (this.inputMode === 'fulfill') {
+        if (this.inputMode === 'fulfill' || noActiveFile) {
             input.disabled = true;
         } else {
             input.value = this.inputValue;
