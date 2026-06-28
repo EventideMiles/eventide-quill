@@ -1,6 +1,6 @@
 import { App, Modal, Notice, PluginSettingTab, Setting, SuggestModal } from 'obsidian';
 import EventideQuillPlugin from './main';
-import { ModelInfo, ModelRole, ProviderConfig, ProviderType, roleSatisfies } from './ai/provider';
+import { ModelCapability, ModelInfo, ModelRole, ProviderConfig, ProviderType, roleSatisfies } from './ai/provider';
 import { createProvider, generateModelId, generateProviderId } from './ai/provider-registry';
 import { DEFAULT_IMAGE_PROXY_PROMPT } from './ai/vision';
 import { NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS } from './types';
@@ -668,7 +668,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
         new Setting(content)
             .setName('Image tool')
-            .setDesc('Downloads images from a URL for a vision model. No effect unless one is configured.')
+            .setDesc(
+                'Allows image-fetching tools for a vision model — gates fetch_image_url and fandom_image. ' +
+                    'No effect unless a vision-capable chat model or a dedicated image model is configured.'
+            )
             .addToggle((toggle) =>
                 toggle.setValue(this.plugin.settings.lorebookImageTools).onChange(async (value) => {
                     this.plugin.settings.lorebookImageTools = value;
@@ -1116,8 +1119,14 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addTextArea((text) =>
                 text.setValue(this.plugin.settings.lorebookImageProxyPrompt).inputEl.addEventListener('blur', () => {
                     const value = text.inputEl.value.trim();
-                    this.plugin.settings.lorebookImageProxyPrompt =
-                        value.length > 0 ? value : DEFAULT_IMAGE_PROXY_PROMPT;
+                    if (value.length > 0) {
+                        this.plugin.settings.lorebookImageProxyPrompt = value;
+                    } else {
+                        // Restore the default and keep the visible input in
+                        // sync so the displayed text matches the saved setting.
+                        this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_IMAGE_PROXY_PROMPT;
+                        text.inputEl.value = DEFAULT_IMAGE_PROXY_PROMPT;
+                    }
                     void this.plugin.saveSettings();
                 })
             );
@@ -2008,12 +2017,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     'into text for the chat model — it may live on a different provider.'
             )
             .addDropdown((dropdown) => {
-                if (imageModels.length === 0) {
-                    dropdown.addOption('', 'No image models configured');
-                } else {
-                    for (const m of imageModels) {
-                        dropdown.addOption(m.key, m.name);
-                    }
+                // Always offer an explicit "None" (empty value) so the slot can
+                // be cleared back to the intentional no-image-model state even
+                // once image models exist.
+                dropdown.addOption('', imageModels.length === 0 ? 'None (no image models configured)' : 'None');
+                for (const m of imageModels) {
+                    dropdown.addOption(m.key, m.name);
                 }
                 dropdown.setValue(
                     imageModels.some((m) => m.key === this.plugin.settings.aiDefaultImageProvider)
@@ -2581,27 +2590,41 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /**
      * Ensure aiDefaultChatProvider, aiDefaultEmbedProvider, and aiDefaultImageProvider still reference
-     * valid provider+model keys. Clears any key whose provider or model has
-     * been removed. Call after mutating aiProviders and before saveSettings().
+     * valid provider+model keys whose role still satisfies the slot's
+     * capability. Clears any key whose provider or model has been removed, and
+     * also clears a key whose model's role no longer fits (e.g., the model was
+     * switched from "chat" to "embed"). Call after mutating aiProviders and
+     * before saveSettings().
      */
     private validateDefaultProviders(): void {
         const { aiProviders } = this.plugin.settings;
 
-        const isValid = (key: string): boolean => {
+        const satisfies = (key: string, capability: ModelCapability): boolean => {
             const parts = key.split('/', 2);
             if (parts.length !== 2 || !parts[0] || !parts[1]) return false;
             const provider = aiProviders.find((p) => p.id === parts[0]);
             if (!provider) return false;
-            return provider.models.some((m) => m.id === parts[1]);
+            const model = provider.models.find((m) => m.id === parts[1]);
+            if (!model) return false;
+            return roleSatisfies(model.role, capability);
         };
 
-        if (this.plugin.settings.aiDefaultChatProvider && !isValid(this.plugin.settings.aiDefaultChatProvider)) {
+        if (
+            this.plugin.settings.aiDefaultChatProvider &&
+            !satisfies(this.plugin.settings.aiDefaultChatProvider, 'chat')
+        ) {
             this.plugin.settings.aiDefaultChatProvider = '';
         }
-        if (this.plugin.settings.aiDefaultEmbedProvider && !isValid(this.plugin.settings.aiDefaultEmbedProvider)) {
+        if (
+            this.plugin.settings.aiDefaultEmbedProvider &&
+            !satisfies(this.plugin.settings.aiDefaultEmbedProvider, 'embed')
+        ) {
             this.plugin.settings.aiDefaultEmbedProvider = '';
         }
-        if (this.plugin.settings.aiDefaultImageProvider && !isValid(this.plugin.settings.aiDefaultImageProvider)) {
+        if (
+            this.plugin.settings.aiDefaultImageProvider &&
+            !satisfies(this.plugin.settings.aiDefaultImageProvider, 'image')
+        ) {
             this.plugin.settings.aiDefaultImageProvider = '';
         }
     }

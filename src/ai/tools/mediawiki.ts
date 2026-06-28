@@ -383,6 +383,11 @@ function parseGalleryCaptions(wikitext: string, limit: number): Array<{ file: st
             const segs = line.split('|');
             const file = segs[0]?.trim();
             if (!file) continue;
+            // Skip standalone gallery attribute lines (mode=, caption=,
+            // showfilename=, widths=, etc.) — these aren't file entries. Real
+            // filenames start with `File:`/`Image:` or contain an extension,
+            // so a leading lowercase-word-then-`=` never matches them.
+            if (/^[a-z]+=/i.test(file)) continue;
             // Caption = pipe-separated segments that aren't `key=value` attrs.
             const captionSegs = segs
                 .slice(1)

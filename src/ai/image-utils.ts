@@ -84,7 +84,12 @@ function loadViaImageElement(bytes: ArrayBuffer, contentType?: string): Promise<
 
 /** Fit a source rectangle inside `maxDimension`, preserving aspect ratio. */
 function scaleDimensions(width: number, height: number, maxDimension: number): { width: number; height: number } {
-    if (width <= maxDimension && height <= maxDimension) return { width, height };
+    if (maxDimension <= 0) throw new Error('maxDimension must be a positive number.');
+    if (width <= maxDimension && height <= maxDimension)
+        return { width: Math.max(1, width), height: Math.max(1, height) };
     const ratio = width >= height ? maxDimension / width : maxDimension / height;
-    return { width: Math.round(width * ratio), height: Math.round(height * ratio) };
+    return {
+        width: Math.max(1, Math.round(width * ratio)),
+        height: Math.max(1, Math.round(height * ratio))
+    };
 }

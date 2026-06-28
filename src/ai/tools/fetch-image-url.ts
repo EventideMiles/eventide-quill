@@ -1,6 +1,7 @@
 import { requestUrl } from 'obsidian';
 import { downscaleToJpegBase64, isImageContentType } from '../image-utils';
 import type { Tool, ToolContext, ToolResult } from './tool';
+import { validatePublicHost } from './fetch-url';
 
 /**
  * Factory: create the `fetch_image_url` tool.
@@ -46,6 +47,13 @@ export function createFetchImageUrlTool(maxResultTokens: number, maxDimension: n
             if (!/^https?:\/\//i.test(url)) {
                 return { text: 'Error: URL must start with http:// or https://.' };
             }
+
+            // SSRF guard: reject loopback, RFC1918, link-local, and other
+            // internal destinations before the request. Same host gate as the
+            // fetch_url tool — requestUrl follows redirects internally (and
+            // exposes no final URL), so the initial host is the only checkpoint.
+            const hostErr = validatePublicHost(url);
+            if (hostErr) return { text: hostErr };
 
             try {
                 const response = await requestUrl({

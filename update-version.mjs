@@ -50,7 +50,7 @@ function fail(msg) {
 if (!targetVersion) {
     fail('missing version argument. Usage: node update-version.mjs <new-version> [--dry-run]');
 }
-if (!/^\d+\.\d+\.\d+(-[A-Za-z0-9.-]+$)?/.test(targetVersion)) {
+if (!/^\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?$/.test(targetVersion)) {
     fail(`invalid version "${targetVersion}". Expected semver like 0.11.0.`);
 }
 

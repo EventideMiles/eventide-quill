@@ -320,7 +320,7 @@ Before pushing a feature branch to origin for the first time, bump the version i
 
 The version string lives in more than the three release files — it's also embedded in agent strings (e.g. `MEDIAWIKI_UA` in `src/ai/tools/mediawiki.ts`) so outbound requests identify the plugin. To bump it everywhere consistently, prefer the chore tool over hand-editing:
 
-```
+```bash
 npm run set-version -- <new-version>      # writes
 npm run set-version -- <new-version> --dry-run   # preview only
 ```

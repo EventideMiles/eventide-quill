@@ -20,6 +20,13 @@ import {
  */
 function validateWiki(wiki: string, allowedWikis: string[], allowAll: boolean): string | null {
     if (!wiki) return 'Error: "wiki" (subdomain) is required. Example: "starwars".';
+    // Always enforce a safe Fandom subdomain, even in allow-all mode — reject
+    // path separators, dots, query strings, and protocol fragments so the
+    // value can never escape the `${wiki}.fandom.com` host template. `allowAll`
+    // only bypasses the allowlist check below, not this sanitization.
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(wiki)) {
+        return `Error: "wiki" must be a single Fandom subdomain (letters, digits, hyphens only). Got "${wiki}".`;
+    }
     if (allowAll) return null; // danger mode: any Fandom wiki allowed
     if (allowedWikis.length === 0) {
         return 'Error: Fandom lookups are disabled. Add wiki subdomains in Settings → Lorebook.';
@@ -36,7 +43,7 @@ function fandomWikiDescription(allowedWikis: string[], allowAll: boolean): strin
     if (allowAll) return `${base} Any subdomain is allowed.`;
     return allowedWikis.length > 0
         ? `${base} Allowed: ${allowedWikis.join(', ')}.`
-        : `${base} Any subdomain is allowed.`;
+        : `${base} Fandom lookups are disabled — add a wiki in Settings → Lorebook to enable.`;
 }
 
 /**
