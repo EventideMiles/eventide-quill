@@ -764,6 +764,11 @@
         font-size: var(--font-smallest);
         color: var(--text-faint, var(--text-muted));
         font-style: italic;
+        cursor: default;
+
+        &--error {
+            color: var(--text-error);
+        }
     }
 
     &__tool-use-icon {

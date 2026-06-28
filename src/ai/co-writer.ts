@@ -439,15 +439,21 @@ function buildNetworkToolsMessage(plugin: EventideQuillPlugin): ChatMessage | nu
     const wikis = plugin.settings.lorebookFandomWikis;
     const lang = plugin.settings.lorebookWikipediaLang;
     const lines = [
-        'You have network tools available:',
+        'You have network tools available — USE THEM PROACTIVELY when the topic',
+        'involves canon, history, science, places, or real-world references:',
         '- fandom_lookup: search a Fandom wiki for canon details.',
-        `- wikipedia_lookup: search Wikipedia (${lang}).`,
+        `- wikipedia_lookup: search Wikipedia (${lang}) for general reference.`,
         '- fetch_url: fetch any web page and return its text.',
-        'Use these when the writer asks about external canon, references, research,',
-        'or real-world topics. Results count toward context — be judicious.'
+        '',
+        'Do not hesitate — if the writer mentions a topic that a wiki or',
+        'encyclopedia would know about, look it up. You do not need to ask',
+        'permission. Results count toward context — be judicious with very',
+        'large pages.'
     ];
     if (wikis.length > 0) {
-        lines[1] = `- fandom_lookup: search a Fandom wiki for canon details (configured: ${wikis.join(', ')}).`;
+        lines[3] = `- fandom_lookup: search a Fandom wiki (configured: ${wikis.join(', ')}).`;
+    } else {
+        lines[3] = '- fandom_lookup: search any Fandom wiki.';
     }
     return { role: 'system', content: lines.join('\n') };
 }
@@ -567,7 +573,7 @@ export interface CoWriterChatMessage {
      * message rather than as separate chat entries so they don't interfere
      * with the panel's streaming-placeholder logic.
      */
-    toolUses?: { name: string; argsSummary: string }[];
+    toolUses?: { name: string; argsSummary: string; error?: string }[];
 }
 
 /**
@@ -1064,6 +1070,24 @@ export class CoWriterSession {
     }
 
     /**
+     * Annotate the last assistant message's toolUses with error info for
+     * failed tool calls, so the panel can render them red and show the
+     * reason on hover / right-click copy. Called after the execution loop
+     * in each mode.
+     */
+    private annotateToolUseErrors(results: { failed: boolean; result: string }[]): void {
+        const lastMsg = this.chatHistory[this.chatHistory.length - 1];
+        if (!lastMsg || lastMsg.role !== 'assistant' || !lastMsg.toolUses) return;
+        lastMsg.toolUses = lastMsg.toolUses.map((use, i) => {
+            const execResult = results[i];
+            if (execResult?.failed) {
+                return { ...use, error: execResult.result };
+            }
+            return use;
+        });
+    }
+
+    /**
      * Send a discussion message to the AI.
      * Unlike generateOptions, this does not produce continuation options —
      * it returns a normal chat response for brainstorming and discussion.
@@ -1300,8 +1324,10 @@ export class CoWriterSession {
                 if (result.toolCalls.length === 0 || !registry) break;
 
                 // Execute tools and push role:'tool' result messages.
+                const execResults: { failed: boolean; result: string }[] = [];
                 for (const call of result.toolCalls) {
                     const toolResult = await this.executeToolCallSafely(call, registry, ctx);
+                    execResults.push({ failed: toolResult.startsWith('Error'), result: toolResult });
                     this.discussCurrentMessages.push({
                         role: 'tool',
                         content: toolResult,
@@ -1309,6 +1335,10 @@ export class CoWriterSession {
                         name: call.name
                     });
                 }
+
+                // Annotate toolUses with error info so the panel can style
+                // failed calls red and show the reason on hover / right-click copy.
+                this.annotateToolUseErrors(execResults);
 
                 // Re-estimate after tool results were appended.
                 this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
@@ -1595,8 +1625,10 @@ export class CoWriterSession {
 
                 if (result.toolCalls.length === 0 || !registry) break;
 
+                const coachExecResults: { failed: boolean; result: string }[] = [];
                 for (const call of result.toolCalls) {
                     const toolResult = await this.executeToolCallSafely(call, registry, ctx);
+                    coachExecResults.push({ failed: toolResult.startsWith('Error'), result: toolResult });
                     this.discussCurrentMessages.push({
                         role: 'tool',
                         content: toolResult,
@@ -1605,6 +1637,7 @@ export class CoWriterSession {
                     });
                 }
 
+                this.annotateToolUseErrors(coachExecResults);
                 this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
 
                 // Mid-loop compaction (same as discuss).
@@ -2107,56 +2140,21 @@ export class CoWriterSession {
                     break;
                 }
 
-                // Execute each tool and push a role:'tool' result to the API
-                // history. No separate chat entries — tool calls are already
-                // visible as `toolUses` annotations on the assistant message.
+                // Execute each tool via the shared helper (handles JSON parse,
+                // execution errors, truncation uniformly across all modes).
+                const loreExecResults: { failed: boolean; result: string }[] = [];
                 for (const call of toolCalls) {
-                    const tool = registry.get(call.name);
-                    let resultText: string;
-                    if (!tool) {
-                        resultText = `Error: tool "${call.name}" is not registered.`;
-                    } else {
-                        let parsedArgs: Record<string, unknown>;
-                        try {
-                            parsedArgs =
-                                call.arguments.trim().length === 0
-                                    ? {}
-                                    : (JSON.parse(call.arguments) as Record<string, unknown>);
-                        } catch (err) {
-                            const msg = err instanceof Error ? err.message : String(err);
-                            resultText = `Error: invalid JSON arguments: ${msg}`;
-                            this.loreCoachMessages.push({
-                                role: 'tool',
-                                content: resultText,
-                                toolCallId: call.id,
-                                name: call.name
-                            });
-                            continue;
-                        }
-                        try {
-                            if (ctx.signal?.aborted) {
-                                resultText = 'Error: aborted before tool execution.';
-                            } else {
-                                resultText = await tool.execute(parsedArgs, ctx);
-                                const maxChars = tool.maxResultTokens * 4;
-                                if (resultText.length > maxChars) {
-                                    resultText =
-                                        resultText.slice(0, maxChars) +
-                                        `\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
-                                }
-                            }
-                        } catch (err) {
-                            const msg = err instanceof Error ? err.message : String(err);
-                            resultText = `Error executing tool "${call.id}": ${msg}`;
-                        }
-                    }
+                    const toolResult = await this.executeToolCallSafely(call, registry, ctx);
+                    loreExecResults.push({ failed: toolResult.startsWith('Error'), result: toolResult });
                     this.loreCoachMessages.push({
                         role: 'tool',
-                        content: resultText,
+                        content: toolResult,
                         toolCallId: call.id,
                         name: call.name
                     });
                 }
+
+                this.annotateToolUseErrors(loreExecResults);
 
                 // Attach the lore draft from the POST-tool state so the
                 // assistant turn that actually invoked propose_entry owns the

@@ -1,4 +1,4 @@
-import { App, MarkdownRenderer } from 'obsidian';
+import { App, MarkdownRenderer, Notice } from 'obsidian';
 import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { ConfirmModal } from './confirm-modal';
@@ -704,19 +704,35 @@ export class CoWriterPanel extends AbstractChatPanel {
                     if (msg.toolUses && msg.toolUses.length > 0) {
                         const toolList = bubble.createEl('div', { cls: 'quill-cowriter-panel__tool-uses' });
                         for (const use of msg.toolUses) {
-                            const entry = toolList.createEl('div', { cls: 'quill-cowriter-panel__tool-use' });
+                            const failed = Boolean(use.error);
+                            const entry = toolList.createEl('div', {
+                                cls: `quill-cowriter-panel__tool-use${failed ? ' quill-cowriter-panel__tool-use--error' : ''}`,
+                                title: failed ? use.error : undefined
+                            });
                             entry.createEl('span', {
                                 cls: 'quill-cowriter-panel__tool-use-icon',
-                                text: '\u29c9'
+                                text: failed ? '\u26a0' : '\u29c9'
                             });
                             entry.createEl('span', {
                                 cls: 'quill-cowriter-panel__tool-use-name',
-                                text: `Used ${use.name}`
+                                text: `${failed ? 'Failed' : 'Used'} ${use.name}`
                             });
                             if (use.argsSummary) {
                                 entry.createEl('span', {
                                     cls: 'quill-cowriter-panel__tool-use-args',
                                     text: use.argsSummary
+                                });
+                            }
+                            // Right-click failed tool calls to copy the error
+                            // reason for bug reporting.
+                            if (failed && use.error) {
+                                const errorText = use.error;
+                                this.renderEvents.registerDomEvent(entry, 'contextmenu', (e: MouseEvent) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    void navigator.clipboard.writeText(errorText).then(() => {
+                                        new Notice('Copied error to clipboard');
+                                    });
                                 });
                             }
                         }
