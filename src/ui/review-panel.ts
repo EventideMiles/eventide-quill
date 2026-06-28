@@ -9,8 +9,9 @@ import {
 import type { CompactionStrategy } from '../ai/manuscript-compaction';
 import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
+import { FileMentionSuggest } from './file-mention-suggest';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
-import { buildEmbedFolderPath, embedFolderLabel, parseEmbedFolderPath } from '../utils/vault-files';
+import { buildEmbedFolderPath, embedFolderLabel, parseEmbedFolderPath, resolveAtMentions } from '../utils/vault-files';
 import { FilenameModal } from './filename-modal';
 import { ChatContextFiles } from './chat-context-files';
 
@@ -1216,10 +1217,23 @@ export class ReviewPanel extends AbstractChatPanel {
         });
         input.disabled = disabled;
 
+        // Inline file-mention autocomplete for @-references
+        if (!disabled) {
+            new FileMentionSuggest(this.app, input, this.renderEvents);
+        }
+
         const doSend = () => {
             if (this.chatLoading) return;
-            const text = input.value.trim();
+            let text = input.value.trim();
             if (!text) return;
+
+            // Resolve @-mentioned files and add them to context.
+            const { resolvedPaths, cleanedText } = resolveAtMentions(text, this.app.vault);
+            for (const path of resolvedPaths) {
+                void this.addChatContextFile(path);
+            }
+            text = cleanedText;
+
             this.chatHistory.push({ role: 'user', content: text });
             input.value = '';
             this.chatLoading = true;

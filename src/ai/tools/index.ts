@@ -1,9 +1,9 @@
 import { ToolRegistry } from './tool';
 import { appendToNoteTool } from './append-to-note';
 import { calculateFileSizesTool } from './calculate-file-sizes';
-import { createFandomLookupTool } from './fandom-lookup';
+import { createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
 import { createFetchUrlTool } from './fetch-url';
-import { createWikipediaLookupTool } from './wikipedia-lookup';
+import { createWikipediaLookupTool, createWikipediaPageTool } from './wikipedia-lookup';
 import { editNoteTool } from './edit-note';
 import { grepNotesTool } from './grep-notes';
 import { loreSiblingsTool } from './lore-siblings';
@@ -18,9 +18,9 @@ export type { Tool, ToolContext } from './tool';
 export { streamWithTools } from './tool-loop';
 export { appendToNoteTool } from './append-to-note';
 export { calculateFileSizesTool } from './calculate-file-sizes';
-export { createFandomLookupTool } from './fandom-lookup';
+export { createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
 export { createFetchUrlTool } from './fetch-url';
-export { createWikipediaLookupTool } from './wikipedia-lookup';
+export { createWikipediaLookupTool, createWikipediaPageTool } from './wikipedia-lookup';
 export { editNoteTool } from './edit-note';
 export { grepNotesTool } from './grep-notes';
 export { loreSiblingsTool } from './lore-siblings';
@@ -60,7 +60,7 @@ export function createLoreCoachToolRegistry(): ToolRegistry {
 /**
  * Build the full tool registry for a co-writer mode. Handles all gating:
  * - `coWriterToolsEnabled` off → returns null (no tools)
- * - `lorebookNetworkTools` on → registers fetch_url, fandom_lookup, wikipedia_lookup
+ * - `lorebookNetworkTools` on → registers all network tools
  * - `includeProposeEntry` → adds propose_entry (lorebook coach only)
  *
  * Network tools use factory functions because their maxResultTokens and
@@ -75,7 +75,9 @@ export function createToolRegistry(plugin: EventideQuillPlugin, includeProposeEn
         const maxTokens = plugin.settings.lorebookToolMaxTokens;
         registry.register(createFetchUrlTool(maxTokens));
         registry.register(createFandomLookupTool(maxTokens, plugin.settings.lorebookFandomWikis));
+        registry.register(createFandomPageTool(maxTokens, plugin.settings.lorebookFandomWikis));
         registry.register(createWikipediaLookupTool(maxTokens, plugin.settings.lorebookWikipediaLang));
+        registry.register(createWikipediaPageTool(maxTokens, plugin.settings.lorebookWikipediaLang));
     }
 
     return registry;

@@ -438,23 +438,25 @@ function buildNetworkToolsMessage(plugin: EventideQuillPlugin): ChatMessage | nu
     if (!plugin.settings.lorebookNetworkTools) return null;
     const wikis = plugin.settings.lorebookFandomWikis;
     const lang = plugin.settings.lorebookWikipediaLang;
+    const fandomLine =
+        wikis.length > 0
+            ? `- fandom_lookup / fandom_page: search Fandom (${wikis.join(', ')}); use fandom_page with an exact title to get content.`
+            : '- fandom_lookup / fandom_page: search any Fandom wiki; use fandom_page with an exact title to get content.';
     const lines = [
         'You have network tools available — USE THEM PROACTIVELY when the topic',
         'involves canon, history, science, places, or real-world references:',
-        '- fandom_lookup: search a Fandom wiki for canon details.',
-        `- wikipedia_lookup: search Wikipedia (${lang}) for general reference.`,
+        fandomLine,
+        `- wikipedia_lookup / wikipedia_page: search Wikipedia (${lang}); use wikipedia_page with an exact title to get content.`,
         '- fetch_url: fetch any web page and return its text.',
+        '',
+        'Workflow: use the *_lookup tool to search, then use the *_page tool',
+        'with the exact title from the results to retrieve the full extract.',
         '',
         'Do not hesitate — if the writer mentions a topic that a wiki or',
         'encyclopedia would know about, look it up. You do not need to ask',
         'permission. Results count toward context — be judicious with very',
         'large pages.'
     ];
-    if (wikis.length > 0) {
-        lines[3] = `- fandom_lookup: search a Fandom wiki (configured: ${wikis.join(', ')}).`;
-    } else {
-        lines[3] = '- fandom_lookup: search any Fandom wiki.';
-    }
     return { role: 'system', content: lines.join('\n') };
 }
 

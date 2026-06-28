@@ -191,7 +191,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     coWriterLoreContext: true,
     reviewLoreContext: true,
     coWriterToolsEnabled: true,
-    lorebookNetworkTools: false,
+    lorebookNetworkTools: true,
     lorebookFandomWikis: [],
     lorebookWikipediaLang: 'en',
     lorebookToolMaxTokens: 2000
@@ -903,9 +903,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .setName('Network tools')
             .setDesc(
                 'Allow the co-writer to call network tools (fetch_url, fandom_lookup, ' +
-                    'wikipedia_lookup). These send requests to external sites — enable only ' +
-                    'if you want the AI to research canon, look up references, or fetch web ' +
-                    'pages. Default: off.'
+                    'wikipedia_lookup). These send requests to external sites — disable only ' +
+                    'if you want to restrict the AI from researching canon, references, or web ' +
+                    'pages. Default: on.'
             )
             .addToggle((toggle) =>
                 toggle.setValue(this.plugin.settings.lorebookNetworkTools).onChange(async (value) => {

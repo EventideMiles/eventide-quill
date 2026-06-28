@@ -9,6 +9,34 @@ import { requestUrl } from 'obsidian';
  * platform proxy). All responses are JSON — no HTML parsing needed.
  */
 
+/** Custom User-Agent to comply with Wikimedia's API policy (200 req/min tier). */
+const MEDIAWIKI_UA = 'EventideQuill/0.9.0 (https://github.com/EventideMiles/eventide-quill)';
+
+/** Minimum interval (ms) between requests to the same host. */
+const MIN_INTERVAL_MS = 500;
+
+/** Per-host timestamp of the last API call. */
+const lastCall = new Map<string, number>();
+
+/** Promise-based sleep. */
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+/**
+ * Enforce a minimum interval between consecutive requests to the same host.
+ * Call before every outbound request to obey rate limits.
+ */
+async function rateLimit(host: string): Promise<void> {
+    const now = Date.now();
+    const last = lastCall.get(host) ?? 0;
+    const elapsed = now - last;
+    if (elapsed < MIN_INTERVAL_MS) {
+        await sleep(MIN_INTERVAL_MS - elapsed);
+    }
+    lastCall.set(host, Date.now());
+}
+
 /** A single search result from the MediaWiki `list=search` API. */
 interface MediaWikiSearchResult {
     title: string;
@@ -32,7 +60,8 @@ interface MediaWikiExtract {
 export async function mediawikiSearch(host: string, query: string, limit = 5): Promise<MediaWikiSearchResult[]> {
     const url = `https://${host}/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=${limit}&format=json&origin=*`;
 
-    const response = await requestUrl({ url, method: 'GET', throw: false });
+    await rateLimit(host);
+    const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
 
     if (response.status !== 200) {
         throw new Error(`Search failed: HTTP ${response.status}`);
@@ -51,21 +80,34 @@ export async function mediawikiSearch(host: string, query: string, limit = 5): P
 }
 
 /**
- * Fetch the intro extract (plain text) for a specific page title.
+ * Internal: fetch the intro extract for a specific page title.
  *
- * Uses `explaintext=1` to get plain text instead of HTML — no parsing needed.
- * Falls back gracefully when `explaintext` isn't supported (some Fandom wikis).
+ * Tries `prop=extracts` first (plain text, no HTML parsing needed).
+ * Some Fandom wikis don't support `prop=extracts` — for those, falls back
+ * to `action=parse&prop=text&section=0` and strips HTML tags.
  *
- * @param host   The wiki host.
- * @param title  The exact page title.
- * @returns The extract text, or null if the page doesn't exist.
+ * @returns The extract object, or null if the page is missing.
  */
-export async function mediawikiExtract(host: string, title: string): Promise<MediaWikiExtract | null> {
+async function mediawikiExtractByTitle(host: string, title: string): Promise<MediaWikiExtract | null> {
+    // Try prop=extracts first (returns plain text, no HTML to strip).
+    let result = await mediawikiExtractByExtracts(host, title);
+    if (result) return result;
+
+    // Fallback: action=parse (some Fandom wikis don't support prop=extracts).
+    return await mediawikiExtractByParse(host, title);
+}
+
+/**
+ * Attempt extraction via `action=query&prop=extracts` with redirect following.
+ * Returns null when the wiki doesn't support this API or the page is missing.
+ */
+async function mediawikiExtractByExtracts(host: string, title: string): Promise<MediaWikiExtract | null> {
     const url =
         `https://${host}/api.php?action=query&prop=extracts&exintro=1&explaintext=1` +
-        `&titles=${encodeURIComponent(title)}&format=json&origin=*`;
+        `&redirects=1&titles=${encodeURIComponent(title)}&format=json&origin=*`;
 
-    const response = await requestUrl({ url, method: 'GET', throw: false });
+    await rateLimit(host);
+    const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
 
     if (response.status !== 200) {
         throw new Error(`Extract failed: HTTP ${response.status}`);
@@ -85,6 +127,62 @@ export async function mediawikiExtract(host: string, title: string): Promise<Med
     if (!extract) return null;
 
     return { title: firstPage.title ?? title, extract };
+}
+
+/**
+ * Fallback extraction via `action=parse&prop=text&section=0`.
+ * Used when the wiki doesn't support `prop=extracts`.
+ * Strips HTML tags to produce plain text.
+ */
+async function mediawikiExtractByParse(host: string, title: string): Promise<MediaWikiExtract | null> {
+    const url =
+        `https://${host}/api.php?action=parse&page=${encodeURIComponent(title)}` +
+        `&redirects=1&prop=text&section=0&format=json&origin=*`;
+
+    await rateLimit(host);
+    const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
+
+    if (response.status !== 200) return null;
+
+    const data = response.json as {
+        error?: { code?: string };
+        parse?: { title?: string; text?: { '*': string } };
+    };
+
+    if (data.error || !data.parse?.text?.['*']) return null;
+
+    const html = data.parse.text['*'];
+    const text = stripHtml(html).replace(/\s+/g, ' ').trim();
+    if (!text) return null;
+
+    return { title: data.parse.title ?? title, extract: text };
+}
+
+/**
+ * Fetch the intro extract (plain text) for a specific page title.
+ *
+ * Uses `explaintext=1` to get plain text instead of HTML — no parsing needed.
+ * Tries exact title first, then falls back to a search-based lookup so the
+ * model can use titles returned by the search API even when the exact title
+ * is a redirect or differs slightly from what MediaWiki expects.
+ *
+ * @param host   The wiki host.
+ * @param title  The page title (exact or approximate).
+ * @returns The extract text, or null if the page doesn't exist.
+ */
+export async function mediawikiExtract(host: string, title: string): Promise<MediaWikiExtract | null> {
+    // First try the exact title (with redirect following).
+    let result = await mediawikiExtractByTitle(host, title);
+    if (result) return result;
+
+    // Exact title failed — fall back to search to find the actual page.
+    const searchResults = await mediawikiSearch(host, title, 1);
+    if (searchResults.length === 0) return null;
+
+    const searchTitle = searchResults[0]!.title;
+    if (searchTitle.toLowerCase() === title.toLowerCase()) return null;
+
+    return await mediawikiExtractByTitle(host, searchTitle);
 }
 
 /**
@@ -122,10 +220,12 @@ export async function mediawikiLookup(host: string, query: string, maxTokens: nu
     }
 
     // Multiple candidates — return the list so the model can pick.
-    const lines = results.map((r, i) => `${i + 1}. ${r.title} — ${r.snippet.slice(0, 100)}`);
+    // Titles are quoted so the model can reliably extract the exact title
+    // (rather than guessing where the title ends and the snippet begins).
+    const lines = results.map((r, i) => `${i + 1}. "${r.title}" — ${r.snippet.slice(0, 100)}`);
     return (
         `Found ${results.length} results for "${query}" on ${host}. ` +
-        `Call again with a specific title to get the full extract:\n${lines.join('\n')}`
+        `Use the *_page tool with the exact title (including quotes) from the list below to fetch the full extract:\n${lines.join('\n')}`
     );
 }
 

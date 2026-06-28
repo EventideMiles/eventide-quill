@@ -378,6 +378,7 @@
 
     /* Textarea row (below buttons) */
     &__ta-row {
+        position: relative;
         flex-shrink: 0;
         padding: 0 0 $space-xs 0;
     }

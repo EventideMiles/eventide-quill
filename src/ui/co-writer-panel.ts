@@ -2,8 +2,9 @@ import { App, MarkdownRenderer, Notice } from 'obsidian';
 import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { ConfirmModal } from './confirm-modal';
+import { FileMentionSuggest } from './file-mention-suggest';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
-import { buildEmbedFolderPath, embedFolderLabel, parseEmbedFolderPath } from '../utils/vault-files';
+import { buildEmbedFolderPath, embedFolderLabel, parseEmbedFolderPath, resolveAtMentions } from '../utils/vault-files';
 import { renderChangeBulkBar, renderChangeCard } from './change-card';
 import { renderLoreDraftCard } from './lore-entry-review';
 import type EventideQuillPlugin from '../main';
@@ -1343,11 +1344,24 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.inputValue = input.value;
         });
 
+        // Inline file-mention autocomplete for @-references
+        if (!noActiveFile && this.inputMode !== 'fulfill') {
+            new FileMentionSuggest(this.app, input, this.renderEvents);
+        }
+
         const doSend = () => {
             if (this.optionsLoading || this.draftState === 'generating' || this.fulfillActive) return;
-            const text = input.value.trim();
+            let text = input.value.trim();
             // Fulfill runs the sweep; an empty instruction is allowed.
             if (text.length === 0 && this.inputMode !== 'fulfill') return;
+
+            // Resolve @-mentioned files and add them to context.
+            const { resolvedPaths, cleanedText } = resolveAtMentions(text, this.app.vault);
+            for (const path of resolvedPaths) {
+                this.onAddContextFile?.(path);
+            }
+            text = cleanedText;
+
             this.userScrolledUp = false; // Resume auto-follow on new message
             this.inputValue = '';
             input.value = '';
