@@ -1144,13 +1144,15 @@ export class CoWriterSession {
         const registry = toolsEnabled ? createInternalToolRegistry() : null;
         const toolDefs = registry?.toToolDefinitions();
         const ctx: ToolContext = { plugin };
-        const MAX_TOOL_ROUNDS = 5;
+        // 0 = unlimited (the model calls as many rounds as it needs; use Stop
+        // to cancel). A positive number caps turn consumption.
+        const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
 
         try {
             this.abortController = new AbortController();
             ctx.signal = this.abortController.signal;
 
-            for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+            for (let round = 0; round < maxRounds; round++) {
                 // Rebuild baseMessages each round — discussCurrentMessages may
                 // have grown with tool-call + tool-result messages.
                 const roundBaseMessages: ChatMessage[] = [
@@ -1172,7 +1174,7 @@ export class CoWriterSession {
                         messages: roundBaseMessages,
                         model: chat.modelId,
                         temperature: plugin.settings.coWriterTemperature,
-                        maxTokens: 1024,
+                        maxTokens: plugin.settings.coWriterMaxOutputTokens,
                         signal: this.abortController.signal,
                         tools: toolDefs
                     },
@@ -1420,7 +1422,7 @@ export class CoWriterSession {
         const registry = toolsEnabled ? createInternalToolRegistry() : null;
         const toolDefs = registry?.toToolDefinitions();
         const ctx: ToolContext = { plugin };
-        const MAX_TOOL_ROUNDS = 5;
+        const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
 
         let response = '';
 
@@ -1428,7 +1430,7 @@ export class CoWriterSession {
             this.abortController = new AbortController();
             ctx.signal = this.abortController.signal;
 
-            for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+            for (let round = 0; round < maxRounds; round++) {
                 const roundBaseMessages: ChatMessage[] = [
                     this.discussCurrentMessages[0]!,
                     ...injectedContext,
@@ -1445,13 +1447,13 @@ export class CoWriterSession {
                         messages: roundBaseMessages,
                         model: chat.modelId,
                         temperature: plugin.settings.coWriterTemperature,
-                        maxTokens: 1024,
+                        maxTokens: plugin.settings.coWriterMaxOutputTokens,
                         signal: this.abortController.signal,
                         tools: toolDefs
                     },
                     {
                         onChunk: (text) => this.onDiscussChunk?.(text),
-                        onThoughtChange: (t) => this.onThought?.(t),
+                        onThoughtChange: (thought) => this.onThought?.(thought),
                         onClear: () => this.onDiscussClear?.()
                     }
                 );
@@ -1838,10 +1840,10 @@ export class CoWriterSession {
             });
         }
 
-        const MAX_TOOL_ROUNDS = 5;
+        const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
 
         try {
-            for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+            for (let round = 0; round < maxRounds; round++) {
                 this.abortController = new AbortController();
                 ctx.signal = this.abortController.signal;
 
@@ -1873,7 +1875,7 @@ export class CoWriterSession {
                     messages: messagesForCall,
                     model: chat.modelId,
                     temperature: 0.7,
-                    maxTokens: 2048,
+                    maxTokens: plugin.settings.coWriterMaxOutputTokens,
                     signal: this.abortController.signal,
                     tools: toolDefs,
                     toolChoice: toolDefs ? 'auto' : undefined

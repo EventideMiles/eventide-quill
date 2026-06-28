@@ -72,6 +72,8 @@ export interface EventideQuillSettings {
     contextAutoScan: boolean;
     coWriterTemperature: number;
     coWriterMaxOutputTokens: number;
+    /** Max tool-calling rounds per response. 0 = unlimited. Default: 0. */
+    coWriterMaxToolRounds: number;
     coWriterVaultContext: boolean;
     coWriterAppendNewline: boolean;
     enableCoWriterThought: boolean;
@@ -164,6 +166,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     contextAutoScan: true,
     coWriterTemperature: 1.0,
     coWriterMaxOutputTokens: 2048,
+    coWriterMaxToolRounds: 0,
     coWriterVaultContext: true,
     coWriterAppendNewline: true,
     enableCoWriterThought: true,
@@ -1853,6 +1856,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     .onClick(async () => {
                         this.plugin.settings.coWriterTemperature = DEFAULT_SETTINGS.coWriterTemperature;
                         this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
+                        this.plugin.settings.coWriterMaxToolRounds = DEFAULT_SETTINGS.coWriterMaxToolRounds;
                         this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
                         this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                         this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
@@ -1893,6 +1897,28 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         } else {
                             text.setValue(String(this.plugin.settings.coWriterMaxOutputTokens));
                             new Notice('Value must be a number ≥ 1');
+                        }
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName('Max tool rounds')
+            .setDesc(
+                'Maximum number of tool-calling rounds per response. Set to 0 for unlimited — the model ' +
+                    'will call as many rounds as it needs (use Stop to cancel). Set a specific number to ' +
+                    'cap turn consumption. Default: 0 (unlimited).'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.coWriterMaxToolRounds))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 0) {
+                            this.plugin.settings.coWriterMaxToolRounds = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.coWriterMaxToolRounds));
+                            new Notice('Value must be a number ≥ 0');
                         }
                     })
             );
@@ -2217,6 +2243,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.contextAutoScan = DEFAULT_SETTINGS.contextAutoScan;
                     this.plugin.settings.coWriterTemperature = DEFAULT_SETTINGS.coWriterTemperature;
                     this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
+                    this.plugin.settings.coWriterMaxToolRounds = DEFAULT_SETTINGS.coWriterMaxToolRounds;
                     this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
                     this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
                     this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
