@@ -802,7 +802,12 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the initialize prompt with a big button. */
     private renderInitializePrompt(container: HTMLElement): void {
-        if (!this.requireActiveDocument(container, 'the co-writer')) return;
+        // Direct and Fulfill need an active document because they insert into
+        // the editor. Discuss, Coach, and Lorebook work without one — tools
+        // can gather context via lookups instead.
+        if (this.inputMode === 'direct' || this.inputMode === 'fulfill') {
+            if (!this.requireActiveDocument(container, 'the co-writer')) return;
+        }
 
         const prompt = container.createEl('div', { cls: 'quill-cowriter-panel__init' });
         prompt.createEl('div', { cls: 'quill-cowriter-panel__init-icon', text: '\u270e' });
@@ -950,8 +955,15 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the pinned bottom area (draft status, context pills, input row). */
     private renderBottomArea(): void {
+        // Direct and Fulfill need an active file. Other modes (discuss, coach,
+        // lorebook) work without one.
         const activeFile = this.app.workspace.getActiveFile();
-        if (!activeFile && this.chatHistory.length === 0) return;
+        if (
+            !activeFile &&
+            this.chatHistory.length === 0 &&
+            (this.inputMode === 'direct' || this.inputMode === 'fulfill')
+        )
+            return;
 
         const bottom = this.containerEl!.createEl('div', { cls: 'quill-cowriter-panel__bottom' });
 

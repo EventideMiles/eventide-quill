@@ -1015,24 +1015,19 @@ export class CoWriterSession {
             return;
         }
 
-        // Use the active file if available; fall back to stored manuscriptPath
+        // Use the active file if available; fall back to stored manuscriptPath.
+        // Discuss mode works without an active file — the model can gather
+        // context via tools (manuscript_mentions, vault_lookup, etc.) instead
+        // of from the active document's prose.
         const activeFile = plugin.app.workspace.getActiveFile();
         const filePath = activeFile?.path ?? this.manuscriptPath;
-        if (!filePath) {
-            new Notice('Quill: Open a manuscript to discuss the scene.');
-            return;
-        }
-        this.manuscriptPath = filePath;
+        if (filePath) this.manuscriptPath = filePath;
 
-        const markdownView = findEditorView(plugin.app, filePath);
-        if (!markdownView) {
-            new Notice('Quill: Open a manuscript editor to discuss the scene.');
-            return;
-        }
-        const editor = markdownView.editor;
+        const markdownView = filePath ? findEditorView(plugin.app, filePath) : null;
+        const editor = markdownView?.editor ?? null;
 
-        // Populate context engine so the context tab shows data
-        if (!plugin.currentAssembly) {
+        // Populate context engine so the context tab shows data (only when we have an editor).
+        if (editor && filePath && !plugin.currentAssembly) {
             await plugin.assembleDocumentContext(editor.getValue(), filePath);
         }
 
@@ -1041,16 +1036,15 @@ export class CoWriterSession {
         this.currentOptions = [];
         this.optionsLoading = true;
         this.onOptionsLoading?.(true);
-        this.lockEditor();
+        if (editor) this.lockEditor();
 
         // Add user's message to display-only chat history
         this.chatHistory.push({ role: 'user', content: message });
 
-        const cursor = editor.getCursor();
-        const fullText = editor.getValue();
-        const cursorOffset = editor.posToOffset(cursor);
-        const textBeforeCursor = fullText.slice(0, cursorOffset);
-        const proseForContext = textBeforeCursor.slice(-4000);
+        const fullText = editor?.getValue() ?? '';
+        const proseForContext = editor
+            ? editor.getValue().slice(0, editor.posToOffset(editor.getCursor())).slice(-4000)
+            : '';
 
         // Build injected context — vault + additional files.
         // Injected fresh every call; never stored in discussCurrentMessages.
@@ -1281,24 +1275,17 @@ export class CoWriterSession {
             return;
         }
 
-        // Use the active file if available; fall back to stored manuscriptPath
+        // Use the active file if available; fall back to stored manuscriptPath.
+        // Coach mode works without an active file — same rationale as discuss.
         const activeFile = plugin.app.workspace.getActiveFile();
         const filePath = activeFile?.path ?? this.manuscriptPath;
-        if (!filePath) {
-            new Notice('Quill: Open a manuscript to use coaching.');
-            return;
-        }
-        this.manuscriptPath = filePath;
+        if (filePath) this.manuscriptPath = filePath;
 
-        const markdownView = findEditorView(plugin.app, filePath);
-        if (!markdownView) {
-            new Notice('Quill: Open a manuscript editor to use coaching.');
-            return;
-        }
-        const editor = markdownView.editor;
+        const markdownView = filePath ? findEditorView(plugin.app, filePath) : null;
+        const editor = markdownView?.editor ?? null;
 
-        // Populate context engine
-        if (!plugin.currentAssembly) {
+        // Populate context engine (only when we have an editor).
+        if (editor && filePath && !plugin.currentAssembly) {
             await plugin.assembleDocumentContext(editor.getValue(), filePath);
         }
 
@@ -1307,16 +1294,15 @@ export class CoWriterSession {
         this.currentOptions = [];
         this.optionsLoading = true;
         this.onOptionsLoading?.(true);
-        this.lockEditor();
+        if (editor) this.lockEditor();
 
         // Add user message to display history (same as sendDiscussion)
         this.chatHistory.push({ role: 'user', content: message });
 
-        const cursor = editor.getCursor();
-        const fullText = editor.getValue();
-        const cursorOffset = editor.posToOffset(cursor);
-        const textBeforeCursor = fullText.slice(0, cursorOffset);
-        const proseForContext = textBeforeCursor.slice(-4000);
+        const fullText = editor?.getValue() ?? '';
+        const proseForContext = editor
+            ? editor.getValue().slice(0, editor.posToOffset(editor.getCursor())).slice(-4000)
+            : '';
 
         // Build injected context
         const injectedContext: ChatMessage[] = [];
