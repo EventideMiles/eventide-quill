@@ -628,6 +628,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 desc: 'Queries a Fandom wiki in your allowlist (e.g., starwars.fandom.com) for canon.'
             },
             {
+                name: 'fandom_image',
+                desc: "Fetches images for a Fandom topic via the wiki API, and lists the page's other images with captions."
+            },
+            {
                 name: 'wikipedia_lookup / wikipedia_page',
                 desc: 'Queries Wikipedia (configurable language) for reference material.'
             },

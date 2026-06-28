@@ -1,7 +1,7 @@
 import { ToolRegistry } from './tool';
 import { appendToNoteTool } from './append-to-note';
 import { calculateFileSizesTool } from './calculate-file-sizes';
-import { createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
+import { createFandomImageTool, createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
 import { createFetchImageUrlTool } from './fetch-image-url';
 import { createFetchUrlTool } from './fetch-url';
 import { createWikipediaLookupTool, createWikipediaPageTool } from './wikipedia-lookup';
@@ -19,7 +19,7 @@ export type { Tool, ToolContext, ToolResult } from './tool';
 export { streamWithTools } from './tool-loop';
 export { appendToNoteTool } from './append-to-note';
 export { calculateFileSizesTool } from './calculate-file-sizes';
-export { createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
+export { createFandomImageTool, createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
 export { createFetchImageUrlTool } from './fetch-image-url';
 export { createFetchUrlTool } from './fetch-url';
 export { createWikipediaLookupTool, createWikipediaPageTool } from './wikipedia-lookup';
@@ -85,6 +85,19 @@ export function createToolRegistry(plugin: EventideQuillPlugin, includeProposeEn
         if (plugin.settings.lorebookFandomWikis.length > 0 || fandomAllowAll) {
             registry.register(createFandomLookupTool(maxTokens, plugin.settings.lorebookFandomWikis, fandomAllowAll));
             registry.register(createFandomPageTool(maxTokens, plugin.settings.lorebookFandomWikis, fandomAllowAll));
+            // fandom_image: a Fandom lookup that returns an image, so it also
+            // requires the image-tools gate. Uses prop=pageimages to fetch the
+            // API's thumbnail URL — fetching Fandom image URLs directly 403s.
+            if (plugin.settings.lorebookImageTools) {
+                registry.register(
+                    createFandomImageTool(
+                        maxTokens,
+                        plugin.settings.lorebookImageMaxDimension,
+                        plugin.settings.lorebookFandomWikis,
+                        fandomAllowAll
+                    )
+                );
+            }
         }
     }
 

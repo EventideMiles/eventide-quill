@@ -195,7 +195,9 @@ Tool tiers (gating):
 | Internal (default on) | `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `append_to_note` | `coWriterToolsEnabled` |
 | Lorebook coach only | `propose_entry` (surfaces a lore draft to the UI) | `createLoreCoachToolRegistry` |
 | Network (default on) | `fetch_url`, `fandom_lookup` / `fandom_page`, `wikipedia_lookup` / `wikipedia_page` | `lorebookNetworkTools` |
-| Image (default on) | `fetch_image_url` | `lorebookImageTools` |
+| Image (default on) | `fetch_image_url`, `fandom_image` | `lorebookImageTools` |
+
+`fandom_image` (Fandom image lookup: lead image via `prop=pageimages`, gallery browsing via `prop=images` + `imageinfo`, with captions parsed from `<gallery>` wikitext) needs both `lorebookNetworkTools` and `lorebookImageTools`, plus the Fandom allowlist gate — it's registered inside the fandom block with an extra image-tools check.
 
 Fandom requires a non-empty allowlist (`lorebookFandomWikis`), or the `lorebookFandomAllowAllWikis` "danger" toggle to allow any wiki; an empty allowlist with that toggle off disables Fandom everywhere. `mediawiki.ts` is the shared MediaWiki client with per-host rate limiting. Convention: tool ids are `snake_case` verbs/nouns (`manuscript_mentions`, `fetch_url`).
 

@@ -1,5 +1,15 @@
-import type { Tool, ToolContext } from './tool';
-import { mediawikiExtract, mediawikiLookup } from './mediawiki';
+import { requestUrl } from 'obsidian';
+import { downscaleToJpegBase64, isImageContentType } from '../image-utils';
+import type { Tool, ToolContext, ToolResult } from './tool';
+import {
+    MEDIAWIKI_UA,
+    mediawikiCharacterGallery,
+    mediawikiExtract,
+    mediawikiImageInfo,
+    mediawikiLookup,
+    mediawikiPageImage,
+    mediawikiSearch
+} from './mediawiki';
 
 /**
  * Validate the wiki subdomain against the allowed list. Returns an error
@@ -148,4 +158,162 @@ export function createFandomPageTool(maxResultTokens: number, allowedWikis: stri
             }
         }
     };
+}
+
+/**
+ * Factory: create the `fandom_image` tool.
+ *
+ * Finds the main image (poster, character portrait, key art) for a topic on a
+ * Fandom wiki by combining a search with `prop=pageimages`, then downloads the
+ * thumbnail the API returns. This is the reliable path to Fandom imagery —
+ * guessing image URLs and fetching them directly 403s (Fandom hotlink-protects
+ * the original files), but the `static.wikia.nocookie.net` thumbnail URLs
+ * returned by the API are fetchable.
+ *
+ * @param maxResultTokens  Truncation cap for the text result.
+ * @param maxDimension     Downscale cap (longest side, px); also the thumbnail width requested.
+ * @param allowedWikis     Subdomains the writer has approved. Ignored when `allowAll` is true.
+ * @param allowAll         Danger setting: accept any subdomain.
+ */
+export function createFandomImageTool(
+    maxResultTokens: number,
+    maxDimension: number,
+    allowedWikis: string[],
+    allowAll: boolean
+): Tool {
+    return {
+        id: 'fandom_image',
+        description:
+            'Fetch an image from a Fandom wiki and return it so you can see it. By default fetches ' +
+            'the lead image for a topic AND lists the other images on that page; pass `image` (an ' +
+            'exact filename from that list) to fetch a specific gallery image instead. Use for ' +
+            'character appearance, cover art, or scene art. Requires a vision-capable model to be useful.',
+        parameters: {
+            type: 'object',
+            properties: {
+                wiki: { type: 'string', description: fandomWikiDescription(allowedWikis, allowAll) },
+                query: {
+                    type: 'string',
+                    description:
+                        'Topic to find a page for (e.g., "Luke Skywalker", "Frodo"). Returns the lead image plus a list of other images on the page. Omit if `image` is set.'
+                },
+                image: {
+                    type: 'string',
+                    description:
+                        'Optional exact filename to fetch directly (e.g., "File:Frodo.jpg" or "Frodo.jpg"), as returned in a previous result\'s image list. When set, `query` is ignored.'
+                }
+            },
+            required: ['wiki']
+        },
+        maxResultTokens,
+        requiresNetwork: true,
+
+        async execute(args: Record<string, unknown>, _ctx: ToolContext): Promise<ToolResult> {
+            const wiki = typeof args.wiki === 'string' ? args.wiki.trim().toLowerCase() : '';
+            const query = typeof args.query === 'string' ? args.query.trim() : '';
+            const image = typeof args.image === 'string' ? args.image.trim() : '';
+
+            const err = validateWiki(wiki, allowedWikis, allowAll);
+            if (err) return { text: err };
+            if (!query && !image) {
+                return { text: 'Error: provide "query" (to find a page) or "image" (a specific filename).' };
+            }
+
+            const host = `${wiki}.fandom.com`;
+            try {
+                // Path A: fetch a specific named image from the gallery.
+                if (image) {
+                    const info = await mediawikiImageInfo(host, image, maxDimension);
+                    if (!info) {
+                        return {
+                            text: `No image named "${image}" found on ${host}. Call fandom_image with just a query to list the images on a page.`
+                        };
+                    }
+                    if (!isImageContentType(info.mime)) {
+                        return {
+                            text: `"${image}" on ${host} is not a raster image (mime "${info.mime}") — likely a video. Pick a different file from the gallery list.`
+                        };
+                    }
+                    const { base64, contentType } = await downloadAndDownscale(info.imageUrl, maxDimension);
+                    return {
+                        text: `Fetched "${image}" from ${host} (${contentType}, downscaled to ≤${maxDimension}px).`,
+                        images: [base64]
+                    };
+                }
+
+                // Path B: query → lead image + captioned gallery list.
+                const results = await mediawikiSearch(host, query, 1);
+                if (results.length === 0) {
+                    return { text: `No page found for "${query}" on ${host}.` };
+                }
+                const title = results[0]!.title;
+
+                // List the page's images (plus its /Gallery subpage on Fandom,
+                // where the fuller image set lives) with their captions, so the
+                // model can pick a relevant one by name.
+                const gallery = await mediawikiCharacterGallery(host, title, 16);
+                const galleryNote =
+                    gallery.length > 0
+                        ? gallery.map((g, i) => `${i + 1}. ${g.file}${g.caption ? ` — ${g.caption}` : ''}`).join('\n')
+                        : '(no other images found)';
+                const pickHint =
+                    ' To fetch a different image, call fandom_image again with `image` set to one of the names above.';
+
+                const leadImage = await mediawikiPageImage(host, title, maxDimension);
+                if (leadImage) {
+                    try {
+                        const { base64, contentType } = await downloadAndDownscale(leadImage.imageUrl, maxDimension);
+                        return {
+                            text:
+                                `Fetched the lead image for "${title}" from ${host} (${contentType}, ` +
+                                `downscaled to ≤${maxDimension}px). Other images available:\n${galleryNote}${pickHint}`,
+                            images: [base64]
+                        };
+                    } catch (dlErr) {
+                        // Lead image download failed — still surface the gallery.
+                        const dlMsg = dlErr instanceof Error ? dlErr.message : String(dlErr);
+                        return {
+                            text:
+                                `Found "${title}" on ${host} but the lead image could not be fetched (${dlMsg}). ` +
+                                `Other images available:\n${galleryNote}${pickHint}`
+                        };
+                    }
+                }
+
+                // No lead image — return the gallery so the model can pick.
+                return {
+                    text: `No lead image on "${title}" (${host}). Images available:\n${galleryNote}${pickHint}`
+                };
+            } catch (caught) {
+                const msg = caught instanceof Error ? caught.message : String(caught);
+                return { text: `Error fetching image for "${query || image}" from ${host}: ${msg}` };
+            }
+        }
+    };
+}
+
+/**
+ * Download an image URL and downscale it to a vision-ready JPEG base64. Throws
+ * on HTTP failure or non-image responses so callers can catch and surface a
+ * textual error to the model.
+ */
+async function downloadAndDownscale(
+    url: string,
+    maxDimension: number
+): Promise<{ base64: string; contentType: string }> {
+    const response = await requestUrl({
+        url,
+        method: 'GET',
+        throw: false,
+        headers: { Accept: 'image/*', 'User-Agent': MEDIAWIKI_UA }
+    });
+    if (response.status !== 200) {
+        throw new Error(`HTTP ${response.status}`);
+    }
+    const contentType = response.headers['content-type'] ?? '';
+    if (!isImageContentType(contentType)) {
+        throw new Error(`response was not a raster image (content-type "${contentType}")`);
+    }
+    const base64 = await downscaleToJpegBase64(response.arrayBuffer, maxDimension, contentType);
+    return { base64, contentType };
 }

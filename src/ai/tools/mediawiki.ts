@@ -10,7 +10,7 @@ import { requestUrl } from 'obsidian';
  */
 
 /** Custom User-Agent to comply with Wikimedia's API policy (200 req/min tier). */
-const MEDIAWIKI_UA = 'EventideQuill/0.9.0 (https://github.com/EventideMiles/eventide-quill)';
+export const MEDIAWIKI_UA = 'EventideQuill/0.10.0 (https://github.com/EventideMiles/eventide-quill)';
 
 /** Minimum interval (ms) between requests to the same host. */
 const MIN_INTERVAL_MS = 500;
@@ -241,6 +241,227 @@ export async function mediawikiLookup(host: string, query: string, maxTokens: nu
         `Found ${results.length} results for "${query}" on ${host}. ` +
         `Use the *_page tool with the exact title (including quotes) from the list below to fetch the full extract:\n${lines.join('\n')}`
     );
+}
+
+/**
+ * Fetch the main page-image thumbnail URL for a specific page title via the
+ * MediaWiki `prop=pageimages` API. Returns the thumbnail source URL (scaled to
+ * `thumbSize` wide) or null if the page has no image or is missing.
+ *
+ * The returned URL lives on the wiki's image CDN (`static.wikia.nocookie.net`
+ * for Fandom, `upload.wikimedia.org` for Wikipedia) and is fetchable — unlike
+ * original file URLs, which hotlink-protect and 403/404 on direct fetch. This
+ * is the reliable way to obtain a page's lead image for a vision model.
+ *
+ * @param host      The wiki host.
+ * @param title     The page title.
+ * @param thumbSize Max thumbnail width in pixels.
+ */
+export async function mediawikiPageImage(
+    host: string,
+    title: string,
+    thumbSize: number
+): Promise<{ title: string; imageUrl: string } | null> {
+    const url =
+        `https://${host}/api.php?action=query&prop=pageimages&piprop=thumbnail` +
+        `&pithumbsize=${thumbSize}&redirects=1&titles=${encodeURIComponent(title)}&format=json&origin=*`;
+
+    await rateLimit(host);
+    const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
+
+    if (response.status !== 200) {
+        throw new Error(`Page image query failed: HTTP ${response.status}`);
+    }
+
+    const data = response.json as {
+        query?: { pages?: Record<string, { title?: string; thumbnail?: { source: string } }> };
+    };
+
+    const firstPage = Object.values(data.query?.pages ?? {})[0];
+    if (!firstPage?.thumbnail?.source) return null;
+
+    return { title: firstPage.title ?? title, imageUrl: firstPage.thumbnail.source };
+}
+
+/**
+ * List the image filenames used on a page (the page's gallery, including the
+ * lead image) via the MediaWiki `prop=images` query. Returns full file titles
+ * (e.g. `"File:Foo.jpg"`). The list may include non-raster files (video clips
+ * are common on Fandom) — callers should validate `mime` when fetching.
+ *
+ * @param host   The wiki host.
+ * @param title  The page title.
+ * @param limit  Max filenames to return.
+ */
+export async function mediawikiPageGallery(host: string, title: string, limit: number): Promise<string[]> {
+    const url =
+        `https://${host}/api.php?action=query&prop=images&imlimit=${limit}` +
+        `&redirects=1&titles=${encodeURIComponent(title)}&format=json&origin=*`;
+
+    await rateLimit(host);
+    const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
+
+    if (response.status !== 200) {
+        throw new Error(`Gallery query failed: HTTP ${response.status}`);
+    }
+
+    const data = response.json as {
+        query?: { pages?: Record<string, { images?: Array<{ title: string }> }> };
+    };
+
+    const firstPage = Object.values(data.query?.pages ?? {})[0];
+    return (firstPage?.images ?? []).map((img) => img.title);
+}
+
+/**
+ * Fetch a specific image file's thumbnail URL and MIME type via the MediaWiki
+ * `prop=imageinfo` query. `filename` may be a bare name ("Foo.jpg") or a full
+ * `"File:Foo.jpg"` title. Returns null if the file doesn't exist. The returned
+ * `imageUrl` is the bounded thumbnail on the wiki CDN, which is fetchable
+ * (original file URLs hotlink-protect).
+ */
+export async function mediawikiImageInfo(
+    host: string,
+    filename: string,
+    thumbSize: number
+): Promise<{ imageUrl: string; mime: string } | null> {
+    const fileTitle = normalizeFileTitle(filename);
+    const url =
+        `https://${host}/api.php?action=query&prop=imageinfo&iiprop=url%7Cmime&iiurlwidth=${thumbSize}` +
+        `&titles=${encodeURIComponent(fileTitle)}&format=json&origin=*`;
+
+    await rateLimit(host);
+    const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
+
+    if (response.status !== 200) {
+        throw new Error(`Image info query failed: HTTP ${response.status}`);
+    }
+
+    const data = response.json as {
+        query?: {
+            pages?: Record<
+                string,
+                {
+                    imageinfo?: Array<{ thumburl?: string; url?: string; mime?: string }>;
+                }
+            >;
+        };
+    };
+
+    const firstPage = Object.values(data.query?.pages ?? {})[0];
+    const info = firstPage?.imageinfo?.[0];
+    if (!info) return null;
+
+    // Prefer the bounded thumbnail; fall back to the original URL.
+    const imageUrl = info.thumburl ?? info.url;
+    if (!imageUrl) return null;
+    return { imageUrl, mime: info.mime ?? '' };
+}
+
+/** Normalize a bare filename to a full `File:` title (no-op if already prefixed). */
+function normalizeFileTitle(filename: string): string {
+    const trimmed = filename.trim();
+    return /^(file|image):/i.test(trimmed) ? trimmed : `File:${trimmed}`;
+}
+
+/**
+ * Parse `<gallery>` blocks out of article wikitext and return each image with
+ * its caption (the human-authored text beside the filename — e.g. "Werewolf",
+ * "Frodo in the Shire"). These captions are what let a model pick a relevant
+ * image; bare filenames rarely convey what an image depicts. Lines without a
+ * caption, or whose other segments are `key=value` attributes (`link=`/`alt=`),
+ * get `caption: undefined`. Filenames are normalized to full `File:` titles.
+ */
+function parseGalleryCaptions(wikitext: string, limit: number): Array<{ file: string; caption?: string }> {
+    const out: Array<{ file: string; caption?: string }> = [];
+    const blocks = wikitext.match(/<gallery[^>]*>([\s\S]*?)<\/gallery>/gi);
+    if (!blocks) return out;
+    for (const block of blocks) {
+        for (const raw of block.split('\n')) {
+            const line = raw.trim();
+            if (!line || line.startsWith('<') || line.startsWith('}}')) continue;
+            const segs = line.split('|');
+            const file = segs[0]?.trim();
+            if (!file) continue;
+            // Caption = pipe-separated segments that aren't `key=value` attrs.
+            const captionSegs = segs
+                .slice(1)
+                .map((s) => s.trim())
+                .filter((s) => s.length > 0 && !s.includes('='));
+            out.push({
+                file: normalizeFileTitle(file),
+                caption: captionSegs.length > 0 ? captionSegs.join(' ') : undefined
+            });
+            if (out.length >= limit) return out;
+        }
+    }
+    return out;
+}
+
+/**
+ * Fetch the article wikitext and return the page's gallery images with
+ * captions (from `<gallery>` blocks). Returns an empty array when the page has
+ * no galleries or the wikitext can't be fetched.
+ */
+export async function mediawikiGalleryWithCaptions(
+    host: string,
+    title: string,
+    limit: number
+): Promise<Array<{ file: string; caption?: string }>> {
+    const url = `https://${host}/api.php?action=parse&prop=wikitext&redirects=1&page=${encodeURIComponent(
+        title
+    )}&format=json&origin=*`;
+
+    await rateLimit(host);
+    const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
+
+    if (response.status !== 200) {
+        throw new Error(`Wikitext fetch failed: HTTP ${response.status}`);
+    }
+
+    const data = response.json as { parse?: { wikitext?: { '*': string } }; error?: unknown };
+    const wikitext = data.parse?.wikitext?.['*'];
+    if (!wikitext) return [];
+    return parseGalleryCaptions(wikitext, limit);
+}
+
+/**
+ * Best-effort captioned gallery for a character/topic page: merges captions
+ * from the page's own `<gallery>` blocks AND its dedicated "<title>/Gallery"
+ * subpage (a Fandom convention where the fuller image set lives). Dedupes by
+ * filename and caps at `limit`. Missing subpages parse to an empty list and
+ * are silently skipped. Falls back to the flat `prop=images` filename list
+ * when neither page has galleries.
+ */
+export async function mediawikiCharacterGallery(
+    host: string,
+    title: string,
+    limit: number
+): Promise<Array<{ file: string; caption?: string }>> {
+    const combined: Array<{ file: string; caption?: string }> = [];
+    const seen = new Set<string>();
+    const add = (entries: Array<{ file: string; caption?: string }>) => {
+        for (const e of entries) {
+            const key = e.file.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            combined.push(e);
+            if (combined.length >= limit) return;
+        }
+    };
+
+    add(await mediawikiGalleryWithCaptions(host, title, limit));
+    if (combined.length < limit && !/\/gallery$/i.test(title)) {
+        // Dedicated /Gallery subpage holds the fuller image set for a
+        // character. A missing subpage returns an empty list (no throw).
+        add(await mediawikiGalleryWithCaptions(host, `${title}/Gallery`, limit));
+    }
+
+    if (combined.length > 0) return combined;
+
+    // Neither page had <gallery> blocks — fall back to the flat image list.
+    const files = await mediawikiPageGallery(host, title, limit);
+    return files.map((file) => ({ file }));
 }
 
 /** Strip HTML tags from a string (used for search snippets). */

@@ -458,6 +458,13 @@ function buildNetworkToolsMessage(plugin: EventideQuillPlugin): ChatMessage | nu
         lines.push(
             `- fandom_lookup / fandom_page: search Fandom (${wikiDesc}); use fandom_page with an exact title to get content.`
         );
+        // fandom_image is registered only when image tools are also on, since it
+        // returns an image (routed through the vision layer).
+        if (plugin.settings.lorebookImageTools) {
+            lines.push(
+                `- fandom_image: fetch the lead image for a Fandom topic (${wikiDesc}) and list the page's other images with their captions; pass a filename via the "image" param to fetch a specific gallery image. Use it to see character appearance or artwork.`
+            );
+        }
     }
     lines.push(
         `- wikipedia_lookup / wikipedia_page: search Wikipedia (${lang}); use wikipedia_page with an exact title to get content.`,
