@@ -105,7 +105,7 @@ export interface EventideQuillSettings {
     lorebookWikipediaLang: string;
     /** Per-tool result truncation cap (approximate tokens). */
     lorebookToolMaxTokens: number;
-    /** Gate for the fetch_image_url tool (downloads an image for the model to see). Default: on. */
+    /** Gate for image-fetching tools (fetch_image_url, fandom_image). Default: on. */
     lorebookImageTools: boolean;
     /** Max image dimension (longest side, px) before downscale. Keeps vision payloads small. */
     lorebookImageMaxDimension: number;
@@ -1079,10 +1079,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         new Setting(content)
             .setName('Image tools')
             .setDesc(
-                'Allow the co-writer to call fetch_image_url (download an image for the model ' +
-                    'to see). Images are downscaled before delivery. Requires a vision-capable ' +
-                    'chat model (role "Chat + image") or a dedicated image model (role "Image") ' +
-                    'to have any effect. Default: on.'
+                'Allow the co-writer to call image-fetching tools — fetch_image_url (download any ' +
+                    'image URL) and fandom_image (Fandom lead/gallery images). Images are downscaled ' +
+                    'before delivery. Requires a vision-capable chat model (role "Chat + image") or a ' +
+                    'dedicated image model (role "Image") to have any effect. Default: on.'
             )
             .addToggle((toggle) =>
                 toggle.setValue(this.plugin.settings.lorebookImageTools).onChange(async (value) => {

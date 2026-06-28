@@ -294,6 +294,18 @@ The project does not use `eslint-config-prettier`. The obsidianmd ESLint rules a
 - Persist settings via `loadData()` / `saveData()`.
 - `src/settings.ts` is the single source of truth for the settings schema.
 
+### Tool-gating toggles — descriptions live in three places
+
+The three tool-gating settings each gate **more than one tool**, and each has its user-facing description duplicated across **three locations** that must be kept in sync: the schema-field JSDoc, the Welcome/privacy-tab toggle, and the General-tab toggle. When you change one copy, update all three and make sure every tool the gate covers is named — incomplete copies have been flagged in review before. The two tab labels are not even identical, so locate them by the setting field name, not by label string.
+
+| Setting field (`src/settings.ts`) | Gates | Welcome/privacy-tab `.setName` | General-tab `.setName` |
+|------|-------|------|------|
+| `coWriterToolsEnabled` | all internal tools (`manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `append_to_note`) | `Co-writer tools` | `Co-writer tool use` |
+| `lorebookNetworkTools` | `fetch_url`, `fandom_lookup` / `fandom_page`, `wikipedia_lookup` / `wikipedia_page` | `Network research tools` | `Network tools` |
+| `lorebookImageTools` | `fetch_image_url`, `fandom_image` | `Image tool` | `Image tools` |
+
+Each row = one JSDoc + two `setDesc(...)` copies to keep aligned. The authoritative gate logic is `createToolRegistry()` in `src/ai/tools/index.ts` — if you add or move a tool between tiers, also update the gating table in "Tool-calling architecture" and every description for the affected toggle(s). `fandom_image` is the cross-toggle case: it needs both `lorebookNetworkTools` **and** `lorebookImageTools` (plus the Fandom allowlist), so its gate spans two rows.
+
 ## Key feature areas
 
 1. **Manuscript Context Engine** — auto-builds working context from open document.
