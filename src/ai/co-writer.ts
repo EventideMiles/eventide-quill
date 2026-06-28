@@ -1276,6 +1276,25 @@ export class CoWriterSession {
 
                 // Re-estimate after tool results were appended.
                 this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+
+                // Mid-loop compaction: if tool results have filled the context
+                // past the compaction threshold, summarize older turns to free
+                // room for the next batch. Keeps batch sizes high instead of
+                // degrading as the conversation grows.
+                if (estimateTokens(this.discussCurrentMessages) / maxTokens >= compactPct) {
+                    const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
+                    try {
+                        const cResult = await compactConversation(chat.provider, this.discussCurrentMessages, sc);
+                        if (cResult) {
+                            this.discussCurrentMessages = cResult.messages;
+                            this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+                        }
+                    } catch (compErr: unknown) {
+                        if (compErr instanceof Error && compErr.name === 'AbortError') return;
+                        console.warn('Quill: Mid-loop compaction failed; continuing.', compErr);
+                    }
+                }
+
                 // Sync chat so the user sees the response + tool indicators.
                 this.onChatUpdate?.();
             }
@@ -1543,6 +1562,22 @@ export class CoWriterSession {
                 }
 
                 this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+
+                // Mid-loop compaction (same as discuss).
+                if (estimateTokens(this.discussCurrentMessages) / maxTokens >= compactPct) {
+                    const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
+                    try {
+                        const cResult = await compactConversation(chat.provider, this.discussCurrentMessages, sc);
+                        if (cResult) {
+                            this.discussCurrentMessages = cResult.messages;
+                            this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+                        }
+                    } catch (compErr: unknown) {
+                        if (compErr instanceof Error && compErr.name === 'AbortError') return;
+                        console.warn('Quill: Mid-loop compaction failed; continuing.', compErr);
+                    }
+                }
+
                 this.onChatUpdate?.();
             }
 
@@ -2084,6 +2119,23 @@ export class CoWriterSession {
                 // Update token estimate so the indicator reflects tool-result
                 // growth, then sync the chat so the user sees progress.
                 this.onTokenEstimate?.(estimateTokens(this.loreCoachMessages), maxTokens);
+
+                // Mid-loop compaction: if tool results have filled the context,
+                // summarize older turns to free room for the next batch.
+                if (estimateTokens(this.loreCoachMessages) / maxTokens >= compactPct) {
+                    const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
+                    try {
+                        const cResult = await compactConversation(chat.provider, this.loreCoachMessages, sc);
+                        if (cResult) {
+                            this.loreCoachMessages = cResult.messages;
+                            this.onTokenEstimate?.(estimateTokens(this.loreCoachMessages), maxTokens);
+                        }
+                    } catch (compErr: unknown) {
+                        if (compErr instanceof Error && compErr.name === 'AbortError') return;
+                        console.warn('Quill: Mid-loop compaction failed; continuing.', compErr);
+                    }
+                }
+
                 this.onChatUpdate?.();
 
                 // Continue to next round — the model will see its tool_calls
