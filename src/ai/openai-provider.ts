@@ -103,9 +103,12 @@ export class OpenAiCompatibleProvider implements AiProvider {
             model: modelConfig.model,
             messages: options.messages.map((m) => {
                 const out: Record<string, unknown> = { role: m.role };
-                if (m.images && m.images.length > 0) {
+                if ((m.role === 'user' || m.role === 'assistant') && m.images && m.images.length > 0) {
                     // Vision content: OpenAI-compatible endpoints (LM Studio,
                     // OpenAI, etc.) accept an array of typed content parts.
+                    // Role-gated to user/assistant turns — system/tool messages
+                    // fall through to text-only below (the APIs reject image
+                    // content there, matching the ChatMessage.images contract).
                     // Only vision-capable chat models reach here — a text-only
                     // model would have received a text description via
                     // resolveImageInjection instead, so this branch never

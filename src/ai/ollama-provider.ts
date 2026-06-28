@@ -90,10 +90,14 @@ export class OllamaProvider implements AiProvider {
                 const out: Record<string, unknown> = { role: m.role };
                 if (m.content !== undefined) out.content = m.content;
                 // Ollama's native vision format: a sibling `images` array of
-                // raw base64 strings (no data: prefix). Only sent when the
-                // resolved chat model is vision-capable — otherwise images are
-                // translated to text upstream by resolveImageInjection.
-                if (m.images && m.images.length > 0) out.images = m.images;
+                // raw base64 strings (no data: prefix). Role-gated to
+                // user/assistant turns — system/tool messages can't carry
+                // images (matching the ChatMessage.images contract). Only sent
+                // when the resolved chat model is vision-capable — otherwise
+                // images are translated to text upstream by resolveImageInjection.
+                if ((m.role === 'user' || m.role === 'assistant') && m.images && m.images.length > 0) {
+                    out.images = m.images;
+                }
                 if (m.toolCalls && m.toolCalls.length > 0) {
                     out.tool_calls = m.toolCalls.map((tc) => ({
                         id: tc.id,
