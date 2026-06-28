@@ -1,0 +1,83 @@
+import type { Tool, ToolContext } from './tool';
+import { openNoteForEdit, pushLoreEditDiff, readNoteContent, resolveNoteFile } from './lore-edit-helpers';
+
+/**
+ * Propose appending content to the end of an existing note. The note opens
+ * in a new tab with the appended content shown as a green inline diff. The
+ * writer reviews and approves or rejects it.
+ *
+ * Only one pending lore edit at a time — clears any prior pending edit.
+ */
+export const appendToNoteTool: Tool = {
+    id: 'append_to_note',
+    description:
+        'Propose appending content to an existing note that is NOT currently open. ' +
+        'The note opens in a new tab with the new content shown as a diff. The writer ' +
+        'reviews and approves or rejects it AFTER you finish. For the file the writer ' +
+        'currently has open, recommend they use Direct or Fulfill mode instead. ' +
+        'When editing multiple files, batch your edits — do NOT pause between files.',
+    parameters: {
+        type: 'object',
+        properties: {
+            path: {
+                type: 'string',
+                description: 'Vault-relative path or note name.'
+            },
+            content: {
+                type: 'string',
+                description: 'The content to append to the end of the note.'
+            }
+        },
+        required: ['path', 'content']
+    },
+    maxResultTokens: 100,
+    requiresNetwork: false,
+
+    async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
+        const path = typeof args.path === 'string' ? args.path.trim() : '';
+        const content = typeof args.content === 'string' ? args.content : '';
+
+        if (!path) return 'Error: "path" is required.';
+        if (!content) return 'Error: "content" is required.';
+
+        const { plugin } = ctx;
+        const file = resolveNoteFile(plugin, path);
+        if (!file) return `Error: note "${path}" not found in the vault.`;
+
+        const existing = await readNoteContent(plugin, file.path);
+        if (existing === null) return `Error: could not read "${file.path}".`;
+
+        // Ensure a blank line between existing content and the append. Count
+        // trailing newlines so a single trailing newline still gets a gap
+        // (otherwise the append would start immediately after that newline).
+        let sep = '';
+        if (existing.length > 0) {
+            const trailing = existing.length - existing.replace(/\n+$/, '').length;
+            sep = trailing >= 2 ? '' : '\n'.repeat(2 - trailing);
+        }
+        const newText = sep + content;
+
+        const opened = await openNoteForEdit(plugin.app, file.path);
+        if (!opened) return `Error: could not open "${file.path}" for review.`;
+
+        const session = plugin.coWriterSession;
+        if (!opened.wasAlreadyOpen) {
+            session.loreEditOpenedByTool.add(file.path);
+        }
+        const entry = session.getOrCreateLoreEdit(file.path, file.basename);
+        entry.changeSet.clear();
+
+        entry.changeSet.add({
+            from: existing.length,
+            to: existing.length,
+            newText,
+            label: `Append to ${file.basename}`,
+            originalText: ''
+        });
+
+        pushLoreEditDiff(opened.cm, entry.changeSet, file.path);
+        session.onLoreEditUpdate?.();
+
+        return `Append proposed for "${file.basename}". The writer will see the new content as a diff and can approve or reject it.`;
+    }
+};

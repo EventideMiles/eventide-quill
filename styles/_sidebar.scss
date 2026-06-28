@@ -101,6 +101,11 @@
         flex-direction: column;
         overflow: hidden;
         padding: $space-md;
+        // Obsidian's workspace containers set user-select: none with high
+        // specificity. !important is the only reliable way to override it
+        // so the writer can select and copy text from chat responses.
+        user-select: text !important;
+        -webkit-user-select: text !important;
     }
 
     // Sub-tab bar — second-level tabs (e.g., linter Results / Details,
@@ -143,5 +148,7 @@
         flex: 1;
         overflow-y: auto;
         min-height: 0;
+        user-select: text !important;
+        -webkit-user-select: text !important;
     }
 }

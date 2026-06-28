@@ -47,6 +47,7 @@ import {
 import type { ChatMessage } from './ai/provider';
 
 import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
+import type { LoreDraftEntry } from './ai/co-writer';
 import {
     getManuscriptAnalysis,
     getManuscriptAnalysisModeById,
@@ -69,7 +70,7 @@ import {
     pushDiffEdits,
     toDiffSnapshots
 } from './ui/change-diff-extension';
-import { ChangeSet } from './core/change-set';
+import { ChangeSet, type ProposedEdit } from './core/change-set';
 import { parseEmbedFolderPath, readVaultFiles, loreFolderEmbedPaths } from './utils/vault-files';
 import type { ManuscriptMetrics, ManuscriptSnapshot, ChapterRange } from './core/dashboard/types';
 import { listChaptersInFile, manuscriptMetrics } from './core/dashboard/metrics';
@@ -362,17 +363,19 @@ export default class EventideQuillPlugin extends Plugin {
         // globally; it only renders when a snapshot is pushed to a given editor.
         this.registerEditorExtension(
             getChangeDiffExtension({
-                onApprove: (owner: string, id: number) => {
+                onApprove: (owner: string, id: number, filePath?: string) => {
                     if (owner === 'fulfill') this.approveCoWriterFulfill(id);
                     else if (owner === 'transform') this.approveTransformChange(id);
                     else if (owner === 'direct') this.approveDirectChange(id);
                     else if (owner === 'lint-batch') this.approveLintBatchChange(id);
+                    else if (owner === 'lore_edit' && filePath) this.approveLoreEdit(filePath, id);
                 },
-                onReject: (owner: string, id: number) => {
+                onReject: (owner: string, id: number, filePath?: string) => {
                     if (owner === 'fulfill') this.rejectCoWriterFulfill(id);
                     else if (owner === 'transform') this.rejectTransformChange(id);
                     else if (owner === 'direct') this.rejectDirectChange(id);
                     else if (owner === 'lint-batch') this.rejectLintBatchChange(id);
+                    else if (owner === 'lore_edit' && filePath) this.rejectLoreEdit(filePath);
                 }
             })
         );
@@ -1708,6 +1711,8 @@ export default class EventideQuillPlugin extends Plugin {
                 this.lintPanel.coWriterSetOptionsLoading(session.optionsLoading);
                 this.lintPanel.coWriterSetCoachPhase(session.coachSession?.phase ?? 'discern');
                 this.lintPanel.coWriterSetCoachActive(session.coachActive);
+                this.lintPanel.coWriterSetLoreCoachPhase(session.loreCoachSession?.phase ?? 'discover');
+                this.lintPanel.coWriterSetLoreCoachActive(session.loreCoachActive);
             }
         };
         session.onOptionsLoading = (loading: boolean) => {
@@ -1722,6 +1727,9 @@ export default class EventideQuillPlugin extends Plugin {
         };
         session.onDiscussChunk = (text: string) => {
             this.lintPanel?.coWriterDiscussAppendChunk(text);
+        };
+        session.onDiscussClear = () => {
+            this.lintPanel?.coWriterDiscussClearStreaming();
         };
         session.onDiscussFinished = () => {
             void this.lintPanel?.coWriterDiscussFinished();
@@ -1742,6 +1750,26 @@ export default class EventideQuillPlugin extends Plugin {
         };
         session.onDirectChangeUpdate = () => {
             this.lintPanel?.coWriterSetDirectChange(session.directChanges.edits[0] ?? null);
+        };
+        session.onLoreCoachUpdate = () => {
+            if (!this.lintPanel) return;
+            this.lintPanel.coWriterSetLoreCoachPhase(session.loreCoachSession?.phase ?? 'discover');
+            this.lintPanel.coWriterSetLoreCoachActive(session.loreCoachActive);
+        };
+        // `onLoreDraftReady` is intentionally a no-op here — the draft card
+        // is rendered inline on the chat message that produced it (driven by
+        // `onChatUpdate`), so there's nothing to push to the panel separately.
+        // The hook exists for future use (e.g., auto-scroll to the draft).
+        session.onLoreDraftReady = () => {};
+        session.onLoreEditUpdate = () => {
+            const edits = [...session.loreEdits.entries()]
+                .map(([filePath, entry]) => ({
+                    edit: entry.changeSet.edits[0] ?? null,
+                    filePath,
+                    fileBasename: entry.fileBasename
+                }))
+                .filter((e) => e.edit) as { edit: ProposedEdit; filePath: string; fileBasename: string }[];
+            this.lintPanel?.coWriterSetLoreEdits(edits);
         };
     }
 
@@ -1870,6 +1898,45 @@ export default class EventideQuillPlugin extends Plugin {
     /** Reject the pending Direct continuation: discard it (nothing was written). */
     rejectDirectChange(id: number): void {
         this.coWriterSession.rejectDirectChange(id);
+    }
+
+    /**
+     * Send a message to the Lorebook Coach.
+     * The coach uses the pseudo-tool framework to pull manuscript mentions,
+     * lore siblings, and vault notes mid-generation, then proposes a draft
+     * entry for the writer to review and save as a note.
+     */
+    async sendCoWriterLoreCoach(message: string): Promise<void> {
+        await this.openCoWriterPanel();
+        this.wireCoWriterPanel();
+        await this.coWriterSession.sendLoreCoach(this, message);
+    }
+
+    /** End the current Lorebook Coach session. */
+    endCoWriterLoreCoach(): void {
+        this.coWriterSession.endLoreCoachSession();
+        this.lintPanel?.coWriterSetLoreCoachActive(false);
+        this.lintPanel?.coWriterSetLoreCoachPhase('discover');
+    }
+
+    /**
+     * Discard the pending lore draft. The chat message that produced it
+     * stays in history (so the writer can see what was proposed) but the
+     * session's `currentLoreDraft` is cleared so the review card's actions
+     * no longer fire.
+     */
+    discardLoreDraft(_draft: LoreDraftEntry): void {
+        this.coWriterSession.currentLoreDraft = null;
+    }
+
+    /** Approve a pending lore edit for a specific file. */
+    approveLoreEdit(filePath: string, id: number): void {
+        this.coWriterSession.approveLoreEdit(filePath, id);
+    }
+
+    /** Reject a pending lore edit for a specific file. */
+    rejectLoreEdit(filePath: string): void {
+        this.coWriterSession.rejectLoreEdit(filePath);
     }
 
     /** Resolve the CodeMirror view of the active markdown editor, if any. */

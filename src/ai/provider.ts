@@ -43,9 +43,86 @@ export interface ModelInfo {
 
 /** A single message in a chat conversation. */
 export interface ChatMessage {
-    role: 'system' | 'user' | 'assistant';
+    role: 'system' | 'user' | 'assistant' | 'tool';
     content: string;
+    /**
+     * Present on assistant messages that requested one or more tool calls.
+     * The provider formats these as `tool_calls` in the request body so the
+     * model sees its prior tool invocations in conversation history.
+     */
+    toolCalls?: ToolCallRequest[];
+    /**
+     * Present on `role: 'tool'` messages: the ID of the assistant tool call
+     * this result answers. Required by OpenAI; Ollama is lenient but accepts it.
+     */
+    toolCallId?: string;
+    /**
+     * Present on `role: 'tool'` messages: the name of the tool that produced
+     * this result. Optional but useful for debugging and required by some APIs.
+     */
+    name?: string;
 }
+
+/**
+ * A complete tool call request emitted by the model (after stream accumulation).
+ * The arguments field is a JSON string per OpenAI's convention — parsed by the
+ * tool-loop before execution.
+ */
+export interface ToolCallRequest {
+    /** Unique ID assigned by the provider (OpenAI) or synthesized (Ollama). */
+    id: string;
+    /** The tool function name (e.g., "manuscript_mentions"). */
+    name: string;
+    /** JSON-encoded arguments string, exactly as the provider sent it. */
+    arguments: string;
+}
+
+/**
+ * An incremental tool call fragment streamed by the provider. OpenAI streams
+ * tool calls token-by-token: the first fragment carries the id and name;
+ * subsequent fragments carry argument substrings that must be concatenated.
+ * The tool-loop accumulates these by `index` before executing.
+ */
+export interface ToolCallFragment {
+    /** Position within the streamed tool_calls array — used to accumulate fragments. */
+    index: number;
+    /** Present on the first fragment for this index: the provider-assigned ID. */
+    id?: string;
+    /** Present on the first fragment for this index: the tool function name. */
+    name?: string;
+    /** Partial JSON arguments substring to append to the running buffer. */
+    arguments?: string;
+}
+
+/**
+ * A tool definition the model may call. Mirrors the OpenAI/Ollama
+ * `tools` request-body shape:
+ *
+ *   { type: 'function', function: { name, description, parameters } }
+ *
+ * Internally we store the function fields flat for ergonomics; the provider
+ * implementations wrap them into the request-body shape on the way out.
+ */
+export interface ToolDefinition {
+    /** The tool function name; the model uses this as the call target. */
+    name: string;
+    /** Human-readable description surfaced to the model. */
+    description: string;
+    /**
+     * JSON Schema describing the parameters object the model should emit.
+     * Example: `{ type: 'object', properties: {...}, required: [...] }`.
+     * Stored as an opaque record — the provider passes it through verbatim.
+     */
+    parameters: Record<string, unknown>;
+}
+
+/**
+ * Controls how the model selects tools when `tools` is set on a request.
+ * - `'auto'` (default) — the model decides whether to call a tool.
+ * - `'none'` — tools are listed but the model must not call any.
+ * - `{ type: 'function', function: { name } }` — force-call a specific tool.
+ */
+export type ToolChoice = 'auto' | 'none' | { type: 'function'; function: { name: string } };
 
 /** Options for a chat completion request. */
 export interface ChatOptions {
@@ -56,6 +133,16 @@ export interface ChatOptions {
     maxTokens?: number;
     temperature?: number;
     signal?: AbortSignal;
+    /**
+     * Tools the model may call. When set, the provider includes a `tools`
+     * field in the request body and the model is permitted to emit
+     * `tool_calls` in its response. Tools are ignored if the model's API
+     * or chat template doesn't support them — the request will fail with
+     * a provider-specific error in that case.
+     */
+    tools?: ToolDefinition[];
+    /** How the model selects tools. Defaults to `'auto'` when `tools` is set. */
+    toolChoice?: ToolChoice;
 }
 
 /** Options for an embedding request. */
@@ -78,6 +165,14 @@ export interface ChatChunk {
     /** Reasoning / thinking content, if the model supports it (Claude extended thinking,
      *  OpenAI reasoning, or DeepSeek R1 style  tags). */
     thought?: string;
+    /**
+     * Incremental tool-call fragments, when the model is calling tools. Each
+     * fragment carries an `index` used to accumulate the call across chunks;
+     * the first fragment for an index carries the id and name. Consumers
+     * accumulate fragments by index, parse the arguments JSON, and execute
+     * the tool when the stream completes.
+     */
+    toolCalls?: ToolCallFragment[];
     /** True for the final chunk in the stream. */
     done: boolean;
     model?: string;

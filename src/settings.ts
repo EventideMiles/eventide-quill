@@ -72,6 +72,8 @@ export interface EventideQuillSettings {
     contextAutoScan: boolean;
     coWriterTemperature: number;
     coWriterMaxOutputTokens: number;
+    /** Max tool-calling rounds per response. 0 = unlimited. Default: 0. */
+    coWriterMaxToolRounds: number;
     coWriterVaultContext: boolean;
     coWriterAppendNewline: boolean;
     enableCoWriterThought: boolean;
@@ -88,6 +90,8 @@ export interface EventideQuillSettings {
     lorebookFolderTypes: Record<string, LoreEntryType>;
     coWriterLoreContext: boolean;
     reviewLoreContext: boolean;
+    /** Whether the Lorebook Coach may use AI tool-calling. Default: on. */
+    coWriterToolsEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -162,6 +166,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     contextAutoScan: true,
     coWriterTemperature: 1.0,
     coWriterMaxOutputTokens: 2048,
+    coWriterMaxToolRounds: 0,
     coWriterVaultContext: true,
     coWriterAppendNewline: true,
     enableCoWriterThought: true,
@@ -176,7 +181,8 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     lorebookFolders: [],
     lorebookFolderTypes: {},
     coWriterLoreContext: true,
-    reviewLoreContext: true
+    reviewLoreContext: true,
+    coWriterToolsEnabled: true
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -867,6 +873,21 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(content)
+            .setName('Co-writer tool use')
+            .setDesc(
+                'Let the co-writer (discuss, coach, and lorebook modes) call tools ' +
+                    '(manuscript mentions, lore siblings, vault lookup) via the model\u2019s native ' +
+                    'tool-calling API so it can look up details mid-conversation. Turn off if your ' +
+                    'model doesn\u2019t support tool calling or to avoid the extra turn consumption. Default: on.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.coWriterToolsEnabled).onChange(async (value) => {
+                    this.plugin.settings.coWriterToolsEnabled = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
             .setName('Lorebook folders')
             .setDesc(
                 'Folders scanned for lore entries. Any Markdown file under one of these folders is treated as a lore entry. Set a per-folder type default so every file inherits it without frontmatter; leave as mixed to type files individually via the quill-type key.'
@@ -1006,6 +1027,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookFolderTypes = { ...DEFAULT_SETTINGS.lorebookFolderTypes };
                     this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
                     this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
+                    this.plugin.settings.coWriterToolsEnabled = DEFAULT_SETTINGS.coWriterToolsEnabled;
                     await this.plugin.saveSettings();
                     this.display();
                 })
@@ -1834,6 +1856,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     .onClick(async () => {
                         this.plugin.settings.coWriterTemperature = DEFAULT_SETTINGS.coWriterTemperature;
                         this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
+                        this.plugin.settings.coWriterMaxToolRounds = DEFAULT_SETTINGS.coWriterMaxToolRounds;
                         this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
                         this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                         this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
@@ -1874,6 +1897,28 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         } else {
                             text.setValue(String(this.plugin.settings.coWriterMaxOutputTokens));
                             new Notice('Value must be a number ≥ 1');
+                        }
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName('Max tool rounds')
+            .setDesc(
+                'Maximum number of tool-calling rounds per response. Set to 0 for unlimited — the model ' +
+                    'will call as many rounds as it needs (use Stop to cancel). Set a specific number to ' +
+                    'cap turn consumption. Default: 0 (unlimited).'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.coWriterMaxToolRounds))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 0) {
+                            this.plugin.settings.coWriterMaxToolRounds = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.coWriterMaxToolRounds));
+                            new Notice('Value must be a number ≥ 0');
                         }
                     })
             );
@@ -2198,6 +2243,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.contextAutoScan = DEFAULT_SETTINGS.contextAutoScan;
                     this.plugin.settings.coWriterTemperature = DEFAULT_SETTINGS.coWriterTemperature;
                     this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
+                    this.plugin.settings.coWriterMaxToolRounds = DEFAULT_SETTINGS.coWriterMaxToolRounds;
                     this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
                     this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
                     this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;

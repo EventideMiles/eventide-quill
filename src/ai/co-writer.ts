@@ -1,9 +1,9 @@
-import { App, Editor, Notice, Platform } from 'obsidian';
+import { App, Editor, MarkdownView, Notice, Platform, TFile } from 'obsidian';
 import { EditorView } from '@codemirror/view';
 import type EventideQuillPlugin from '../main';
 import { type VoiceProfile } from '../types';
 import { findEditorView } from '../utils/find-editor';
-import { AiProvider, type ChatMessage } from './provider';
+import { type AiProvider, type ChatMessage, type ToolCallRequest, type ToolDefinition } from './provider';
 import {
     getCoWriterDiscussPrompt,
     getCoWriterGenerationPrompt,
@@ -13,6 +13,8 @@ import {
     getCoWriterCoachToOptions,
     getCoWriterOptionPrompt,
     getCoWriterVoicePrompt,
+    getLoreCoachSystemPrompt,
+    getLoreCoachUserPrompt,
     type ActiveSteering
 } from './prompts';
 import { compactConversation } from './compaction';
@@ -23,6 +25,8 @@ import { EmbeddingCache, rankBySimilarity } from './embedding-cache';
 import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
 import { ChangeSet } from '../core/change-set';
+import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
+import { createInternalToolRegistry, createLoreCoachToolRegistry, type ToolContext, type ToolRegistry } from './tools';
 import {
     clearDiffEdits,
     diffEditsField,
@@ -36,6 +40,29 @@ import {
  *  Preserves content inside wiki links ([[...]]) so linked targets are not broken. */
 function sanitizeProse(text: string): string {
     return text.replace(/\[\[[^\]]*\]\]|\u2014/g, (match) => (match.startsWith('[[') ? match : ', '));
+}
+
+/**
+ * Produce a short human-readable summary of a tool call's arguments for the
+ * chat indicator ("Used manuscript_mentions("Sarah Connor")"). The raw
+ * arguments are a JSON string from the model; this extracts the most
+ * relevant field (varies by tool) and truncates for display.
+ */
+function summarizeToolArgs(toolName: string, argumentsJson: string): string {
+    try {
+        const args = argumentsJson.trim().length === 0 ? {} : (JSON.parse(argumentsJson) as Record<string, unknown>);
+        // Pick the most descriptive field based on common tool arg names.
+        const value =
+            (typeof args.name === 'string' && args.name) ||
+            (typeof args.path === 'string' && args.path) ||
+            (typeof args.query === 'string' && args.query) ||
+            (typeof args.type === 'string' && args.type) ||
+            '';
+        if (!value) return '';
+        return value.length > 60 ? `${value.slice(0, 57)}...` : value;
+    } catch {
+        return '';
+    }
 }
 
 /**
@@ -352,6 +379,68 @@ async function buildPlotMapMessage(plugin: EventideQuillPlugin): Promise<ChatMes
 }
 
 /**
+ * Build a system message telling the model how many files it can safely
+ * read + edit in the current round, based on the remaining context budget
+ * and the per-round output token limit. This lets the model BATCH multiple
+ * read→edit cycles per round instead of doing one file per round (which is
+ * painfully slow on local models where each round = a full inference pass).
+ *
+ * Returns null when the budget is too small for batching to matter.
+ */
+function buildContextBudgetMessage(
+    plugin: EventideQuillPlugin,
+    messages: ChatMessage[],
+    maxContextTokens: number
+): ChatMessage | null {
+    const used = estimateTokens(messages);
+    const available = maxContextTokens - used;
+    if (available <= 2000) return null;
+
+    // Rough per-file costs:
+    //   Input: vault_lookup result (~1500 tokens) + edit_note tool-result (~100) ≈ 2000
+    //   Output: edit_note arguments (path + old_text + new_text) ≈ 600
+    const perFileContextCost = 2000;
+    const perFileOutputCost = 600;
+    const maxOutput = plugin.settings.coWriterMaxOutputTokens;
+
+    const contextBatch = Math.max(1, Math.floor(available / perFileContextCost));
+    const outputBatch = Math.max(1, Math.floor(maxOutput / perFileOutputCost));
+    const batchSize = Math.min(contextBatch, outputBatch);
+
+    if (batchSize <= 1) return null;
+
+    return {
+        role: 'system',
+        content:
+            `Context budget: ${used.toLocaleString()}/${maxContextTokens.toLocaleString()} tokens used, ` +
+            `${available.toLocaleString()} available. You can safely read and edit up to ${batchSize} ` +
+            `file(s) in this round. Batch your tool calls — read and edit multiple files per response ` +
+            `to minimize total rounds.`
+    };
+}
+
+/**
+ * Build a system message informing the model which file the writer currently
+ * has open. This lets the model distinguish between edits to the active file
+ * (where Direct/Fulfill mode provides a streaming live-edit UX) and edits to
+ * other notes (where the edit_note / append_to_note tools are the right path).
+ *
+ * Returns null when no markdown file is active.
+ */
+function buildActiveFileMessage(plugin: EventideQuillPlugin): ChatMessage | null {
+    const activeFile = plugin.app.workspace.getActiveFile();
+    if (!activeFile || activeFile.extension !== 'md') return null;
+    return {
+        role: 'system',
+        content:
+            `The writer currently has "${activeFile.path}" open in the editor.\n` +
+            'For edits to THIS file, recommend the writer use Direct or Fulfill mode ' +
+            '(which stream changes live into the editor). Use edit_note / append_to_note ' +
+            'tools for any OTHER note that is not currently open.'
+    };
+}
+
+/**
  * Compute active inline-directive steering for the cursor position.
  * Returns one `inline`-source entry per directive in the contiguous trailing
  * run. Empty when directive processing is disabled or no directives are active.
@@ -393,6 +482,34 @@ export interface CoachSession {
     clarifyRound: number;
 }
 
+/**
+ * Lorebook coach phase — a simpler state machine than the prose coach because
+ * the conversation drives the flow. The phase is mostly a UI indicator; the
+ * model decides when to ask questions vs. emit a draft.
+ *
+ *  - `discover` — first turn; the user names what they want to develop.
+ *  - `develop` — interactive Q&A; the model uses tools and asks probing questions.
+ *  - `refine`  — a draft has been produced; subsequent turns refine it.
+ */
+export type LoreCoachPhase = 'discover' | 'develop' | 'refine';
+
+/** A lorebook coach session. */
+export interface LoreCoachSession {
+    /** Current phase — drives the bottom-bar indicator. */
+    phase: LoreCoachPhase;
+    /** What the user is working on (the initial scope message). Free-form. */
+    scope: string;
+    /** Detected/declared entry type, populated when the first draft is produced. */
+    entryType: LoreEntryType | null;
+    /** Turn counter; bounds the conversation against runaway loops. */
+    rounds: number;
+}
+
+// Re-export LoreDraftEntry from its canonical home in lorebook-types so
+// existing call sites (panel, review UI, main.ts) keep importing from here
+// without churn. New code should import from '../core/dashboard/lorebook-types'.
+export type { LoreDraftEntry } from '../core/dashboard/lorebook-types';
+
 /** A single continuation option suggested by the AI. */
 export interface CoWriterOption {
     label: string;
@@ -408,6 +525,16 @@ export interface CoWriterChatMessage {
     thought?: string;
     /** Whether to show an accept button below this message for plan revision. */
     showAccept?: boolean;
+    /** Lore draft attached to this message (lorebook coach mode only). */
+    loreDraft?: LoreDraftEntry;
+    /**
+     * Tools the model called during this turn, shown as muted indicators
+     * within the assistant bubble (below the response text). Empty for turns
+     * where the model didn't call any tools. Stored as an array on the
+     * message rather than as separate chat entries so they don't interfere
+     * with the panel's streaming-placeholder logic.
+     */
+    toolUses?: { name: string; argsSummary: string }[];
 }
 
 /**
@@ -475,6 +602,12 @@ export class CoWriterSession {
     onDiscussStartStreaming: (() => void) | null = null;
     /** Called when a discuss response chunk arrives during streaming. */
     onDiscussChunk: ((text: string) => void) | null = null;
+    /**
+     * Called to clear the streaming text display (discard draft text the
+     * model emitted before its reasoning block). Used by the Lorebook Coach
+     * to prevent duplicated response content around `<think>` tags.
+     */
+    onDiscussClear: (() => void) | null = null;
     /** Called when the discuss response is complete (triggers markdown render). */
     onDiscussFinished: (() => void) | null = null;
     /** Called when the discuss response encounters an error. */
@@ -487,6 +620,36 @@ export class CoWriterSession {
     coachActive = false;
     /** Whether option cards have been auto-generated for the current coach session. */
     private coachOptionsGenerated = false;
+
+    // ── Lorebook coach state ────────────────────────────────────────────────
+    /** Current lorebook coach session, if lorebook coach mode is active. */
+    loreCoachSession: LoreCoachSession | null = null;
+    /** Whether lorebook coach mode is currently active. */
+    loreCoachActive = false;
+    /**
+     * API-level conversation history for the lorebook coach. Kept separate
+     * from {@link discussCurrentMessages} so the two modes don't cross-pollute
+     * (system prompts, tool result messages, and phase instructions differ).
+     */
+    loreCoachMessages: ChatMessage[] = [];
+    /** The most recent lore draft produced this session, awaiting review. */
+    currentLoreDraft: LoreDraftEntry | null = null;
+    /** Called when lorebook coach state changes (phase advance, end coach). */
+    onLoreCoachUpdate: (() => void) | null = null;
+    /** Called when a new lore draft is ready for the review card. */
+    onLoreDraftReady: (() => void) | null = null;
+
+    /** Pending note edits keyed by vault path (from edit_note / append_to_note tools). */
+    loreEdits: Map<string, { changeSet: ChangeSet; fileBasename: string }> = new Map();
+    /**
+     * Files that the tool opened in a new tab (not previously open). These
+     * tabs are closed when the edit is approved or rejected so multi-file
+     * edits don't leave a trail of tabs behind. Files the writer already had
+     * open are NOT tracked here — their tabs are left alone.
+     */
+    loreEditOpenedByTool: Set<string> = new Set();
+    /** Called when a lore edit is proposed, approved, or rejected. */
+    onLoreEditUpdate: (() => void) | null = null;
 
     /** Fulfill-mode proposed edits (one per directive), in document order. */
     fulfillChanges: ChangeSet = new ChangeSet();
@@ -746,6 +909,127 @@ export class CoWriterSession {
         }
     }
 
+    // ── Shared tool-calling helpers (used by discuss, coach, and lorebook) ────
+
+    /**
+     * Stream one round of chat completion with tool-call fragment accumulation.
+     * Handles text + thought streaming, the reasoning-clear-on-first-thought
+     * pattern (discards draft text emitted before `<think>`), and tool-call
+     * fragment accumulation. Does NOT handle multi-round looping, chat history,
+     * or tool execution — the caller orchestrates those.
+     *
+     * @returns Accumulated response text, thought, and materialized tool calls.
+     */
+    private async streamToolAwareRound(
+        provider: AiProvider,
+        options: {
+            messages: ChatMessage[];
+            model?: string;
+            maxTokens?: number;
+            temperature?: number;
+            signal?: AbortSignal;
+            tools?: ToolDefinition[];
+        },
+        callbacks: {
+            onChunk: (text: string) => void;
+            onThoughtChange: (thought: string) => void;
+            onClear: () => void;
+        }
+    ): Promise<{ response: string; thought: string; toolCalls: ToolCallRequest[] }> {
+        let response = '';
+        let thought = '';
+        let sawReasoning = false;
+        const fragmentBuffer = new Map<number, { id?: string; name?: string; arguments: string }>();
+
+        const stream = provider.chatCompletion({
+            ...options,
+            toolChoice: options.tools && options.tools.length > 0 ? 'auto' : undefined
+        });
+
+        for await (const chunk of stream) {
+            if (chunk.done) break;
+
+            if (chunk.thought) {
+                if (!sawReasoning) {
+                    sawReasoning = true;
+                    response = '';
+                    callbacks.onClear();
+                }
+                thought += chunk.thought;
+                this.thoughtBuffer = thought;
+                callbacks.onThoughtChange(thought);
+            }
+
+            if (chunk.text) {
+                response += chunk.text;
+                callbacks.onChunk(chunk.text);
+            }
+
+            if (chunk.toolCalls) {
+                for (const frag of chunk.toolCalls) {
+                    const existing = fragmentBuffer.get(frag.index);
+                    if (existing) {
+                        if (frag.id !== undefined) existing.id = frag.id;
+                        if (frag.name !== undefined) existing.name = frag.name;
+                        if (frag.arguments !== undefined) existing.arguments += frag.arguments;
+                    } else {
+                        fragmentBuffer.set(frag.index, {
+                            id: frag.id,
+                            name: frag.name,
+                            arguments: frag.arguments ?? ''
+                        });
+                    }
+                }
+            }
+        }
+
+        const toolCalls: ToolCallRequest[] = [...fragmentBuffer.entries()]
+            .sort(([a], [b]) => a - b)
+            .map(([idx, acc]) => ({
+                id: acc.id ?? `call_${idx}`,
+                name: acc.name ?? '',
+                arguments: acc.arguments
+            }));
+
+        return { response, thought, toolCalls };
+    }
+
+    /**
+     * Execute one tool call with JSON argument parsing, result truncation,
+     * and full error containment. Never throws — failures surface to the
+     * model as an error string so it can recover.
+     */
+    private async executeToolCallSafely(
+        call: ToolCallRequest,
+        registry: ToolRegistry,
+        ctx: ToolContext
+    ): Promise<string> {
+        const tool = registry.get(call.name);
+        if (!tool) return `Error: tool "${call.name}" is not registered.`;
+
+        let parsedArgs: Record<string, unknown>;
+        try {
+            parsedArgs =
+                call.arguments.trim().length === 0 ? {} : (JSON.parse(call.arguments) as Record<string, unknown>);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return `Error: invalid JSON arguments: ${msg}`;
+        }
+
+        try {
+            if (ctx.signal?.aborted) return 'Error: aborted before tool execution.';
+            const result = await tool.execute(parsedArgs, ctx);
+            const maxChars = tool.maxResultTokens * 4;
+            if (result.length > maxChars) {
+                return result.slice(0, maxChars) + `\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
+            }
+            return result;
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return `Error executing tool "${call.name}": ${msg}`;
+        }
+    }
+
     /**
      * Send a discussion message to the AI.
      * Unlike generateOptions, this does not produce continuation options —
@@ -771,24 +1055,19 @@ export class CoWriterSession {
             return;
         }
 
-        // Use the active file if available; fall back to stored manuscriptPath
+        // Use the active file if available; fall back to stored manuscriptPath.
+        // Discuss mode works without an active file — the model can gather
+        // context via tools (manuscript_mentions, vault_lookup, etc.) instead
+        // of from the active document's prose.
         const activeFile = plugin.app.workspace.getActiveFile();
         const filePath = activeFile?.path ?? this.manuscriptPath;
-        if (!filePath) {
-            new Notice('Quill: Open a manuscript to discuss the scene.');
-            return;
-        }
-        this.manuscriptPath = filePath;
+        if (filePath) this.manuscriptPath = filePath;
 
-        const markdownView = findEditorView(plugin.app, filePath);
-        if (!markdownView) {
-            new Notice('Quill: Open a manuscript editor to discuss the scene.');
-            return;
-        }
-        const editor = markdownView.editor;
+        const markdownView = filePath ? findEditorView(plugin.app, filePath) : null;
+        const editor = markdownView?.editor ?? null;
 
-        // Populate context engine so the context tab shows data
-        if (!plugin.currentAssembly) {
+        // Populate context engine so the context tab shows data (only when we have an editor).
+        if (editor && filePath && !plugin.currentAssembly) {
             await plugin.assembleDocumentContext(editor.getValue(), filePath);
         }
 
@@ -797,16 +1076,15 @@ export class CoWriterSession {
         this.currentOptions = [];
         this.optionsLoading = true;
         this.onOptionsLoading?.(true);
-        this.lockEditor();
+        if (editor) this.lockEditor();
 
         // Add user's message to display-only chat history
         this.chatHistory.push({ role: 'user', content: message });
 
-        const cursor = editor.getCursor();
-        const fullText = editor.getValue();
-        const cursorOffset = editor.posToOffset(cursor);
-        const textBeforeCursor = fullText.slice(0, cursorOffset);
-        const proseForContext = textBeforeCursor.slice(-4000);
+        const fullText = editor?.getValue() ?? '';
+        const proseForContext = editor
+            ? editor.getValue().slice(0, editor.posToOffset(editor.getCursor())).slice(-4000)
+            : '';
 
         // Build injected context — vault + additional files.
         // Injected fresh every call; never stored in discussCurrentMessages.
@@ -827,6 +1105,10 @@ export class CoWriterSession {
         const discussDirective = buildDirectiveMessage(plugin, proseForContext);
         if (discussDirective) {
             injectedContext.push(discussDirective);
+        }
+        const activeFileMsg = buildActiveFileMessage(plugin);
+        if (activeFileMsg) {
+            injectedContext.push(activeFileMsg);
         }
 
         const prompt = getCoWriterDiscussPrompt(proseForContext || '(empty document)', message);
@@ -882,13 +1164,6 @@ export class CoWriterSession {
         // Append the user message after compaction so it's always below any new context head
         this.discussCurrentMessages.push({ role: 'user', content: prompt });
 
-        // Build the full API payload: system prompt + injected context + conversation
-        const baseMessages: ChatMessage[] = [
-            this.discussCurrentMessages[0]!, // system prompt
-            ...injectedContext,
-            ...this.discussCurrentMessages.slice(1) // context heads + chat turns
-        ];
-
         if (__DEV__ && plugin.settings.enableDebugLogging) {
             console.warn('[Quill Co-writer] Discuss context', {
                 manuscriptExcerptChars: proseForContext.length,
@@ -901,60 +1176,135 @@ export class CoWriterSession {
             });
         }
 
-        let thought = '';
-        let response = '';
-
-        // Notify panel that streaming is starting
-        this.onDiscussStartStreaming?.();
-        this.onDiscussChunk?.('');
+        // Tool setup: when enabled, the model can call internal tools
+        // (manuscript_mentions, lore_siblings, vault_lookup) to look up
+        // details mid-conversation. Each tool call produces a visible
+        // round in the chat and consumes a model turn.
+        const toolsEnabled = plugin.settings.coWriterToolsEnabled;
+        const registry = toolsEnabled ? createInternalToolRegistry() : null;
+        const toolDefs = registry?.toToolDefinitions();
+        const ctx: ToolContext = { plugin };
+        // 0 = unlimited (the model calls as many rounds as it needs; use Stop
+        // to cancel). A positive number caps turn consumption.
+        const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
 
         try {
             this.abortController = new AbortController();
-            const stream = chat.provider.chatCompletion({
-                messages: baseMessages,
-                model: chat.modelId,
-                temperature: plugin.settings.coWriterTemperature,
-                maxTokens: 1024,
-                signal: this.abortController.signal
-            });
+            ctx.signal = this.abortController.signal;
 
-            for await (const chunk of stream) {
-                if (chunk.done) break;
-                response += chunk.text;
-                if (chunk.text) {
-                    this.onDiscussChunk?.(chunk.text);
-                }
-                if (chunk.thought) {
-                    thought += chunk.thought;
-                    this.thoughtBuffer = thought;
-                    this.onThought?.(thought);
-                }
-            }
+            for (let round = 0; round < maxRounds; round++) {
+                // Rebuild baseMessages each round — discussCurrentMessages may
+                // have grown with tool-call + tool-result messages. Inject the
+                // context-budget message fresh so the model knows its batch size.
+                const budgetMsg = buildContextBudgetMessage(plugin, this.discussCurrentMessages, maxTokens);
+                const roundBaseMessages: ChatMessage[] = [
+                    this.discussCurrentMessages[0]!,
+                    ...injectedContext,
+                    ...(budgetMsg ? [budgetMsg] : []),
+                    ...this.discussCurrentMessages.slice(1)
+                ];
 
-            // Replace the streaming placeholder with the complete message
-            const lastIdx = this.chatHistory.length - 1;
-            if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
-                this.chatHistory[lastIdx] = {
+                // Push a fresh draft before discussStartStreaming so the
+                // panel's placeholder-check (last message already assistant?)
+                // is a no-op — we own the message we'll replace post-stream.
+                this.chatHistory.push({ role: 'assistant', content: '' });
+                this.onDiscussStartStreaming?.();
+                this.onDiscussChunk?.('');
+
+                const result = await this.streamToolAwareRound(
+                    chat.provider,
+                    {
+                        messages: roundBaseMessages,
+                        model: chat.modelId,
+                        temperature: plugin.settings.coWriterTemperature,
+                        maxTokens: plugin.settings.coWriterMaxOutputTokens,
+                        signal: this.abortController.signal,
+                        tools: toolDefs
+                    },
+                    {
+                        onChunk: (text) => this.onDiscussChunk?.(text),
+                        onThoughtChange: (thought) => this.onThought?.(thought),
+                        onClear: () => this.onDiscussClear?.()
+                    }
+                );
+
+                // Replace the draft with the finalized message (never push a
+                // second assistant message — the draft and final would both
+                // render and duplicate the response text).
+                const lastIdx = this.chatHistory.length - 1;
+                if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
+                    this.chatHistory[lastIdx] = {
+                        role: 'assistant',
+                        content: result.response,
+                        thought: result.thought || undefined,
+                        toolUses:
+                            result.toolCalls.length > 0
+                                ? result.toolCalls.map((c) => ({
+                                      name: c.name,
+                                      argsSummary: summarizeToolArgs(c.name, c.arguments)
+                                  }))
+                                : undefined
+                    };
+                }
+
+                // Push to API-level conversation (with tool_calls so the model
+                // sees its prior invocations on the next round).
+                this.discussCurrentMessages.push({
                     role: 'assistant',
-                    content: response,
-                    thought: thought || undefined
-                };
-            } else {
-                this.chatHistory.push({
-                    role: 'assistant',
-                    content: response,
-                    thought: thought || undefined
+                    content: result.response,
+                    toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined
                 });
+
+                // Update token estimate so the indicator reflects tool-result
+                // growth — tool results stay in the conversation and keep
+                // getting re-sent, so the user needs to see their cost.
+                this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+
+                // No tools called (or tools disabled) → this round is final.
+                if (result.toolCalls.length === 0 || !registry) break;
+
+                // Execute tools and push role:'tool' result messages.
+                for (const call of result.toolCalls) {
+                    const toolResult = await this.executeToolCallSafely(call, registry, ctx);
+                    this.discussCurrentMessages.push({
+                        role: 'tool',
+                        content: toolResult,
+                        toolCallId: call.id,
+                        name: call.name
+                    });
+                }
+
+                // Re-estimate after tool results were appended.
+                this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+
+                // Mid-loop compaction: if tool results have filled the context
+                // past the compaction threshold, summarize older turns to free
+                // room for the next batch. Keeps batch sizes high instead of
+                // degrading as the conversation grows.
+                if (estimateTokens(this.discussCurrentMessages) / maxTokens >= compactPct) {
+                    const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
+                    try {
+                        const cResult = await compactConversation(chat.provider, this.discussCurrentMessages, sc, {
+                            signal: this.abortController?.signal
+                        });
+                        if (cResult) {
+                            this.discussCurrentMessages = cResult.messages;
+                            this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+                        }
+                    } catch (compErr: unknown) {
+                        // Propagate aborts to the outer catch so the normal
+                        // loading-state/editor-unlock cleanup runs (don't return
+                        // from inside the tool loop, which would skip it).
+                        if (compErr instanceof Error && compErr.name === 'AbortError') throw compErr;
+                        console.warn('Quill: Mid-loop compaction failed; continuing.', compErr);
+                    }
+                }
+
+                // Sync chat so the user sees the response + tool indicators.
+                this.onChatUpdate?.();
             }
-            this.discussCurrentMessages.push({ role: 'assistant', content: response });
 
-            // Push conversation-only token estimate after response
-            const conversationTokens = estimateTokens(this.discussCurrentMessages);
-            this.onTokenEstimate?.(conversationTokens, maxTokens);
-
-            // Mark the response as complete (triggers markdown render)
             this.onDiscussFinished?.();
-
             this.unlockEditor();
             this.optionsLoading = false;
             this.onOptionsLoading?.(false);
@@ -994,24 +1344,17 @@ export class CoWriterSession {
             return;
         }
 
-        // Use the active file if available; fall back to stored manuscriptPath
+        // Use the active file if available; fall back to stored manuscriptPath.
+        // Coach mode works without an active file — same rationale as discuss.
         const activeFile = plugin.app.workspace.getActiveFile();
         const filePath = activeFile?.path ?? this.manuscriptPath;
-        if (!filePath) {
-            new Notice('Quill: Open a manuscript to use coaching.');
-            return;
-        }
-        this.manuscriptPath = filePath;
+        if (filePath) this.manuscriptPath = filePath;
 
-        const markdownView = findEditorView(plugin.app, filePath);
-        if (!markdownView) {
-            new Notice('Quill: Open a manuscript editor to use coaching.');
-            return;
-        }
-        const editor = markdownView.editor;
+        const markdownView = filePath ? findEditorView(plugin.app, filePath) : null;
+        const editor = markdownView?.editor ?? null;
 
-        // Populate context engine
-        if (!plugin.currentAssembly) {
+        // Populate context engine (only when we have an editor).
+        if (editor && filePath && !plugin.currentAssembly) {
             await plugin.assembleDocumentContext(editor.getValue(), filePath);
         }
 
@@ -1020,16 +1363,15 @@ export class CoWriterSession {
         this.currentOptions = [];
         this.optionsLoading = true;
         this.onOptionsLoading?.(true);
-        this.lockEditor();
+        if (editor) this.lockEditor();
 
         // Add user message to display history (same as sendDiscussion)
         this.chatHistory.push({ role: 'user', content: message });
 
-        const cursor = editor.getCursor();
-        const fullText = editor.getValue();
-        const cursorOffset = editor.posToOffset(cursor);
-        const textBeforeCursor = fullText.slice(0, cursorOffset);
-        const proseForContext = textBeforeCursor.slice(-4000);
+        const fullText = editor?.getValue() ?? '';
+        const proseForContext = editor
+            ? editor.getValue().slice(0, editor.posToOffset(editor.getCursor())).slice(-4000)
+            : '';
 
         // Build injected context
         const injectedContext: ChatMessage[] = [];
@@ -1049,6 +1391,10 @@ export class CoWriterSession {
         const coachDirective = buildDirectiveMessage(plugin, proseForContext);
         if (coachDirective) {
             injectedContext.push(coachDirective);
+        }
+        const coachActiveFileMsg = buildActiveFileMessage(plugin);
+        if (coachActiveFileMsg) {
+            injectedContext.push(coachActiveFileMsg);
         }
 
         // Initialize coach session on first call
@@ -1126,12 +1472,6 @@ export class CoWriterSession {
             }
         }
 
-        const baseMessages: ChatMessage[] = [
-            this.discussCurrentMessages[0]!,
-            ...injectedContext,
-            ...this.discussCurrentMessages.slice(1)
-        ];
-
         if (__DEV__ && plugin.settings.enableDebugLogging) {
             console.warn('[Quill Co-writer] Coach context', {
                 manuscriptExcerptChars: proseForContext.length,
@@ -1144,36 +1484,114 @@ export class CoWriterSession {
             });
         }
 
-        let thought = '';
-        let response = '';
+        // Tool setup: same internal tools as discuss mode.
+        const toolsEnabled = plugin.settings.coWriterToolsEnabled;
+        const registry = toolsEnabled ? createInternalToolRegistry() : null;
+        const toolDefs = registry?.toToolDefinitions();
+        const ctx: ToolContext = { plugin };
+        const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
 
-        this.onDiscussStartStreaming?.();
-        this.onDiscussChunk?.('');
+        let response = '';
 
         try {
             this.abortController = new AbortController();
-            const stream = chat.provider.chatCompletion({
-                messages: baseMessages,
-                model: chat.modelId,
-                temperature: plugin.settings.coWriterTemperature,
-                maxTokens: 1024,
-                signal: this.abortController.signal
-            });
+            ctx.signal = this.abortController.signal;
 
-            for await (const chunk of stream) {
-                if (chunk.done) break;
-                response += chunk.text;
-                if (chunk.text) {
-                    this.onDiscussChunk?.(chunk.text);
+            for (let round = 0; round < maxRounds; round++) {
+                const coachBudgetMsg = buildContextBudgetMessage(plugin, this.discussCurrentMessages, maxTokens);
+                const roundBaseMessages: ChatMessage[] = [
+                    this.discussCurrentMessages[0]!,
+                    ...injectedContext,
+                    ...(coachBudgetMsg ? [coachBudgetMsg] : []),
+                    ...this.discussCurrentMessages.slice(1)
+                ];
+
+                this.chatHistory.push({ role: 'assistant', content: '' });
+                this.onDiscussStartStreaming?.();
+                this.onDiscussChunk?.('');
+
+                const result = await this.streamToolAwareRound(
+                    chat.provider,
+                    {
+                        messages: roundBaseMessages,
+                        model: chat.modelId,
+                        temperature: plugin.settings.coWriterTemperature,
+                        maxTokens: plugin.settings.coWriterMaxOutputTokens,
+                        signal: this.abortController.signal,
+                        tools: toolDefs
+                    },
+                    {
+                        onChunk: (text) => this.onDiscussChunk?.(text),
+                        onThoughtChange: (thought) => this.onThought?.(thought),
+                        onClear: () => this.onDiscussClear?.()
+                    }
+                );
+
+                response = result.response;
+
+                // Replace the draft with the finalized message.
+                const lastIdx = this.chatHistory.length - 1;
+                if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
+                    this.chatHistory[lastIdx] = {
+                        role: 'assistant',
+                        content: result.response,
+                        thought: result.thought || undefined,
+                        toolUses:
+                            result.toolCalls.length > 0
+                                ? result.toolCalls.map((c) => ({
+                                      name: c.name,
+                                      argsSummary: summarizeToolArgs(c.name, c.arguments)
+                                  }))
+                                : undefined
+                    };
                 }
-                if (chunk.thought) {
-                    thought += chunk.thought;
-                    this.thoughtBuffer = thought;
-                    this.onThought?.(thought);
+
+                this.discussCurrentMessages.push({
+                    role: 'assistant',
+                    content: result.response,
+                    toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined
+                });
+
+                this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+
+                if (result.toolCalls.length === 0 || !registry) break;
+
+                for (const call of result.toolCalls) {
+                    const toolResult = await this.executeToolCallSafely(call, registry, ctx);
+                    this.discussCurrentMessages.push({
+                        role: 'tool',
+                        content: toolResult,
+                        toolCallId: call.id,
+                        name: call.name
+                    });
                 }
+
+                this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+
+                // Mid-loop compaction (same as discuss).
+                if (estimateTokens(this.discussCurrentMessages) / maxTokens >= compactPct) {
+                    const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
+                    try {
+                        const cResult = await compactConversation(chat.provider, this.discussCurrentMessages, sc, {
+                            signal: this.abortController?.signal
+                        });
+                        if (cResult) {
+                            this.discussCurrentMessages = cResult.messages;
+                            this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
+                        }
+                    } catch (compErr: unknown) {
+                        // Propagate aborts to the outer catch so the normal
+                        // loading-state/editor-unlock cleanup runs.
+                        if (compErr instanceof Error && compErr.name === 'AbortError') throw compErr;
+                        console.warn('Quill: Mid-loop compaction failed; continuing.', compErr);
+                    }
+                }
+
+                this.onChatUpdate?.();
             }
 
-            // Update coach session
+            // Update coach session — runs after all tool rounds complete,
+            // using the final round's response.
             if (this.coachSession) {
                 this.coachSession.response = response;
                 this.coachSession.isFirstTurn = false;
@@ -1205,27 +1623,14 @@ export class CoWriterSession {
                 (this.coachSession.phase === 'plan' || this.coachSession.phase === 'direction') &&
                 !this.coachSession.isFirstTurn;
 
-            // Update chat history
-            const lastIdx = this.chatHistory.length - 1;
-            if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
-                this.chatHistory[lastIdx] = {
-                    role: 'assistant',
-                    content: response,
-                    thought: thought || undefined,
-                    showAccept: isRevision || undefined
-                };
-            } else {
-                this.chatHistory.push({
-                    role: 'assistant',
-                    content: response,
-                    thought: thought || undefined,
-                    showAccept: isRevision || undefined
-                });
+            // Add showAccept to the last assistant message if this is a revision.
+            if (isRevision) {
+                const lastIdx = this.chatHistory.length - 1;
+                const lastMsg = lastIdx >= 0 ? this.chatHistory[lastIdx] : undefined;
+                if (lastMsg && lastMsg.role === 'assistant') {
+                    lastMsg.showAccept = true;
+                }
             }
-            this.discussCurrentMessages.push({ role: 'assistant', content: response });
-
-            const conversationTokens = estimateTokens(this.discussCurrentMessages);
-            this.onTokenEstimate?.(conversationTokens, maxTokens);
 
             this.onDiscussFinished?.();
 
@@ -1421,6 +1826,376 @@ export class CoWriterSession {
         this.coachActive = false;
         this.coachOptionsGenerated = false;
         this.discussCurrentMessages = [];
+    }
+
+    // ── Lorebook coach ──────────────────────────────────────────────────────
+
+    /**
+     * Send a message to the lorebook coach. Uses the provider's native
+     * tool-calling API so the model can invoke `manuscript_mentions`,
+     * `lore_siblings`, `vault_lookup`, and `propose_entry` via its own
+     * tool-call mechanism.
+     *
+     * Unlike the prose coach, this method manages the multi-round tool-calling
+     * loop ITSELF (not via the transparent `streamWithTools` wrapper) so that:
+     *   - Each round is its own chat message with its own reasoning section.
+     *   - Tool calls are visible as distinct "Used X" turns in the chat history.
+     *   - "Draft" text emitted before a reasoning block is discarded so the
+     *     response isn't duplicated around `<think>` tags.
+     *
+     * Turn off tools via `coWriterToolsEnabled` (settings → lorebook) when
+     * the model doesn't support tool calling or to avoid extra turn consumption.
+     *
+     * Does NOT lock the editor or require an active manuscript — lorebook
+     * development is independent of any open chapter. Does require at least
+     * one configured lorebook folder.
+     */
+    async sendLoreCoach(plugin: EventideQuillPlugin, message: string): Promise<void> {
+        const chat = plugin.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: No AI provider configured. Set one up in settings.');
+            return;
+        }
+        if (plugin.settings.lorebookFolders.length === 0) {
+            new Notice('Quill: Add at least one lorebook folder in settings → lorebook first.');
+            return;
+        }
+
+        this.cancelGeneration();
+        this.app = plugin.app;
+        this.currentOptions = [];
+        this.optionsLoading = true;
+        this.onOptionsLoading?.(true);
+
+        // Add user message to display history.
+        this.chatHistory.push({ role: 'user', content: message });
+
+        // Initialize session on first turn.
+        if (!this.loreCoachSession) {
+            this.loreCoachSession = {
+                phase: 'discover',
+                scope: message,
+                entryType: null,
+                rounds: 0
+            };
+            this.loreCoachActive = true;
+            this.currentLoreDraft = null;
+
+            this.loreCoachMessages = [
+                { role: 'system', content: getLoreCoachSystemPrompt() },
+                { role: 'user', content: getLoreCoachUserPrompt(message) }
+            ];
+        } else {
+            this.loreCoachSession.rounds++;
+            this.loreCoachMessages.push({ role: 'user', content: getLoreCoachUserPrompt(message) });
+        }
+
+        const toolsEnabled = plugin.settings.coWriterToolsEnabled;
+        const registry = toolsEnabled ? createLoreCoachToolRegistry() : null;
+        const toolDefs = registry?.toToolDefinitions();
+        const ctx: ToolContext = { plugin };
+
+        const maxTokens = chat.provider.config.maxContextTokens;
+        const compactPct = Math.max(50, Math.min(95, this.settingsOrDefault(plugin).contextCompactAtPercent)) / 100;
+        const conversationTokens = estimateTokens(this.loreCoachMessages);
+        this.onTokenEstimate?.(conversationTokens, maxTokens);
+
+        if (conversationTokens / maxTokens >= compactPct) {
+            const sentenceCount = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
+            try {
+                const result = await compactConversation(chat.provider, this.loreCoachMessages, sentenceCount);
+                if (result) {
+                    this.loreCoachMessages = result.messages;
+                    this.onTokenEstimate?.(estimateTokens(this.loreCoachMessages), maxTokens);
+                }
+            } catch (err: unknown) {
+                if (err instanceof Error && err.name === 'AbortError') {
+                    this.optionsLoading = false;
+                    this.onOptionsLoading?.(false);
+                    return;
+                }
+                console.warn('Quill: Lore coach compaction failed; continuing without compaction.', err);
+            }
+        }
+
+        if (__DEV__ && plugin.settings.enableDebugLogging) {
+            console.warn('[Quill Co-writer] Lore coach context', {
+                scope: this.loreCoachSession.scope,
+                phase: this.loreCoachSession.phase,
+                rounds: this.loreCoachSession.rounds,
+                toolsEnabled,
+                conversationTokens: estimateTokens(this.loreCoachMessages),
+                maxTokens
+            });
+        }
+
+        const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
+
+        try {
+            for (let round = 0; round < maxRounds; round++) {
+                this.abortController = new AbortController();
+                ctx.signal = this.abortController.signal;
+
+                // Push a fresh placeholder for this round BEFORE calling
+                // discussStartStreaming. The panel's discussStartStreaming
+                // checks "is the last message already assistant?" and skips
+                // its own push when so — by pre-pushing our own draft we
+                // prevent a duplicate placeholder and own the message we'll
+                // finalize in place after the stream.
+                this.chatHistory.push({ role: 'assistant', content: '' });
+                this.thoughtBuffer = '';
+                this.onDiscussStartStreaming?.();
+                this.onDiscussChunk?.('');
+
+                let response = '';
+                let thought = '';
+                let sawReasoning = false;
+                const fragmentBuffer = new Map<number, { id?: string; name?: string; arguments: string }>();
+
+                // Inject context-budget + active-file awareness fresh each
+                // round so the model knows how many files it can batch and
+                // which file is open.
+                const activeFileMsg = buildActiveFileMessage(plugin);
+                const budgetMsg = buildContextBudgetMessage(plugin, this.loreCoachMessages, maxTokens);
+                const injected: ChatMessage[] = [];
+                if (activeFileMsg) injected.push(activeFileMsg);
+                if (budgetMsg) injected.push(budgetMsg);
+                const messagesForCall =
+                    injected.length > 0 && this.loreCoachMessages.length > 0
+                        ? [this.loreCoachMessages[0]!, ...injected, ...this.loreCoachMessages.slice(1)]
+                        : this.loreCoachMessages;
+
+                const stream = chat.provider.chatCompletion({
+                    messages: messagesForCall,
+                    model: chat.modelId,
+                    temperature: 0.7,
+                    maxTokens: plugin.settings.coWriterMaxOutputTokens,
+                    signal: this.abortController.signal,
+                    tools: toolDefs,
+                    toolChoice: toolDefs ? 'auto' : undefined
+                });
+
+                for await (const chunk of stream) {
+                    if (chunk.done) break;
+
+                    if (chunk.thought) {
+                        // Reasoning models sometimes emit a "draft" response
+                        // before their reasoning block, then repeat it verbatim
+                        // after. Discard any text accumulated before the first
+                        // reasoning chunk so the two copies don't concatenate
+                        // into a duplicated block.
+                        if (!sawReasoning) {
+                            sawReasoning = true;
+                            response = '';
+                            this.onDiscussClear?.();
+                        }
+                        thought += chunk.thought;
+                        this.thoughtBuffer = thought;
+                        this.onThought?.(thought);
+                    }
+
+                    if (chunk.text) {
+                        response += chunk.text;
+                        this.onDiscussChunk?.(chunk.text);
+                    }
+
+                    if (chunk.toolCalls) {
+                        for (const frag of chunk.toolCalls) {
+                            const existing = fragmentBuffer.get(frag.index);
+                            if (existing) {
+                                if (frag.id !== undefined) existing.id = frag.id;
+                                if (frag.name !== undefined) existing.name = frag.name;
+                                if (frag.arguments !== undefined) existing.arguments += frag.arguments;
+                            } else {
+                                fragmentBuffer.set(frag.index, {
+                                    id: frag.id,
+                                    name: frag.name,
+                                    arguments: frag.arguments ?? ''
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Materialize accumulated tool-call fragments into complete calls.
+                const toolCalls = [...fragmentBuffer.entries()]
+                    .sort(([a], [b]) => a - b)
+                    .map(([idx, acc]) => ({
+                        id: acc.id ?? `call_${idx}`,
+                        name: acc.name ?? '',
+                        arguments: acc.arguments
+                    }));
+
+                // Phase advance: discover → develop after the first response
+                // (unless propose_entry advanced to 'refine' below).
+                if (this.loreCoachSession && this.loreCoachSession.phase === 'discover') {
+                    this.loreCoachSession.phase = 'develop';
+                }
+
+                // REPLACE the placeholder (last message) with the finalized
+                // message — never push a second assistant message, or the
+                // placeholder and the final would both render and duplicate
+                // the response text. Tool calls are annotated on the message
+                // as `toolUses` (rendered within the bubble by the panel).
+                // loreDraft is attached AFTER tool execution below, so the
+                // draft comes from the post-tool state (propose_entry's
+                // output) rather than a pre-tool snapshot.
+                const lastIdx = this.chatHistory.length - 1;
+                if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
+                    this.chatHistory[lastIdx] = {
+                        role: 'assistant',
+                        content: response,
+                        thought: thought || undefined,
+                        toolUses:
+                            toolCalls.length > 0
+                                ? toolCalls.map((c) => ({
+                                      name: c.name,
+                                      argsSummary: summarizeToolArgs(c.name, c.arguments)
+                                  }))
+                                : undefined
+                    };
+                }
+
+                this.loreCoachMessages.push({
+                    role: 'assistant',
+                    content: response,
+                    toolCalls: toolCalls.length > 0 ? toolCalls : undefined
+                });
+
+                // No tools called (or tools disabled) → this round is final.
+                if (toolCalls.length === 0 || !registry) {
+                    break;
+                }
+
+                // Execute each tool and push a role:'tool' result to the API
+                // history. No separate chat entries — tool calls are already
+                // visible as `toolUses` annotations on the assistant message.
+                for (const call of toolCalls) {
+                    const tool = registry.get(call.name);
+                    let resultText: string;
+                    if (!tool) {
+                        resultText = `Error: tool "${call.name}" is not registered.`;
+                    } else {
+                        let parsedArgs: Record<string, unknown>;
+                        try {
+                            parsedArgs =
+                                call.arguments.trim().length === 0
+                                    ? {}
+                                    : (JSON.parse(call.arguments) as Record<string, unknown>);
+                        } catch (err) {
+                            const msg = err instanceof Error ? err.message : String(err);
+                            resultText = `Error: invalid JSON arguments: ${msg}`;
+                            this.loreCoachMessages.push({
+                                role: 'tool',
+                                content: resultText,
+                                toolCallId: call.id,
+                                name: call.name
+                            });
+                            continue;
+                        }
+                        try {
+                            if (ctx.signal?.aborted) {
+                                resultText = 'Error: aborted before tool execution.';
+                            } else {
+                                resultText = await tool.execute(parsedArgs, ctx);
+                                const maxChars = tool.maxResultTokens * 4;
+                                if (resultText.length > maxChars) {
+                                    resultText =
+                                        resultText.slice(0, maxChars) +
+                                        `\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
+                                }
+                            }
+                        } catch (err) {
+                            const msg = err instanceof Error ? err.message : String(err);
+                            resultText = `Error executing tool "${call.id}": ${msg}`;
+                        }
+                    }
+                    this.loreCoachMessages.push({
+                        role: 'tool',
+                        content: resultText,
+                        toolCallId: call.id,
+                        name: call.name
+                    });
+                }
+
+                // Attach the lore draft from the POST-tool state so the
+                // assistant turn that actually invoked propose_entry owns the
+                // review card. Only this round's message carries the draft — a
+                // later, non-proposing round gets undefined so an outdated
+                // actionable card can't resurface.
+                const proposedThisRound = toolCalls.some((c) => c.name === 'propose_entry');
+                const draftIdx = this.chatHistory.length - 1;
+                if (draftIdx >= 0 && this.chatHistory[draftIdx]?.role === 'assistant') {
+                    this.chatHistory[draftIdx].loreDraft =
+                        proposedThisRound && this.currentLoreDraft ? this.currentLoreDraft : undefined;
+                }
+
+                // If propose_entry was called, advance phase and fire the
+                // draft-ready callback.
+                if (this.currentLoreDraft && this.loreCoachSession) {
+                    this.loreCoachSession.entryType = this.currentLoreDraft.entryType;
+                    this.loreCoachSession.phase = 'refine';
+                    this.onLoreDraftReady?.();
+                }
+
+                // Update token estimate so the indicator reflects tool-result
+                // growth, then sync the chat so the user sees progress.
+                this.onTokenEstimate?.(estimateTokens(this.loreCoachMessages), maxTokens);
+
+                // Mid-loop compaction: if tool results have filled the context,
+                // summarize older turns to free room for the next batch.
+                if (estimateTokens(this.loreCoachMessages) / maxTokens >= compactPct) {
+                    const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
+                    try {
+                        const cResult = await compactConversation(chat.provider, this.loreCoachMessages, sc, {
+                            signal: this.abortController?.signal
+                        });
+                        if (cResult) {
+                            this.loreCoachMessages = cResult.messages;
+                            this.onTokenEstimate?.(estimateTokens(this.loreCoachMessages), maxTokens);
+                        }
+                    } catch (compErr: unknown) {
+                        // Propagate aborts to the outer catch so the normal
+                        // loading-state cleanup runs.
+                        if (compErr instanceof Error && compErr.name === 'AbortError') throw compErr;
+                        console.warn('Quill: Mid-loop compaction failed; continuing.', compErr);
+                    }
+                }
+
+                this.onChatUpdate?.();
+
+                // Continue to next round — the model will see its tool_calls
+                // and the tool results and continue the conversation.
+            }
+
+            this.onDiscussFinished?.();
+            this.optionsLoading = false;
+            this.onOptionsLoading?.(false);
+            this.onTokenEstimate?.(estimateTokens(this.loreCoachMessages), maxTokens);
+            this.onChatUpdate?.();
+            this.onLoreCoachUpdate?.();
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') {
+                this.optionsLoading = false;
+                this.onOptionsLoading?.(false);
+                return;
+            }
+            const msg = err instanceof Error ? err.message : String(err);
+            this.onDiscussError?.(msg);
+            new Notice(`Quill: Lore coach failed — ${msg}`);
+            this.optionsLoading = false;
+            this.onOptionsLoading?.(false);
+            this.onChatUpdate?.();
+        }
+    }
+
+    /** Clear lorebook coach session state. Used by the "End coaching" button. */
+    endLoreCoachSession(): void {
+        this.loreCoachSession = null;
+        this.loreCoachActive = false;
+        this.loreCoachMessages = [];
+        this.currentLoreDraft = null;
+        this.onLoreCoachUpdate?.();
     }
 
     /**
@@ -1696,6 +2471,134 @@ export class CoWriterSession {
         this.optionsLoading = false;
         this.onOptionsLoading?.(false);
         this.onDirectChangeUpdate?.();
+    }
+
+    // ── Lore edit (edit_note / append_to_note tools) ─────────────────────
+
+    /**
+     * Approve a pending lore edit: commit the ChangeSet edit to the target
+     * note. If the file is open in an editor, dispatches via CodeMirror (the
+     * normal path). If the file was closed (the writer tabbed away or it was
+     * never open), falls back to reading + modifying the file directly.
+     *
+     * If the tool opened the file in a new tab, the tab is closed after
+     * applying the change so multi-file edits don't leave a trail of tabs.
+     */
+    approveLoreEdit(filePath: string, id: number): void {
+        const entry = this.loreEdits.get(filePath);
+        if (!entry) return;
+
+        const view = this.app ? findEditorView(this.app, filePath) : null;
+        const cm = view ? (view.editor as unknown as { cm: EditorView }).cm : null;
+
+        if (cm) {
+            // File is open — reconcile any drift from manual edits during
+            // review (same sync the other approval flows do), then dispatch.
+            syncChangeSetPositions(cm, entry.changeSet, 'lore_edit');
+            const change = entry.changeSet.approve(id);
+            if (!change) return;
+            const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'lore_edit');
+            cm.dispatch({
+                changes: change,
+                effects: setDiffEdits.of(preserved),
+                selection: { anchor: change.from + change.insert.length }
+            });
+            this.closeLoreEditTabIfOpenedByTool(filePath);
+            this.loreEdits.delete(filePath);
+            this.onLoreEditUpdate?.();
+            return;
+        }
+
+        // File isn't open — apply the change directly via the vault. Don't
+        // close the tab, delete the entry, or fire updates until the write
+        // has actually succeeded, so a failed write keeps the edit reviewable.
+        if (this.app) {
+            const file = this.app.vault.getAbstractFileByPath(filePath);
+            if (file instanceof TFile) {
+                const edit = entry.changeSet.get(id);
+                if (!edit || edit.state !== 'pending') return;
+                void this.app.vault
+                    .process(file, (content) => content.slice(0, edit.from) + edit.newText + content.slice(edit.to))
+                    .then(() => {
+                        entry.changeSet.approve(id);
+                        this.closeLoreEditTabIfOpenedByTool(filePath);
+                        this.loreEdits.delete(filePath);
+                        this.onLoreEditUpdate?.();
+                    })
+                    .catch((err: unknown) => {
+                        console.warn('Quill: Lore edit write failed; keeping the edit pending.', err);
+                        this.onLoreEditUpdate?.();
+                    });
+                return;
+            }
+        }
+
+        // Fallback (no app, no open editor, or file vanished) — just clear.
+        const change = entry.changeSet.approve(id);
+        if (!change) return;
+        this.closeLoreEditTabIfOpenedByTool(filePath);
+        this.loreEdits.delete(filePath);
+        this.onLoreEditUpdate?.();
+    }
+
+    /** Reject a pending lore edit for a specific file: discard the diff. */
+    rejectLoreEdit(filePath: string): void {
+        if (this.app) {
+            const view = findEditorView(this.app, filePath);
+            if (view) {
+                const cm = (view.editor as unknown as { cm: EditorView }).cm;
+                if (cm) clearDiffEdits(cm, 'lore_edit');
+            }
+        }
+        this.closeLoreEditTabIfOpenedByTool(filePath);
+        this.loreEdits.delete(filePath);
+        this.onLoreEditUpdate?.();
+    }
+
+    /** Clear all pending lore edits (e.g., on reset / new chat). */
+    clearLoreEdit(): void {
+        if (this.app) {
+            for (const filePath of this.loreEdits.keys()) {
+                const view = findEditorView(this.app, filePath);
+                if (view) {
+                    const cm = (view.editor as unknown as { cm: EditorView }).cm;
+                    if (cm) clearDiffEdits(cm, 'lore_edit');
+                }
+                this.closeLoreEditTabIfOpenedByTool(filePath);
+            }
+        }
+        this.loreEdits.clear();
+    }
+
+    /**
+     * Close the tab for a file IF the tool opened it (not if the writer had
+     * it open already). Prevents a "full lorebook edit" from leaving a trail
+     * of tabs behind while respecting tabs the writer opened themselves.
+     */
+    private closeLoreEditTabIfOpenedByTool(filePath: string): void {
+        if (!this.app || !this.loreEditOpenedByTool.has(filePath)) return;
+        this.loreEditOpenedByTool.delete(filePath);
+        for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+            if (leaf.view instanceof MarkdownView && leaf.view.file?.path === filePath) {
+                leaf.detach();
+                break;
+            }
+        }
+    }
+
+    /**
+     * Get or create a per-file ChangeSet for a pending lore edit. Each file
+     * tracks its own ChangeSet (one pending edit per file at a time) so the
+     * model can propose edits to multiple files in a single conversation
+     * ("full lorebook edit") without losing earlier proposals.
+     */
+    getOrCreateLoreEdit(filePath: string, fileBasename: string): { changeSet: ChangeSet; fileBasename: string } {
+        let entry = this.loreEdits.get(filePath);
+        if (!entry) {
+            entry = { changeSet: new ChangeSet(), fileBasename };
+            this.loreEdits.set(filePath, entry);
+        }
+        return entry;
     }
 
     /**
@@ -2283,8 +3186,10 @@ export class CoWriterSession {
         this.unlockEditor();
         this.cancelGeneration();
         this.endCoachSession();
+        this.endLoreCoachSession();
         this.clearFulfill();
         this.clearDirect();
+        this.clearLoreEdit();
         this.manuscriptPath = null;
         this.originalText = '';
         this.insertionStart = -1;
@@ -2312,8 +3217,10 @@ export class CoWriterSession {
         this.unlockEditor();
         this.cancelGeneration();
         this.endCoachSession();
+        this.endLoreCoachSession();
         this.clearFulfill();
         this.clearDirect();
+        this.clearLoreEdit();
         this.originalText = '';
         this.insertionStart = -1;
         this.insertionLength = 0;

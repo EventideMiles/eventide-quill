@@ -1,0 +1,114 @@
+import type { Tool, ToolContext } from './tool';
+import { openNoteForEdit, pushLoreEditDiff, readNoteContent, resolveNoteFile } from './lore-edit-helpers';
+
+/**
+ * Propose an edit to an existing note. The model provides the exact `old_text`
+ * to find and the `new_text` to replace it with. The note is opened in a new
+ * tab and the edit is surfaced as a green inline diff (same review UX as
+ * Direct/Fulfill/Transform) so the writer can approve or reject it in context.
+ *
+ * Only one pending lore edit is allowed at a time — calling this again while
+ * a prior edit is pending replaces it (the prior edit is cleared from the diff).
+ *
+ * The tool does NOT write to the file. The writer must click "Approve" to
+ * commit the edit or "Reject" to discard it.
+ */
+export const editNoteTool: Tool = {
+    id: 'edit_note',
+    description:
+        'Propose a targeted edit to a specific section of an existing note that ' +
+        'is NOT currently open in the editor. The note opens in a new tab with ' +
+        'the change shown as a diff. The writer reviews and approves or rejects ' +
+        'it AFTER you finish. For the file the writer currently has open, ' +
+        'recommend they use Direct or Fulfill mode instead. ' +
+        'CRITICAL: old_text must be the SMALLEST excerpt that uniquely identifies ' +
+        'the section being changed — one sentence, one paragraph, or a heading ' +
+        'plus its body. Do NOT pass the entire file. new_text is just the ' +
+        'replacement for that excerpt, not a rewrite of the whole document. ' +
+        'When editing multiple files, batch your edits per the context budget ' +
+        'and do NOT pause between files.',
+    parameters: {
+        type: 'object',
+        properties: {
+            path: {
+                type: 'string',
+                description:
+                    'Vault-relative path or note name (e.g., "Lore/Characters/Sarah Connor.md" or "Sarah Connor").'
+            },
+            old_text: {
+                type: 'string',
+                description:
+                    'The SMALLEST excerpt that uniquely identifies the section to change. ' +
+                    'One sentence, one paragraph, or a heading + its body. NOT the entire file. ' +
+                    'Must match character-for-character (case-sensitive, including whitespace).'
+            },
+            new_text: {
+                type: 'string',
+                description:
+                    'The replacement for the excerpt identified by old_text. Just the new section, not a full rewrite.'
+            }
+        },
+        required: ['path', 'old_text', 'new_text']
+    },
+    maxResultTokens: 100,
+    requiresNetwork: false,
+
+    async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
+        const path = typeof args.path === 'string' ? args.path.trim() : '';
+        const oldText = typeof args.old_text === 'string' ? args.old_text : '';
+
+        if (!path) return 'Error: "path" is required.';
+        if (!oldText) return 'Error: "old_text" is required.';
+        // Distinguish an absent new_text (error) from an explicit empty
+        // string (valid — used to delete the old_text excerpt entirely).
+        if (args.new_text === undefined) {
+            return 'Error: "new_text" is required (pass an empty string to delete the excerpt).';
+        }
+        const newText = typeof args.new_text === 'string' ? args.new_text : '';
+
+        const { plugin } = ctx;
+        const file = resolveNoteFile(plugin, path);
+        if (!file) return `Error: note "${path}" not found in the vault.`;
+
+        const content = await readNoteContent(plugin, file.path);
+        if (content === null) return `Error: could not read "${file.path}".`;
+
+        const idx = content.indexOf(oldText);
+        if (idx === -1) {
+            // Help the model recover: show what's actually in the note.
+            const preview = content.slice(0, 300).trim();
+            return `Error: old_text not found in "${file.path}". The note starts with:\n${preview}${content.length > 300 ? '\n...' : ''}`;
+        }
+        // Reject non-unique matches so the edit doesn't silently hit the
+        // wrong occurrence when the excerpt appears more than once.
+        if (content.indexOf(oldText, idx + 1) !== -1) {
+            return `Error: old_text matches multiple places in "${file.path}". Pass a larger excerpt that uniquely identifies the section to change.`;
+        }
+
+        // Open the note and push the diff.
+        const opened = await openNoteForEdit(plugin.app, file.path);
+        if (!opened) return `Error: could not open "${file.path}" for review.`;
+
+        const session = plugin.coWriterSession;
+        if (!opened.wasAlreadyOpen) {
+            session.loreEditOpenedByTool.add(file.path);
+        }
+        // One edit per file at a time — clearing the file's own ChangeSet
+        // doesn't affect edits pending for other files.
+        const entry = session.getOrCreateLoreEdit(file.path, file.basename);
+        entry.changeSet.clear();
+
+        entry.changeSet.add({
+            from: idx,
+            to: idx + oldText.length,
+            newText,
+            label: `Edit ${file.basename}`,
+            originalText: oldText
+        });
+
+        pushLoreEditDiff(opened.cm, entry.changeSet, file.path);
+        session.onLoreEditUpdate?.();
+
+        return `Edit proposed for "${file.basename}". The writer will see the diff and can approve or reject it. Continue with your response.`;
+    }
+};

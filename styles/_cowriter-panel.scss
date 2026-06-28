@@ -705,6 +705,87 @@
         }
     }
 
+    /* Lorebook coach mode UI — mirrors the coach bar pattern. */
+    &__lore-bar {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        padding: $space-sm $space-md;
+        font-size: var(--font-smallest);
+        color: var(--text-muted);
+        border-top: 1px solid var(--background-modifier-border);
+        margin-top: $space-xs;
+    }
+
+    &__lore-phase {
+        font-style: italic;
+        color: var(--text-accent);
+        font-weight: 500;
+    }
+
+    &__lore-end-btn {
+        background: var(--background-modifier-form-field);
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: 2px $space-md;
+        font-size: var(--font-smallest);
+        color: var(--text-muted);
+        cursor: pointer;
+        transition: background $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-border);
+            color: var(--text-normal);
+        }
+    }
+
+    /* Inline lore-draft review card attached to a coach chat message. */
+    &__init-sub--warn {
+        color: var(--text-warning, var(--text-accent));
+        font-style: italic;
+    }
+
+    /* Tool-use indicators — muted entries showing which tools the model called
+       during a turn. Rendered within the assistant bubble below the response
+       text. */
+    &__tool-uses {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin-top: $space-xs;
+        padding-left: $space-xs;
+        border-left: 2px solid var(--background-modifier-border);
+    }
+
+    &__tool-use {
+        display: flex;
+        align-items: center;
+        gap: $space-xs;
+        font-size: var(--font-smallest);
+        color: var(--text-faint, var(--text-muted));
+        font-style: italic;
+    }
+
+    &__tool-use-icon {
+        opacity: 0.7;
+    }
+
+    &__tool-use-name {
+        font-weight: 500;
+    }
+
+    &__tool-use-args {
+        opacity: 0.8;
+
+        &::before {
+            content: '(';
+        }
+
+        &::after {
+            content: ')';
+        }
+    }
+
     /* Compact button for co-writer panel */
     &__compact-btn {
         cursor: pointer;

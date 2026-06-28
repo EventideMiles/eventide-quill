@@ -1,7 +1,21 @@
-import { ChatChunk } from './provider';
+import { ChatChunk, type ToolCallFragment } from './provider';
 
 /** Sentinel value emitted by OpenAI as the final SSE data line. */
 const SSE_DONE_SENTINEL = '[DONE]';
+
+/**
+ * FNV-1a string hash (hex). Used to synthesize Ollama tool-call ids that are
+ * deterministic for a given call but unique across separate assistant turns.
+ * Not cryptographic — just a stable, well-distributed short digest.
+ */
+function fnv1aHex(text: string): string {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0');
+}
 
 /**
  * Extract thought/reasoning content from a text string by detecting common
@@ -126,6 +140,17 @@ interface Delta {
     reasoning_content?: string;
     /** Generic thinking field used by some OpenAI-compatible providers. */
     thinking?: string;
+    /**
+     * Incremental tool-call fragments. OpenAI streams tool calls in pieces:
+     * the first fragment for an index carries `id` and `function.name`;
+     * subsequent fragments carry `function.arguments` substrings that must
+     * be concatenated before JSON parsing.
+     */
+    tool_calls?: Array<{
+        index: number;
+        id?: string;
+        function?: { name?: string; arguments?: string };
+    }>;
 }
 
 /**
@@ -170,6 +195,16 @@ interface OllamaChatLine {
     message?: {
         role?: string;
         content?: string;
+        /**
+         * Tool calls emitted by the model. Unlike OpenAI (which streams
+         * arguments as a JSON string in fragments), Ollama emits the
+         * completed tool calls as a single message with parsed argument
+         * objects. We re-serialize them to JSON strings when converting
+         * so the accumulator sees a uniform shape across providers.
+         */
+        tool_calls?: Array<{
+            function: { name: string; arguments: Record<string, unknown> | string };
+        }>;
     };
     done?: boolean;
     model?: string;
@@ -273,29 +308,14 @@ export function openAiEventsToChunks(events: SseEvent[]): ChatChunk[] {
 /**
  * Convert an Ollama NDJSON chat response into ChatChunk objects.
  * Ollama sends lines like: {"message":{"role":"assistant","content":"Hello"},"done":false}
+ *
+ * Delegates per-line conversion to {@link ollamaNdjsonLineToChunk} so tool
+ * calls are extracted uniformly across the streaming and buffered paths.
  */
 export function ollamaNdjsonToChunks(lines: Record<string, unknown>[]): ChatChunk[] {
-    const chunks: ChatChunk[] = [];
+    const chunks: ChatChunk[] = lines.map((line) => ollamaNdjsonLineToChunk(line));
 
-    for (const rawLine of lines) {
-        const line = rawLine as unknown as OllamaChatLine;
-        const message = line.message;
-        const text = message?.content ?? '';
-        const done = line.done === true;
-
-        const chunk: ChatChunk = {
-            text,
-            done
-        };
-
-        if (typeof line.model === 'string') {
-            chunk.model = line.model;
-        }
-
-        chunks.push(chunk);
-    }
-
-    // Ensure a final done chunk if the last line didn't set done
+    // Ensure a final done chunk if the last line didn't set done.
     const last = chunks[chunks.length - 1];
     if (last && !last.done) {
         chunks.push({ text: '', done: true });
@@ -419,8 +439,24 @@ export function openAiSseDataToChunk(parsed: OpenAiSseData): ChatChunk | null {
     if (!firstChoice) return null;
 
     const delta = firstChoice.delta;
-    const text = delta?.content ?? '';
     const reasoning = delta?.reasoning_content ?? delta?.thinking ?? '';
+
+    // Per the OpenAI reasoning-model spec, `reasoning_content` (or `thinking`)
+    // and `content` are mutually exclusive: during the reasoning phase content
+    // is empty and reasoning_content carries the chain-of-thought; during the
+    // response phase content carries the answer and reasoning_content is empty.
+    //
+    // Some providers (notably certain LM Studio configurations) mirror the
+    // reasoning into BOTH fields simultaneously. Without this guard the
+    // reasoning text gets streamed into the chat response AND the reasoning
+    // toggle, producing a confusing [response][reasoning][response] visual
+    // where the first "response" is actually the duplicated reasoning.
+    //
+    // Fix: when reasoning_content is present, drop content for this chunk —
+    // the reasoning is captured in `thought`, and the real response will
+    // arrive in subsequent chunks where reasoning_content is absent.
+    const text = reasoning ? '' : (delta?.content ?? '');
+
     const finishReason = firstChoice.finish_reason;
 
     const chunk: ChatChunk = {
@@ -428,6 +464,19 @@ export function openAiSseDataToChunk(parsed: OpenAiSseData): ChatChunk | null {
         thought: reasoning || undefined,
         done: finishReason !== null && finishReason !== undefined
     };
+
+    // Extract streamed tool-call fragments. The model emits tool_calls in
+    // pieces across multiple SSE events; each piece carries an `index` used
+    // by the consumer to accumulate the full call.
+    if (delta?.tool_calls && delta.tool_calls.length > 0) {
+        chunk.toolCalls = delta.tool_calls.map((tc) => {
+            const fragment: ToolCallFragment = { index: tc.index };
+            if (tc.id !== undefined) fragment.id = tc.id;
+            if (tc.function?.name !== undefined) fragment.name = tc.function.name;
+            if (tc.function?.arguments !== undefined) fragment.arguments = tc.function.arguments;
+            return fragment;
+        });
+    }
 
     if (parsed.model) {
         chunk.model = parsed.model;
@@ -454,6 +503,32 @@ export function ollamaNdjsonLineToChunk(raw: Record<string, unknown>): ChatChunk
     const done = line.done === true;
 
     const chunk: ChatChunk = { text, done };
+
+    // Ollama emits completed tool_calls as a single message with parsed
+    // argument objects (not streamed as JSON string fragments like OpenAI).
+    // Normalize to one ToolCallFragment per call with a synthesized id and
+    // JSON-stringified arguments so the consumer's accumulator sees a uniform
+    // shape across providers.
+    if (message?.tool_calls && message.tool_calls.length > 0) {
+        chunk.toolCalls = message.tool_calls.map((tc, i) => {
+            const args = tc.function.arguments;
+            const argsString = typeof args === 'string' ? args : JSON.stringify(args ?? {});
+            // Ollama doesn't assign ids — synthesize one stable per call that
+            // is unique across turns. A bare index (`ollama_call_${i}`) repeats
+            // across assistant turns and collides with history kept by the
+            // co-writer, confusing tool-result routing. The content hash of
+            // name + arguments is deterministic for the same response and
+            // varies across distinct tool-using turns; the index keeps the id
+            // stable within a single response.
+            const contentHash = fnv1aHex(`${tc.function.name}:${argsString}`);
+            return {
+                index: i,
+                id: `ollama_call_${i}_${contentHash}`,
+                name: tc.function.name,
+                arguments: argsString
+            };
+        });
+    }
 
     if (typeof line.model === 'string') {
         chunk.model = line.model;
