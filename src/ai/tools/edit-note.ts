@@ -16,13 +16,17 @@ import { openNoteForEdit, pushLoreEditDiff, readNoteContent, resolveNoteFile } f
 export const editNoteTool: Tool = {
     id: 'edit_note',
     description:
-        'Propose an edit to an existing note that is NOT currently open in the editor. ' +
-        'The note opens in a new tab with the change shown as a diff. The writer reviews ' +
-        'and approves or rejects it AFTER you finish. Provide the exact old_text to find ' +
-        'and the new_text to replace it with. For the file the writer currently has open, ' +
+        'Propose a targeted edit to a specific section of an existing note that ' +
+        'is NOT currently open in the editor. The note opens in a new tab with ' +
+        'the change shown as a diff. The writer reviews and approves or rejects ' +
+        'it AFTER you finish. For the file the writer currently has open, ' +
         'recommend they use Direct or Fulfill mode instead. ' +
-        'When editing multiple files, batch your edits — read and edit several per round ' +
-        '(the system tells you how many fit). Do NOT pause between files.',
+        'CRITICAL: old_text must be the SMALLEST excerpt that uniquely identifies ' +
+        'the section being changed — one sentence, one paragraph, or a heading ' +
+        'plus its body. Do NOT pass the entire file. new_text is just the ' +
+        'replacement for that excerpt, not a rewrite of the whole document. ' +
+        'When editing multiple files, batch your edits per the context budget ' +
+        'and do NOT pause between files.',
     parameters: {
         type: 'object',
         properties: {
@@ -34,11 +38,14 @@ export const editNoteTool: Tool = {
             old_text: {
                 type: 'string',
                 description:
-                    'The exact text to find in the note. Must match character-for-character (case-sensitive, including whitespace).'
+                    'The SMALLEST excerpt that uniquely identifies the section to change. ' +
+                    'One sentence, one paragraph, or a heading + its body. NOT the entire file. ' +
+                    'Must match character-for-character (case-sensitive, including whitespace).'
             },
             new_text: {
                 type: 'string',
-                description: 'The replacement text.'
+                description:
+                    'The replacement for the excerpt identified by old_text. Just the new section, not a full rewrite.'
             }
         },
         required: ['path', 'old_text', 'new_text']
