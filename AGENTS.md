@@ -38,6 +38,7 @@ Scripts (see `package.json`):
 | `npm run sass` | `sass styles/main.scss styles.css` (one-shot build of styles.css from SCSS sources) |
 | `npm run sass:watch` | `sass --watch styles/main.scss styles.css` (rebuild on SCSS change during dev) |
 | `npm run version` | `node version-bump.mjs && git add manifest.json versions.json` (run via `npm version`) |
+| `npm run set-version -- <v>` | Chore: rewrite the version string everywhere it appears (release files + embedded copies like the MediaWiki User-Agent). Adds a new `versions.json` key without dropping history. Does **not** tag/commit/push. Supports `--dry-run`. |
 
 There is **no standalone `typecheck` script** — `tsc` runs inside `build`. There is **no `test` script and no test framework** (see Verification below).
 
@@ -317,10 +318,22 @@ Before pushing a feature branch to origin for the first time, bump the version i
 - **Minor** (0.x.0): New features or feature-complete milestones (e.g., 0.2.0, 0.5.0).
 - **Patch** (0.0.x): Bugfixes when neither major nor minor applies.
 
-When bumping, always update all three files together:
+The version string lives in more than the three release files — it's also embedded in agent strings (e.g. `MEDIAWIKI_UA` in `src/ai/tools/mediawiki.ts`) so outbound requests identify the plugin. To bump it everywhere consistently, prefer the chore tool over hand-editing:
+
+```
+npm run set-version -- <new-version>      # writes
+npm run set-version -- <new-version> --dry-run   # preview only
+```
+
+This rewrites every literal occurrence of the current version across the repo (`package.json`, `manifest.json`, and any source file embedding it) and adds a new `versions.json` entry without dropping release history. In one run it updates all three release files **plus** the embedded copies. It does **not** tag, commit, or push — review with `git diff` and commit the chore yourself. (The legacy `npm version` / `version-bump.mjs` path is the release lifecycle hook and tags.)
+
+The files it updates, for reference:
 - `package.json` — `"version"`
 - `manifest.json` — `"version"` (keep `"minAppVersion"` unchanged unless a major bump adds new API requirements)
-- `versions.json` — add `"<new-version>": "<minAppVersion>"` entry
+- `versions.json` — add `"<new-version>": "<minAppVersion>"` entry (history preserved)
+- every embedded copy (User-Agents, etc.)
+
+> **If you introduce the version string in a new place**, extend `update-version.mjs` so the next bump catches it. The tool finds occurrences via a literal scan over `SCAN_EXT` (currently `.ts/.mts/.mjs/.js/.json/.md/.scss`) minus the `SKIP_*` sets (build outputs, lockfiles, `versions.json` which is special-cased). If you embed the version in a new file type or a skipped path, add it to that scope. Always embed the version as a single literal token (never split across string concatenation) so the replace stays safe.
 
 After bumping, run `npm run build` and `npm run lint` to verify.
 
