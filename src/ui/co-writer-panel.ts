@@ -85,8 +85,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private fulfillActive = false;
     /** Direct-mode proposed continuation (mirrored from the session), rendered as a review card. */
     private directChange: ProposedEdit | null = null;
-    /** Pending lore edit (from edit_note / append_to_note tools), rendered as a review card. */
-    private loreEdit: ProposedEdit | null = null;
+    /** Pending lore edits (from edit_note / append_to_note tools), one card per file. */
+    private loreEdits: { edit: ProposedEdit; filePath: string; fileBasename: string }[] = [];
     /** Whether the mode picker is open (replaces the mode-cycle-on-click behavior). */
     private modePickerOpen = false;
     /** Current lorebook coach phase, if lorebook coach mode is active. */
@@ -118,8 +118,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onLoreCoachMessage: ((message: string) => void) | null = null;
     private onEndLoreCoach: (() => void) | null = null;
     private onDiscardLoreDraft: ((draft: LoreDraftEntry) => void) | null = null;
-    private onApproveLoreEdit: ((id: number) => void) | null = null;
-    private onRejectLoreEdit: (() => void) | null = null;
+    private onApproveLoreEdit: ((filePath: string, id: number) => void) | null = null;
+    private onRejectLoreEdit: ((filePath: string) => void) | null = null;
 
     /**
      * Conversation token estimate pushed from the plugin layer.
@@ -280,19 +280,19 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.scheduleRender();
     }
 
-    /** Replace the pending lore edit (null = none pending) and re-render. */
-    setLoreEdit(edit: ProposedEdit | null): void {
-        this.loreEdit = edit;
+    /** Replace the pending lore edits list and re-render. */
+    setLoreEdits(edits: { edit: ProposedEdit; filePath: string; fileBasename: string }[]): void {
+        this.loreEdits = edits;
         this.scheduleRender();
     }
 
-    /** Set the handler invoked to approve the pending lore edit by id. */
-    setApproveLoreEditHandler(handler: (id: number) => void): void {
+    /** Set the handler invoked to approve a pending lore edit by file path + id. */
+    setApproveLoreEditHandler(handler: (filePath: string, id: number) => void): void {
         this.onApproveLoreEdit = handler;
     }
 
-    /** Set the handler invoked to reject the pending lore edit. */
-    setRejectLoreEditHandler(handler: () => void): void {
+    /** Set the handler invoked to reject a pending lore edit by file path. */
+    setRejectLoreEditHandler(handler: (filePath: string) => void): void {
         this.onRejectLoreEdit = handler;
     }
 
@@ -750,12 +750,13 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.renderDirectChangeCard(scroll);
         }
 
-        // Lore edit card — rendered when a tool (edit_note / append_to_note)
-        // proposed a change to a note. Same review-card pattern as Direct.
-        if (this.loreEdit) {
-            const p = renderChangeCard(scroll, this.loreEdit, null, this.app, this.renderEvents, {
-                onApprove: (id: number) => this.onApproveLoreEdit?.(id),
-                onReject: () => this.onRejectLoreEdit?.()
+        // Lore edit cards — one per pending edit (from edit_note /
+        // append_to_note tools). Multiple files can be pending simultaneously
+        // so the writer can review a "full lorebook edit" one file at a time.
+        for (const entry of this.loreEdits) {
+            const p = renderChangeCard(scroll, entry.edit, entry.fileBasename, this.app, this.renderEvents, {
+                onApprove: (id: number) => this.onApproveLoreEdit?.(entry.filePath, id),
+                onReject: () => this.onRejectLoreEdit?.(entry.filePath)
             });
             if (p) {
                 this.renderPromises.push(p);

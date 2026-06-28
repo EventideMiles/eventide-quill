@@ -54,10 +54,10 @@ export const appendToNoteTool: Tool = {
         if (!opened) return `Error: could not open "${file.path}" for review.`;
 
         const session = plugin.coWriterSession;
-        session.loreEditChanges.clear();
-        session.loreEditPath = file.path;
+        const entry = session.getOrCreateLoreEdit(file.path, file.basename);
+        entry.changeSet.clear();
 
-        session.loreEditChanges.add({
+        entry.changeSet.add({
             from: existing.length,
             to: existing.length,
             newText,
@@ -65,7 +65,7 @@ export const appendToNoteTool: Tool = {
             originalText: ''
         });
 
-        pushLoreEditDiff(opened.cm, session.loreEditChanges);
+        pushLoreEditDiff(opened.cm, entry.changeSet, file.path);
         session.onLoreEditUpdate?.();
 
         return `Append proposed for "${file.basename}". The writer will see the new content as a diff and can approve or reject it.`;

@@ -73,10 +73,12 @@ export const editNoteTool: Tool = {
         if (!opened) return `Error: could not open "${file.path}" for review.`;
 
         const session = plugin.coWriterSession;
-        session.loreEditChanges.clear();
-        session.loreEditPath = file.path;
+        // One edit per file at a time — clearing the file's own ChangeSet
+        // doesn't affect edits pending for other files.
+        const entry = session.getOrCreateLoreEdit(file.path, file.basename);
+        entry.changeSet.clear();
 
-        session.loreEditChanges.add({
+        entry.changeSet.add({
             from: idx,
             to: idx + oldText.length,
             newText,
@@ -84,7 +86,7 @@ export const editNoteTool: Tool = {
             originalText: oldText
         });
 
-        pushLoreEditDiff(opened.cm, session.loreEditChanges);
+        pushLoreEditDiff(opened.cm, entry.changeSet, file.path);
         session.onLoreEditUpdate?.();
 
         return `Edit proposed for "${file.basename}". The writer will see the diff and can approve or reject it. Continue with your response.`;

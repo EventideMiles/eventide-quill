@@ -70,7 +70,7 @@ import {
     pushDiffEdits,
     toDiffSnapshots
 } from './ui/change-diff-extension';
-import { ChangeSet } from './core/change-set';
+import { ChangeSet, type ProposedEdit } from './core/change-set';
 import { parseEmbedFolderPath, readVaultFiles, loreFolderEmbedPaths } from './utils/vault-files';
 import type { ManuscriptMetrics, ManuscriptSnapshot, ChapterRange } from './core/dashboard/types';
 import { listChaptersInFile, manuscriptMetrics } from './core/dashboard/metrics';
@@ -363,19 +363,19 @@ export default class EventideQuillPlugin extends Plugin {
         // globally; it only renders when a snapshot is pushed to a given editor.
         this.registerEditorExtension(
             getChangeDiffExtension({
-                onApprove: (owner: string, id: number) => {
+                onApprove: (owner: string, id: number, filePath?: string) => {
                     if (owner === 'fulfill') this.approveCoWriterFulfill(id);
                     else if (owner === 'transform') this.approveTransformChange(id);
                     else if (owner === 'direct') this.approveDirectChange(id);
                     else if (owner === 'lint-batch') this.approveLintBatchChange(id);
-                    else if (owner === 'lore_edit') this.approveLoreEdit(id);
+                    else if (owner === 'lore_edit' && filePath) this.approveLoreEdit(filePath, id);
                 },
-                onReject: (owner: string, id: number) => {
+                onReject: (owner: string, id: number, filePath?: string) => {
                     if (owner === 'fulfill') this.rejectCoWriterFulfill(id);
                     else if (owner === 'transform') this.rejectTransformChange(id);
                     else if (owner === 'direct') this.rejectDirectChange(id);
                     else if (owner === 'lint-batch') this.rejectLintBatchChange(id);
-                    else if (owner === 'lore_edit') this.rejectLoreEdit();
+                    else if (owner === 'lore_edit' && filePath) this.rejectLoreEdit(filePath);
                 }
             })
         );
@@ -1762,7 +1762,14 @@ export default class EventideQuillPlugin extends Plugin {
         // The hook exists for future use (e.g., auto-scroll to the draft).
         session.onLoreDraftReady = () => {};
         session.onLoreEditUpdate = () => {
-            this.lintPanel?.coWriterSetLoreEdit(session.loreEditChanges.edits[0] ?? null);
+            const edits = [...session.loreEdits.entries()]
+                .map(([filePath, entry]) => ({
+                    edit: entry.changeSet.edits[0] ?? null,
+                    filePath,
+                    fileBasename: entry.fileBasename
+                }))
+                .filter((e) => e.edit) as { edit: ProposedEdit; filePath: string; fileBasename: string }[];
+            this.lintPanel?.coWriterSetLoreEdits(edits);
         };
     }
 
@@ -1922,14 +1929,14 @@ export default class EventideQuillPlugin extends Plugin {
         this.coWriterSession.currentLoreDraft = null;
     }
 
-    /** Approve the pending lore edit (from edit_note / append_to_note tool). */
-    approveLoreEdit(id: number): void {
-        this.coWriterSession.approveLoreEdit(id);
+    /** Approve a pending lore edit for a specific file. */
+    approveLoreEdit(filePath: string, id: number): void {
+        this.coWriterSession.approveLoreEdit(filePath, id);
     }
 
-    /** Reject the pending lore edit. */
-    rejectLoreEdit(): void {
-        this.coWriterSession.rejectLoreEdit();
+    /** Reject a pending lore edit for a specific file. */
+    rejectLoreEdit(filePath: string): void {
+        this.coWriterSession.rejectLoreEdit(filePath);
     }
 
     /** Resolve the CodeMirror view of the active markdown editor, if any. */

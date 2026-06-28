@@ -37,11 +37,13 @@ export async function openNoteForEdit(
 /**
  * Push a proposed edit's diff snapshots to the target editor's CodeMirror so
  * the user sees the green-box inline diff. Clears any prior lore-edit diff
- * first so only one pending lore edit is visible at a time.
+ * for THIS file's editor first (other files' diffs in other editors are
+ * untouched). Pass `filePath` so the inline Approve/Reject buttons can route
+ * to the correct file when multiple edits are pending.
  */
-export function pushLoreEditDiff(cm: EditorView, changeSet: ChangeSet): void {
+export function pushLoreEditDiff(cm: EditorView, changeSet: ChangeSet, filePath: string): void {
     clearDiffEdits(cm, 'lore_edit');
-    pushDiffEdits(cm, toDiffSnapshots(changeSet, 'lore_edit'), 'lore_edit');
+    pushDiffEdits(cm, toDiffSnapshots(changeSet, 'lore_edit', filePath), 'lore_edit');
 }
 
 /**

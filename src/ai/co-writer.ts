@@ -599,10 +599,8 @@ export class CoWriterSession {
     /** Called when a new lore draft is ready for the review card. */
     onLoreDraftReady: (() => void) | null = null;
 
-    /** Proposed note edit (from edit_note / append_to_note tools), one at a time. */
-    loreEditChanges: ChangeSet = new ChangeSet();
-    /** Path of the note whose edit is pending review, or null when none. */
-    loreEditPath: string | null = null;
+    /** Pending note edits keyed by vault path (from edit_note / append_to_note tools). */
+    loreEdits: Map<string, { changeSet: ChangeSet; fileBasename: string }> = new Map();
     /** Called when a lore edit is proposed, approved, or rejected. */
     onLoreEditUpdate: (() => void) | null = null;
 
@@ -2355,18 +2353,21 @@ export class CoWriterSession {
     // ── Lore edit (edit_note / append_to_note tools) ─────────────────────
 
     /**
-     * Approve the pending lore edit: commit the ChangeSet edit to the target
+     * Approve a pending lore edit: commit the ChangeSet edit to the target
      * note's editor and clear the diff. The editor handles saving via
      * Obsidian's normal auto-save.
      */
-    approveLoreEdit(id: number): void {
-        if (!this.app || !this.loreEditPath) return;
-        const view = findEditorView(this.app, this.loreEditPath);
+    approveLoreEdit(filePath: string, id: number): void {
+        if (!this.app) return;
+        const entry = this.loreEdits.get(filePath);
+        if (!entry) return;
+
+        const view = findEditorView(this.app, filePath);
         if (!view) return;
         const cm = (view.editor as unknown as { cm: EditorView }).cm;
         if (!cm) return;
 
-        const change = this.loreEditChanges.approve(id);
+        const change = entry.changeSet.approve(id);
         if (!change) return;
 
         const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'lore_edit');
@@ -2376,36 +2377,50 @@ export class CoWriterSession {
             selection: { anchor: change.from + change.insert.length }
         });
 
-        this.loreEditChanges.clear();
-        this.loreEditPath = null;
+        this.loreEdits.delete(filePath);
         this.onLoreEditUpdate?.();
     }
 
-    /** Reject the pending lore edit: discard the diff without writing. */
-    rejectLoreEdit(): void {
-        if (this.app && this.loreEditPath) {
-            const view = findEditorView(this.app, this.loreEditPath);
+    /** Reject a pending lore edit for a specific file: discard the diff. */
+    rejectLoreEdit(filePath: string): void {
+        if (this.app) {
+            const view = findEditorView(this.app, filePath);
             if (view) {
                 const cm = (view.editor as unknown as { cm: EditorView }).cm;
                 if (cm) clearDiffEdits(cm, 'lore_edit');
             }
         }
-        this.loreEditChanges.clear();
-        this.loreEditPath = null;
+        this.loreEdits.delete(filePath);
         this.onLoreEditUpdate?.();
     }
 
-    /** Clear lore edit state (e.g., on reset / new chat). */
+    /** Clear all pending lore edits (e.g., on reset / new chat). */
     clearLoreEdit(): void {
-        if (this.app && this.loreEditPath) {
-            const view = findEditorView(this.app, this.loreEditPath);
-            if (view) {
-                const cm = (view.editor as unknown as { cm: EditorView }).cm;
-                if (cm) clearDiffEdits(cm, 'lore_edit');
+        if (this.app) {
+            for (const filePath of this.loreEdits.keys()) {
+                const view = findEditorView(this.app, filePath);
+                if (view) {
+                    const cm = (view.editor as unknown as { cm: EditorView }).cm;
+                    if (cm) clearDiffEdits(cm, 'lore_edit');
+                }
             }
         }
-        this.loreEditChanges.clear();
-        this.loreEditPath = null;
+        this.loreEdits.clear();
+    }
+
+    /**
+     * Get or create a per-file ChangeSet for a pending lore edit. Each file
+     * tracks its own ChangeSet (one pending edit per file at a time) so the
+     * model can propose edits to multiple files in a single conversation
+     * ("full lorebook edit") without losing earlier proposals.
+     */
+    getOrCreateLoreEdit(filePath: string, fileBasename: string): { changeSet: ChangeSet; fileBasename: string } {
+        let entry = this.loreEdits.get(filePath);
+        if (!entry) {
+            entry = { changeSet: new ChangeSet(), fileBasename };
+            this.loreEdits.set(filePath, entry);
+        }
+        return entry;
     }
 
     /**

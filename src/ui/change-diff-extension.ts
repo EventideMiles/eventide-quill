@@ -28,14 +28,21 @@ export interface DiffEditSnapshot {
     newText: string;
     label: string;
     state: ProposedEdit['state'];
-    /** Which surface owns this edit (e.g. 'fulfill', 'transform'). Routes approve/reject. */
+    /** Which surface owns this edit (e.g. 'fulfill', 'transform', 'lore_edit'). Routes approve/reject. */
     owner: string;
+    /**
+     * For multi-file owners (currently 'lore_edit'): the vault path of the
+     * file this edit targets. Passed to the approve/reject handlers so they
+     * can route to the correct file's ChangeSet when multiple edits are
+     * pending across different notes. Undefined for single-file owners.
+     */
+    filePath?: string;
 }
 
 /** Handlers invoked from the inline Approve/Reject buttons. */
 export interface ChangeDiffHandlers {
-    onApprove?: (owner: string, id: number) => void;
-    onReject?: (owner: string, id: number) => void;
+    onApprove?: (owner: string, id: number, filePath?: string) => void;
+    onReject?: (owner: string, id: number, filePath?: string) => void;
 }
 
 /** Push a new set of edit snapshots to the editor (empty array clears the diff). */
@@ -62,8 +69,12 @@ export const diffEditsField = StateField.define<DiffEditSnapshot[]>({
     }
 });
 
-/** Build render snapshots from a ChangeSet's edits, tagged with the owning surface. */
-export function toDiffSnapshots(changeSet: ChangeSet, owner: string): DiffEditSnapshot[] {
+/**
+ * Build render snapshots from a ChangeSet's edits, tagged with the owning
+ * surface. Pass `filePath` for multi-file owners (e.g. 'lore_edit') so the
+ * inline Approve/Reject buttons can route to the correct file's ChangeSet.
+ */
+export function toDiffSnapshots(changeSet: ChangeSet, owner: string, filePath?: string): DiffEditSnapshot[] {
     return changeSet.edits.map((e) => ({
         id: e.id,
         from: e.from,
@@ -71,7 +82,8 @@ export function toDiffSnapshots(changeSet: ChangeSet, owner: string): DiffEditSn
         newText: e.newText,
         label: e.label,
         state: e.state,
-        owner
+        owner,
+        filePath
     }));
 }
 
@@ -158,14 +170,14 @@ class ChangePreviewWidget extends WidgetType {
             approve.textContent = 'Approve';
             approve.addEventListener('click', (e: MouseEvent) => {
                 e.stopPropagation();
-                this.handlers.onApprove?.(this.edit.owner, this.edit.id);
+                this.handlers.onApprove?.(this.edit.owner, this.edit.id, this.edit.filePath);
             });
             const reject = window.activeDocument.createElement('button');
             reject.className = 'quill-change-diff__btn';
             reject.textContent = 'Reject';
             reject.addEventListener('click', (e: MouseEvent) => {
                 e.stopPropagation();
-                this.handlers.onReject?.(this.edit.owner, this.edit.id);
+                this.handlers.onReject?.(this.edit.owner, this.edit.id, this.edit.filePath);
             });
             controls.appendChild(approve);
             controls.appendChild(reject);
