@@ -1,0 +1,63 @@
+@use 'base' as *;
+
+/**
+ * Inline file-mention suggestion list shown when the user types `@` in a
+ * co-writer or review chat textarea.
+ *
+ * The `.quill-file-mention-suggest-wrapper` is positioned absolutely at the
+ * top-left of its parent `.quill-*-panel__ta-row` (which must be
+ * `position: relative`). The list itself is `position: absolute; top: 0`
+ * so it drops below the top edge of the textarea at a consistent position.
+ */
+
+.quill-file-mention-suggest-wrapper {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 10;
+    pointer-events: none;
+}
+
+.quill-file-mention-suggest {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: auto;
+
+    width: auto;
+    min-width: 200px;
+    max-width: min(360px, calc(100vw - 4rem));
+    max-height: 260px;
+    overflow-y: auto;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: $radius-sm;
+    box-shadow: var(--shadow-s);
+    font-size: var(--font-small);
+    line-height: 1.4;
+
+    &__item {
+        padding: $space-xs $space-sm;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--text-muted);
+        transition: background-color $transition-fast, color $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+
+        &--selected {
+            background: var(--background-modifier-hover) !important;
+            color: var(--text-normal) !important;
+        }
+    }
+
+    &__highlight {
+        font-weight: 600;
+        color: var(--text-accent);
+    }
+}

@@ -1,6 +1,9 @@
 import { ToolRegistry } from './tool';
 import { appendToNoteTool } from './append-to-note';
 import { calculateFileSizesTool } from './calculate-file-sizes';
+import { createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
+import { createFetchUrlTool } from './fetch-url';
+import { createWikipediaLookupTool, createWikipediaPageTool } from './wikipedia-lookup';
 import { editNoteTool } from './edit-note';
 import { grepNotesTool } from './grep-notes';
 import { loreSiblingsTool } from './lore-siblings';
@@ -8,12 +11,16 @@ import { manuscriptMentionsTool } from './manuscript-mentions';
 import { measureFolderTool } from './measure-folder';
 import { proposeEntryTool } from './propose-entry';
 import { vaultLookupTool } from './vault-lookup';
+import type EventideQuillPlugin from '../../main';
 
 export { ToolRegistry } from './tool';
 export type { Tool, ToolContext } from './tool';
 export { streamWithTools } from './tool-loop';
 export { appendToNoteTool } from './append-to-note';
 export { calculateFileSizesTool } from './calculate-file-sizes';
+export { createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
+export { createFetchUrlTool } from './fetch-url';
+export { createWikipediaLookupTool, createWikipediaPageTool } from './wikipedia-lookup';
 export { editNoteTool } from './edit-note';
 export { grepNotesTool } from './grep-notes';
 export { loreSiblingsTool } from './lore-siblings';
@@ -41,11 +48,42 @@ export function createInternalToolRegistry(): ToolRegistry {
 }
 
 /**
- * Build a registry for the Lorebook Coach: the five internal tools plus
+ * Build a registry for the Lorebook Coach: the eight internal tools plus
  * `propose_entry` (which surfaces a draft to the UI for review).
  */
 export function createLoreCoachToolRegistry(): ToolRegistry {
     const registry = createInternalToolRegistry();
     registry.register(proposeEntryTool);
+    return registry;
+}
+
+/**
+ * Build the full tool registry for a co-writer mode. Handles all gating:
+ * - `coWriterToolsEnabled` off → returns null (no tools)
+ * - `lorebookNetworkTools` on → registers all network tools
+ * - `includeProposeEntry` → adds propose_entry (lorebook coach only)
+ *
+ * Network tools use factory functions because their maxResultTokens and
+ * configuration (Fandom wikis, Wikipedia language) come from settings.
+ */
+export function createToolRegistry(plugin: EventideQuillPlugin, includeProposeEntry: boolean): ToolRegistry | null {
+    if (!plugin.settings.coWriterToolsEnabled) return null;
+
+    const registry = includeProposeEntry ? createLoreCoachToolRegistry() : createInternalToolRegistry();
+
+    if (plugin.settings.lorebookNetworkTools) {
+        const maxTokens = plugin.settings.lorebookToolMaxTokens;
+        registry.register(createFetchUrlTool(maxTokens));
+        registry.register(createWikipediaLookupTool(maxTokens, plugin.settings.lorebookWikipediaLang));
+        registry.register(createWikipediaPageTool(maxTokens, plugin.settings.lorebookWikipediaLang));
+        // Fandom tools are only registered when a non-empty allowlist is
+        // configured — an empty list means "Fandom disabled" everywhere
+        // (settings UI, validateWiki, and here), never "all wikis allowed".
+        if (plugin.settings.lorebookFandomWikis.length > 0) {
+            registry.register(createFandomLookupTool(maxTokens, plugin.settings.lorebookFandomWikis));
+            registry.register(createFandomPageTool(maxTokens, plugin.settings.lorebookFandomWikis));
+        }
+    }
+
     return registry;
 }

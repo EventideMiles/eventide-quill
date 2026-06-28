@@ -26,7 +26,7 @@ import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
 import { ChangeSet } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
-import { createInternalToolRegistry, createLoreCoachToolRegistry, type ToolContext, type ToolRegistry } from './tools';
+import { createToolRegistry, type ToolContext, type ToolRegistry } from './tools';
 import {
     clearDiffEdits,
     diffEditsField,
@@ -50,16 +50,30 @@ function sanitizeProse(text: string): string {
  */
 function summarizeToolArgs(toolName: string, argumentsJson: string): string {
     try {
-        const args = argumentsJson.trim().length === 0 ? {} : (JSON.parse(argumentsJson) as Record<string, unknown>);
-        // Pick the most descriptive field based on common tool arg names.
-        const value =
-            (typeof args.name === 'string' && args.name) ||
-            (typeof args.path === 'string' && args.path) ||
-            (typeof args.query === 'string' && args.query) ||
-            (typeof args.type === 'string' && args.type) ||
-            '';
-        if (!value) return '';
-        return value.length > 60 ? `${value.slice(0, 57)}...` : value;
+        const args = JSON.parse(argumentsJson) as Record<string, unknown>;
+        // Build a summary from the most relevant field(s) for each tool type.
+        const parts: string[] = [];
+        const wiki = typeof args.wiki === 'string' ? args.wiki : '';
+        const query = typeof args.query === 'string' ? args.query : '';
+        const url = typeof args.url === 'string' ? args.url : '';
+        const name = typeof args.name === 'string' ? args.name : '';
+        const path = typeof args.path === 'string' ? args.path : '';
+        const type = typeof args.type === 'string' ? args.type : '';
+        const title = typeof args.title === 'string' ? args.title : '';
+
+        // fandom_lookup: show "wiki: query"; fandom_page: show "wiki: title"
+        if (wiki && query) parts.push(`${wiki}: ${query}`);
+        else if (wiki && title) parts.push(`${wiki}: ${title}`);
+        else if (query) parts.push(query);
+        else if (url) parts.push(url);
+        else if (name) parts.push(name);
+        else if (path) parts.push(path);
+        else if (type) parts.push(type);
+        else if (title) parts.push(title);
+
+        if (parts.length === 0) return '';
+        const summary = parts.join(' ');
+        return summary.length > 60 ? `${summary.slice(0, 57)}...` : summary;
     } catch {
         return '';
     }
@@ -420,6 +434,43 @@ function buildContextBudgetMessage(
 }
 
 /**
+ * Build a system message telling the model which network tools are available,
+ * when enabled. Returns null when network tools are off.
+ */
+function buildNetworkToolsMessage(plugin: EventideQuillPlugin): ChatMessage | null {
+    // Mirror createToolRegistry(): no tools at all when tools are disabled, so
+    // the prompt never advertises network tools the model can't actually call.
+    if (!plugin.settings.coWriterToolsEnabled) return null;
+    if (!plugin.settings.lorebookNetworkTools) return null;
+    const wikis = plugin.settings.lorebookFandomWikis;
+    const lang = plugin.settings.lorebookWikipediaLang;
+    const lines = [
+        'You have network tools available — USE THEM PROACTIVELY when the topic',
+        'involves canon, history, science, places, or real-world references:'
+    ];
+    // Fandom tools are only registered when a non-empty allowlist is set, so
+    // advertise them only then — empty list means Fandom is disabled.
+    if (wikis.length > 0) {
+        lines.push(
+            `- fandom_lookup / fandom_page: search Fandom (${wikis.join(', ')}); use fandom_page with an exact title to get content.`
+        );
+    }
+    lines.push(
+        `- wikipedia_lookup / wikipedia_page: search Wikipedia (${lang}); use wikipedia_page with an exact title to get content.`,
+        '- fetch_url: fetch any web page and return its text.',
+        '',
+        'Workflow: use the *_lookup tool to search, then use the *_page tool',
+        'with the exact title from the results to retrieve the full extract.',
+        '',
+        'Do not hesitate — if the writer mentions a topic that a wiki or',
+        'encyclopedia would know about, look it up. You do not need to ask',
+        'permission. Results count toward context — be judicious with very',
+        'large pages.'
+    );
+    return { role: 'system', content: lines.join('\n') };
+}
+
+/**
  * Build a system message informing the model which file the writer currently
  * has open. This lets the model distinguish between edits to the active file
  * (where Direct/Fulfill mode provides a streaming live-edit UX) and edits to
@@ -534,7 +585,7 @@ export interface CoWriterChatMessage {
      * message rather than as separate chat entries so they don't interfere
      * with the panel's streaming-placeholder logic.
      */
-    toolUses?: { name: string; argsSummary: string }[];
+    toolUses?: { name: string; argsSummary: string; error?: string }[];
 }
 
 /**
@@ -1031,6 +1082,24 @@ export class CoWriterSession {
     }
 
     /**
+     * Annotate the last assistant message's toolUses with error info for
+     * failed tool calls, so the panel can render them red and show the
+     * reason on hover / right-click copy. Called after the execution loop
+     * in each mode.
+     */
+    private annotateToolUseErrors(results: { failed: boolean; result: string }[]): void {
+        const lastMsg = this.chatHistory[this.chatHistory.length - 1];
+        if (!lastMsg || lastMsg.role !== 'assistant' || !lastMsg.toolUses) return;
+        lastMsg.toolUses = lastMsg.toolUses.map((use, i) => {
+            const execResult = results[i];
+            if (execResult?.failed) {
+                return { ...use, error: execResult.result };
+            }
+            return use;
+        });
+    }
+
+    /**
      * Send a discussion message to the AI.
      * Unlike generateOptions, this does not produce continuation options —
      * it returns a normal chat response for brainstorming and discussion.
@@ -1110,6 +1179,10 @@ export class CoWriterSession {
         if (activeFileMsg) {
             injectedContext.push(activeFileMsg);
         }
+        const discussNetworkMsg = buildNetworkToolsMessage(plugin);
+        if (discussNetworkMsg) {
+            injectedContext.push(discussNetworkMsg);
+        }
 
         const prompt = getCoWriterDiscussPrompt(proseForContext || '(empty document)', message);
 
@@ -1180,8 +1253,7 @@ export class CoWriterSession {
         // (manuscript_mentions, lore_siblings, vault_lookup) to look up
         // details mid-conversation. Each tool call produces a visible
         // round in the chat and consumes a model turn.
-        const toolsEnabled = plugin.settings.coWriterToolsEnabled;
-        const registry = toolsEnabled ? createInternalToolRegistry() : null;
+        const registry = createToolRegistry(plugin, false);
         const toolDefs = registry?.toToolDefinitions();
         const ctx: ToolContext = { plugin };
         // 0 = unlimited (the model calls as many rounds as it needs; use Stop
@@ -1264,8 +1336,10 @@ export class CoWriterSession {
                 if (result.toolCalls.length === 0 || !registry) break;
 
                 // Execute tools and push role:'tool' result messages.
+                const execResults: { failed: boolean; result: string }[] = [];
                 for (const call of result.toolCalls) {
                     const toolResult = await this.executeToolCallSafely(call, registry, ctx);
+                    execResults.push({ failed: toolResult.startsWith('Error'), result: toolResult });
                     this.discussCurrentMessages.push({
                         role: 'tool',
                         content: toolResult,
@@ -1273,6 +1347,10 @@ export class CoWriterSession {
                         name: call.name
                     });
                 }
+
+                // Annotate toolUses with error info so the panel can style
+                // failed calls red and show the reason on hover / right-click copy.
+                this.annotateToolUseErrors(execResults);
 
                 // Re-estimate after tool results were appended.
                 this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
@@ -1396,6 +1474,10 @@ export class CoWriterSession {
         if (coachActiveFileMsg) {
             injectedContext.push(coachActiveFileMsg);
         }
+        const coachNetworkMsg = buildNetworkToolsMessage(plugin);
+        if (coachNetworkMsg) {
+            injectedContext.push(coachNetworkMsg);
+        }
 
         // Initialize coach session on first call
         if (!this.coachSession || (this.coachSession.phase === 'discern' && message)) {
@@ -1485,8 +1567,7 @@ export class CoWriterSession {
         }
 
         // Tool setup: same internal tools as discuss mode.
-        const toolsEnabled = plugin.settings.coWriterToolsEnabled;
-        const registry = toolsEnabled ? createInternalToolRegistry() : null;
+        const registry = createToolRegistry(plugin, false);
         const toolDefs = registry?.toToolDefinitions();
         const ctx: ToolContext = { plugin };
         const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
@@ -1556,8 +1637,10 @@ export class CoWriterSession {
 
                 if (result.toolCalls.length === 0 || !registry) break;
 
+                const coachExecResults: { failed: boolean; result: string }[] = [];
                 for (const call of result.toolCalls) {
                     const toolResult = await this.executeToolCallSafely(call, registry, ctx);
+                    coachExecResults.push({ failed: toolResult.startsWith('Error'), result: toolResult });
                     this.discussCurrentMessages.push({
                         role: 'tool',
                         content: toolResult,
@@ -1566,6 +1649,7 @@ export class CoWriterSession {
                     });
                 }
 
+                this.annotateToolUseErrors(coachExecResults);
                 this.onTokenEstimate?.(estimateTokens(this.discussCurrentMessages), maxTokens);
 
                 // Mid-loop compaction (same as discuss).
@@ -1890,8 +1974,7 @@ export class CoWriterSession {
             this.loreCoachMessages.push({ role: 'user', content: getLoreCoachUserPrompt(message) });
         }
 
-        const toolsEnabled = plugin.settings.coWriterToolsEnabled;
-        const registry = toolsEnabled ? createLoreCoachToolRegistry() : null;
+        const registry = createToolRegistry(plugin, true);
         const toolDefs = registry?.toToolDefinitions();
         const ctx: ToolContext = { plugin };
 
@@ -1923,7 +2006,7 @@ export class CoWriterSession {
                 scope: this.loreCoachSession.scope,
                 phase: this.loreCoachSession.phase,
                 rounds: this.loreCoachSession.rounds,
-                toolsEnabled,
+                toolsEnabled: plugin.settings.coWriterToolsEnabled,
                 conversationTokens: estimateTokens(this.loreCoachMessages),
                 maxTokens
             });
@@ -1957,9 +2040,11 @@ export class CoWriterSession {
                 // which file is open.
                 const activeFileMsg = buildActiveFileMessage(plugin);
                 const budgetMsg = buildContextBudgetMessage(plugin, this.loreCoachMessages, maxTokens);
+                const networkMsg = buildNetworkToolsMessage(plugin);
                 const injected: ChatMessage[] = [];
                 if (activeFileMsg) injected.push(activeFileMsg);
                 if (budgetMsg) injected.push(budgetMsg);
+                if (networkMsg) injected.push(networkMsg);
                 const messagesForCall =
                     injected.length > 0 && this.loreCoachMessages.length > 0
                         ? [this.loreCoachMessages[0]!, ...injected, ...this.loreCoachMessages.slice(1)]
@@ -2067,56 +2152,21 @@ export class CoWriterSession {
                     break;
                 }
 
-                // Execute each tool and push a role:'tool' result to the API
-                // history. No separate chat entries — tool calls are already
-                // visible as `toolUses` annotations on the assistant message.
+                // Execute each tool via the shared helper (handles JSON parse,
+                // execution errors, truncation uniformly across all modes).
+                const loreExecResults: { failed: boolean; result: string }[] = [];
                 for (const call of toolCalls) {
-                    const tool = registry.get(call.name);
-                    let resultText: string;
-                    if (!tool) {
-                        resultText = `Error: tool "${call.name}" is not registered.`;
-                    } else {
-                        let parsedArgs: Record<string, unknown>;
-                        try {
-                            parsedArgs =
-                                call.arguments.trim().length === 0
-                                    ? {}
-                                    : (JSON.parse(call.arguments) as Record<string, unknown>);
-                        } catch (err) {
-                            const msg = err instanceof Error ? err.message : String(err);
-                            resultText = `Error: invalid JSON arguments: ${msg}`;
-                            this.loreCoachMessages.push({
-                                role: 'tool',
-                                content: resultText,
-                                toolCallId: call.id,
-                                name: call.name
-                            });
-                            continue;
-                        }
-                        try {
-                            if (ctx.signal?.aborted) {
-                                resultText = 'Error: aborted before tool execution.';
-                            } else {
-                                resultText = await tool.execute(parsedArgs, ctx);
-                                const maxChars = tool.maxResultTokens * 4;
-                                if (resultText.length > maxChars) {
-                                    resultText =
-                                        resultText.slice(0, maxChars) +
-                                        `\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
-                                }
-                            }
-                        } catch (err) {
-                            const msg = err instanceof Error ? err.message : String(err);
-                            resultText = `Error executing tool "${call.id}": ${msg}`;
-                        }
-                    }
+                    const toolResult = await this.executeToolCallSafely(call, registry, ctx);
+                    loreExecResults.push({ failed: toolResult.startsWith('Error'), result: toolResult });
                     this.loreCoachMessages.push({
                         role: 'tool',
-                        content: resultText,
+                        content: toolResult,
                         toolCallId: call.id,
                         name: call.name
                     });
                 }
+
+                this.annotateToolUseErrors(loreExecResults);
 
                 // Attach the lore draft from the POST-tool state so the
                 // assistant turn that actually invoked propose_entry owns the

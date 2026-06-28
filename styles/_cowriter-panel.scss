@@ -378,6 +378,7 @@
 
     /* Textarea row (below buttons) */
     &__ta-row {
+        position: relative;
         flex-shrink: 0;
         padding: 0 0 $space-xs 0;
     }
@@ -764,6 +765,11 @@
         font-size: var(--font-smallest);
         color: var(--text-faint, var(--text-muted));
         font-style: italic;
+        cursor: default;
+
+        &--error {
+            color: var(--text-error);
+        }
     }
 
     &__tool-use-icon {

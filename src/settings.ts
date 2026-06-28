@@ -90,8 +90,16 @@ export interface EventideQuillSettings {
     lorebookFolderTypes: Record<string, LoreEntryType>;
     coWriterLoreContext: boolean;
     reviewLoreContext: boolean;
-    /** Whether the Lorebook Coach may use AI tool-calling. Default: on. */
+    /** Whether the co-writer may use AI tool-calling. Default: on. */
     coWriterToolsEnabled: boolean;
+    /** Master gate for network tools (fetch_url, fandom_lookup, wikipedia_lookup). Default: off. */
+    lorebookNetworkTools: boolean;
+    /** Fandom wiki subdomains the model may query (e.g., ['starwars', 'memory-alpha']). */
+    lorebookFandomWikis: string[];
+    /** Wikipedia language subdomain (e.g., 'en', 'fr', 'de'). */
+    lorebookWikipediaLang: string;
+    /** Per-tool result truncation cap (approximate tokens). */
+    lorebookToolMaxTokens: number;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -182,7 +190,11 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     lorebookFolderTypes: {},
     coWriterLoreContext: true,
     reviewLoreContext: true,
-    coWriterToolsEnabled: true
+    coWriterToolsEnabled: true,
+    lorebookNetworkTools: true,
+    lorebookFandomWikis: [],
+    lorebookWikipediaLang: 'en',
+    lorebookToolMaxTokens: 2000
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -888,6 +900,69 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(content)
+            .setName('Network tools')
+            .setDesc(
+                'Allow the co-writer to call network tools (fetch_url, fandom_lookup, ' +
+                    'wikipedia_lookup). These send requests to external sites — disable only ' +
+                    'if you want to restrict the AI from researching canon, references, or web ' +
+                    'pages. Default: on.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.lorebookNetworkTools).onChange(async (value) => {
+                    this.plugin.settings.lorebookNetworkTools = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
+            .setName('Fandom wikis')
+            .setDesc(
+                'Comma-separated Fandom wiki subdomains the AI may query ' +
+                    '(e.g., "starwars, memory-alpha, lotr"). Leave empty to disable Fandom lookups.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(this.plugin.settings.lorebookFandomWikis.join(', '))
+                    .inputEl.addEventListener('blur', () => {
+                        const wikis = text.inputEl.value
+                            .split(',')
+                            .map((s) => s.trim().toLowerCase())
+                            .filter((s) => s.length > 0);
+                        this.plugin.settings.lorebookFandomWikis = wikis;
+                        void this.plugin.saveSettings();
+                    })
+            );
+
+        new Setting(content)
+            .setName('Wikipedia language')
+            .setDesc('Wikipedia language subdomain (e.g., "en", "fr", "de"). Default: en.')
+            .addText((text) =>
+                text.setValue(this.plugin.settings.lorebookWikipediaLang).inputEl.addEventListener('blur', () => {
+                    const lang = text.inputEl.value.trim().toLowerCase();
+                    this.plugin.settings.lorebookWikipediaLang = lang || 'en';
+                    void this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
+            .setName('Network tool result limit (tokens)')
+            .setDesc('Maximum tokens returned per network tool call. Default: 2000.')
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.lorebookToolMaxTokens))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 100) {
+                            this.plugin.settings.lorebookToolMaxTokens = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.lorebookToolMaxTokens));
+                            new Notice('Value must be a number ≥ 100');
+                        }
+                    })
+            );
+
+        new Setting(content)
             .setName('Lorebook folders')
             .setDesc(
                 'Folders scanned for lore entries. Any Markdown file under one of these folders is treated as a lore entry. Set a per-folder type default so every file inherits it without frontmatter; leave as mixed to type files individually via the quill-type key.'
@@ -1028,6 +1103,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
                     this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
                     this.plugin.settings.coWriterToolsEnabled = DEFAULT_SETTINGS.coWriterToolsEnabled;
+                    this.plugin.settings.lorebookNetworkTools = DEFAULT_SETTINGS.lorebookNetworkTools;
+                    this.plugin.settings.lorebookFandomWikis = [...DEFAULT_SETTINGS.lorebookFandomWikis];
+                    this.plugin.settings.lorebookWikipediaLang = DEFAULT_SETTINGS.lorebookWikipediaLang;
+                    this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
                     await this.plugin.saveSettings();
                     this.display();
                 })
@@ -2247,6 +2326,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
                     this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
                     this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
+                    this.plugin.settings.lorebookNetworkTools = DEFAULT_SETTINGS.lorebookNetworkTools;
+                    this.plugin.settings.lorebookFandomWikis = [...DEFAULT_SETTINGS.lorebookFandomWikis];
+                    this.plugin.settings.lorebookWikipediaLang = DEFAULT_SETTINGS.lorebookWikipediaLang;
+                    this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
                     this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                     this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
                     this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;

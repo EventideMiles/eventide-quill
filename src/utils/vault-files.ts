@@ -124,3 +124,78 @@ export async function readVaultFiles(
     }
     return messages;
 }
+
+/**
+ * Resolve @-mentioned file paths in text to vault file paths and add them
+ * to context. Matches `@` followed by non-whitespace, trims trailing
+ * sentence punctuation, then attempts resolution before falling back to
+ * the email guard (skips tokens that look like email domains: dot with no
+ * path separator).
+ *
+ * Resolution priority (first match wins):
+ *   1. Exact vault path match
+ *   2. Exact vault path with `.md` appended
+ *   3. Base filename match (last path segment without extension)
+ *   4. Substring match on full path (case-insensitive)
+ *
+ * Returns the resolved file paths and the text with `@` stripped from
+ * resolved mentions (resolved text becomes the bare path, unresolved
+ * mentions keep their `@` prefix unchanged).
+ */
+export function resolveAtMentions(text: string, vault: Vault): { resolvedPaths: string[]; cleanedText: string } {
+    const markdownFiles = vault.getMarkdownFiles();
+    const resolvedPaths: string[] = [];
+
+    const cleanedText = text.replace(/@(\S+)/g, (_match, mention: string) => {
+        // Trim trailing sentence punctuation so mentions like "@foo.md," or
+        // "@bar." at the end of a clause still resolve. Try exact / exact-.md
+        // resolution BEFORE the email guard so root notes such as "@foo.md"
+        // (which contain a dot) are recognized as file mentions rather than
+        // being mistaken for an email domain.
+        const trimmed = mention.replace(/[.,;:!?)\]}"']+$/, '');
+        const candidate = trimmed || mention;
+
+        const resolved = resolveMentionToPath(candidate, markdownFiles);
+        if (resolved) {
+            if (!resolvedPaths.includes(resolved)) {
+                resolvedPaths.push(resolved);
+            }
+            return mention;
+        }
+
+        // Email guard: skip if the candidate contains a dot but no path
+        // separator (looks like an email domain, e.g. "@example.com").
+        if (candidate.includes('.') && !candidate.includes('/')) {
+            return _match;
+        }
+        return _match;
+    });
+
+    return { resolvedPaths, cleanedText };
+}
+
+/** Try to resolve a bare @mention to a vault file path. */
+function resolveMentionToPath(mention: string, files: TFile[]): string | null {
+    // 1. Exact path match
+    const exact = files.find((f) => f.path === mention);
+    if (exact) return exact.path;
+
+    // 2. Exact path with .md appended
+    const withExt = files.find((f) => f.path === `${mention}.md`);
+    if (withExt) return withExt.path;
+
+    // 3. Base filename (last segment, no extension)
+    const baseName = mention.split('/').pop() ?? mention;
+    const nameMatch = files.find((f) => {
+        const name = f.path.split('/').pop()?.replace(/\.md$/, '');
+        return name === baseName;
+    });
+    if (nameMatch) return nameMatch.path;
+
+    // 4. Substring match on full path (case-insensitive)
+    const lower = mention.toLowerCase();
+    const subMatch = files.find((f) => f.path.toLowerCase().includes(lower));
+    if (subMatch) return subMatch.path;
+
+    return null;
+}
