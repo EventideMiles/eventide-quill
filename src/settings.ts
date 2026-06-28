@@ -1252,7 +1252,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
     }
 
-    /** Render the footer area (reserved for future donation / support links). */
+    /**
+     * Render the footer area. Currently empty and collapsed to 0 height in
+     * `_settings.scss` so it occupies no space. Reserved for a future donation /
+     * support ask — restore the footer sizing there (rules are commented out)
+     * when adding content here.
+     */
     private renderFooter(containerEl: HTMLElement): void {
         containerEl.createEl('div', { cls: 'quill-settings__footer' });
     }

@@ -202,14 +202,17 @@ div[class*='quill-settings-content-'].is-hidden {
 
     // --- Footer (reserved for future donation / support links) ---
     // Fixed at the bottom via the flex layout — does not scroll with content.
+    // Intentionally collapsed to 0 height while empty so it doesn't waste
+    // vertical real estate (~0.75"). When footer content (e.g. a donation ask)
+    // is added in renderFooter(), uncomment the rules below to restore the bar.
 
     &__footer {
         flex-shrink: 0;
-        padding: $space-lg $space-md;
-        min-height: 60px;
-        border-top: 1px solid var(--background-modifier-border);
-        background: var(--background-primary);
-        box-shadow: 0 -4px 12px -4px rgba(0, 0, 0, 0.08);
+        // padding: $space-lg $space-md;
+        // min-height: 60px;
+        // border-top: 1px solid var(--background-modifier-border);
+        // background: var(--background-primary);
+        // box-shadow: 0 -4px 12px -4px rgba(0, 0, 0, 0.08);
     }
 }
 
