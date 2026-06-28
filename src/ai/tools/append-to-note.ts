@@ -15,8 +15,7 @@ export const appendToNoteTool: Tool = {
         'The note opens in a new tab with the new content shown as a diff. The writer ' +
         'reviews and approves or rejects it AFTER you finish. For the file the writer ' +
         'currently has open, recommend they use Direct or Fulfill mode instead. ' +
-        'When editing multiple files, process them sequentially — but do NOT pause ' +
-        'or wait for approval between files.',
+        'When editing multiple files, batch your edits — do NOT pause between files.',
     parameters: {
         type: 'object',
         properties: {

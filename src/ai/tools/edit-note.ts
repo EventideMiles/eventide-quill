@@ -21,9 +21,8 @@ export const editNoteTool: Tool = {
         'and approves or rejects it AFTER you finish. Provide the exact old_text to find ' +
         'and the new_text to replace it with. For the file the writer currently has open, ' +
         'recommend they use Direct or Fulfill mode instead. ' +
-        'When editing multiple files, process them sequentially (read one, edit it, then ' +
-        'the next) — but do NOT pause or wait for approval between files. Keep going ' +
-        'until all edits are proposed.',
+        'When editing multiple files, batch your edits — read and edit several per round ' +
+        '(the system tells you how many fit). Do NOT pause between files.',
     parameters: {
         type: 'object',
         properties: {

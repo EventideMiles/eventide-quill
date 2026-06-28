@@ -379,13 +379,53 @@ async function buildPlotMapMessage(plugin: EventideQuillPlugin): Promise<ChatMes
 }
 
 /**
+ * Build a system message telling the model how many files it can safely
+ * read + edit in the current round, based on the remaining context budget
+ * and the per-round output token limit. This lets the model BATCH multiple
+ * read→edit cycles per round instead of doing one file per round (which is
+ * painfully slow on local models where each round = a full inference pass).
+ *
+ * Returns null when the budget is too small for batching to matter.
+ */
+function buildContextBudgetMessage(
+    plugin: EventideQuillPlugin,
+    messages: ChatMessage[],
+    maxContextTokens: number
+): ChatMessage | null {
+    const used = estimateTokens(messages);
+    const available = maxContextTokens - used;
+    if (available <= 2000) return null;
+
+    // Rough per-file costs:
+    //   Input: vault_lookup result (~1500 tokens) + edit_note tool-result (~100) ≈ 2000
+    //   Output: edit_note arguments (path + old_text + new_text) ≈ 600
+    const perFileContextCost = 2000;
+    const perFileOutputCost = 600;
+    const maxOutput = plugin.settings.coWriterMaxOutputTokens;
+
+    const contextBatch = Math.max(1, Math.floor(available / perFileContextCost));
+    const outputBatch = Math.max(1, Math.floor(maxOutput / perFileOutputCost));
+    const batchSize = Math.min(contextBatch, outputBatch);
+
+    if (batchSize <= 1) return null;
+
+    return {
+        role: 'system',
+        content:
+            `Context budget: ${used.toLocaleString()}/${maxContextTokens.toLocaleString()} tokens used, ` +
+            `${available.toLocaleString()} available. You can safely read and edit up to ${batchSize} ` +
+            `file(s) in this round. Batch your tool calls — read and edit multiple files per response ` +
+            `to minimize total rounds.`
+    };
+}
+
+/**
  * Build a system message informing the model which file the writer currently
  * has open. This lets the model distinguish between edits to the active file
  * (where Direct/Fulfill mode provides a streaming live-edit UX) and edits to
  * other notes (where the edit_note / append_to_note tools are the right path).
  *
- * Returns null when no markdown file is active (e.g., the sidebar has focus
- * or a non-markdown file is open).
+ * Returns null when no markdown file is active.
  */
 function buildActiveFileMessage(plugin: EventideQuillPlugin): ChatMessage | null {
     const activeFile = plugin.app.workspace.getActiveFile();
@@ -1154,10 +1194,13 @@ export class CoWriterSession {
 
             for (let round = 0; round < maxRounds; round++) {
                 // Rebuild baseMessages each round — discussCurrentMessages may
-                // have grown with tool-call + tool-result messages.
+                // have grown with tool-call + tool-result messages. Inject the
+                // context-budget message fresh so the model knows its batch size.
+                const budgetMsg = buildContextBudgetMessage(plugin, this.discussCurrentMessages, maxTokens);
                 const roundBaseMessages: ChatMessage[] = [
                     this.discussCurrentMessages[0]!,
                     ...injectedContext,
+                    ...(budgetMsg ? [budgetMsg] : []),
                     ...this.discussCurrentMessages.slice(1)
                 ];
 
@@ -1431,9 +1474,11 @@ export class CoWriterSession {
             ctx.signal = this.abortController.signal;
 
             for (let round = 0; round < maxRounds; round++) {
+                const coachBudgetMsg = buildContextBudgetMessage(plugin, this.discussCurrentMessages, maxTokens);
                 const roundBaseMessages: ChatMessage[] = [
                     this.discussCurrentMessages[0]!,
                     ...injectedContext,
+                    ...(coachBudgetMsg ? [coachBudgetMsg] : []),
                     ...this.discussCurrentMessages.slice(1)
                 ];
 
@@ -1863,12 +1908,17 @@ export class CoWriterSession {
                 let sawReasoning = false;
                 const fragmentBuffer = new Map<number, { id?: string; name?: string; arguments: string }>();
 
-                // Inject the active-file awareness message fresh each round
-                // (the writer may have switched files between rounds).
+                // Inject context-budget + active-file awareness fresh each
+                // round so the model knows how many files it can batch and
+                // which file is open.
                 const activeFileMsg = buildActiveFileMessage(plugin);
+                const budgetMsg = buildContextBudgetMessage(plugin, this.loreCoachMessages, maxTokens);
+                const injected: ChatMessage[] = [];
+                if (activeFileMsg) injected.push(activeFileMsg);
+                if (budgetMsg) injected.push(budgetMsg);
                 const messagesForCall =
-                    activeFileMsg && this.loreCoachMessages.length > 0
-                        ? [this.loreCoachMessages[0]!, activeFileMsg, ...this.loreCoachMessages.slice(1)]
+                    injected.length > 0 && this.loreCoachMessages.length > 0
+                        ? [this.loreCoachMessages[0]!, ...injected, ...this.loreCoachMessages.slice(1)]
                         : this.loreCoachMessages;
 
                 const stream = chat.provider.chatCompletion({
