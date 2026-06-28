@@ -16,17 +16,18 @@ import { openNoteForEdit, pushLoreEditDiff, readNoteContent, resolveNoteFile } f
 export const editNoteTool: Tool = {
     id: 'edit_note',
     description:
-        'Propose a targeted edit to a specific section of an existing note that ' +
-        'is NOT currently open in the editor. The note opens in a new tab with ' +
-        'the change shown as a diff. The writer reviews and approves or rejects ' +
-        'it AFTER you finish. For the file the writer currently has open, ' +
-        'recommend they use Direct or Fulfill mode instead. ' +
-        'CRITICAL: old_text must be the SMALLEST excerpt that uniquely identifies ' +
-        'the section being changed — one sentence, one paragraph, or a heading ' +
-        'plus its body. Do NOT pass the entire file. new_text is just the ' +
-        'replacement for that excerpt, not a rewrite of the whole document. ' +
-        'When editing multiple files, batch your edits per the context budget ' +
-        'and do NOT pause between files.',
+        'Propose a change to an existing note that is NOT currently open in the editor. ' +
+        'The note opens in a new tab with the change shown as a diff; the writer reviews ' +
+        'and approves or rejects it AFTER you finish. For the file the writer currently ' +
+        'has open, recommend Direct or Fulfill mode instead. Two modes: ' +
+        '(1) REPLACE — pass old_text (the SMALLEST excerpt that uniquely identifies the ' +
+        'section) and new_text (its replacement). old_text must match character-for-character ' +
+        'and be unique in the note. Do NOT pass the whole file. ' +
+        '(2) INSERT — pass anchor (an exact excerpt already in the note) and new_text ' +
+        '(the content to add); new_text is inserted right after the anchor, or before it ' +
+        'with position: "before". The anchor is KEPT — nothing is replaced — so use this ' +
+        'to add a new section, paragraph, or line without any risk of clobbering existing ' +
+        'text. Include any needed line breaks in new_text.',
     parameters: {
         type: 'object',
         properties: {
@@ -38,17 +39,29 @@ export const editNoteTool: Tool = {
             old_text: {
                 type: 'string',
                 description:
-                    'The SMALLEST excerpt that uniquely identifies the section to change. ' +
-                    'One sentence, one paragraph, or a heading + its body. NOT the entire file. ' +
-                    'Must match character-for-character (case-sensitive, including whitespace).'
+                    'REPLACE mode: the SMALLEST excerpt that uniquely identifies the section to change ' +
+                    '(one sentence, one paragraph, or a heading + its body). Must match character-for-character ' +
+                    'and be unique. Omit to use INSERT mode.'
             },
             new_text: {
                 type: 'string',
                 description:
-                    'The replacement for the excerpt identified by old_text. Just the new section, not a full rewrite.'
+                    'REPLACE: the replacement for old_text. INSERT: the content to add (include any line breaks).'
+            },
+            anchor: {
+                type: 'string',
+                description:
+                    'INSERT mode: an exact excerpt already in the note. new_text is inserted right after it ' +
+                    '(or before it, with position). The anchor is kept, nothing is replaced. Must be unique. ' +
+                    'Omit to use REPLACE mode.'
+            },
+            position: {
+                type: 'string',
+                enum: ['after', 'before'],
+                description: 'INSERT mode: where new_text goes relative to the anchor. Default "after".'
             }
         },
-        required: ['path', 'old_text', 'new_text']
+        required: ['path', 'new_text']
     },
     maxResultTokens: 100,
     requiresNetwork: false,
@@ -56,15 +69,22 @@ export const editNoteTool: Tool = {
     async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
         const path = typeof args.path === 'string' ? args.path.trim() : '';
         const oldText = typeof args.old_text === 'string' ? args.old_text : '';
+        const anchor = typeof args.anchor === 'string' ? args.anchor : '';
+        const position = args.position === 'before' ? 'before' : 'after';
 
         if (!path) return 'Error: "path" is required.';
-        if (!oldText) return 'Error: "old_text" is required.';
-        // Distinguish an absent new_text (error) from an explicit empty
-        // string (valid — used to delete the old_text excerpt entirely).
+        // Distinguish an absent new_text (error) from an explicit empty string
+        // (valid in REPLACE mode — deletes the old_text excerpt entirely).
         if (args.new_text === undefined) {
-            return 'Error: "new_text" is required (pass an empty string to delete the excerpt).';
+            return 'Error: "new_text" is required.';
         }
         const newText = typeof args.new_text === 'string' ? args.new_text : '';
+        if (!oldText && !anchor) {
+            return (
+                'Error: provide "old_text" (to replace an excerpt) or "anchor" ' +
+                '(to insert without replacing anything).'
+            );
+        }
 
         const { plugin } = ctx;
         const file = resolveNoteFile(plugin, path);
@@ -73,16 +93,44 @@ export const editNoteTool: Tool = {
         const content = await readNoteContent(plugin, file.path);
         if (content === null) return `Error: could not read "${file.path}".`;
 
-        const idx = content.indexOf(oldText);
-        if (idx === -1) {
-            // Help the model recover: show what's actually in the note.
-            const preview = content.slice(0, 300).trim();
-            return `Error: old_text not found in "${file.path}". The note starts with:\n${preview}${content.length > 300 ? '\n...' : ''}`;
-        }
-        // Reject non-unique matches so the edit doesn't silently hit the
-        // wrong occurrence when the excerpt appears more than once.
-        if (content.indexOf(oldText, idx + 1) !== -1) {
-            return `Error: old_text matches multiple places in "${file.path}". Pass a larger excerpt that uniquely identifies the section to change.`;
+        // Resolve the edit range: a replace range [from, to) for REPLACE mode,
+        // or a zero-width insertion point (from === to) for INSERT mode.
+        let from: number;
+        let to: number;
+        let label: string;
+        let originalText: string;
+
+        if (oldText) {
+            // REPLACE — find the excerpt to replace.
+            const idx = content.indexOf(oldText);
+            if (idx === -1) {
+                const preview = content.slice(0, 300).trim();
+                return `Error: old_text not found in "${file.path}". The note starts with:\n${preview}${content.length > 300 ? '\n...' : ''}`;
+            }
+            if (content.indexOf(oldText, idx + 1) !== -1) {
+                return `Error: old_text matches multiple places in "${file.path}". Pass a larger excerpt that uniquely identifies the section to change.`;
+            }
+            from = idx;
+            to = idx + oldText.length;
+            label = `Edit ${file.basename}`;
+            originalText = oldText;
+        } else {
+            // INSERT — find the anchor and insert after (or before) it. The
+            // anchor itself is never modified; new_text is spliced in at the
+            // anchor's end (after) or start (before) as a pure insertion.
+            const idx = content.indexOf(anchor);
+            if (idx === -1) {
+                const preview = content.slice(0, 300).trim();
+                return `Error: anchor not found in "${file.path}". The note starts with:\n${preview}${content.length > 300 ? '\n...' : ''}`;
+            }
+            if (content.indexOf(anchor, idx + 1) !== -1) {
+                return `Error: anchor matches multiple places in "${file.path}". Pass a larger anchor that uniquely identifies the insertion point.`;
+            }
+            const insertPos = position === 'before' ? idx : idx + anchor.length;
+            from = insertPos;
+            to = insertPos;
+            label = `Insert into ${file.basename}`;
+            originalText = '';
         }
 
         // Open the note and push the diff.
@@ -99,16 +147,17 @@ export const editNoteTool: Tool = {
         entry.changeSet.clear();
 
         entry.changeSet.add({
-            from: idx,
-            to: idx + oldText.length,
+            from,
+            to,
             newText,
-            label: `Edit ${file.basename}`,
-            originalText: oldText
+            label,
+            originalText
         });
 
         pushLoreEditDiff(opened.cm, entry.changeSet, file.path);
         session.onLoreEditUpdate?.();
 
-        return `Edit proposed for "${file.basename}". The writer will see the diff and can approve or reject it. Continue with your response.`;
+        const action = oldText ? 'Edit' : 'Insert';
+        return `${action} proposed for "${file.basename}". The writer will see the diff and can approve or reject it. Continue with your response.`;
     }
 };
