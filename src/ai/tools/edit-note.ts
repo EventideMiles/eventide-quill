@@ -18,12 +18,12 @@ export const editNoteTool: Tool = {
     description:
         'Propose an edit to an existing note that is NOT currently open in the editor. ' +
         'The note opens in a new tab with the change shown as a diff. The writer reviews ' +
-        'and approves or rejects it. Provide the exact old_text to find and the new_text ' +
-        'to replace it with. For the file the writer currently has open, recommend they ' +
-        'use Direct or Fulfill mode instead. ' +
-        'Work ONE file at a time: read it, edit it, then move to the next. ' +
-        'Do not read all target files at once — each result stays in context ' +
-        'for all subsequent rounds.',
+        'and approves or rejects it AFTER you finish. Provide the exact old_text to find ' +
+        'and the new_text to replace it with. For the file the writer currently has open, ' +
+        'recommend they use Direct or Fulfill mode instead. ' +
+        'When editing multiple files, process them sequentially (read one, edit it, then ' +
+        'the next) — but do NOT pause or wait for approval between files. Keep going ' +
+        'until all edits are proposed.',
     parameters: {
         type: 'object',
         properties: {

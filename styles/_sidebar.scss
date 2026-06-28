@@ -101,12 +101,11 @@
         flex-direction: column;
         overflow: hidden;
         padding: $space-md;
-        // Obsidian's workspace containers can inherit user-select: none,
-        // which prevents the writer from selecting and copying text from
-        // chat responses, review results, lorebook entries, etc. Explicitly
-        // re-enable text selection on all panel content.
-        user-select: text;
-        -webkit-user-select: text;
+        // Obsidian's workspace containers set user-select: none with high
+        // specificity. !important is the only reliable way to override it
+        // so the writer can select and copy text from chat responses.
+        user-select: text !important;
+        -webkit-user-select: text !important;
     }
 
     // Sub-tab bar — second-level tabs (e.g., linter Results / Details,
@@ -149,7 +148,7 @@
         flex: 1;
         overflow-y: auto;
         min-height: 0;
-        user-select: text;
-        -webkit-user-select: text;
+        user-select: text !important;
+        -webkit-user-select: text !important;
     }
 }
