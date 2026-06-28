@@ -54,6 +54,8 @@
         max-height: 280px;
         overflow-y: auto;
         padding-right: $space-xs;
+        user-select: text;
+        -webkit-user-select: text;
 
         // Constrain rendered markdown so long drafts don't blow out the chat.
         & > :first-child {
