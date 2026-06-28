@@ -74,10 +74,15 @@ export function createToolRegistry(plugin: EventideQuillPlugin, includeProposeEn
     if (plugin.settings.lorebookNetworkTools) {
         const maxTokens = plugin.settings.lorebookToolMaxTokens;
         registry.register(createFetchUrlTool(maxTokens));
-        registry.register(createFandomLookupTool(maxTokens, plugin.settings.lorebookFandomWikis));
-        registry.register(createFandomPageTool(maxTokens, plugin.settings.lorebookFandomWikis));
         registry.register(createWikipediaLookupTool(maxTokens, plugin.settings.lorebookWikipediaLang));
         registry.register(createWikipediaPageTool(maxTokens, plugin.settings.lorebookWikipediaLang));
+        // Fandom tools are only registered when a non-empty allowlist is
+        // configured — an empty list means "Fandom disabled" everywhere
+        // (settings UI, validateWiki, and here), never "all wikis allowed".
+        if (plugin.settings.lorebookFandomWikis.length > 0) {
+            registry.register(createFandomLookupTool(maxTokens, plugin.settings.lorebookFandomWikis));
+            registry.register(createFandomPageTool(maxTokens, plugin.settings.lorebookFandomWikis));
+        }
     }
 
     return registry;

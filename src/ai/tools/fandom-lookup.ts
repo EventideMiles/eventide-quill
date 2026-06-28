@@ -3,11 +3,16 @@ import { mediawikiExtract, mediawikiLookup } from './mediawiki';
 
 /**
  * Validate the wiki subdomain against the allowed list (if configured).
- * Returns an error string on failure, or null on success.
+ * Returns an error string on failure, or null on success. An empty
+ * `allowedWikis` list means Fandom lookups are disabled (matching the
+ * settings UI: "Leave empty to disable Fandom lookups").
  */
 function validateWiki(wiki: string, allowedWikis: string[]): string | null {
     if (!wiki) return 'Error: "wiki" (subdomain) is required. Example: "starwars".';
-    if (allowedWikis.length > 0 && !allowedWikis.includes(wiki)) {
+    if (allowedWikis.length === 0) {
+        return 'Error: Fandom lookups are disabled. Add wiki subdomains in Settings → Lorebook.';
+    }
+    if (!allowedWikis.includes(wiki)) {
         return `Error: wiki "${wiki}" is not in the allowed list. Allowed: ${allowedWikis.join(', ')}.`;
     }
     return null;
@@ -22,7 +27,7 @@ function validateWiki(wiki: string, allowedWikis: string[]): string | null {
  *
  * @param maxResultTokens  Truncation cap for the extract.
  * @param allowedWikis     Subdomains the writer has approved (e.g., ['starwars']).
- *                         Empty array = all Fandom wikis allowed.
+ *                         Empty array = Fandom disabled (tool is not registered).
  */
 export function createFandomLookupTool(maxResultTokens: number, allowedWikis: string[]): Tool {
     return {
@@ -80,7 +85,7 @@ export function createFandomLookupTool(maxResultTokens: number, allowedWikis: st
  *
  * @param maxResultTokens  Truncation cap for the extract.
  * @param allowedWikis     Subdomains the writer has approved (e.g., ['starwars']).
- *                         Empty array = all Fandom wikis allowed.
+ *                         Empty array = Fandom disabled (tool is not registered).
  */
 export function createFandomPageTool(maxResultTokens: number, allowedWikis: string[]): Tool {
     return {

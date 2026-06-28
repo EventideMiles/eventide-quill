@@ -38,6 +38,14 @@ export function createFetchUrlTool(maxResultTokens: number): Tool {
                 return 'Error: URL must start with http:// or https://';
             }
 
+            // Block SSRF: reject localhost, private RFC1918 ranges, link-local,
+            // and other internal destinations before any network call. The host
+            // is validated here from the model-supplied URL; requestUrl follows
+            // redirects internally (and exposes no final URL), so redirect
+            // targets cannot be re-checked — the initial host gate is the guard.
+            const hostErr = validatePublicHost(url);
+            if (hostErr) return hostErr;
+
             try {
                 const response = await requestUrl({
                     url,
@@ -116,4 +124,58 @@ function truncate(text: string, maxTokens: number, url: string): string {
     const maxChars = maxTokens * 4;
     if (text.length <= maxChars) return text;
     return text.slice(0, maxChars) + `\n\n...[truncated at ${maxTokens} tokens — full page at ${url}]`;
+}
+
+/**
+ * Reject URLs that target a local or private network destination (SSRF guard).
+ * Returns an error string when the host is internal, or null when the host is
+ * safe to fetch. Covers hostname forms (localhost, *.local), IPv4 literals in
+ * loopback / RFC1918 / link-local / CGNAT / 0.0.0.0 ranges, and common IPv6
+ * loopback / link-local / unique-local prefixes.
+ */
+function validatePublicHost(rawUrl: string): string | null {
+    let parsed: URL;
+    try {
+        parsed = new URL(rawUrl);
+    } catch {
+        return 'Error: invalid URL.';
+    }
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (!host) return 'Error: URL has no host.';
+
+    if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) {
+        return `Error: refusing to fetch local host "${host}".`;
+    }
+
+    // IPv6 loopback / link-local / unique-local. Only meaningful for IPv6
+    // literals (which contain a colon), so the prefix checks can't trip on
+    // ordinary DNS hostnames that merely start with "fc"/"fd"/"fe".
+    if (host.includes(':')) {
+        if (host === '::1' || host === '::') {
+            return `Error: refusing to fetch local host "${host}".`;
+        }
+        if (host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd')) {
+            return `Error: refusing to fetch local host "${host}".`;
+        }
+    }
+
+    // IPv4 literal checks.
+    const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (v4) {
+        const a = Number(v4[1]);
+        const b = Number(v4[2]);
+        const isPrivate =
+            a === 0 || // 0.0.0.0/8
+            a === 10 || // RFC1918
+            a === 127 || // loopback
+            (a === 169 && b === 254) || // link-local
+            (a === 172 && b >= 16 && b <= 31) || // RFC1918
+            (a === 192 && b === 168) || // RFC1918
+            (a === 100 && b >= 64 && b <= 127); // CGNAT 100.64.0.0/10
+        if (isPrivate) {
+            return `Error: refusing to fetch private-network host "${host}".`;
+        }
+    }
+
+    return null;
 }

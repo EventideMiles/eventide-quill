@@ -926,7 +926,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     .inputEl.addEventListener('blur', () => {
                         const wikis = text.inputEl.value
                             .split(',')
-                            .map((s) => s.trim())
+                            .map((s) => s.trim().toLowerCase())
                             .filter((s) => s.length > 0);
                         this.plugin.settings.lorebookFandomWikis = wikis;
                         void this.plugin.saveSettings();

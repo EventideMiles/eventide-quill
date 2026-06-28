@@ -127,8 +127,10 @@ export async function readVaultFiles(
 
 /**
  * Resolve @-mentioned file paths in text to vault file paths and add them
- * to context. Matches `@` followed by non-whitespace, skips tokens that
- * look like email domains (dot with no path separator).
+ * to context. Matches `@` followed by non-whitespace, trims trailing
+ * sentence punctuation, then attempts resolution before falling back to
+ * the email guard (skips tokens that look like email domains: dot with no
+ * path separator).
  *
  * Resolution priority (first match wins):
  *   1. Exact vault path match
@@ -145,17 +147,26 @@ export function resolveAtMentions(text: string, vault: Vault): { resolvedPaths: 
     const resolvedPaths: string[] = [];
 
     const cleanedText = text.replace(/@(\S+)/g, (_match, mention: string) => {
-        // Email guard: skip if the mention contains a dot but no path separator.
-        if (mention.includes('.') && !mention.includes('/')) {
-            return _match;
-        }
+        // Trim trailing sentence punctuation so mentions like "@foo.md," or
+        // "@bar." at the end of a clause still resolve. Try exact / exact-.md
+        // resolution BEFORE the email guard so root notes such as "@foo.md"
+        // (which contain a dot) are recognized as file mentions rather than
+        // being mistaken for an email domain.
+        const trimmed = mention.replace(/[.,;:!?)\]}"']+$/, '');
+        const candidate = trimmed || mention;
 
-        const resolved = resolveMentionToPath(mention, markdownFiles);
+        const resolved = resolveMentionToPath(candidate, markdownFiles);
         if (resolved) {
             if (!resolvedPaths.includes(resolved)) {
                 resolvedPaths.push(resolved);
             }
             return mention;
+        }
+
+        // Email guard: skip if the candidate contains a dot but no path
+        // separator (looks like an email domain, e.g. "@example.com").
+        if (candidate.includes('.') && !candidate.includes('/')) {
+            return _match;
         }
         return _match;
     });

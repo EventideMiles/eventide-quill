@@ -59,14 +59,17 @@ function summarizeToolArgs(toolName: string, argumentsJson: string): string {
         const name = typeof args.name === 'string' ? args.name : '';
         const path = typeof args.path === 'string' ? args.path : '';
         const type = typeof args.type === 'string' ? args.type : '';
+        const title = typeof args.title === 'string' ? args.title : '';
 
-        // fandom_lookup: show "wiki: query"
+        // fandom_lookup: show "wiki: query"; fandom_page: show "wiki: title"
         if (wiki && query) parts.push(`${wiki}: ${query}`);
+        else if (wiki && title) parts.push(`${wiki}: ${title}`);
         else if (query) parts.push(query);
         else if (url) parts.push(url);
         else if (name) parts.push(name);
         else if (path) parts.push(path);
         else if (type) parts.push(type);
+        else if (title) parts.push(title);
 
         if (parts.length === 0) return '';
         const summary = parts.join(' ');
@@ -435,17 +438,24 @@ function buildContextBudgetMessage(
  * when enabled. Returns null when network tools are off.
  */
 function buildNetworkToolsMessage(plugin: EventideQuillPlugin): ChatMessage | null {
+    // Mirror createToolRegistry(): no tools at all when tools are disabled, so
+    // the prompt never advertises network tools the model can't actually call.
+    if (!plugin.settings.coWriterToolsEnabled) return null;
     if (!plugin.settings.lorebookNetworkTools) return null;
     const wikis = plugin.settings.lorebookFandomWikis;
     const lang = plugin.settings.lorebookWikipediaLang;
-    const fandomLine =
-        wikis.length > 0
-            ? `- fandom_lookup / fandom_page: search Fandom (${wikis.join(', ')}); use fandom_page with an exact title to get content.`
-            : '- fandom_lookup / fandom_page: search any Fandom wiki; use fandom_page with an exact title to get content.';
     const lines = [
         'You have network tools available — USE THEM PROACTIVELY when the topic',
-        'involves canon, history, science, places, or real-world references:',
-        fandomLine,
+        'involves canon, history, science, places, or real-world references:'
+    ];
+    // Fandom tools are only registered when a non-empty allowlist is set, so
+    // advertise them only then — empty list means Fandom is disabled.
+    if (wikis.length > 0) {
+        lines.push(
+            `- fandom_lookup / fandom_page: search Fandom (${wikis.join(', ')}); use fandom_page with an exact title to get content.`
+        );
+    }
+    lines.push(
         `- wikipedia_lookup / wikipedia_page: search Wikipedia (${lang}); use wikipedia_page with an exact title to get content.`,
         '- fetch_url: fetch any web page and return its text.',
         '',
@@ -456,7 +466,7 @@ function buildNetworkToolsMessage(plugin: EventideQuillPlugin): ChatMessage | nu
         'encyclopedia would know about, look it up. You do not need to ask',
         'permission. Results count toward context — be judicious with very',
         'large pages.'
-    ];
+    );
     return { role: 'system', content: lines.join('\n') };
 }
 

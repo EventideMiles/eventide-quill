@@ -18,6 +18,14 @@ const MIN_INTERVAL_MS = 500;
 /** Per-host timestamp of the last API call. */
 const lastCall = new Map<string, number>();
 
+/**
+ * Per-host promise chain that serializes outbound requests. Without this,
+ * overlapping calls read the same `lastCall` value, sleep in parallel, and
+ * update together — defeating the rate limit. Chaining ensures each caller
+ * only proceeds after the previous request has updated the timestamp.
+ */
+const rateLimitQueue = new Map<string, Promise<void>>();
+
 /** Promise-based sleep. */
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -25,16 +33,22 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Enforce a minimum interval between consecutive requests to the same host.
- * Call before every outbound request to obey rate limits.
+ * Serialized per host so concurrent callers observe the updated `lastCall`
+ * timestamp before proceeding. Call before every outbound request.
  */
 async function rateLimit(host: string): Promise<void> {
-    const now = Date.now();
-    const last = lastCall.get(host) ?? 0;
-    const elapsed = now - last;
-    if (elapsed < MIN_INTERVAL_MS) {
-        await sleep(MIN_INTERVAL_MS - elapsed);
-    }
-    lastCall.set(host, Date.now());
+    const prev = rateLimitQueue.get(host) ?? Promise.resolve();
+    const next = prev.then(async () => {
+        const now = Date.now();
+        const last = lastCall.get(host) ?? 0;
+        const elapsed = now - last;
+        if (elapsed < MIN_INTERVAL_MS) {
+            await sleep(MIN_INTERVAL_MS - elapsed);
+        }
+        lastCall.set(host, Date.now());
+    });
+    rateLimitQueue.set(host, next);
+    await next;
 }
 
 /** A single search result from the MediaWiki `list=search` API. */
