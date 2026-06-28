@@ -73,17 +73,24 @@ export const editNoteTool: Tool = {
         const position = args.position === 'before' ? 'before' : 'after';
 
         if (!path) return 'Error: "path" is required.';
-        // Distinguish an absent new_text (error) from an explicit empty string
-        // (valid in REPLACE mode — deletes the old_text excerpt entirely).
-        if (args.new_text === undefined) {
-            return 'Error: "new_text" is required.';
+        // new_text must be a string. An explicit empty string is valid in
+        // REPLACE mode (it deletes the old_text excerpt); any other non-string
+        // value is rejected rather than coerced to '' (which would silently
+        // produce an unintended empty edit).
+        if (typeof args.new_text !== 'string') {
+            return 'Error: "new_text" is required and must be a string.';
         }
-        const newText = typeof args.new_text === 'string' ? args.new_text : '';
+        const newText = args.new_text;
         if (!oldText && !anchor) {
             return (
                 'Error: provide "old_text" (to replace an excerpt) or "anchor" ' +
                 '(to insert without replacing anything).'
             );
+        }
+        // Exactly one mode: providing both makes the intent ambiguous (the
+        // REPLACE branch would otherwise win silently and drop the anchor).
+        if (oldText && anchor) {
+            return 'Error: provide "old_text" (REPLACE) or "anchor" (INSERT), not both.';
         }
 
         const { plugin } = ctx;
