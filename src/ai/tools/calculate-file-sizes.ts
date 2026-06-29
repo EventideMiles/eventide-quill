@@ -1,6 +1,6 @@
 import { normalizePath, TFile } from 'obsidian';
 import type { Tool, ToolContext } from './tool';
-import { getMaxContextTokens, tokenPercent } from './context-helpers';
+import { describeBatchFit } from './context-helpers';
 
 /**
  * Calculate the total size of specific files (from any folder). Use when
@@ -8,7 +8,8 @@ import { getMaxContextTokens, tokenPercent } from './context-helpers';
  * Characters, 5 from Locations, 3 from Events — and need to know whether
  * they all fit in one batch.
  *
- * Returns the same context-window percentage guidance as measure_folder.
+ * Returns fit guidance measured against the REMAINING context (the live
+ * conversation is already consuming part of the window), like measure_folder.
  */
 export const calculateFileSizesTool: Tool = {
     id: 'calculate_file_sizes',
@@ -16,7 +17,8 @@ export const calculateFileSizesTool: Tool = {
         'Calculate the total size of specific files across the vault. Use when ' +
         'you are targeting individual files from multiple folders and need to ' +
         'know whether they all fit in one batch. Returns per-file sizes, total ' +
-        'tokens, and context-window percentage.',
+        'tokens, and how much of the REMAINING context (after the current ' +
+        'conversation) the batch would use.',
     parameters: {
         type: 'object',
         properties: {
@@ -68,23 +70,14 @@ export const calculateFileSizesTool: Tool = {
         if (found === 0) return 'None of the specified files were found in the vault.';
 
         const estTokens = Math.ceil(totalChars / 4);
-        const maxTokens = getMaxContextTokens(ctx.plugin);
-        const pct = tokenPercent(estTokens, maxTokens);
+        const consumed = ctx.consumedTokens?.() ?? 0;
 
         const lines = [
-            `${found} files, ${totalChars.toLocaleString()} chars, ~${estTokens.toLocaleString()} tokens (${pct} of ${maxTokens.toLocaleString()}-token context window)`,
+            `${found} files, ${totalChars.toLocaleString()} chars, ~${estTokens.toLocaleString()} tokens.`,
+            ...describeBatchFit(estTokens, plugin, consumed, found),
+            '',
             ...details
         ];
-
-        if (pct && !isNaN(parseInt(pct))) {
-            const pctNum = parseInt(pct);
-            if (pctNum <= 60) {
-                lines.push(`\nAll ${found} files fit comfortably in a single batch.`);
-            } else {
-                const half = Math.ceil(found / 2);
-                lines.push(`\nToo large for one batch (${pctNum}%). Split: ~${half} files per batch.`);
-            }
-        }
 
         return lines.join('\n');
     }

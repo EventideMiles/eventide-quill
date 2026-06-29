@@ -1333,7 +1333,12 @@ export class CoWriterSession {
         // round in the chat and consumes a model turn. The registry is built
         // above (before the budget math) so its `tools`-field overhead is
         // counted in toolTokenOverhead.
-        const ctx: ToolContext = { plugin };
+        const ctx: ToolContext = {
+            plugin,
+            // Live snapshot: sizing tools read this at execution time so their
+            // "will it fit" math accounts for the conversation already in context.
+            consumedTokens: () => this.estimateRequestTokens(this.discussCurrentMessages)
+        };
         // 0 = unlimited (the model calls as many rounds as it needs; use Stop
         // to cancel). A positive number caps turn consumption.
         const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
@@ -1661,7 +1666,10 @@ export class CoWriterSession {
         // Tool setup: same internal tools as discuss mode. The registry is
         // built above (before the budget math) so its `tools`-field overhead is
         // counted in toolTokenOverhead.
-        const ctx: ToolContext = { plugin };
+        const ctx: ToolContext = {
+            plugin,
+            consumedTokens: () => this.estimateRequestTokens(this.discussCurrentMessages)
+        };
         const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
 
         let response = '';
@@ -2074,7 +2082,10 @@ export class CoWriterSession {
         const registry = createToolRegistry(plugin, true);
         const toolDefs = registry?.toToolDefinitions();
         this.toolTokenOverhead = registry?.estimateTokens() ?? 0;
-        const ctx: ToolContext = { plugin };
+        const ctx: ToolContext = {
+            plugin,
+            consumedTokens: () => this.estimateRequestTokens(this.loreCoachMessages)
+        };
 
         const maxTokens = chat.provider.config.maxContextTokens;
         const compactPct = Math.max(50, Math.min(95, this.settingsOrDefault(plugin).contextCompactAtPercent)) / 100;

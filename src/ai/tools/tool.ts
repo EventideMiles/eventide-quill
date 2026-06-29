@@ -85,6 +85,15 @@ export interface ToolContext {
     plugin: EventideQuillPlugin;
     /** Abort signal from the outer request; tools should respect it for long ops. */
     signal?: AbortSignal;
+    /**
+     * Approximate tokens already consumed by the active request's message
+     * prefix (conversation + prior tool results + tools-field overhead),
+     * computed at call time. Provided by the co-writer tool loops so
+     * sizing/planning tools (measure_folder, calculate_file_sizes) can report
+     * "will this batch fit" against the REMAINING context, not the whole
+     * window. Undefined when the tool is invoked outside a tracked loop.
+     */
+    consumedTokens?: () => number;
 }
 
 /**
