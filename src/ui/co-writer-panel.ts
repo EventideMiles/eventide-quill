@@ -135,6 +135,13 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onDiscardLoreDraft: ((draft: LoreDraftEntry) => void) | null = null;
     private onApproveLoreEdit: ((filePath: string, id: number) => void) | null = null;
     private onRejectLoreEdit: ((filePath: string, id: number) => void) | null = null;
+    /**
+     * Fired on every mode switch (regardless of direction). Used to clear
+     * session-scoped state that shouldn't follow the writer across modes —
+     * currently subagents. {@link pendingImages} is cleared locally since it
+     * lives on the panel.
+     */
+    private onModeSwitch: (() => void) | null = null;
 
     /**
      * Conversation token estimate pushed from the plugin layer.
@@ -357,6 +364,10 @@ export class CoWriterPanel extends AbstractChatPanel {
         const oldMode = this.inputMode;
         this.inputMode = mode;
         this.modePickerOpen = false;
+        // Drop any queued images — an image attached for one mode shouldn't
+        // follow the writer into another (a lorebook reference image shouldn't
+        // land in a discuss turn, etc.).
+        this.pendingImages = [];
         // Entering or leaving a stateful mode resets the chat so the new mode
         // starts fresh: fulfill holds its own ChangeSet, lorebook holds its
         // own session state, and neither should inherit the other's history.
@@ -365,6 +376,13 @@ export class CoWriterPanel extends AbstractChatPanel {
             (oldMode === 'fulfill' || mode === 'fulfill' || oldMode === 'lorebook' || mode === 'lorebook')
         ) {
             this.onNewChat?.(false);
+        }
+        // Fire on every switch (including discuss ↔ coach ↔ direct) so
+        // session-scoped state like subagents doesn't linger across modes.
+        // chatHistory reset for stateful-mode crossings is handled above via
+        // onNewChat; this only clears the subagent views.
+        if (oldMode !== mode) {
+            this.onModeSwitch?.();
         }
         this.scheduleRender();
     }
@@ -394,6 +412,11 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Set the handler invoked when the user discards a proposed lore draft. */
     setDiscardLoreDraftHandler(handler: (draft: LoreDraftEntry) => void): void {
         this.onDiscardLoreDraft = handler;
+    }
+
+    /** Wire a callback fired on every co-writer mode switch (used to clear session-scoped state like subagents). */
+    setModeSwitchHandler(handler: () => void): void {
+        this.onModeSwitch = handler;
     }
 
     /** Replace the lorebook coach phase (drives the bottom-bar indicator). */
@@ -1489,12 +1512,14 @@ export class CoWriterPanel extends AbstractChatPanel {
                 'New chat',
                 'Start a new chat? The conversation will be cleared. Manuscript and vault context files will be kept.',
                 () => {
+                    this.pendingImages = [];
                     this.onNewChat?.(false);
                 },
                 'Keep context',
                 {
                     text: 'Clear context too',
                     handler: () => {
+                        this.pendingImages = [];
                         this.onNewChat?.(true);
                     }
                 }
