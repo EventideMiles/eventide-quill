@@ -110,6 +110,12 @@ export interface EventideQuillSettings {
     /** Max image dimension (longest side, px) before downscale. Keeps vision payloads small. */
     lorebookImageMaxDimension: number;
     /**
+     * Max output tokens for the Regime B image-description proxy call. Higher
+     * values let the model describe multi-character images in detail; lower
+     * values are faster on local hardware. The model stops early when done.
+     */
+    lorebookImageMaxDescriptionTokens: number;
+    /**
      * Proxy prompt for Regime B (text-only chat model + dedicated image model):
      * how the image model should caption images it translates to text for the
      * chat model. Customizable per-writer focus.
@@ -214,6 +220,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     lorebookToolMaxTokens: 2000,
     lorebookImageTools: true,
     lorebookImageMaxDimension: 512,
+    lorebookImageMaxDescriptionTokens: 2048,
     lorebookImageProxyPrompt: DEFAULT_IMAGE_PROXY_PROMPT
 };
 
@@ -1126,6 +1133,28 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(content)
+            .setName('Image description token budget')
+            .setDesc(
+                'Max output tokens for the Regime B image-description call. Higher values let the model ' +
+                    'describe every character in a group image; lower values are faster on local hardware. ' +
+                    'The model stops early when it finishes — this is a ceiling, not a target. Default: 2048.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.lorebookImageMaxDescriptionTokens))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 256 && n <= 8192) {
+                            this.plugin.settings.lorebookImageMaxDescriptionTokens = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.lorebookImageMaxDescriptionTokens));
+                            new Notice('Value must be a number between 256 and 8192');
+                        }
+                    })
+            );
+
+        new Setting(content)
             .setName('Image proxy prompt')
             .setDesc(
                 'When your chat model is text-only and a separate image model is configured, ' +
@@ -1295,6 +1324,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
                     this.plugin.settings.lorebookImageTools = DEFAULT_SETTINGS.lorebookImageTools;
                     this.plugin.settings.lorebookImageMaxDimension = DEFAULT_SETTINGS.lorebookImageMaxDimension;
+                    this.plugin.settings.lorebookImageMaxDescriptionTokens =
+                        DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
                     this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
                     await this.plugin.saveSettings();
                     this.display();
@@ -2568,6 +2599,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
                     this.plugin.settings.lorebookImageTools = DEFAULT_SETTINGS.lorebookImageTools;
                     this.plugin.settings.lorebookImageMaxDimension = DEFAULT_SETTINGS.lorebookImageMaxDimension;
+                    this.plugin.settings.lorebookImageMaxDescriptionTokens =
+                        DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
                     this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
                     this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                     this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;

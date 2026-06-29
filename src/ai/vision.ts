@@ -260,7 +260,7 @@ async function captionWithModel(
         model: modelId,
         messages,
         temperature: 0.3,
-        maxTokens: 1024,
+        maxTokens: plugin.settings.lorebookImageMaxDescriptionTokens,
         signal: opts.signal
     })) {
         if (chunk.text) caption += chunk.text;
