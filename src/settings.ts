@@ -690,6 +690,16 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 'configure receive the manuscript text you send them — pick local providers (Ollama, LM Studio) ' +
                 'to keep everything on your machine. Full per-tool controls live on the General tab.'
         });
+
+        content.createEl('div', {
+            cls: 'quill-settings__welcome-privacy',
+            text:
+                'Images you paste, drop, or attach in the co-writer chat are downscaled locally on your ' +
+                'device before leaving it. They are then sent to your configured chat model (if vision-capable) ' +
+                'or, when the chat model is text-only, to your separately-configured image model for a one-off ' +
+                'description — the text model never receives the pixels. Local providers keep images on your ' +
+                'machine just like manuscript text.'
+        });
     }
 
     /** Render the general settings tab. */

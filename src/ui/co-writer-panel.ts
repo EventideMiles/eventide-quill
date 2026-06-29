@@ -45,6 +45,15 @@ const COWRITER_MODES: { mode: InputMode; icon: string; label: string; desc: stri
 const MAX_PENDING_IMAGES = 4;
 
 /**
+ * Hard cap on raw image bytes before decode. Guards against OOM in
+ * `createImageBitmap` / `Image` element decoding when a writer pastes or drops
+ * an enormous file (RAW, TIFF, high-res panorama). The downscale cap
+ * (`lorebookImageMaxDimension`) only applies AFTER decode succeeds; this guard
+ * prevents the decode itself from running on absurdly large inputs.
+ */
+const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
+
+/**
  * Below this bottom-area width (px), the button row collapses into compact
  * mode: Add-context / Refresh / Compact / New-chat hide behind a hamburger
  * overflow button. Mode + Attach + Send stay visible (primary actions).
@@ -1927,11 +1936,22 @@ export class CoWriterPanel extends AbstractChatPanel {
         let added = 0;
         let capWarned = false;
         let typeWarned = false;
+        let sizeWarned = false;
         for (const file of Array.from(files)) {
             if (!isImageContentType(file.type)) {
                 if (!typeWarned) {
                     new Notice('Quill: Only image files can be attached.');
                     typeWarned = true;
+                }
+                continue;
+            }
+            if (file.size > MAX_IMAGE_BYTES) {
+                if (!sizeWarned) {
+                    const mb = Math.round(file.size / 1024 / 1024);
+                    new Notice(
+                        `Quill: "${file.name}" is ${mb}MB — too large to process. Maximum is ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB.`
+                    );
+                    sizeWarned = true;
                 }
                 continue;
             }
