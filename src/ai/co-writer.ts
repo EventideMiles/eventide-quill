@@ -383,7 +383,7 @@ export async function loadAdditionalContext(
             role: 'system',
             content:
                 'The reference files above are already in your context (full text, capped per file). ' +
-                'Do NOT vault_lookup or re-read any of these — reuse the content already here:\n' +
+                'Reuse their content directly rather than vault_lookup-ing or re-reading any of them:\n' +
                 regularPaths.map((p) => `- ${p}`).join('\n')
         });
     }
@@ -496,9 +496,9 @@ function buildNetworkToolsMessage(plugin: EventideQuillPlugin): ChatMessage | nu
         'Workflow: use the *_lookup tool to search, then use the *_page tool',
         'with the exact title from the results to retrieve the full extract.',
         '',
-        'Do not hesitate — if the writer mentions a topic that a wiki or',
-        'encyclopedia would know about, look it up. You do not need to ask',
-        'permission. Results count toward context — be judicious with very',
+        'Look things up freely — when the writer mentions a topic that a wiki or',
+        'encyclopedia would know about, go straight to the tool. You may proceed',
+        'without asking. Results count toward context — be judicious with very',
         'large pages.'
     );
     return { role: 'system', content: lines.join('\n') };
@@ -520,10 +520,10 @@ function buildInternalToolsMessage(plugin: EventideQuillPlugin): ChatMessage | n
         content: [
             'You have internal vault tools to ground your feedback in the manuscript and notes:',
             '- manuscript_mentions: where a character, place, or plot thread appears in the active manuscript (pass empty to list every entity the extractor found).',
-            "- vault_lookup: read a note's full text by path or name (frontmatter stripped). Use it for a SPECIFIC note you need in full — not to discover who/what is in the story.",
+            "- vault_lookup: read a note's full text by path or name (frontmatter stripped). Reserve it for a SPECIFIC note you need in full.",
             '- grep_notes: search for text across vault files to find where something is mentioned.',
             '- lore_siblings: list other lore entries near a given one.',
-            'To learn the cast and world (characters, locations, plot threads), call manuscript_mentions — do NOT vault_lookup lore files just to find out who exists. If manuscript_mentions returns "no entities," the dashboard has not been scanned: call refresh_dashboard (with a manuscript file path) and retry.',
+            'To learn the cast and world (characters, locations, plot threads), reach for manuscript_mentions — it lists the entities directly, saving a vault_lookup. If it returns "no entities," the dashboard has not been scanned: call refresh_dashboard (with a manuscript file path) and retry.',
             'Reach for these when a question of fact about the manuscript or vault would sharpen your answer. Tool results stay in context — read judiciously.'
         ].join('\n')
     };
@@ -1308,7 +1308,7 @@ export class CoWriterSession {
             const systemPrompt: ChatMessage = {
                 role: 'system',
                 content:
-                    'You are a thoughtful, knowledgeable editor assisting a novelist in a discussion about their work. Respond with specific, craft-focused observations. Ask clarifying questions when helpful. Do not generate prose unless explicitly asked.'
+                    'You are a thoughtful, knowledgeable editor assisting a novelist in a discussion about their work. Respond with specific, craft-focused observations. Ask clarifying questions when helpful. Keep to analysis and discussion, generating prose only when the writer explicitly asks for it.'
             };
             this.discussCurrentMessages = [systemPrompt];
         }
@@ -1649,7 +1649,7 @@ export class CoWriterSession {
             const systemPrompt: ChatMessage = {
                 role: 'system',
                 content:
-                    'You are a thoughtful writing coach guiding a novelist through what to do next in their scene. Your job is to ASK QUESTIONS — at least 2-3 clarifying questions in every response until you have enough information to provide a plan. Do NOT just analyze or discuss the passage without asking questions. Follow the phased structure: discern intent, ask questions, plan, direct. Do not write prose for the writer.'
+                    'You are a thoughtful writing coach guiding a novelist through what to do next in their scene. Your job is to ASK QUESTIONS — at least 2-3 clarifying questions in every response until you have enough information to provide a plan. Lead every response with those questions rather than moving straight to analysis or discussion. Follow the phased structure: discern intent, ask questions, plan, direct. Keep your output to coaching, leaving prose writing to the writer.'
             };
 
             this.discussCurrentMessages = [systemPrompt, { role: 'user', content: prompt }];
@@ -2565,7 +2565,7 @@ export class CoWriterSession {
                     'Fulfill the inline directive at this point in the scene. Your prose will replace the directive comment and sit between the text above and the text below.',
                     'Read the surrounding prose carefully. Do NOT repeat or rephrase content that already appears before or after the directive — the reader has already seen it.',
                     'Insert exactly what the directive asks for. If it says "a paragraph," write one paragraph. If it asks for a specific detail, action, or description, write only that — not a summary of what is already there.',
-                    'Your prose must flow naturally into the text that follows it. Write in the established voice and perspective. Output only the prose — no labels, no explanations.',
+                    'Your prose must flow naturally into the text that follows it. Write in the established voice and perspective. Output only the prose, plain and without labels or explanations.',
                     ...(globalInstruction ? ['', `Overall direction for this sweep: ${globalInstruction}`] : []),
                     '',
                     `Directive: "${range.text}"`,
@@ -3202,7 +3202,7 @@ export class CoWriterSession {
         const userMessage = [
             `Continue the passage from the cursor position following this direction: ${option.label} — ${option.description}`,
             '',
-            'Write the next paragraph or paragraphs in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation — no labels, no explanations.',
+            'Write the next paragraph or paragraphs in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation, plain and without labels or explanations.',
             '',
             '--- Current document up to cursor ---',
             textBeforeCursor.slice(-8000)
@@ -3427,7 +3427,7 @@ export class CoWriterSession {
             ? [
                   `Continue the passage from the cursor position following this direction: ${direction}`,
                   stoppingPointInstruction ? `\n${stoppingPointInstruction}` : '',
-                  'Write the next paragraph or paragraphs in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation \u2014 no labels, no explanations.',
+                  'Write the next paragraph or paragraphs in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation, plain and without labels or explanations.',
                   '',
                   '--- Current document up to cursor ---',
                   proseForContext
@@ -3435,7 +3435,7 @@ export class CoWriterSession {
             : [
                   'Continue the passage naturally from the cursor position.',
                   '',
-                  'Read the document up to the cursor and continue writing in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation \u2014 no labels, no explanations.',
+                  'Read the document up to the cursor and continue writing in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation, plain and without labels or explanations.',
                   '',
                   '--- Current document up to cursor ---',
                   proseForContext

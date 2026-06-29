@@ -25,13 +25,13 @@ export const runLorebookBatchTool: Tool = {
         'Spawn an isolated subagent to batch-edit a set of existing lore notes. The subagent runs ' +
         'the edit loop (vault_lookup → edit_note / insert_note / append_to_note, revise_edit on ' +
         'overlaps) in its OWN fresh context and returns only a short summary of what it changed, ' +
-        'so the tool rounds do NOT accumulate in this conversation. Pass the goal plus the FULL ' +
+        'keeping the tool rounds out of this conversation. Pass the goal plus the FULL ' +
         "file list — the tool sizes and chunks the batch against the subagent's own fresh context " +
-        "(NOT this conversation's remaining context), so do not pre-split the files yourself. " +
-        'Every produced diff lands in the shared review queue and stays there for the writer to ' +
-        'approve after the subagent closes. Use this for a BATCH (several files); for a single ' +
-        'quick edit, do it inline with edit_note / insert_note. This conversation is blocked while ' +
-        'the subagent runs (a local model cannot do two things at once).',
+        "(this conversation's remaining context is irrelevant), so hand it the full list and leave " +
+        'the splitting to the tool. Every produced diff lands in the shared review queue and stays ' +
+        'there for the writer to approve after the subagent closes. Use this for a BATCH (several ' +
+        'files); for a single quick edit, do it inline with edit_note / insert_note. This ' +
+        'conversation is blocked while the subagent runs (a local model handles one inference at a time).',
     parameters: {
         type: 'object',
         properties: {
