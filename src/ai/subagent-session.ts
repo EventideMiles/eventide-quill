@@ -20,7 +20,7 @@ export interface SubagentChatMessage {
  * What kind of batch a subagent runs — drives the status-card label and the
  * tools/prompt it's given. All three are the same runner with different config.
  */
-export type SubagentKind = 'lore' | 'research' | 'continuity';
+export type SubagentKind = 'lore' | 'research';
 
 /**
  * Configuration handed to a {@link SubagentSession} — the mode-specific bits

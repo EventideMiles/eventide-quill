@@ -163,7 +163,7 @@ src/
       context-helpers.ts, lore-edit-helpers.ts,
       manuscript-mentions.ts, lore-siblings.ts, vault-lookup.ts, grep-notes.ts,
       measure-folder.ts, calculate-file-sizes.ts, edit-note.ts, insert-note.ts, append-to-note.ts, revise-edit.ts,
-      run-lorebook-batch.ts, research.ts, continuity-audit.ts (subagent spawners → SubagentSession),
+      run-lorebook-batch.ts, research.ts (subagent spawners → SubagentSession),
       propose-entry.ts, fetch-url.ts, fetch-image-url.ts,
       fandom-lookup.ts, wikipedia-lookup.ts, mediawiki.ts (shared MediaWiki client)
   ui/                  # Views, modals, panels
@@ -198,7 +198,7 @@ Tool tiers (gating):
 |------|-------|--------------|
 | Internal (default on) | `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit` | `coWriterToolsEnabled` |
 | Lorebook coach only | `propose_entry` (surfaces a lore draft to the UI) | `createLoreCoachToolRegistry` |
-| Parent modes only | `run_lorebook_batch` (lore edits), `run_research` (vault Q&A), `run_continuity_audit` (manuscript audit) — each spawns a `SubagentSession`, see "Subagents" | `allowSubagents` (all parent modes: discuss/coach/lorebook; subagents pass `false` so they can't nest) |
+| Parent modes only | `run_lorebook_batch` (lore edits), `run_research` (vault Q&A) — each spawns a `SubagentSession`, see "Subagents" | `allowSubagents` (all parent modes: discuss/coach/lorebook; subagents pass `false` so they can't nest) |
 | Network (default on) | `fetch_url`, `fandom_lookup` / `fandom_page`, `wikipedia_lookup` / `wikipedia_page` | `lorebookNetworkTools` |
 | Image (default on) | `fetch_image_url`, `fandom_image` | `lorebookImageTools` |
 
@@ -208,19 +208,18 @@ Fandom requires a non-empty allowlist (`lorebookFandomWikis`), or the `lorebookF
 
 ## Subagents
 
-A **subagent** is a self-contained batch worker that runs in its OWN fresh context, isolated from the parent conversation, so a long, context-heavy task (a full lorebook edit, a vault-wide search, a continuity pass) doesn't pile into the user's chat and bloat it permanently. Three kinds share one runner:
+A **subagent** is a self-contained batch worker that runs in its OWN fresh context, isolated from the parent conversation, so a long, context-heavy task (a full lorebook edit, a vault-wide search) doesn't pile into the user's chat and bloat it permanently. Two kinds share one runner:
 
 - **`SubagentSession`** (`src/ai/subagent-session.ts`) — the generic runner, config-driven via `SubagentConfig` (`{ kind, goal, paths?, systemPrompt, brief, registry }`). Holds its own `messages` (fresh: the mode's system prompt + the task brief), its own `chatHistory` display buffer, a `status` (`running | succeeded | failed`), and a `summary`. It runs the tool loop (stream → assemble tool calls → execute → compact) without disturbing the working parent loops. State is plain serializable data (no live editor/abort handles mixed in) so the deferred conversation-persistence feature can layer on later.
 - **Three spawners, all parent-modes-only** (registered when `createToolRegistry(plugin, includeProposeEntry, allowSubagents=true)`; subagents pass `false`, so **subagents cannot spawn sub-subagents** — single-level nesting by construction):
   - `run_lorebook_batch { goal, paths }` (`src/ai/tools/run-lorebook-batch.ts`) — edits existing lore notes. Internal+editing tools; edits flow to the shared review queue.
   - `run_research { question }` (`src/ai/tools/research.ts`) — read-only vault Q&A; returns a cited findings report. Compares entries against external media (Wikipedia / Fandom / `fetch_url`) when `lorebookNetworkTools` is on.
-  - `run_continuity_audit { paths, focus? }` (`src/ai/tools/continuity-audit.ts`) — read-only manuscript continuity audit; returns a ranked, cited findings report.
-  - Research/continuity use `createReadOnlyToolRegistry(plugin, includeExternal)` (read-only vault tools; research passes `includeExternal=true` to also get the network/image tools via the shared `registerExternalTools` helper — continuity is manuscript-internal and passes false).
-- **Sizing lives where the context is.** `run_lorebook_batch` chunks the file list against the subagent's own fresh window (≈ the full context, since it starts from ~zero) — `CoWriterSession.runLorebookBatch` measures + chunks, one `SubagentSession` per chunk. Research runs as a single subagent (no file list); continuity runs as a single subagent over all given chapters (cross-chapter by nature — not chunked; compaction handles overflow). `measure_folder` / `calculate_file_sizes` still report against the PARENT's remaining context — for the parent's WHEN decision (subagent vs inline), not the subagent's internal sizing.
-- **Edits are NOT isolated; the conversation IS.** A lore subagent's edits flow through `plugin.coWriterSession.loreEdits` (the shared review queue) via the tools' side effects — a subagent-produced diff reviews exactly like an inline one and **persists after the subagent closes** (removed only by the writer's approve/reject/new-chat). Research/continuity produce no edits (read-only). Every subagent's `messages`/`chatHistory` are per-subagent and ephemeral.
+  - Both use `createReadOnlyToolRegistry(plugin, includeExternal)` (read-only vault tools; research passes `includeExternal=true` to also get the network/image tools via the shared `registerExternalTools` helper).
+- **Sizing lives where the context is.** `run_lorebook_batch` chunks the file list against the subagent's own fresh window (≈ the full context, since it starts from ~zero) — `CoWriterSession.runLorebookBatch` measures + chunks, one `SubagentSession` per chunk. Research runs as a single subagent (no file list). `measure_folder` / `calculate_file_sizes` still report against the PARENT's remaining context — for the parent's WHEN decision (subagent vs inline), not the subagent's internal sizing.
+- **Edits are NOT isolated; the conversation IS.** A lore subagent's edits flow through `plugin.coWriterSession.loreEdits` (the shared review queue) via the tools' side effects — a subagent-produced diff reviews exactly like an inline one and **persists after the subagent closes** (removed only by the writer's approve/reject/new-chat). Research produces no edits (read-only). Every subagent's `messages`/`chatHistory` are per-subagent and ephemeral.
 - **The parent is blocked while a subagent runs** — intentional and required for local models (one inference at a time). The subagent is the same model on the same provider, serialized as a synchronous tool call; it is NOT a concurrent process. Cancellation propagates via the parent's abort signal.
 
-Landed: the runner + registry + all three spawners, plus the drill-down UX — status cards in the parent view (labeled by kind: Batch edit / Research / Continuity; running/succeeded/failed) and a "View" action that drills into the subagent's internal conversation (with a `← Back` that returns to the parent chat, preserved intact). Navigation state lives on the session (`activeSubagentId`); the panel switches views via `setSubagents`/`setActiveSubagent` pushed on `onChatUpdate`. Deferred: stored/resumable conversation history (`.planning/pr-conversation-persistence.md`).
+Landed: the runner + registry + both spawners, plus the drill-down UX — status cards in the parent view (labeled by kind: Batch edit / Research; running/succeeded/failed) and a "View" action that drills into the subagent's internal conversation (with a `← Back` that returns to the parent chat, preserved intact). Navigation state lives on the session (`activeSubagentId`); the panel switches views via `setSubagents`/`setActiveSubagent` pushed on `onChatUpdate`. Deferred: stored/resumable conversation history (`.planning/pr-conversation-persistence.md`).
 
 ## Vision & image support
 

@@ -28,7 +28,7 @@ It runs locally by default (Ollama, or any OpenAI-compatible local server such a
 - **Collaborative Drafting** — writer leads, AI extends, turn by turn — in discuss, coach, and fulfill modes, in your voice and perspective.
 - **Co-writer Tool-calling** — the co-writer calls vault tools mid-conversation: read notes (`vault_lookup`, `grep_notes`), pull siblings and manuscript mentions, measure folder/file sizes, and propose reviewable edits (`edit_note`, `insert_note`, `append_to_note`, `revise_edit`). On by default; restrictable in settings.
 - **Network research tools** — optional `fetch_url`, Wikipedia, and Fandom lookups (Fandom gated by a configurable allowlist) for checking lore against external references.
-- **Subagents** — for big, context-heavy work, the co-writer can spawn isolated subagents that run in their own fresh context and return a summary: batch lore edits, vault Q&A + external research, and manuscript continuity audits. Keeps the main chat lean — especially valuable on local models.
+- **Subagents** — for big, context-heavy work, the co-writer can spawn isolated subagents that run in their own fresh context and return a summary: batch lore edits and vault Q&A + external research. Keeps the main chat lean — especially valuable on local models.
 
 **Worldbuilding**
 - **Lorebook + Lorebook Coach** — typed lore entries (characters, locations, events, items, factions, plot threads, themes) with coverage-gap detection, plus a Coach mode that drafts entries from your manuscript.

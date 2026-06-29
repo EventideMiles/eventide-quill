@@ -1,7 +1,6 @@
 import { ToolRegistry } from './tool';
 import { appendToNoteTool } from './append-to-note';
 import { calculateFileSizesTool } from './calculate-file-sizes';
-import { runContinuityAuditTool } from './continuity-audit';
 import { createFandomImageTool, createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
 import { createFetchImageUrlTool } from './fetch-image-url';
 import { createFetchUrlTool } from './fetch-url';
@@ -13,6 +12,7 @@ import { loreSiblingsTool } from './lore-siblings';
 import { manuscriptMentionsTool } from './manuscript-mentions';
 import { measureFolderTool } from './measure-folder';
 import { proposeEntryTool } from './propose-entry';
+import { refreshDashboardTool } from './refresh-dashboard';
 import { runResearchTool } from './research';
 import { reviseEditTool } from './revise-edit';
 import { runLorebookBatchTool } from './run-lorebook-batch';
@@ -35,17 +35,17 @@ export { loreSiblingsTool } from './lore-siblings';
 export { manuscriptMentionsTool } from './manuscript-mentions';
 export { measureFolderTool } from './measure-folder';
 export { proposeEntryTool } from './propose-entry';
+export { refreshDashboardTool } from './refresh-dashboard';
 export { reviseEditTool } from './revise-edit';
-export { runContinuityAuditTool } from './continuity-audit';
 export { runLorebookBatchTool } from './run-lorebook-batch';
 export { runResearchTool } from './research';
 export { vaultLookupTool } from './vault-lookup';
 
 /**
- * Build a registry containing the ten internal-only tools:
+ * Build a registry containing the eleven internal-only tools:
  * `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`,
  * `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`,
- * `append_to_note`, `revise_edit`.
+ * `append_to_note`, `revise_edit`, `refresh_dashboard`.
  */
 export function createInternalToolRegistry(): ToolRegistry {
     const registry = new ToolRegistry();
@@ -59,6 +59,7 @@ export function createInternalToolRegistry(): ToolRegistry {
     registry.register(insertNoteTool);
     registry.register(appendToNoteTool);
     registry.register(reviseEditTool);
+    registry.register(refreshDashboardTool);
     return registry;
 }
 
@@ -103,8 +104,8 @@ export function createLoreCoachToolRegistry(): ToolRegistry {
  * - `includeProposeEntry` → adds propose_entry (lorebook coach only)
  * - `allowSubagents` → adds the subagent spawners (parent modes only; the
  *   subagents themselves pass false so they cannot spawn sub-subagents —
- *   single-level nesting by construction): `run_lorebook_batch` (lore edits),
- *   `run_research` (vault Q&A), `run_continuity_audit` (manuscript audit)
+ *   single-level nesting by construction): `run_lorebook_batch` (lore edits)
+ *   and `run_research` (vault Q&A)
  *
  * Network tools use factory functions because their maxResultTokens and
  * configuration (Fandom wikis, Wikipedia language) come from settings.
@@ -121,7 +122,6 @@ export function createToolRegistry(
     if (allowSubagents) {
         registry.register(runLorebookBatchTool);
         registry.register(runResearchTool);
-        registry.register(runContinuityAuditTool);
     }
 
     registerExternalTools(registry, plugin);

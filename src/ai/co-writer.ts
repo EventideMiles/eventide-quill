@@ -16,7 +16,6 @@ import {
     getLoreCoachSystemPrompt,
     getLoreCoachUserPrompt,
     getResearchSystemPrompt,
-    getContinuitySystemPrompt,
     type ActiveSteering
 } from './prompts';
 import { compactConversation } from './compaction';
@@ -3022,38 +3021,8 @@ export class CoWriterSession {
     }
 
     /**
-     * Spawn a continuity subagent: audits the given manuscript chapters (plus
-     * relevant lorebook) for continuity problems and returns a cited, ranked
-     * findings report. Read-only. Chapters are NOT chunked — continuity is
-     * cross-chapter by nature, so the subagent reads them together (compaction
-     * handles overflow). Awaits completion; aborts propagate.
-     */
-    async runContinuityAudit(
-        plugin: EventideQuillPlugin,
-        provider: AiProvider,
-        modelId: string,
-        paths: string[],
-        focus: string,
-        parentSignal?: AbortSignal
-    ): Promise<string> {
-        const fileList = `\n${paths.map((p) => `- ${p}`).join('\n')}`;
-        const focusLine = focus
-            ? `\n\nFocus: ${focus}`
-            : '\n\nFocus: audit generally (contradictions, timeline, character consistency, worldbuilding).';
-        const config: SubagentConfig = {
-            kind: 'continuity',
-            goal: focus ? `Continuity audit: ${focus}` : 'Continuity audit',
-            paths,
-            systemPrompt: getContinuitySystemPrompt(),
-            brief: `Audit continuity across these manuscript chapters:${fileList}${focusLine}\n\nRead them in order, cross-check against the lorebook where relevant, and end with a ranked, cited findings report.`,
-            registry: createReadOnlyToolRegistry(plugin)
-        };
-        return this.runSubagent(plugin, provider, modelId, config, parentSignal);
-    }
-
-    /**
-     * Shared single-run subagent driver used by the non-chunked kinds (research,
-     * continuity). Creates the session, wires its UI callbacks, registers it,
+     * Shared single-run subagent driver used by the non-chunked kind (research).
+     * Creates the session, wires its UI callbacks, registers it,
      * runs it, and returns its summary. Throws AbortError on cancel (propagates
      * to the parent's cleanup); other failures come back as the summary string.
      */
