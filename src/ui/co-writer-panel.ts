@@ -35,6 +35,13 @@ const COWRITER_MODES: { mode: InputMode; icon: string; label: string; desc: stri
     }
 ];
 
+/**
+ * Maximum number of images that can be queued for a single outgoing message.
+ * Balances multi-image reference (character + outfit + map) against token cost
+ * under Regime A and downscale latency under Regime B.
+ */
+const MAX_PENDING_IMAGES = 4;
+
 /** Extract a display name from a vault path. */
 function fileNameFromPath(path: string): string {
     const lastSlash = path.lastIndexOf('/');
@@ -71,6 +78,12 @@ export class CoWriterPanel extends AbstractChatPanel {
     private inputMode: InputMode = 'coach';
     /** Preserved textarea value across re-renders so user-typed content survives generation. */
     private inputValue = '';
+    /**
+     * Pending image attachments (base64 JPEG, no `data:` prefix) captured via
+     * paste/drop/attach but not yet sent. Cleared on send, on mode switch, and
+     * on new chat. Capped at {@link MAX_PENDING_IMAGES}.
+     */
+    private pendingImages: string[] = [];
     /** Whether the last message is streaming (in-progress assistant response). */
     private discussStreaming = false;
     /** Current coach phase, if coach mode is active. */
@@ -97,13 +110,13 @@ export class CoWriterPanel extends AbstractChatPanel {
     private loreCoachActive = false;
 
     private onSendMessage: ((direction: string) => void) | null = null;
-    private onDiscussMessage: ((message: string) => void) | null = null;
+    private onDiscussMessage: ((message: string, images?: string[]) => void) | null = null;
     private onGenerateOptions: ((direction: string) => void) | null = null;
     private onApplyOption: ((index: number) => void) | null = null;
     private onAddContextFile: ((filePath: string) => void) | null = null;
     private onRemoveContextFile: ((filePath: string) => void) | null = null;
     private onRefreshSuggestions: (() => void) | null = null;
-    private onCoachMessage: ((message: string) => void) | null = null;
+    private onCoachMessage: ((message: string, images?: string[]) => void) | null = null;
     private onCoachToOptions: (() => void) | null = null;
     private onEndCoach: (() => void) | null = null;
     private onAcceptPlan: (() => void) | null = null;
@@ -117,7 +130,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onRejectAllFulfill: (() => void) | null = null;
     private onApproveDirect: ((id: number) => void) | null = null;
     private onRejectDirect: ((id: number) => void) | null = null;
-    private onLoreCoachMessage: ((message: string) => void) | null = null;
+    private onLoreCoachMessage: ((message: string, images?: string[]) => void) | null = null;
     private onEndLoreCoach: (() => void) | null = null;
     private onDiscardLoreDraft: ((draft: LoreDraftEntry) => void) | null = null;
     private onApproveLoreEdit: ((filePath: string, id: number) => void) | null = null;
@@ -171,7 +184,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     }
 
     /** Set the handler invoked when the user sends a discussion (brainstorming) message. */
-    setDiscussMessageHandler(handler: (message: string) => void): void {
+    setDiscussMessageHandler(handler: (message: string, images?: string[]) => void): void {
         this.onDiscussMessage = handler;
     }
 
@@ -201,7 +214,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     }
 
     /** Set the handler invoked when the user submits a coach message. */
-    setCoachMessageHandler(handler: (message: string) => void): void {
+    setCoachMessageHandler(handler: (message: string, images?: string[]) => void): void {
         this.onCoachMessage = handler;
     }
 
@@ -369,7 +382,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     }
 
     /** Set the handler invoked when the user sends a message in lorebook coach mode. */
-    setLoreCoachMessageHandler(handler: (message: string) => void): void {
+    setLoreCoachMessageHandler(handler: (message: string, images?: string[]) => void): void {
         this.onLoreCoachMessage = handler;
     }
 
@@ -1553,6 +1566,12 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.userScrolledUp = false; // Resume auto-follow on new message
             this.inputValue = '';
             input.value = '';
+            // Snapshot pending images and clear the queue. Only the chat modes
+            // (discuss/coach/lorebook) consume images — direct/fulfill are
+            // prose-continuation and stay text-only, so their pendingImages is
+            // always empty by construction (capture is disabled there).
+            const sentImages = this.pendingImages.length > 0 ? [...this.pendingImages] : undefined;
+            this.pendingImages = [];
             if (this.inputMode === 'direct') {
                 this.optionsLoading = true;
             } else if (this.inputMode === 'fulfill') {
@@ -1567,11 +1586,11 @@ export class CoWriterPanel extends AbstractChatPanel {
                 const timeoutId = window.setTimeout(() => this.onRunFulfill?.(''));
                 this.renderEvents.register(() => window.clearTimeout(timeoutId));
             } else if (this.inputMode === 'coach') {
-                this.onCoachMessage?.(text);
+                this.onCoachMessage?.(text, sentImages);
             } else if (this.inputMode === 'lorebook') {
-                this.onLoreCoachMessage?.(text);
+                this.onLoreCoachMessage?.(text, sentImages);
             } else {
-                this.onDiscussMessage?.(text);
+                this.onDiscussMessage?.(text, sentImages);
             }
         };
 

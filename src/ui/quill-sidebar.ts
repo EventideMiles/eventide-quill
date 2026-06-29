@@ -645,8 +645,8 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setSendMessageHandler((direction: string) => {
                 void this.plugin.sendCoWriterMessage(direction);
             });
-            this.coWriterPanel.setDiscussMessageHandler((message: string) => {
-                void this.plugin.sendCoWriterDiscussion(message);
+            this.coWriterPanel.setDiscussMessageHandler((message: string, images?: string[]) => {
+                void this.plugin.sendCoWriterDiscussion(message, images);
             });
             this.coWriterPanel.setApplyOptionHandler((index: number) => {
                 const manuscriptPath = this.plugin.coWriterSession.manuscriptPath;
@@ -678,8 +678,8 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setNewChatHandler((clearContext: boolean) => {
                 this.plugin.resetCoWriterChat(clearContext);
             });
-            this.coWriterPanel.setCoachMessageHandler((message: string) => {
-                void this.plugin.sendCoWriterCoach(message);
+            this.coWriterPanel.setCoachMessageHandler((message: string, images?: string[]) => {
+                void this.plugin.sendCoWriterCoach(message, images);
             });
             this.coWriterPanel.setCoachToOptionsHandler(() => {
                 void this.plugin.coWriterCoachToOptions();
@@ -720,8 +720,8 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setRejectDirectHandler((id: number) => {
                 this.plugin.rejectDirectChange(id);
             });
-            this.coWriterPanel.setLoreCoachMessageHandler((message: string) => {
-                void this.plugin.sendCoWriterLoreCoach(message);
+            this.coWriterPanel.setLoreCoachMessageHandler((message: string, images?: string[]) => {
+                void this.plugin.sendCoWriterLoreCoach(message, images);
             });
             this.coWriterPanel.setEndLoreCoachHandler(() => {
                 this.plugin.endCoWriterLoreCoach();

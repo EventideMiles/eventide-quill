@@ -1827,26 +1827,26 @@ export default class EventideQuillPlugin extends Plugin {
     /**
      * Send a discussion message to the co-writer (brainstorming mode, no options).
      */
-    async sendCoWriterDiscussion(message: string): Promise<void> {
+    async sendCoWriterDiscussion(message: string, images?: string[]): Promise<void> {
         const path = this.app.workspace.getActiveFile()?.path;
         if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
         await this.ensureContextInitialized();
         this.wireCoWriterPanel();
-        await this.coWriterSession.sendDiscussion(this, message);
+        await this.coWriterSession.sendDiscussion(this, message, images);
     }
 
     /**
      * Send a coach message to the co-writer.
      * The AI analyzes the passage and guides the writer through a structured process.
      */
-    async sendCoWriterCoach(message: string): Promise<void> {
+    async sendCoWriterCoach(message: string, images?: string[]): Promise<void> {
         const path = this.app.workspace.getActiveFile()?.path;
         if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
         await this.ensureContextInitialized();
         this.wireCoWriterPanel();
-        await this.coWriterSession.sendCoach(this, message);
+        await this.coWriterSession.sendCoach(this, message, images);
     }
 
     /**
@@ -1923,10 +1923,10 @@ export default class EventideQuillPlugin extends Plugin {
      * lore siblings, and vault notes mid-generation, then proposes a draft
      * entry for the writer to review and save as a note.
      */
-    async sendCoWriterLoreCoach(message: string): Promise<void> {
+    async sendCoWriterLoreCoach(message: string, images?: string[]): Promise<void> {
         await this.openCoWriterPanel();
         this.wireCoWriterPanel();
-        await this.coWriterSession.sendLoreCoach(this, message);
+        await this.coWriterSession.sendLoreCoach(this, message, images);
     }
 
     /** End the current Lorebook Coach session. */
@@ -2371,6 +2371,17 @@ export default class EventideQuillPlugin extends Plugin {
             this.lintPanel?.coWriterSetAdditionalContextTokens(0);
         }
         this.lintPanel?.coWriterRefresh();
+    }
+
+    /**
+     * Clear subagent sessions without resetting the rest of the chat. Used on
+     * every co-writer mode switch so a subagent queued for one mode doesn't
+     * follow the writer into another. Chat history is preserved (only the
+     * subagents map and drill-down state are cleared); the new-chat path goes
+     * through {@link resetCoWriterChat} instead.
+     */
+    clearCoWriterSubagents(): void {
+        this.coWriterSession.clearSubagents();
     }
 
     /**
