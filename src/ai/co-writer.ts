@@ -27,12 +27,7 @@ import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
 import { ChangeSet } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
-import {
-    createReadOnlyToolRegistry,
-    createToolRegistry,
-    executeToolCall,
-    type ToolContext
-} from './tools';
+import { createReadOnlyToolRegistry, createToolRegistry, executeToolCall, type ToolContext } from './tools';
 import { injectImagesIntoMessages } from './vision';
 import { SubagentSession, type SubagentView, type SubagentConfig } from './subagent-session';
 import { resolveNoteFile } from './tools/lore-edit-helpers';
