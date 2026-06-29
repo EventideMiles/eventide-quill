@@ -30,6 +30,7 @@ import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-t
 import {
     createReadOnlyToolRegistry,
     createToolRegistry,
+    executeToolCall,
     type ToolContext,
     type ToolRegistry,
     type ToolResult
@@ -1148,53 +1149,6 @@ export class CoWriterSession {
     }
 
     /**
-     * Execute one tool call with JSON argument parsing, result truncation,
-     * and full error containment. Non-abort failures surface to the model as
-     * an error string so it can recover; aborts (`AbortError` or an already-
-     * aborted signal) are rethrown so the outer tool loop's cleanup runs.
-     */
-    private async executeToolCallSafely(
-        call: ToolCallRequest,
-        registry: ToolRegistry,
-        ctx: ToolContext
-    ): Promise<ToolResult> {
-        const tool = registry.get(call.name);
-        if (!tool) return { text: `Error: tool "${call.name}" is not registered.` };
-
-        let parsedArgs: Record<string, unknown>;
-        try {
-            parsedArgs =
-                call.arguments.trim().length === 0 ? {} : (JSON.parse(call.arguments) as Record<string, unknown>);
-        } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { text: `Error: invalid JSON arguments: ${msg}` };
-        }
-
-        try {
-            // Propagate aborts so the outer tool loop's abort handling takes
-            // over (loading-state reset + editor unlock). Without this, a
-            // cancellation mid-tool-execution would be swallowed as model-visible
-            // error text and the loop would keep running. The outer catches in
-            // each mode recognize AbortError by name and run the same cleanup
-            // path used for aborted streams.
-            if (ctx.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-            const result = await tool.execute(parsedArgs, ctx);
-            const normalized: ToolResult = typeof result === 'string' ? { text: result } : result;
-            const maxChars = tool.maxResultTokens * 4;
-            if (normalized.text.length > maxChars) {
-                normalized.text = `${normalized.text.slice(0, maxChars)}\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
-            }
-            return normalized;
-        } catch (err) {
-            // Rethrow aborts — including tools that surface a generic Error
-            // after the signal has already fired (checked via signal.aborted).
-            if (ctx.signal?.aborted || (err instanceof Error && err.name === 'AbortError')) throw err;
-            const msg = err instanceof Error ? err.message : String(err);
-            return { text: `Error executing tool "${call.name}": ${msg}` };
-        }
-    }
-
-    /**
      * Annotate the last assistant message's toolUses with error info for
      * failed tool calls, so the panel can render them red and show the
      * reason on hover / right-click copy. Called after the execution loop
@@ -1484,7 +1438,7 @@ export class CoWriterSession {
                 const execResults: { failed: boolean; result: string }[] = [];
                 const collectedImages: string[] = [];
                 for (const call of result.toolCalls) {
-                    const toolResult = await this.executeToolCallSafely(call, registry, ctx);
+                    const toolResult = await executeToolCall(call, registry, ctx);
                     execResults.push({ failed: toolResult.text.startsWith('Error'), result: toolResult.text });
                     this.discussCurrentMessages.push({
                         role: 'tool',
@@ -1815,7 +1769,7 @@ export class CoWriterSession {
                 const coachExecResults: { failed: boolean; result: string }[] = [];
                 const coachCollectedImages: string[] = [];
                 for (const call of result.toolCalls) {
-                    const toolResult = await this.executeToolCallSafely(call, registry, ctx);
+                    const toolResult = await executeToolCall(call, registry, ctx);
                     coachExecResults.push({ failed: toolResult.text.startsWith('Error'), result: toolResult.text });
                     this.discussCurrentMessages.push({
                         role: 'tool',
@@ -2358,7 +2312,7 @@ export class CoWriterSession {
                 const loreExecResults: { failed: boolean; result: string }[] = [];
                 const loreCollectedImages: string[] = [];
                 for (const call of toolCalls) {
-                    const toolResult = await this.executeToolCallSafely(call, registry, ctx);
+                    const toolResult = await executeToolCall(call, registry, ctx);
                     loreExecResults.push({ failed: toolResult.text.startsWith('Error'), result: toolResult.text });
                     this.loreCoachMessages.push({
                         role: 'tool',

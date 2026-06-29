@@ -1,8 +1,8 @@
-import { type AiProvider, type ChatMessage, type ToolCallRequest } from './provider';
+import { type AiProvider, type ChatMessage } from './provider';
 import type EventideQuillPlugin from '../main';
 import { compactConversation } from './compaction';
 import { estimateTokens } from '../utils/tokens';
-import { type ToolContext, type ToolRegistry, type ToolResult } from './tools';
+import { executeToolCall, type ToolContext, type ToolRegistry } from './tools';
 import { injectImagesIntoMessages } from './vision';
 
 /** Lifecycle states for a subagent batch, surfaced in the drill-down UI (stage 2). */
@@ -233,7 +233,7 @@ export class SubagentSession {
                 // tools' side effects (plugin.coWriterSession).
                 const collectedImages: string[] = [];
                 for (const call of toolCalls) {
-                    const result = await this.executeToolCall(call, registry, ctx);
+                    const result = await executeToolCall(call, registry, ctx);
                     this.messages.push({ role: 'tool', content: result.text, toolCallId: call.id, name: call.name });
                     this.chatHistory.push({ role: 'tool', content: result.text });
                     if (result.images && result.images.length > 0) collectedImages.push(...result.images);
@@ -291,46 +291,6 @@ export class SubagentSession {
     /** Current request token estimate (conversation + tools-field overhead). */
     private requestTokens(): number {
         return estimateTokens(this.messages) + this.toolTokenOverhead;
-    }
-
-    /**
-     * Execute one tool call: JSON-arg parsing, error containment, truncation.
-     * Mirrors the parent loops' `executeToolCallSafely` semantics — aborts
-     * propagate, other failures surface to the model as an error string. The
-     * overlap guard and revise_edit logic live inside the tools themselves, so
-     * they apply uniformly here.
-     */
-    private async executeToolCall(
-        call: ToolCallRequest,
-        registry: ToolRegistry,
-        ctx: ToolContext
-    ): Promise<ToolResult> {
-        const tool = registry.get(call.name);
-        if (!tool) return { text: `Error: tool "${call.name}" is not registered.` };
-
-        let parsedArgs: Record<string, unknown>;
-        try {
-            parsedArgs =
-                call.arguments.trim().length === 0 ? {} : (JSON.parse(call.arguments) as Record<string, unknown>);
-        } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { text: `Error: invalid JSON arguments: ${msg}` };
-        }
-
-        try {
-            if (ctx.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-            const result = await tool.execute(parsedArgs, ctx);
-            const normalized: ToolResult = typeof result === 'string' ? { text: result } : result;
-            const maxChars = tool.maxResultTokens * 4;
-            if (normalized.text.length > maxChars) {
-                normalized.text = `${normalized.text.slice(0, maxChars)}\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
-            }
-            return normalized;
-        } catch (err) {
-            if (ctx.signal?.aborted || (err instanceof Error && err.name === 'AbortError')) throw err;
-            const msg = err instanceof Error ? err.message : String(err);
-            return { text: `Error executing tool "${call.name}": ${msg}` };
-        }
     }
 
     private fail(reason: string): string {

@@ -1,5 +1,5 @@
 import type EventideQuillPlugin from '../../main';
-import type { ToolDefinition } from '../provider';
+import type { ToolCallRequest, ToolDefinition } from '../provider';
 
 /**
  * Structured tool result. `text` is always shown to the model as the tool's
@@ -179,5 +179,44 @@ export class ToolRegistry {
             function: { name: t.name, description: t.description, parameters: t.parameters }
         }));
         return Math.ceil(JSON.stringify(wrapped).length / 4);
+    }
+}
+
+/**
+ * Execute one tool call: JSON-arg parsing, error containment, result
+ * truncation. The single source of truth for tool-execution semantics across
+ * every tool-loop path (co-writer modes, SubagentSession, streamWithTools) —
+ * aborts propagate, non-abort failures surface as an error string the model
+ * can recover from, and results are truncated to `maxResultTokens * 4` chars.
+ */
+export async function executeToolCall(
+    call: ToolCallRequest,
+    registry: ToolRegistry,
+    ctx: ToolContext
+): Promise<ToolResult> {
+    const tool = registry.get(call.name);
+    if (!tool) return { text: `Error: tool "${call.name}" is not registered.` };
+
+    let parsedArgs: Record<string, unknown>;
+    try {
+        parsedArgs = call.arguments.trim().length === 0 ? {} : (JSON.parse(call.arguments) as Record<string, unknown>);
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { text: `Error: invalid JSON arguments: ${msg}` };
+    }
+
+    try {
+        if (ctx.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        const result = await tool.execute(parsedArgs, ctx);
+        const normalized: ToolResult = typeof result === 'string' ? { text: result } : result;
+        const maxChars = tool.maxResultTokens * 4;
+        if (normalized.text.length > maxChars) {
+            normalized.text = `${normalized.text.slice(0, maxChars)}\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
+        }
+        return normalized;
+    } catch (err) {
+        if (ctx.signal?.aborted || (err instanceof Error && err.name === 'AbortError')) throw err;
+        const msg = err instanceof Error ? err.message : String(err);
+        return { text: `Error executing tool "${call.name}": ${msg}` };
     }
 }

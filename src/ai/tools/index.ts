@@ -19,7 +19,7 @@ import { runLorebookBatchTool } from './run-lorebook-batch';
 import { vaultLookupTool } from './vault-lookup';
 import type EventideQuillPlugin from '../../main';
 
-export { ToolRegistry } from './tool';
+export { ToolRegistry, executeToolCall } from './tool';
 export type { Tool, ToolContext, ToolResult } from './tool';
 export { streamWithTools } from './tool-loop';
 export { appendToNoteTool } from './append-to-note';

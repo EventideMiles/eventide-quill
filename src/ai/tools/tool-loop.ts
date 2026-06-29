@@ -1,5 +1,5 @@
 import type { AiProvider, ChatChunk, ChatMessage, ToolCallRequest } from '../provider';
-import type { Tool, ToolContext, ToolRegistry, ToolResult } from './tool';
+import { executeToolCall, type ToolContext, type ToolRegistry } from './tool';
 import { injectImagesIntoMessages } from '../vision';
 
 /**
@@ -163,13 +163,7 @@ export async function* streamWithTools(
         // → tool results → user image message → assistant).
         const collectedImages: string[] = [];
         for (const call of toolCalls) {
-            const tool = registry.get(call.name);
-            let result: ToolResult;
-            if (!tool) {
-                result = { text: `Error: tool "${call.name}" is not registered.` };
-            } else {
-                result = await executeToolSafely(tool, call.arguments, ctx);
-            }
+            const result = await executeToolCall(call, registry, ctx);
             messages.push({
                 role: 'tool',
                 content: result.text,
@@ -195,43 +189,4 @@ export async function* streamWithTools(
     if (lastModel) doneChunk.model = lastModel;
     if (lastUsage) doneChunk.usage = lastUsage;
     yield doneChunk;
-}
-
-/**
- * Parse arguments JSON and execute the tool with truncation + error
- * containment. Non-abort failures surface to the model as a tool-result
- * error string so the model can recover or apologize; aborts (`AbortError`
- * or an already-aborted signal) are rethrown so the consumer of
- * {@link streamWithTools} can run its abort cleanup — the same channel the
- * underlying stream uses to signal cancellation.
- */
-async function executeToolSafely(tool: Tool, argumentsJson: string, ctx: ToolContext): Promise<ToolResult> {
-    try {
-        if (ctx.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-
-        // Parse the arguments JSON the model emitted. Tolerant of empty
-        // arguments (treat as empty object) — some models emit `{}` or `""`.
-        let args: Record<string, unknown>;
-        try {
-            const trimmed = argumentsJson.trim();
-            args = trimmed.length === 0 ? {} : (JSON.parse(trimmed) as Record<string, unknown>);
-        } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { text: `Error: invalid JSON arguments: ${msg}. You emitted: ${argumentsJson.slice(0, 200)}` };
-        }
-
-        const result = await tool.execute(args, ctx);
-        const normalized: ToolResult = typeof result === 'string' ? { text: result } : result;
-        const maxChars = tool.maxResultTokens * 4; // rough tokens → chars
-        if (normalized.text.length > maxChars) {
-            normalized.text = `${normalized.text.slice(0, maxChars)}\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
-        }
-        return normalized;
-    } catch (err) {
-        // Rethrow aborts — including tools that surface a generic Error after
-        // the signal has already fired (checked via signal.aborted).
-        if (ctx.signal?.aborted || (err instanceof Error && err.name === 'AbortError')) throw err;
-        const message = err instanceof Error ? err.message : String(err);
-        return { text: `Error executing tool "${tool.id}": ${message}` };
-    }
 }
