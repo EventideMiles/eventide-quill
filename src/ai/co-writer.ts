@@ -2629,13 +2629,15 @@ export class CoWriterSession {
     // ── Lore edit (edit_note / insert_note / append_to_note tools) ──────
 
     /**
-     * Approve a pending lore edit: commit the ChangeSet edit to the target
-     * note. If the file is open in an editor, dispatches via CodeMirror (the
-     * normal path). If the file was closed (the writer tabbed away or it was
-     * never open), falls back to reading + modifying the file directly.
+     * Approve one pending lore edit: commit it to the target note. If the file
+     * is open in an editor, dispatches via CodeMirror (the normal path) and
+     * re-pushes any remaining pending edits as the diff. If the file was closed
+     * (the writer tabbed away), falls back to reading + modifying the file
+     * directly.
      *
-     * If the tool opened the file in a new tab, the tab is closed after
-     * applying the change so multi-file edits don't leave a trail of tabs.
+     * Multiple edits may be pending for the same file (e.g. an insert_note plus
+     * an edit_note on one character). The entry — and the tab the tool opened —
+     * are torn down only when the last pending edit is resolved.
      */
     approveLoreEdit(filePath: string, id: number): void {
         const entry = this.loreEdits.get(filePath);
@@ -2645,26 +2647,32 @@ export class CoWriterSession {
         const cm = view ? (view.editor as unknown as { cm: EditorView }).cm : null;
 
         if (cm) {
-            // File is open — reconcile any drift from manual edits during
-            // review (same sync the other approval flows do), then dispatch.
+            // File is open — reconcile drift, approve this edit, and re-push the
+            // remaining pending lore edits as the diff in the same transaction
+            // (approved/rejected edits render no decoration). Later edits'
+            // offsets are remapped by ChangeSet.approve so they stay valid.
             syncChangeSetPositions(cm, entry.changeSet, 'lore_edit');
             const change = entry.changeSet.approve(id);
             if (!change) return;
             const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'lore_edit');
             cm.dispatch({
                 changes: change,
-                effects: setDiffEdits.of(preserved),
+                effects: setDiffEdits.of([...preserved, ...toDiffSnapshots(entry.changeSet, 'lore_edit', filePath)]),
                 selection: { anchor: change.from + change.insert.length }
             });
-            this.closeLoreEditTabIfOpenedByTool(filePath);
-            this.loreEdits.delete(filePath);
+            if (!entry.changeSet.hasPending) {
+                this.closeLoreEditTabIfOpenedByTool(filePath);
+                this.loreEdits.delete(filePath);
+            }
             this.onLoreEditUpdate?.();
             return;
         }
 
-        // File isn't open — apply the change directly via the vault. Don't
-        // close the tab, delete the entry, or fire updates until the write
-        // has actually succeeded, so a failed write keeps the edit reviewable.
+        // File isn't open — apply the single edit directly via the vault.
+        // ChangeSet.approve remaps later edits' offsets, so each one-shot write
+        // stays valid against the post-write content. Don't close the tab,
+        // delete the entry, or fire updates until the write has actually
+        // succeeded, so a failed write keeps the edit reviewable.
         if (this.app) {
             const file = this.app.vault.getAbstractFileByPath(filePath);
             if (file instanceof TFile) {
@@ -2674,8 +2682,10 @@ export class CoWriterSession {
                     .process(file, (content) => content.slice(0, edit.from) + edit.newText + content.slice(edit.to))
                     .then(() => {
                         entry.changeSet.approve(id);
-                        this.closeLoreEditTabIfOpenedByTool(filePath);
-                        this.loreEdits.delete(filePath);
+                        if (!entry.changeSet.hasPending) {
+                            this.closeLoreEditTabIfOpenedByTool(filePath);
+                            this.loreEdits.delete(filePath);
+                        }
                         this.onLoreEditUpdate?.();
                     })
                     .catch((err: unknown) => {
@@ -2686,25 +2696,43 @@ export class CoWriterSession {
             }
         }
 
-        // Fallback (no app, no open editor, or file vanished) — just clear.
-        const change = entry.changeSet.approve(id);
-        if (!change) return;
-        this.closeLoreEditTabIfOpenedByTool(filePath);
-        this.loreEdits.delete(filePath);
+        // Fallback (no app, no open editor, or file vanished) — approve in-memory only.
+        entry.changeSet.approve(id);
+        if (!entry.changeSet.hasPending) {
+            this.closeLoreEditTabIfOpenedByTool(filePath);
+            this.loreEdits.delete(filePath);
+        }
         this.onLoreEditUpdate?.();
     }
 
-    /** Reject a pending lore edit for a specific file: discard the diff. */
-    rejectLoreEdit(filePath: string): void {
-        if (this.app) {
-            const view = findEditorView(this.app, filePath);
-            if (view) {
-                const cm = (view.editor as unknown as { cm: EditorView }).cm;
-                if (cm) clearDiffEdits(cm, 'lore_edit');
+    /**
+     * Reject one pending lore edit by id; leave any siblings pending. Tears
+     * down the entry (and the tool-opened tab) only when the last pending edit
+     * for the file is resolved.
+     */
+    rejectLoreEdit(filePath: string, id: number): void {
+        const entry = this.loreEdits.get(filePath);
+        if (!entry) return;
+
+        const view = this.app ? findEditorView(this.app, filePath) : null;
+        const cm = view ? (view.editor as unknown as { cm: EditorView }).cm : null;
+
+        if (cm) {
+            syncChangeSetPositions(cm, entry.changeSet, 'lore_edit');
+            entry.changeSet.reject(id);
+            if (entry.changeSet.hasPending) {
+                pushDiffEdits(cm, toDiffSnapshots(entry.changeSet, 'lore_edit', filePath));
+            } else {
+                clearDiffEdits(cm, 'lore_edit');
             }
+        } else {
+            entry.changeSet.reject(id);
         }
-        this.closeLoreEditTabIfOpenedByTool(filePath);
-        this.loreEdits.delete(filePath);
+
+        if (!entry.changeSet.hasPending) {
+            this.closeLoreEditTabIfOpenedByTool(filePath);
+            this.loreEdits.delete(filePath);
+        }
         this.onLoreEditUpdate?.();
     }
 
@@ -2740,10 +2768,11 @@ export class CoWriterSession {
     }
 
     /**
-     * Get or create a per-file ChangeSet for a pending lore edit. Each file
-     * tracks its own ChangeSet (one pending edit per file at a time) so the
-     * model can propose edits to multiple files in a single conversation
-     * ("full lorebook edit") without losing earlier proposals.
+     * Get or create a per-file ChangeSet for pending lore edits. Each file
+     * tracks its own ChangeSet and may hold MULTIPLE pending edits at once
+     * (e.g. an insert_note plus an edit_note on the same character), so the
+     * model can compose multi-step changes to one note without clobbering
+     * earlier proposals. Edits for different files are independent.
      */
     getOrCreateLoreEdit(filePath: string, fileBasename: string): { changeSet: ChangeSet; fileBasename: string } {
         let entry = this.loreEdits.get(filePath);

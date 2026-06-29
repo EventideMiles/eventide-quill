@@ -375,7 +375,7 @@ export default class EventideQuillPlugin extends Plugin {
                     else if (owner === 'transform') this.rejectTransformChange(id);
                     else if (owner === 'direct') this.rejectDirectChange(id);
                     else if (owner === 'lint-batch') this.rejectLintBatchChange(id);
-                    else if (owner === 'lore_edit' && filePath) this.rejectLoreEdit(filePath);
+                    else if (owner === 'lore_edit' && filePath) this.rejectLoreEdit(filePath, id);
                 }
             })
         );
@@ -1948,9 +1948,9 @@ export default class EventideQuillPlugin extends Plugin {
         this.coWriterSession.approveLoreEdit(filePath, id);
     }
 
-    /** Reject a pending lore edit for a specific file. */
-    rejectLoreEdit(filePath: string): void {
-        this.coWriterSession.rejectLoreEdit(filePath);
+    /** Reject a pending lore edit for a specific file by id. */
+    rejectLoreEdit(filePath: string, id: number): void {
+        this.coWriterSession.rejectLoreEdit(filePath, id);
     }
 
     /** Resolve the CodeMirror view of the active markdown editor, if any. */

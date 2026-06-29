@@ -6,7 +6,8 @@ import { openNoteForEdit, pushLoreEditDiff, readNoteContent, resolveNoteFile } f
  * in a new tab with the appended content shown as a green inline diff. The
  * writer reviews and approves or rejects it.
  *
- * Only one pending lore edit at a time — clears any prior pending edit.
+ * Multiple pending edits to the same file coexist (each surfaces as its own
+ * review card); edits to different files are independent.
  */
 export const appendToNoteTool: Tool = {
     id: 'append_to_note',
@@ -64,8 +65,9 @@ export const appendToNoteTool: Tool = {
         if (!opened.wasAlreadyOpen) {
             session.loreEditOpenedByTool.add(file.path);
         }
+        // Edits accumulate per file. Offsets are in original-document coordinates
+        // because lore edits are proposed, never applied, until the writer approves.
         const entry = session.getOrCreateLoreEdit(file.path, file.basename);
-        entry.changeSet.clear();
 
         entry.changeSet.add({
             from: existing.length,

@@ -120,7 +120,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onEndLoreCoach: (() => void) | null = null;
     private onDiscardLoreDraft: ((draft: LoreDraftEntry) => void) | null = null;
     private onApproveLoreEdit: ((filePath: string, id: number) => void) | null = null;
-    private onRejectLoreEdit: ((filePath: string) => void) | null = null;
+    private onRejectLoreEdit: ((filePath: string, id: number) => void) | null = null;
 
     /**
      * Conversation token estimate pushed from the plugin layer.
@@ -292,8 +292,8 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.onApproveLoreEdit = handler;
     }
 
-    /** Set the handler invoked to reject a pending lore edit by file path. */
-    setRejectLoreEditHandler(handler: (filePath: string) => void): void {
+    /** Set the handler invoked to reject a pending lore edit by file path + id. */
+    setRejectLoreEditHandler(handler: (filePath: string, id: number) => void): void {
         this.onRejectLoreEdit = handler;
     }
 
@@ -783,7 +783,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         for (const entry of this.loreEdits) {
             const p = renderChangeCard(scroll, entry.edit, entry.fileBasename, this.app, this.renderEvents, {
                 onApprove: (id: number) => this.onApproveLoreEdit?.(entry.filePath, id),
-                onReject: () => this.onRejectLoreEdit?.(entry.filePath)
+                onReject: (id: number) => this.onRejectLoreEdit?.(entry.filePath, id)
             });
             if (p) {
                 this.renderPromises.push(p);

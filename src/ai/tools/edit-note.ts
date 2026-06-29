@@ -7,8 +7,8 @@ import { openNoteForEdit, pushLoreEditDiff, readNoteContent, resolveNoteFile } f
  * in a new tab and the edit is surfaced as a green inline diff (same review UX
  * as Direct/Fulfill/Transform) so the writer can approve or reject it in context.
  *
- * Only one pending lore edit is allowed at a time — calling this again while
- * a prior edit is pending replaces it (the prior edit is cleared from the diff).
+ * Multiple pending edits to the same file coexist (each surfaces as its own
+ * review card); edits to different files are independent.
  *
  * The tool does NOT write to the file. The writer must click "Approve" to
  * commit the edit or "Reject" to discard it. For adding content without
@@ -94,10 +94,10 @@ export const editNoteTool: Tool = {
         if (!opened.wasAlreadyOpen) {
             session.loreEditOpenedByTool.add(file.path);
         }
-        // One edit per file at a time — clearing the file's own ChangeSet
-        // doesn't affect edits pending for other files.
+        // Edits accumulate per file. Offsets are in original-document coordinates
+        // because lore edits are proposed, never applied, until the writer
+        // approves — so concurrent proposals don't shift each other's ranges.
         const entry = session.getOrCreateLoreEdit(file.path, file.basename);
-        entry.changeSet.clear();
 
         entry.changeSet.add({
             from,
