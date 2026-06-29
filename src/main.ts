@@ -70,7 +70,7 @@ import {
     pushDiffEdits,
     toDiffSnapshots
 } from './ui/change-diff-extension';
-import { ChangeSet, type ProposedEdit } from './core/change-set';
+import { ChangeSet } from './core/change-set';
 import { parseEmbedFolderPath, readVaultFiles, loreFolderEmbedPaths } from './utils/vault-files';
 import type { ManuscriptMetrics, ManuscriptSnapshot, ChapterRange } from './core/dashboard/types';
 import { listChaptersInFile, manuscriptMetrics } from './core/dashboard/metrics';
@@ -1776,13 +1776,11 @@ export default class EventideQuillPlugin extends Plugin {
         // The hook exists for future use (e.g., auto-scroll to the draft).
         session.onLoreDraftReady = () => {};
         session.onLoreEditUpdate = () => {
-            const edits = [...session.loreEdits.entries()]
-                .map(([filePath, entry]) => ({
-                    edit: entry.changeSet.edits[0] ?? null,
-                    filePath,
-                    fileBasename: entry.fileBasename
-                }))
-                .filter((e) => e.edit) as { edit: ProposedEdit; filePath: string; fileBasename: string }[];
+            const edits = [...session.loreEdits.entries()].flatMap(([filePath, entry]) =>
+                entry.changeSet.edits
+                    .filter((e) => e.state === 'pending')
+                    .map((edit) => ({ edit, filePath, fileBasename: entry.fileBasename }))
+            );
             this.lintPanel?.coWriterSetLoreEdits(edits);
         };
     }

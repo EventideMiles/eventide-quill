@@ -653,6 +653,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.coWriterToolsEnabled).onChange(async (value) => {
                     this.plugin.settings.coWriterToolsEnabled = value;
                     await this.plugin.saveSettings();
+                    this.display();
                 })
             );
 
@@ -663,6 +664,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.lorebookNetworkTools).onChange(async (value) => {
                     this.plugin.settings.lorebookNetworkTools = value;
                     await this.plugin.saveSettings();
+                    this.display();
                 })
             );
 
@@ -676,6 +678,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.lorebookImageTools).onChange(async (value) => {
                     this.plugin.settings.lorebookImageTools = value;
                     await this.plugin.saveSettings();
+                    this.display();
                 })
             );
 
@@ -994,6 +997,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.coWriterToolsEnabled).onChange(async (value) => {
                     this.plugin.settings.coWriterToolsEnabled = value;
                     await this.plugin.saveSettings();
+                    this.display();
                 })
             );
 
@@ -1009,6 +1013,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.lorebookNetworkTools).onChange(async (value) => {
                     this.plugin.settings.lorebookNetworkTools = value;
                     await this.plugin.saveSettings();
+                    this.display();
                 })
             );
 
@@ -1088,6 +1093,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.lorebookImageTools).onChange(async (value) => {
                     this.plugin.settings.lorebookImageTools = value;
                     await this.plugin.saveSettings();
+                    this.display();
                 })
             );
 

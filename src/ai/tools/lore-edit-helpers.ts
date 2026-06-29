@@ -92,7 +92,11 @@ export async function readNoteContent(plugin: EventideQuillPlugin, filePath: str
  * `body` is the input unchanged.
  */
 export function splitFrontmatter(raw: string): { bodyOffset: number; body: string } {
-    const match = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+    // Require the closing `---` to be on its own line: the delimiter must be
+    // followed by a line break or end-of-string. The looser `\r?\n?` tail
+    // previously accepted partial closers like `----` or `---not-close`,
+    // mis-slicing the body and reporting a wrong bodyOffset.
+    const match = raw.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/);
     if (match) return { bodyOffset: match[0].length, body: raw.slice(match[0].length) };
     return { bodyOffset: 0, body: raw };
 }

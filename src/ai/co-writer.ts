@@ -741,6 +741,15 @@ export class CoWriterSession {
      * open are NOT tracked here — their tabs are left alone.
      */
     loreEditOpenedByTool: Set<string> = new Set();
+    /**
+     * Per-file promise chain serializing closed-file lore-edit writes. A second
+     * approval (same edit double-clicked, or a sibling edit) arriving while a
+     * `vault.process` write is in flight would otherwise race: offsets aren't
+     * remapped until the write's `.then()` runs `ChangeSet.approve`, so a
+     * concurrent write could double-apply an edit or land at stale offsets.
+     * Chaining ensures each write observes the post-approve remap of the prior.
+     */
+    private loreEditWriteQueue: Map<string, Promise<void>> = new Map();
     /** Called when a lore edit is proposed, approved, or rejected. */
     onLoreEditUpdate: (() => void) | null = null;
 
@@ -1337,7 +1346,21 @@ export class CoWriterSession {
             plugin,
             // Live snapshot: sizing tools read this at execution time so their
             // "will it fit" math accounts for the conversation already in context.
-            consumedTokens: () => this.estimateRequestTokens(this.discussCurrentMessages)
+            // Mirror the per-round prefix actually sent to the model — system +
+            // injected vault/additional-file/plot-map context + the per-round
+            // budget message + the conversation — not just the conversation
+            // skeleton in discussCurrentMessages, otherwise measure_folder and
+            // calculate_file_sizes overestimate the remaining window.
+            consumedTokens: () => {
+                const budgetMsg = buildContextBudgetMessage(plugin, this.discussCurrentMessages, maxTokens);
+                const roundBase: ChatMessage[] = [
+                    this.discussCurrentMessages[0]!,
+                    ...injectedContext,
+                    ...(budgetMsg ? [budgetMsg] : []),
+                    ...this.discussCurrentMessages.slice(1)
+                ];
+                return this.estimateRequestTokens(roundBase);
+            }
         };
         // 0 = unlimited (the model calls as many rounds as it needs; use Stop
         // to cancel). A positive number caps turn consumption.
@@ -1668,7 +1691,20 @@ export class CoWriterSession {
         // counted in toolTokenOverhead.
         const ctx: ToolContext = {
             plugin,
-            consumedTokens: () => this.estimateRequestTokens(this.discussCurrentMessages)
+            // Mirror the per-round prefix actually sent to the model (system +
+            // injected context + budget message + conversation), not just the
+            // conversation skeleton, so sizing tools see the true remaining
+            // window. See the discuss path for the same construction.
+            consumedTokens: () => {
+                const coachBudgetMsg = buildContextBudgetMessage(plugin, this.discussCurrentMessages, maxTokens);
+                const roundBase: ChatMessage[] = [
+                    this.discussCurrentMessages[0]!,
+                    ...injectedContext,
+                    ...(coachBudgetMsg ? [coachBudgetMsg] : []),
+                    ...this.discussCurrentMessages.slice(1)
+                ];
+                return this.estimateRequestTokens(roundBase);
+            }
         };
         const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
 
@@ -2082,12 +2118,29 @@ export class CoWriterSession {
         const registry = createToolRegistry(plugin, true);
         const toolDefs = registry?.toToolDefinitions();
         this.toolTokenOverhead = registry?.estimateTokens() ?? 0;
+        const maxTokens = chat.provider.config.maxContextTokens;
         const ctx: ToolContext = {
             plugin,
-            consumedTokens: () => this.estimateRequestTokens(this.loreCoachMessages)
+            // Mirror the per-round prefix actually sent to the model (system +
+            // active-file awareness + budget message + network-tools hint +
+            // conversation), not just the conversation skeleton, so sizing
+            // tools see the true remaining window.
+            consumedTokens: () => {
+                const injected: ChatMessage[] = [];
+                const activeFileMsg = buildActiveFileMessage(plugin);
+                if (activeFileMsg) injected.push(activeFileMsg);
+                const budgetMsg = buildContextBudgetMessage(plugin, this.loreCoachMessages, maxTokens);
+                if (budgetMsg) injected.push(budgetMsg);
+                const networkMsg = buildNetworkToolsMessage(plugin);
+                if (networkMsg) injected.push(networkMsg);
+                const roundBase: ChatMessage[] =
+                    this.loreCoachMessages.length > 0
+                        ? [this.loreCoachMessages[0]!, ...injected, ...this.loreCoachMessages.slice(1)]
+                        : injected;
+                return this.estimateRequestTokens(roundBase);
+            }
         };
 
-        const maxTokens = chat.provider.config.maxContextTokens;
         const compactPct = Math.max(50, Math.min(95, this.settingsOrDefault(plugin).contextCompactAtPercent)) / 100;
         const conversationTokens = this.estimateRequestTokens(this.loreCoachMessages);
         this.onTokenEstimate?.(conversationTokens, maxTokens);
@@ -2684,25 +2737,41 @@ export class CoWriterSession {
         // stays valid against the post-write content. Don't close the tab,
         // delete the entry, or fire updates until the write has actually
         // succeeded, so a failed write keeps the edit reviewable.
+        //
+        // Writes are serialized per file via loreEditWriteQueue: a second
+        // approval arriving while a write is in flight is chained behind it, so
+        // it observes the remap from the first write's approve() and can't race
+        // the in-flight vault.process (which would double-apply or land at stale
+        // offsets). The pending check is re-run inside the chain so a duplicate
+        // click on an edit already approved by the prior write becomes a no-op.
         if (this.app) {
             const file = this.app.vault.getAbstractFileByPath(filePath);
             if (file instanceof TFile) {
-                const edit = entry.changeSet.get(id);
-                if (!edit || edit.state !== 'pending') return;
-                void this.app.vault
-                    .process(file, (content) => content.slice(0, edit.from) + edit.newText + content.slice(edit.to))
-                    .then(() => {
-                        entry.changeSet.approve(id);
-                        if (!entry.changeSet.hasPending) {
-                            this.closeLoreEditTabIfOpenedByTool(filePath);
-                            this.loreEdits.delete(filePath);
-                        }
-                        this.onLoreEditUpdate?.();
-                    })
-                    .catch((err: unknown) => {
-                        console.warn('Quill: Lore edit write failed; keeping the edit pending.', err);
-                        this.onLoreEditUpdate?.();
-                    });
+                const run = async (): Promise<void> => {
+                    const edit = entry.changeSet.get(id);
+                    if (!edit || edit.state !== 'pending') return;
+                    await this.app!.vault.process(
+                        file,
+                        (content) => content.slice(0, edit.from) + edit.newText + content.slice(edit.to)
+                    );
+                    entry.changeSet.approve(id);
+                    if (!entry.changeSet.hasPending) {
+                        this.closeLoreEditTabIfOpenedByTool(filePath);
+                        this.loreEdits.delete(filePath);
+                    }
+                    this.onLoreEditUpdate?.();
+                };
+                const prev = this.loreEditWriteQueue.get(filePath) ?? Promise.resolve();
+                const next = prev.then(run).catch((err: unknown) => {
+                    console.warn('Quill: Lore edit write failed; keeping the edit pending.', err);
+                    this.onLoreEditUpdate?.();
+                });
+                this.loreEditWriteQueue.set(filePath, next);
+                void next.then(() => {
+                    if (this.loreEditWriteQueue.get(filePath) === next) {
+                        this.loreEditWriteQueue.delete(filePath);
+                    }
+                });
                 return;
             }
         }
