@@ -7,6 +7,8 @@ import { VaultFileSuggestModal } from './vault-file-suggest-modal';
 import { buildEmbedFolderPath, embedFolderLabel, parseEmbedFolderPath, resolveAtMentions } from '../utils/vault-files';
 import { renderChangeBulkBar, renderChangeCard } from './change-card';
 import { renderLoreDraftCard } from './lore-entry-review';
+import { downscaleToJpegBase64, isImageContentType } from '../ai/image-utils';
+import { isVisionConfigured } from '../ai/vision';
 import type EventideQuillPlugin from '../main';
 import type {
     DraftState,
@@ -709,7 +711,19 @@ export class CoWriterPanel extends AbstractChatPanel {
                     const bubble = scroll.createEl('div', {
                         cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--user'
                     });
-                    bubble.setText(msg.content);
+                    // Use a child text node rather than bubble.setText so a
+                    // thumbnail strip can sit alongside it when images are
+                    // attached to this message.
+                    bubble.createEl('div', { cls: 'quill-cowriter-panel__bubble-text' }).setText(msg.content);
+                    if (msg.images && msg.images.length > 0) {
+                        const thumbs = bubble.createEl('div', { cls: 'quill-cowriter-panel__bubble-images' });
+                        for (const b64 of msg.images) {
+                            thumbs.createEl('img', {
+                                cls: 'quill-cowriter-panel__bubble-image',
+                                attr: { src: `data:image/jpeg;base64,${b64}`, alt: 'Attached image' }
+                            });
+                        }
+                    }
                 } else if (msg.role === 'assistant') {
                     const bubble = scroll.createEl('div', {
                         cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--assistant'
@@ -1474,6 +1488,38 @@ export class CoWriterPanel extends AbstractChatPanel {
             ).open();
         });
 
+        // Attach-image button — chat modes only (direct/fulfill are prose-continuation).
+        // Always visible, including under compact-width hamburger collapse.
+        const canCapture = this.inputMode !== 'direct' && this.inputMode !== 'fulfill';
+        if (canCapture) {
+            const attachBtn = btnRow.createEl('button', {
+                cls: 'quill-cowriter-panel__attach-btn',
+                text: '\u{1f4ce}',
+                title: 'Attach image',
+                attr: { type: 'button' }
+            });
+            if (generating) attachBtn.disabled = true;
+            this.renderEvents.registerDomEvent(attachBtn, 'click', () => {
+                if (generating) return;
+                // Transient off-DOM file input. Not registered on renderEvents:
+                // the input must survive re-renders until the picker closes,
+                // then is removed explicitly in the change handler.
+                const fileInput = document.createElement('input');
+                fileInput.type = 'file';
+                fileInput.accept = 'image/*';
+                fileInput.multiple = true;
+                fileInput.style.display = 'none';
+                fileInput.addEventListener('change', () => {
+                    if (fileInput.files && fileInput.files.length > 0) {
+                        void this.addImageFiles(Array.from(fileInput.files));
+                    }
+                    fileInput.remove();
+                });
+                document.body.appendChild(fileInput);
+                fileInput.click();
+            });
+        }
+
         const refreshBtn = btnRow.createEl('button', {
             cls: 'quill-cowriter-panel__refresh-btn',
             text: '\u21bb',
@@ -1545,6 +1591,30 @@ export class CoWriterPanel extends AbstractChatPanel {
 
         // Textarea row — below the buttons, ~10 lines tall
         const taRow = container.createEl('div', { cls: 'quill-cowriter-panel__ta-row' });
+
+        // Pending-image thumbnail strip (only when images are queued). Rendered
+        // above the textarea so it doesn't shift the input height when populated.
+        if (this.pendingImages.length > 0) {
+            const previewRow = taRow.createEl('div', { cls: 'quill-cowriter-panel__attach-row' });
+            this.pendingImages.forEach((b64, idx) => {
+                const chip = previewRow.createEl('div', { cls: 'quill-cowriter-panel__image-preview' });
+                chip.createEl('img', {
+                    cls: 'quill-cowriter-panel__image-preview-img',
+                    attr: { src: `data:image/jpeg;base64,${b64}`, alt: 'Pending attachment' }
+                });
+                const removeBtn = chip.createEl('button', {
+                    cls: 'quill-cowriter-panel__image-remove',
+                    text: '\u00d7',
+                    title: 'Remove image',
+                    attr: { type: 'button' }
+                });
+                this.renderEvents.registerDomEvent(removeBtn, 'click', () => {
+                    this.pendingImages.splice(idx, 1);
+                    this.scheduleRender();
+                });
+            });
+        }
+
         const input = taRow.createEl('textarea', {
             cls: 'quill-cowriter-panel__input',
             placeholder: noActiveFile
@@ -1568,6 +1638,43 @@ export class CoWriterPanel extends AbstractChatPanel {
         // Track value changes for persistence across re-renders
         this.renderEvents.registerDomEvent(input, 'input', () => {
             this.inputValue = input.value;
+        });
+
+        // Capture pasted images into pendingImages. Plain-text paste passes
+        // through untouched (only image/* items are intercepted).
+        this.renderEvents.registerDomEvent(input, 'paste', (e: ClipboardEvent) => {
+            if (this.inputMode === 'direct' || this.inputMode === 'fulfill') return;
+            const items = e.clipboardData?.items;
+            if (!items) return;
+            const files: File[] = [];
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                if (item && item.kind === 'file' && isImageContentType(item.type)) {
+                    const f = item.getAsFile();
+                    if (f) files.push(f);
+                }
+            }
+            if (files.length > 0) {
+                e.preventDefault();
+                void this.addImageFiles(files);
+            }
+        });
+
+        // Drag-and-drop image capture onto the textarea area. preventDefault on
+        // dragover is required for the drop event to fire.
+        this.renderEvents.registerDomEvent(taRow, 'dragover', (e: DragEvent) => {
+            if (this.inputMode === 'direct' || this.inputMode === 'fulfill') return;
+            e.preventDefault();
+        });
+        this.renderEvents.registerDomEvent(taRow, 'drop', (e: DragEvent) => {
+            if (this.inputMode === 'direct' || this.inputMode === 'fulfill') return;
+            const dropped = e.dataTransfer?.files
+                ? Array.from(e.dataTransfer.files).filter((f) => isImageContentType(f.type))
+                : [];
+            if (dropped.length > 0) {
+                e.preventDefault();
+                void this.addImageFiles(dropped);
+            }
         });
 
         // Inline file-mention autocomplete for @-references
@@ -1715,6 +1822,56 @@ export class CoWriterPanel extends AbstractChatPanel {
             label = label === 'No files in context' ? 'plot map' : `${label} + plot map`;
         }
         return label;
+    }
+
+    /**
+     * Downscale the given image files to base64 JPEG and queue them on
+     * {@link pendingImages}. No-op in direct/fulfill (capture is disabled
+     * there — those modes are prose-continuation and stay text-only).
+     *
+     * Enforces the {@link MAX_PENDING_IMAGES} cap (warns once per call when
+     * the cap or the type filter rejects files). On success, warns once if no
+     * vision regime is configured (so the writer knows their image won't reach
+     * the model without going to settings), then re-renders so the thumbnail
+     * strip appears.
+     */
+    private async addImageFiles(files: File[] | FileList): Promise<void> {
+        if (this.inputMode === 'direct' || this.inputMode === 'fulfill') return;
+        const maxDim = this.plugin.settings.lorebookImageMaxDimension;
+        let added = 0;
+        let capWarned = false;
+        let typeWarned = false;
+        for (const file of Array.from(files)) {
+            if (!isImageContentType(file.type)) {
+                if (!typeWarned) {
+                    new Notice('Quill: Only image files can be attached.');
+                    typeWarned = true;
+                }
+                continue;
+            }
+            if (this.pendingImages.length >= MAX_PENDING_IMAGES) {
+                if (!capWarned) {
+                    new Notice(`Quill: Up to ${MAX_PENDING_IMAGES} images per message.`);
+                    capWarned = true;
+                }
+                break;
+            }
+            try {
+                const bytes = await file.arrayBuffer();
+                const b64 = await downscaleToJpegBase64(bytes, maxDim, file.type);
+                this.pendingImages.push(b64);
+                added++;
+            } catch (err) {
+                console.warn('Quill: image downscale failed', err);
+                new Notice('Quill: Could not process that image.');
+            }
+        }
+        if (added > 0) {
+            if (!isVisionConfigured(this.plugin)) {
+                new Notice('Quill: No image model configured — set one in settings for the AI to see this.');
+            }
+            this.scheduleRender();
+        }
     }
 }
 
