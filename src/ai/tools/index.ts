@@ -1,6 +1,7 @@
 import { ToolRegistry } from './tool';
 import { appendToNoteTool } from './append-to-note';
 import { calculateFileSizesTool } from './calculate-file-sizes';
+import { runContinuityAuditTool } from './continuity-audit';
 import { createFandomImageTool, createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
 import { createFetchImageUrlTool } from './fetch-image-url';
 import { createFetchUrlTool } from './fetch-url';
@@ -12,6 +13,7 @@ import { loreSiblingsTool } from './lore-siblings';
 import { manuscriptMentionsTool } from './manuscript-mentions';
 import { measureFolderTool } from './measure-folder';
 import { proposeEntryTool } from './propose-entry';
+import { runResearchTool } from './research';
 import { reviseEditTool } from './revise-edit';
 import { runLorebookBatchTool } from './run-lorebook-batch';
 import { vaultLookupTool } from './vault-lookup';
@@ -34,7 +36,9 @@ export { manuscriptMentionsTool } from './manuscript-mentions';
 export { measureFolderTool } from './measure-folder';
 export { proposeEntryTool } from './propose-entry';
 export { reviseEditTool } from './revise-edit';
+export { runContinuityAuditTool } from './continuity-audit';
 export { runLorebookBatchTool } from './run-lorebook-batch';
+export { runResearchTool } from './research';
 export { vaultLookupTool } from './vault-lookup';
 
 /**
@@ -59,6 +63,30 @@ export function createInternalToolRegistry(): ToolRegistry {
 }
 
 /**
+ * Build a READ-ONLY registry for research / continuity subagents: the lookup
+ * and sizing tools, but NO editing tools (edit_note / insert_note /
+ * append_to_note / revise_edit) and NO subagent spawners. With
+ * `includeExternal`, also adds the network/image tools (gated identically to
+ * the parent) — used by research, which compares vault entries against external
+ * media (Wikipedia, Fandom, fetched URLs). Continuity is manuscript-internal
+ * and passes false. Returns null when co-writer tools are disabled.
+ */
+export function createReadOnlyToolRegistry(plugin: EventideQuillPlugin, includeExternal = false): ToolRegistry | null {
+    if (!plugin.settings.coWriterToolsEnabled) return null;
+    const registry = new ToolRegistry();
+    registry.register(manuscriptMentionsTool);
+    registry.register(loreSiblingsTool);
+    registry.register(vaultLookupTool);
+    registry.register(grepNotesTool);
+    registry.register(measureFolderTool);
+    registry.register(calculateFileSizesTool);
+    if (includeExternal) {
+        registerExternalTools(registry, plugin);
+    }
+    return registry;
+}
+
+/**
  * Build a registry for the Lorebook Coach: the ten internal tools plus
  * `propose_entry` (which surfaces a draft to the UI for review).
  */
@@ -73,9 +101,10 @@ export function createLoreCoachToolRegistry(): ToolRegistry {
  * - `coWriterToolsEnabled` off → returns null (no tools)
  * - `lorebookNetworkTools` on → registers all network tools
  * - `includeProposeEntry` → adds propose_entry (lorebook coach only)
- * - `allowSubagents` → adds run_lorebook_batch (parent modes only; the
- *   subagent itself passes false so it cannot spawn sub-subagents —
- *   single-level nesting by construction)
+ * - `allowSubagents` → adds the subagent spawners (parent modes only; the
+ *   subagents themselves pass false so they cannot spawn sub-subagents —
+ *   single-level nesting by construction): `run_lorebook_batch` (lore edits),
+ *   `run_research` (vault Q&A), `run_continuity_audit` (manuscript audit)
  *
  * Network tools use factory functions because their maxResultTokens and
  * configuration (Fandom wikis, Wikipedia language) come from settings.
@@ -91,8 +120,23 @@ export function createToolRegistry(
 
     if (allowSubagents) {
         registry.register(runLorebookBatchTool);
+        registry.register(runResearchTool);
+        registry.register(runContinuityAuditTool);
     }
 
+    registerExternalTools(registry, plugin);
+
+    return registry;
+}
+
+/**
+ * Register the external (network + image) tools on `registry`, gated by the
+ * user's `lorebookNetworkTools` / `lorebookImageTools` settings and the Fandom
+ * allowlist. Shared by the parent co-writer registry and the research/
+ * continuity subagent registries so the Fandom multi-gate logic lives in
+ * exactly one place (the gating mirror is fragile when duplicated).
+ */
+function registerExternalTools(registry: ToolRegistry, plugin: EventideQuillPlugin): void {
     if (plugin.settings.lorebookNetworkTools) {
         const maxTokens = plugin.settings.lorebookToolMaxTokens;
         registry.register(createFetchUrlTool(maxTokens));
@@ -129,6 +173,4 @@ export function createToolRegistry(
             createFetchImageUrlTool(plugin.settings.lorebookToolMaxTokens, plugin.settings.lorebookImageMaxDimension)
         );
     }
-
-    return registry;
 }

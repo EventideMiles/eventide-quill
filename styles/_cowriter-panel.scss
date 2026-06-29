@@ -859,6 +859,15 @@
         gap: $space-xs;
     }
 
+    &__subagent-kind {
+        font-size: var(--font-smallest);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text-faint, var(--text-muted));
+        flex-shrink: 0;
+    }
+
     &__subagent-status {
         font-size: var(--font-smallest);
         font-weight: 600;

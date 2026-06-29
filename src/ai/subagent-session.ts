@@ -1,9 +1,8 @@
 import { type AiProvider, type ChatMessage, type ToolCallRequest } from './provider';
 import type EventideQuillPlugin from '../main';
-import { getLoreCoachSystemPrompt } from './prompts';
 import { compactConversation } from './compaction';
 import { estimateTokens } from '../utils/tokens';
-import { createToolRegistry, type ToolContext, type ToolRegistry, type ToolResult } from './tools';
+import { type ToolContext, type ToolRegistry, type ToolResult } from './tools';
 import { injectImagesIntoMessages } from './vision';
 
 /** Lifecycle states for a subagent batch, surfaced in the drill-down UI (stage 2). */
@@ -18,6 +17,33 @@ export interface SubagentChatMessage {
 }
 
 /**
+ * What kind of batch a subagent runs — drives the status-card label and the
+ * tools/prompt it's given. All three are the same runner with different config.
+ */
+export type SubagentKind = 'lore' | 'research' | 'continuity';
+
+/**
+ * Configuration handed to a {@link SubagentSession} — the mode-specific bits
+ * (system prompt, tool registry, brief, display fields). The runner itself is
+ * generic; this is how the lore batch / research / continuity specializations
+ * are expressed. `registry` is null when co-writer tools are disabled (the
+ * runner fails fast with a clear message).
+ */
+export interface SubagentConfig {
+    kind: SubagentKind;
+    /** Short task description for the status card. */
+    goal: string;
+    /** Lore/continuity: the target files (display + brief). Research: omit. */
+    paths?: string[];
+    /** Mode-specific system prompt. */
+    systemPrompt: string;
+    /** The user-turn task brief (the subagent sees ONLY this, not the parent). */
+    brief: string;
+    /** Pre-built tool registry (caller selects edit vs read-only tools). */
+    registry: ToolRegistry | null;
+}
+
+/**
  * A serializable snapshot of a subagent's viewable state — what the co-writer
  * panel renders (status card + drill-down conversation). Plain data by design
  * (no live handles) so it can flow through the sidebar/main push paths and,
@@ -25,6 +51,7 @@ export interface SubagentChatMessage {
  */
 export interface SubagentView {
     id: string;
+    kind: SubagentKind;
     goal: string;
     status: SubagentStatus;
     summary: string | null;
@@ -58,6 +85,7 @@ export interface SubagentView {
  */
 export class SubagentSession {
     readonly id: string;
+    readonly kind: SubagentKind;
     readonly goal: string;
     readonly paths: string[];
     status: SubagentStatus = 'running';
@@ -75,6 +103,9 @@ export class SubagentSession {
     onChatUpdate: (() => void) | null = null;
     onStatusChange: (() => void) | null = null;
 
+    private readonly systemPrompt: string;
+    private readonly brief: string;
+    private readonly registry: ToolRegistry | null;
     private toolTokenOverhead = 0;
 
     private static nextId = 0;
@@ -83,13 +114,16 @@ export class SubagentSession {
         private readonly plugin: EventideQuillPlugin,
         private readonly provider: AiProvider,
         private readonly modelId: string,
-        goal: string,
-        paths: string[],
+        config: SubagentConfig,
         private readonly parentSignal?: AbortSignal
     ) {
         this.id = `subagent_${++SubagentSession.nextId}`;
-        this.goal = goal;
-        this.paths = paths;
+        this.kind = config.kind;
+        this.goal = config.goal;
+        this.paths = config.paths ?? [];
+        this.systemPrompt = config.systemPrompt;
+        this.brief = config.brief;
+        this.registry = config.registry;
     }
 
     /**
@@ -99,28 +133,22 @@ export class SubagentSession {
      * parent model can react without the whole conversation failing.
      */
     async run(): Promise<string> {
-        // The subagent edits existing files — internal tools only, NO
-        // run_lorebook_batch (so a subagent cannot spawn sub-subagents:
-        // single-level nesting by construction) and NO propose_entry.
-        const registry = createToolRegistry(this.plugin, false);
-        if (!registry) {
-            return this.fail('Co-writer tools are disabled, so the subagent has no editing tools.');
+        if (!this.registry) {
+            return this.fail('Co-writer tools are disabled, so this subagent has no tools.');
         }
+        // Capture the narrowed registry so the loop body (and TS) see it as
+        // non-null — `this.registry` is a field and isn't narrowed across calls.
+        const registry = this.registry;
         const toolDefs = registry.toToolDefinitions();
         this.toolTokenOverhead = registry.estimateTokens();
 
-        // Fresh context: lorebook system prompt + the parent's task brief. The
-        // subagent sees ONLY this — not the parent's conversation.
-        const fileList =
-            this.paths.length > 0
-                ? `\n\nFiles in this batch (${this.paths.length}):\n${this.paths.map((p) => `- ${p}`).join('\n')}`
-                : '';
-        const brief = `Task: ${this.goal}${fileList}\n\nEdit the files in this batch per the rules above. vault_lookup each file, then edit_note / insert_note / append_to_note (revise_edit if you hit an overlap). Keep each edit surgical. End with a one- or two-line summary of what you changed.`;
+        // Fresh context: the mode's system prompt + the task brief. The subagent
+        // sees ONLY this — never the parent's conversation.
         this.messages = [
-            { role: 'system', content: getLoreCoachSystemPrompt() },
-            { role: 'user', content: brief }
+            { role: 'system', content: this.systemPrompt },
+            { role: 'user', content: this.brief }
         ];
-        this.chatHistory = [{ role: 'user', content: brief }];
+        this.chatHistory = [{ role: 'user', content: this.brief }];
 
         const maxTokens = this.provider.config.maxContextTokens;
         const compactPct = Math.max(50, Math.min(95, this.plugin.settings.contextCompactAtPercent)) / 100;
@@ -231,7 +259,7 @@ export class SubagentSession {
             }
 
             this.status = 'succeeded';
-            this.summary = lastResponse.trim() || `Batch complete: processed ${this.paths.length} file(s).`;
+            this.summary = lastResponse.trim() || 'Subagent finished.';
             this.onStatusChange?.();
             return this.summary;
         } catch (err: unknown) {
@@ -250,6 +278,7 @@ export class SubagentSession {
     toView(): SubagentView {
         return {
             id: this.id,
+            kind: this.kind,
             goal: this.goal,
             status: this.status,
             summary: this.summary,

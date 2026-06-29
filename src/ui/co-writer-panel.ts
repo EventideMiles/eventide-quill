@@ -854,6 +854,10 @@ export class CoWriterPanel extends AbstractChatPanel {
             });
             const header = card.createEl('div', { cls: 'quill-cowriter-panel__subagent-card-header' });
             header.createEl('span', {
+                cls: 'quill-cowriter-panel__subagent-kind',
+                text: sub.kind === 'research' ? 'Research' : sub.kind === 'continuity' ? 'Continuity' : 'Batch edit'
+            });
+            header.createEl('span', {
                 cls: 'quill-cowriter-panel__subagent-status',
                 text: sub.status === 'running' ? 'Running' : sub.status === 'succeeded' ? 'Done' : 'Failed'
             });

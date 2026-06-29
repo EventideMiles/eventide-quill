@@ -15,6 +15,8 @@ import {
     getCoWriterVoicePrompt,
     getLoreCoachSystemPrompt,
     getLoreCoachUserPrompt,
+    getResearchSystemPrompt,
+    getContinuitySystemPrompt,
     type ActiveSteering
 } from './prompts';
 import { compactConversation } from './compaction';
@@ -26,9 +28,15 @@ import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
 import { ChangeSet } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
-import { createToolRegistry, type ToolContext, type ToolRegistry, type ToolResult } from './tools';
+import {
+    createReadOnlyToolRegistry,
+    createToolRegistry,
+    type ToolContext,
+    type ToolRegistry,
+    type ToolResult
+} from './tools';
 import { injectImagesIntoMessages } from './vision';
-import { SubagentSession, type SubagentView } from './subagent-session';
+import { SubagentSession, type SubagentView, type SubagentConfig } from './subagent-session';
 import { resolveNoteFile } from './tools/lore-edit-helpers';
 import {
     clearDiffEdits,
@@ -1290,7 +1298,7 @@ export class CoWriterSession {
 
         // Build the tool registry up front so its fixed per-request overhead
         // (the serialized `tools` field) is known before the budget math below.
-        const registry = createToolRegistry(plugin, false);
+        const registry = createToolRegistry(plugin, false, true);
         const toolDefs = registry?.toToolDefinitions();
         this.toolTokenOverhead = registry?.estimateTokens() ?? 0;
 
@@ -1654,7 +1662,7 @@ export class CoWriterSession {
 
         // Build the tool registry up front so its fixed per-request overhead
         // (the serialized `tools` field) is known before the budget math below.
-        const registry = createToolRegistry(plugin, false);
+        const registry = createToolRegistry(plugin, false, true);
         const toolDefs = registry?.toToolDefinitions();
         this.toolTokenOverhead = registry?.estimateTokens() ?? 0;
 
@@ -2942,17 +2950,27 @@ export class CoWriterSession {
         const runChunks = chunks.slice(0, MAX_CHUNKS);
         const deferred = chunks.slice(MAX_CHUNKS).flat();
 
-        // Run each chunk as its own SubagentSession, sequentially — the parent is
-        // blocked for the duration (a local model can't run concurrent inference).
-        // Edits flow to the shared loreEdits review queue via the tools' side
-        // effects, so they persist after each subagent CLOSES (they are removed
-        // only by the writer's approve/reject/new-chat — never by subagent
-        // lifecycle). Aborts propagate: cancelling the parent stops the current
-        // subagent and skips the rest; edits already produced remain reviewable.
+        // Lore batch subagents edit existing files — internal tools only, NO
+        // run_lorebook_batch (single-level nesting) and NO propose_entry.
+        const registry = createToolRegistry(plugin, false);
         const batchSummaries: string[] = [];
         for (let i = 0; i < runChunks.length; i++) {
             const chunkPaths = runChunks[i]!;
-            const sub = new SubagentSession(plugin, provider, modelId, goal, chunkPaths, parentSignal);
+            const fileList = `\n\nFiles in this batch (${chunkPaths.length}):\n${chunkPaths.map((p) => `- ${p}`).join('\n')}`;
+            const sub = new SubagentSession(
+                plugin,
+                provider,
+                modelId,
+                {
+                    kind: 'lore',
+                    goal,
+                    paths: chunkPaths,
+                    systemPrompt: getLoreCoachSystemPrompt(),
+                    brief: `Task: ${goal}${fileList}\n\nEdit the files in this batch per the rules above. vault_lookup each file, then edit_note / insert_note / append_to_note (revise_edit if you hit an overlap). Keep each edit surgical. End with a one- or two-line summary of what you changed.`,
+                    registry
+                },
+                parentSignal
+            );
             // Surface the subagent's per-round + status changes on the parent
             // panel so a drilled-in view streams and the status cards update
             // live (the parent's onChatUpdate push includes subagent state).
@@ -2977,6 +2995,84 @@ export class CoWriterSession {
             );
         }
         return lines.join('\n');
+    }
+
+    /**
+     * Spawn a research subagent: investigates the vault for a single question
+     * in its own fresh context and returns a cited findings report. Read-only —
+     * no edits, no review queue. Registered in {@link subagents} so the panel
+     * shows its status + drill-down like any subagent. Awaits completion (the
+     * parent is blocked). Aborts propagate via the parent signal.
+     */
+    async runResearch(
+        plugin: EventideQuillPlugin,
+        provider: AiProvider,
+        modelId: string,
+        question: string,
+        parentSignal?: AbortSignal
+    ): Promise<string> {
+        const config: SubagentConfig = {
+            kind: 'research',
+            goal: question,
+            systemPrompt: getResearchSystemPrompt(),
+            brief: `Question to investigate:\n\n${question}\n\nSearch the vault, gather evidence, and end with a cited findings report. You do not see the conversation that spawned you — work only from the question and the vault.`,
+            registry: createReadOnlyToolRegistry(plugin, true)
+        };
+        return this.runSubagent(plugin, provider, modelId, config, parentSignal);
+    }
+
+    /**
+     * Spawn a continuity subagent: audits the given manuscript chapters (plus
+     * relevant lorebook) for continuity problems and returns a cited, ranked
+     * findings report. Read-only. Chapters are NOT chunked — continuity is
+     * cross-chapter by nature, so the subagent reads them together (compaction
+     * handles overflow). Awaits completion; aborts propagate.
+     */
+    async runContinuityAudit(
+        plugin: EventideQuillPlugin,
+        provider: AiProvider,
+        modelId: string,
+        paths: string[],
+        focus: string,
+        parentSignal?: AbortSignal
+    ): Promise<string> {
+        const fileList = `\n${paths.map((p) => `- ${p}`).join('\n')}`;
+        const focusLine = focus
+            ? `\n\nFocus: ${focus}`
+            : '\n\nFocus: audit generally (contradictions, timeline, character consistency, worldbuilding).';
+        const config: SubagentConfig = {
+            kind: 'continuity',
+            goal: focus ? `Continuity audit: ${focus}` : 'Continuity audit',
+            paths,
+            systemPrompt: getContinuitySystemPrompt(),
+            brief: `Audit continuity across these manuscript chapters:${fileList}${focusLine}\n\nRead them in order, cross-check against the lorebook where relevant, and end with a ranked, cited findings report.`,
+            registry: createReadOnlyToolRegistry(plugin)
+        };
+        return this.runSubagent(plugin, provider, modelId, config, parentSignal);
+    }
+
+    /**
+     * Shared single-run subagent driver used by the non-chunked kinds (research,
+     * continuity). Creates the session, wires its UI callbacks, registers it,
+     * runs it, and returns its summary. Throws AbortError on cancel (propagates
+     * to the parent's cleanup); other failures come back as the summary string.
+     */
+    private async runSubagent(
+        plugin: EventideQuillPlugin,
+        provider: AiProvider,
+        modelId: string,
+        config: SubagentConfig,
+        parentSignal?: AbortSignal
+    ): Promise<string> {
+        void plugin;
+        const sub = new SubagentSession(plugin, provider, modelId, config, parentSignal);
+        sub.onChatUpdate = () => this.onChatUpdate?.();
+        sub.onStatusChange = () => this.onChatUpdate?.();
+        this.subagents.set(sub.id, sub);
+        this.onChatUpdate?.();
+        const summary = await sub.run();
+        this.onChatUpdate?.();
+        return summary;
     }
 
     /** Serializable snapshots of all subagents (status cards + drill-down views). */
