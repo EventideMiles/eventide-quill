@@ -142,6 +142,8 @@ function buildAnalysisUserMessage(options: AnalysisOptions): string {
  * messages on every API call so it survives compaction (mirrors feedback).
  */
 export function buildAnalysisMessages(mode: AnalysisMode, options: AnalysisOptions): ChatMessage[] {
+    const toolsAvailable = !!options.registry;
+    const networkToolsAvailable = !!options.registry?.has('fetch_url');
     return [
         {
             role: 'system',
@@ -149,7 +151,9 @@ export function buildAnalysisMessages(mode: AnalysisMode, options: AnalysisOptio
                 voiceMarker: options.voiceMarker,
                 characters: options.characters,
                 plotThreads: options.plotThreads,
-                vaultContext: options.vaultContext
+                vaultContext: options.vaultContext,
+                toolsAvailable,
+                networkToolsAvailable
             })
         },
         {
@@ -185,8 +189,14 @@ export async function* getAnalysis(
     // sees only the findings report, not the tool rounds. When the registry is
     // null (tools disabled) this falls through to a plain stream — identical to
     // the pre-tool behavior.
-    if (options.registry && options.ctx) {
-        yield* streamWithTools(provider, baseOptions, options.registry, options.ctx);
+    if (options.registry) {
+        if (!options.ctx) {
+            throw new Error('AnalysisOptions.ctx is required when registry is provided.');
+        }
+        // Merge the caller's abort signal into the tool context so tool
+        // execution (executeToolCall) honors it even when ctx.signal was unset.
+        const ctx: ToolContext = options.ctx.signal ? options.ctx : { ...options.ctx, signal: options.signal };
+        yield* streamWithTools(provider, baseOptions, options.registry, ctx);
         return;
     }
 

@@ -619,45 +619,73 @@ export function getAnalysisModePrompt(
         characters?: ExtractedEntity[];
         plotThreads?: string[];
         vaultContext?: string;
+        toolsAvailable?: boolean;
+        networkToolsAvailable?: boolean;
     }
 ): string {
+    const baseOptions: AnalysisBasePromptOptions = {
+        toolsAvailable: options?.toolsAvailable,
+        networkToolsAvailable: options?.networkToolsAvailable
+    };
     switch (mode) {
         case 'plot-logic':
-            return getPlotLogicPrompt(options?.vaultContext);
+            return getPlotLogicPrompt(options?.vaultContext, baseOptions);
         case 'character-consistency':
-            return getCharacterConsistencyPrompt(options?.characters, options?.vaultContext);
+            return getCharacterConsistencyPrompt(options?.characters, options?.vaultContext, baseOptions);
         case 'continuity':
-            return getContinuityScanPrompt(options?.plotThreads, options?.vaultContext);
+            return getContinuityScanPrompt(options?.plotThreads, options?.vaultContext, baseOptions);
         case 'voice-drift':
-            return getVoiceDriftPrompt(options?.voiceMarker, options?.vaultContext);
+            return getVoiceDriftPrompt(options?.voiceMarker, options?.vaultContext, baseOptions);
     }
 }
 
+/** Options controlling conditional content in the analysis base prompt. */
+interface AnalysisBasePromptOptions {
+    /** When true, include the tool-use verification guidance (grep_notes etc.). */
+    toolsAvailable?: boolean;
+    /** When true, include the network-source verification sentence. */
+    networkToolsAvailable?: boolean;
+}
+
 /** Shared base for all critical-analysis modes. Returned as a line array for extension. */
-function getAnalysisBasePrompt(): string[] {
-    return [
+function getAnalysisBasePrompt(options?: AnalysisBasePromptOptions): string[] {
+    const lines: string[] = [
         'You are a critical reader analyzing a work of fiction for internal consistency. You are a companion to the writer: flagging potential issues for the writer to review, analyzing the prose rather than rewriting it.',
         '',
         'Your report must:',
         '- Ground every finding in a specific absolute line number from the manuscript. The line numbers must match the manuscript, not be relative to any excerpt.',
         '- Quote the offending phrase verbatim.',
         '- Explain the issue in one or two sentences.',
-        '- Describe issues rather than proposing rewrites — the writer decides whether and how to address each finding.',
-        '',
-        'Verifying findings across the manuscript:',
-        '- Use grep_notes to check how and where a detail was established elsewhere in the vault.',
-        '- Use vault_lookup to read a lore entry when character or place consistency is at stake.',
-        '- Use manuscript_mentions to see where an entity appears across the manuscript.',
-        '- When network tools are available, check canon against Wikipedia or a Fandom wiki.',
-        '- Cite the file and line (or external source) you verified against, alongside each finding.',
-        '- Verify proactively when a finding depends on material outside the analyzed excerpt.',
+        '- Describe issues rather than proposing rewrites — the writer decides whether and how to address each finding.'
+    ];
+
+    if (options?.toolsAvailable) {
+        lines.push(
+            '',
+            'Verifying findings across the manuscript:',
+            '- Use grep_notes to check how and where a detail was established elsewhere in the vault.',
+            '- Use vault_lookup to read a lore entry when character or place consistency is at stake.',
+            '- Use manuscript_mentions to see where an entity appears across the manuscript.'
+        );
+        if (options?.networkToolsAvailable) {
+            lines.push('- When network tools are available, check canon against Wikipedia or a Fandom wiki.');
+        }
+        lines.push(
+            '- Cite the file and line (or external source) you verified against, alongside each finding.',
+            '- Verify proactively when a finding depends on material outside the analyzed excerpt.'
+        );
+    }
+
+    lines.push(
         '',
         'Output format:',
         '- Markdown bullet list, one bullet per finding.',
         '- Start each bullet with the line number as "L{n}", then the quoted phrase, then your explanation.',
         '- Report only genuine issues you can ground in the text; if a section is clean, say so explicitly rather than padding.',
         '- End with a one-paragraph overall assessment.'
-    ];
+    );
+
+    return lines;
 }
 
 /** Format an ExtractedEntity list as a character inventory for the prompt. */
@@ -691,9 +719,9 @@ function withVaultContext(parts: string[], vaultContext?: string): string {
     return parts.join('\n');
 }
 
-function getPlotLogicPrompt(vaultContext?: string): string {
+function getPlotLogicPrompt(vaultContext?: string, baseOptions?: AnalysisBasePromptOptions): string {
     const parts = [
-        ...getAnalysisBasePrompt(),
+        ...getAnalysisBasePrompt(baseOptions),
         '',
         'Focus on plot logic:',
         '- Contradictions: facts stated one way and then another.',
@@ -704,9 +732,13 @@ function getPlotLogicPrompt(vaultContext?: string): string {
     return withVaultContext(parts, vaultContext);
 }
 
-function getCharacterConsistencyPrompt(characters?: ExtractedEntity[], vaultContext?: string): string {
+function getCharacterConsistencyPrompt(
+    characters?: ExtractedEntity[],
+    vaultContext?: string,
+    baseOptions?: AnalysisBasePromptOptions
+): string {
     const parts = [
-        ...getAnalysisBasePrompt(),
+        ...getAnalysisBasePrompt(baseOptions),
         '',
         'Focus on character consistency:',
         "- Whether each character's actions, dialogue, and emotional reactions are consistent with their established behavior elsewhere in the manuscript.",
@@ -720,9 +752,13 @@ function getCharacterConsistencyPrompt(characters?: ExtractedEntity[], vaultCont
     return withVaultContext(parts, vaultContext);
 }
 
-function getContinuityScanPrompt(plotThreads?: string[], vaultContext?: string): string {
+function getContinuityScanPrompt(
+    plotThreads?: string[],
+    vaultContext?: string,
+    baseOptions?: AnalysisBasePromptOptions
+): string {
     const parts = [
-        ...getAnalysisBasePrompt(),
+        ...getAnalysisBasePrompt(baseOptions),
         '',
         'Focus on continuity:',
         '- Dropped threads: setup that is never paid off.',
@@ -736,9 +772,13 @@ function getContinuityScanPrompt(plotThreads?: string[], vaultContext?: string):
     return withVaultContext(parts, vaultContext);
 }
 
-function getVoiceDriftPrompt(voiceMarker?: VoiceMarker, vaultContext?: string): string {
+function getVoiceDriftPrompt(
+    voiceMarker?: VoiceMarker,
+    vaultContext?: string,
+    baseOptions?: AnalysisBasePromptOptions
+): string {
     const parts = [
-        ...getAnalysisBasePrompt(),
+        ...getAnalysisBasePrompt(baseOptions),
         '',
         'Focus on voice drift:',
         '- POV slips: the narrative leaves the established viewpoint character.',
@@ -1066,9 +1106,11 @@ export function getResearchSystemPrompt(): string {
         '   folders to survey. Prefer targeted greps over reading everything.',
         '2. Read what you find; cross-check between notes when facts could',
         '   conflict. If a claim matters, confirm it from a second source note.',
-        '3. Work only from the question and what the vault contains — your sole',
-        '   sources are the vault and the question. Ground every claim in a real note;',
-        '   if the vault is silent on a point, say so rather than filling it in.',
+        '3. Work from the question, the vault, and any external sources you',
+        '   retrieved (fetch_url, wikipedia_lookup/page, fandom_lookup/page)',
+        '   when network tools are available. Ground every claim in a real note',
+        '   or citation; if the vault and external sources are silent on a point,',
+        '   say so rather than filling it in.',
         '4. Every tool result stays in your context for all later rounds — read',
         '   judiciously, batch broad surveys, and let compaction free room.',
         '',

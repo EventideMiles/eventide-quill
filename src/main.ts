@@ -3350,6 +3350,8 @@ export default class EventideQuillPlugin extends Plugin {
         }
         const vaultContext = contextParts.length > 0 ? contextParts.join('\n\n') : '';
 
+        const analysisRegistry = createReadOnlyToolRegistry(this, this.settings.lorebookNetworkTools);
+
         const initialMessages = buildAnalysisMessages(mode, {
             text: resolved.text,
             scope: resolved.scope,
@@ -3360,7 +3362,8 @@ export default class EventideQuillPlugin extends Plugin {
             voiceMarker,
             characters,
             plotThreads,
-            customInstruction
+            customInstruction,
+            registry: analysisRegistry
         });
         // Lore reference embeds (gated on reviewLoreContext) injected between the
         // system prompt and user instruction so the first analysis payload
@@ -3388,7 +3391,7 @@ export default class EventideQuillPlugin extends Plugin {
                 temperature: this.settings.analysisTemperature,
                 maxTokens: this.settings.analysisMaxOutputTokens,
                 existingMessages: initialWithLore,
-                registry: createReadOnlyToolRegistry(this, this.settings.lorebookNetworkTools),
+                registry: analysisRegistry,
                 ctx: { plugin: this, signal: this.analysisAbort.signal }
             });
 

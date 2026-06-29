@@ -18,22 +18,22 @@ export interface SubagentChatMessage {
 
 /**
  * What kind of batch a subagent runs — drives the status-card label and the
- * tools/prompt it's given. All three are the same runner with different config.
+ * tools/prompt it's given. Both are the same runner with different config.
  */
 export type SubagentKind = 'lore' | 'research';
 
 /**
  * Configuration handed to a {@link SubagentSession} — the mode-specific bits
  * (system prompt, tool registry, brief, display fields). The runner itself is
- * generic; this is how the lore batch / research / continuity specializations
- * are expressed. `registry` is null when co-writer tools are disabled (the
+ * generic; this is how the lore batch and research specializations are
+ * expressed. `registry` is null when co-writer tools are disabled (the
  * runner fails fast with a clear message).
  */
 export interface SubagentConfig {
     kind: SubagentKind;
     /** Short task description for the status card. */
     goal: string;
-    /** Lore/continuity: the target files (display + brief). Research: omit. */
+    /** Lore batch: the target files (display + brief). Research: omit. */
     paths?: string[];
     /** Mode-specific system prompt. */
     systemPrompt: string;

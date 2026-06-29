@@ -199,7 +199,11 @@ export async function executeToolCall(
 
     let parsedArgs: Record<string, unknown>;
     try {
-        parsedArgs = call.arguments.trim().length === 0 ? {} : (JSON.parse(call.arguments) as Record<string, unknown>);
+        const raw: unknown = call.arguments.trim().length === 0 ? {} : JSON.parse(call.arguments);
+        if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+            return { text: `Error: invalid JSON arguments for tool "${call.name}": expected an object.` };
+        }
+        parsedArgs = raw as Record<string, unknown>;
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { text: `Error: invalid JSON arguments: ${msg}` };

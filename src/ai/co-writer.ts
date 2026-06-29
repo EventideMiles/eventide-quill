@@ -2998,7 +2998,6 @@ export class CoWriterSession {
         config: SubagentConfig,
         parentSignal?: AbortSignal
     ): Promise<string> {
-        void plugin;
         const sub = new SubagentSession(plugin, provider, modelId, config, parentSignal);
         sub.onChatUpdate = () => this.onChatUpdate?.();
         sub.onStatusChange = () => this.onChatUpdate?.();

@@ -64,13 +64,13 @@ export function createInternalToolRegistry(): ToolRegistry {
 }
 
 /**
- * Build a READ-ONLY registry for research / continuity subagents: the lookup
+ * Build a READ-ONLY registry for research / lore-batch subagents: the lookup
  * and sizing tools, but NO editing tools (edit_note / insert_note /
  * append_to_note / revise_edit) and NO subagent spawners. With
  * `includeExternal`, also adds the network/image tools (gated identically to
  * the parent) — used by research, which compares vault entries against external
- * media (Wikipedia, Fandom, fetched URLs). Continuity is manuscript-internal
- * and passes false. Returns null when co-writer tools are disabled.
+ * media (Wikipedia, Fandom, fetched URLs). The lore batch passes false.
+ * Returns null when co-writer tools are disabled.
  */
 export function createReadOnlyToolRegistry(plugin: EventideQuillPlugin, includeExternal = false): ToolRegistry | null {
     if (!plugin.settings.coWriterToolsEnabled) return null;
@@ -132,9 +132,9 @@ export function createToolRegistry(
 /**
  * Register the external (network + image) tools on `registry`, gated by the
  * user's `lorebookNetworkTools` / `lorebookImageTools` settings and the Fandom
- * allowlist. Shared by the parent co-writer registry and the research/
- * continuity subagent registries so the Fandom multi-gate logic lives in
- * exactly one place (the gating mirror is fragile when duplicated).
+ * allowlist. Shared by the parent co-writer registry and the research
+ * subagent registry so the Fandom multi-gate logic lives in exactly one place
+ * (the gating mirror is fragile when duplicated).
  */
 function registerExternalTools(registry: ToolRegistry, plugin: EventideQuillPlugin): void {
     if (plugin.settings.lorebookNetworkTools) {
