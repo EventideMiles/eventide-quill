@@ -519,10 +519,11 @@ function buildInternalToolsMessage(plugin: EventideQuillPlugin): ChatMessage | n
         role: 'system',
         content: [
             'You have internal vault tools to ground your feedback in the manuscript and notes:',
-            '- manuscript_mentions: where a character, place, or plot thread appears in the active manuscript (pass empty to list every entity).',
-            "- vault_lookup: read a note's full text by path or name (frontmatter stripped).",
+            '- manuscript_mentions: where a character, place, or plot thread appears in the active manuscript (pass empty to list every entity the extractor found).',
+            "- vault_lookup: read a note's full text by path or name (frontmatter stripped). Use it for a SPECIFIC note you need in full — not to discover who/what is in the story.",
             '- grep_notes: search for text across vault files to find where something is mentioned.',
             '- lore_siblings: list other lore entries near a given one.',
+            'To learn the cast and world (characters, locations, plot threads), call manuscript_mentions — do NOT vault_lookup lore files just to find out who exists. If manuscript_mentions returns "no entities," the dashboard has not been scanned: call refresh_dashboard (with a manuscript file path) and retry.',
             'Reach for these when a question of fact about the manuscript or vault would sharpen your answer. Tool results stay in context — read judiciously.'
         ].join('\n')
     };
