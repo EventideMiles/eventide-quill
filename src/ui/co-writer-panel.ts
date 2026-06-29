@@ -17,6 +17,7 @@ import type {
     LoreDraftEntry
 } from '../ai/co-writer';
 import type { ProposedEdit } from '../core/change-set';
+import type { SubagentView } from '../ai/subagent-session';
 
 export type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill' | 'lorebook';
 
@@ -297,6 +298,40 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.onRejectLoreEdit = handler;
     }
 
+    /** Subagent batch editors (status cards + drill-down). Empty unless a run_lorebook_batch is active/finished. */
+    private subagents: SubagentView[] = [];
+    /** When set, the panel shows this subagent's drill-down view instead of the parent chat. */
+    private activeSubagentId: string | null = null;
+    private onNavigateToSubagent: ((id: string) => void) | null = null;
+    private onNavigateToParent: (() => void) | null = null;
+
+    /** Replace the subagent list and re-render. */
+    setSubagents(list: SubagentView[]): void {
+        this.subagents = list;
+        // If the active subagent is no longer present (e.g., cleared on new chat),
+        // fall back to the parent view so the panel never gets stuck.
+        if (this.activeSubagentId && !list.some((s) => s.id === this.activeSubagentId)) {
+            this.activeSubagentId = null;
+        }
+        this.scheduleRender();
+    }
+
+    /** Set which subagent is drilled-in (null = parent view). */
+    setActiveSubagent(id: string | null): void {
+        this.activeSubagentId = id && this.subagents.some((s) => s.id === id) ? id : null;
+        this.scheduleRender();
+    }
+
+    /** Set the handler invoked when the writer drills into a subagent. */
+    setNavigateToSubagentHandler(handler: (id: string) => void): void {
+        this.onNavigateToSubagent = handler;
+    }
+
+    /** Set the handler invoked when the writer returns from a subagent to the parent. */
+    setNavigateToParentHandler(handler: () => void): void {
+        this.onNavigateToParent = handler;
+    }
+
     /** Replace the Fulfill section list and/or active flag and re-render. */
     setFulfillState(sections: ProposedEdit[], active: boolean): void {
         this.fulfillSections = sections;
@@ -530,6 +565,17 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.renderPending = true;
         this.unloadAndClearContainer();
         this.renderPromises = [];
+
+        // Subagent drill-down view takes over the whole panel (no thought/chat/
+        // input) — it's a read-only inspection of a subagent's internal
+        // conversation. A back control returns to the parent chat, which is
+        // preserved intact in this.chatHistory while drilled in.
+        if (this.activeSubagentId) {
+            this.renderSubagentView();
+            this.renderPending = false;
+            this.scrollToBottom();
+            return;
+        }
 
         // Thought section during generation (options or draft streaming)
         if ((this.draftState === 'generating' || this.optionsLoading) && this.plugin.settings.enableCoWriterThought) {
@@ -789,6 +835,144 @@ export class CoWriterPanel extends AbstractChatPanel {
                 this.renderPromises.push(p);
             }
         }
+
+        // Subagent status cards — one per spawned batch (running / succeeded /
+        // failed). Click to drill into its internal conversation.
+        this.renderSubagentCards(scroll);
+    }
+
+    /**
+     * Status cards for each subagent spawned via run_lorebook_batch. Rendered
+     * in the parent view below the lore-edit cards. Each shows the goal, a
+     * status badge, and a "View" action that drills into the subagent's
+     * live/finalized conversation ({@link renderSubagentView}).
+     */
+    private renderSubagentCards(container: HTMLElement): void {
+        for (const sub of this.subagents) {
+            const card = container.createEl('div', {
+                cls: `quill-cowriter-panel__subagent-card quill-cowriter-panel__subagent-card--${sub.status}`
+            });
+            const header = card.createEl('div', { cls: 'quill-cowriter-panel__subagent-card-header' });
+            header.createEl('span', {
+                cls: 'quill-cowriter-panel__subagent-status',
+                text: sub.status === 'running' ? 'Running' : sub.status === 'succeeded' ? 'Done' : 'Failed'
+            });
+            header.createEl('span', {
+                cls: 'quill-cowriter-panel__subagent-goal',
+                text: truncateText(sub.goal, 70)
+            });
+            if (sub.status === 'running') {
+                card.createEl('div', {
+                    cls: 'quill-cowriter-panel__subagent-progress',
+                    text: `Editing ${sub.pathCount} file(s)…`
+                });
+            } else if (sub.error) {
+                card.createEl('div', { cls: 'quill-cowriter-panel__subagent-error', text: sub.error });
+            } else if (sub.summary) {
+                card.createEl('div', {
+                    cls: 'quill-cowriter-panel__subagent-summary',
+                    text: truncateText(sub.summary, 140)
+                });
+            }
+            const viewBtn = card.createEl('button', {
+                cls: 'quill-cowriter-panel__subagent-view',
+                text: sub.status === 'running' ? 'Watch' : 'View'
+            });
+            this.renderEvents.registerDomEvent(viewBtn, 'click', () => {
+                this.onNavigateToSubagent?.(sub.id);
+            });
+        }
+    }
+
+    /**
+     * Drill-down view: renders a subagent's internal conversation (its
+     * chatHistory) with a back control. Replaces the normal chat + input. The
+     * parent conversation is preserved in {@link chatHistory} while drilled in,
+     * so "Back" always returns to it intact.
+     */
+    private renderSubagentView(): void {
+        const sub = this.subagents.find((s) => s.id === this.activeSubagentId);
+        if (!sub) {
+            // Stale id (cleared mid-render) — bounce back to the parent view.
+            this.activeSubagentId = null;
+            this.scheduleRender();
+            return;
+        }
+
+        const scroll = this.containerEl!.createEl('div', { cls: 'quill-sidebar__content-plain' });
+
+        // Back bar + identity.
+        const bar = scroll.createEl('div', { cls: 'quill-cowriter-panel__subagent-bar' });
+        const back = bar.createEl('button', { cls: 'quill-cowriter-panel__subagent-back' });
+        back.createEl('span', { text: '\u2190' });
+        back.createEl('span', { text: 'Back' });
+        this.renderEvents.registerDomEvent(back, 'click', () => this.onNavigateToParent?.());
+        bar.createEl('span', {
+            cls: `quill-cowriter-panel__subagent-status quill-cowriter-panel__subagent-status--${sub.status}`,
+            text: sub.status === 'running' ? 'Running' : sub.status === 'succeeded' ? 'Done' : 'Failed'
+        });
+        bar.createEl('span', { cls: 'quill-cowriter-panel__subagent-goal', text: truncateText(sub.goal, 60) });
+
+        // Meta line: what's being edited, plus outcome once resolved.
+        const meta = scroll.createEl('div', { cls: 'quill-cowriter-panel__subagent-meta' });
+        meta.createEl('span', { text: `${sub.pathCount} file(s)` });
+        if (sub.status === 'running') {
+            meta.createEl('span', { cls: 'quill-cowriter-panel__subagent-progress', text: 'Editing…' });
+        } else if (sub.error) {
+            meta.createEl('span', { cls: 'quill-cowriter-panel__subagent-error', text: truncateText(sub.error, 160) });
+        } else if (sub.summary) {
+            meta.createEl('span', {
+                cls: 'quill-cowriter-panel__subagent-summary',
+                text: truncateText(sub.summary, 160)
+            });
+        }
+
+        // Conversation — simpler than the parent chat (no options/drafts). Tool
+        // results are shown muted + capped so a huge vault_lookup body doesn't
+        // swamp the view; the full text stays in the subagent's buffer.
+        for (const msg of sub.chatHistory) {
+            if (msg.role === 'user' || msg.role === 'system') {
+                const bubble = scroll.createEl('div', {
+                    cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--user'
+                });
+                this.renderMarkdownInto(bubble, msg.content);
+            } else if (msg.role === 'assistant') {
+                const bubble = scroll.createEl('div', {
+                    cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--assistant'
+                });
+                if (msg.thought && this.plugin.settings.enableCoWriterThought) {
+                    bubble.createEl('div', {
+                        cls: 'quill-cowriter-panel__message-thought-content',
+                        text: msg.thought
+                    });
+                }
+                const body = bubble.createEl('div', { cls: 'quill-cowriter-panel__response-text' });
+                this.renderMarkdownInto(body, msg.content || (sub.status === 'running' ? '\u2026' : '(no text)'));
+                if (msg.toolUses && msg.toolUses.length > 0) {
+                    const toolList = bubble.createEl('div', { cls: 'quill-cowriter-panel__tool-uses' });
+                    for (const use of msg.toolUses) {
+                        toolList.createEl('span', {
+                            cls: 'quill-cowriter-panel__tool-use',
+                            text: `${use.name}(${truncateText(use.argsSummary, 40)})`
+                        });
+                    }
+                }
+            } else if (msg.role === 'tool') {
+                scroll.createEl('div', {
+                    cls: 'quill-cowriter-panel__subagent-tool-result',
+                    text: truncateText(msg.content, 300)
+                });
+            }
+        }
+
+        this.registerScrollListener(scroll);
+    }
+
+    /** Render markdown into `target`, tracking the promise for scroll finalization. */
+    private renderMarkdownInto(target: HTMLElement, content: string): void {
+        const p = MarkdownRenderer.render(this.app, normalizeParagraphBreaks(content), target, '', this.renderEvents);
+        void p;
+        this.renderPromises.push(p);
     }
 
     /** Render the Direct continuation review card (Approve/Reject), using the
@@ -1484,4 +1668,9 @@ export class CoWriterPanel extends AbstractChatPanel {
         }
         return label;
     }
+}
+
+/** Shorten `s` to `max` chars with an ellipsis (for compact card/preview text). */
+function truncateText(s: string, max: number): string {
+    return s.length > max ? `${s.slice(0, max)}…` : s;
 }

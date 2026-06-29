@@ -12,6 +12,7 @@ import { renderDashboardTab, renderDashboardSettingsTab } from './dashboard-pane
 import { renderLorebookTab } from './lorebook-panel';
 import type { InputMode } from './co-writer-panel';
 import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase, LoreCoachPhase } from '../ai/co-writer';
+import type { SubagentView } from '../ai/subagent-session';
 import type { ProposedEdit } from '../core/change-set';
 import type EventideQuillPlugin from '../main';
 import type { ContextAssembly } from '../core/context-engine/types';
@@ -734,6 +735,12 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setRejectLoreEditHandler((filePath, id) => {
                 this.plugin.rejectLoreEdit(filePath, id);
             });
+            this.coWriterPanel.setNavigateToSubagentHandler((id) => {
+                this.plugin.coWriterSession.navigateToSubagent(id);
+            });
+            this.coWriterPanel.setNavigateToParentHandler(() => {
+                this.plugin.coWriterSession.navigateToParent();
+            });
         }
 
         // Sync current state from the session
@@ -756,6 +763,8 @@ export class QuillSidebarView extends ItemView {
                     .map((edit) => ({ edit, filePath, fileBasename: entry.fileBasename }))
             );
             this.coWriterPanel.setLoreEdits(loreEditsList);
+            this.coWriterPanel.setSubagents(session.getSubagentViews());
+            this.coWriterPanel.setActiveSubagent(session.activeSubagentId);
         }
 
         // Sync plot map link from the active manuscript's frontmatter
@@ -989,6 +998,16 @@ export class QuillSidebarView extends ItemView {
     /** Push the pending lore edits to the co-writer panel. */
     coWriterSetLoreEdits(edits: { edit: ProposedEdit; filePath: string; fileBasename: string }[]): void {
         this.coWriterPanel?.setLoreEdits(edits);
+    }
+
+    /** Push the spawned subagent list (status cards + drill-down state). */
+    coWriterSetSubagents(list: SubagentView[]): void {
+        this.coWriterPanel?.setSubagents(list);
+    }
+
+    /** Push which subagent is drilled-in (null = parent view). */
+    coWriterSetActiveSubagent(id: string | null): void {
+        this.coWriterPanel?.setActiveSubagent(id);
     }
 
     /** Switch to the pending subtab on whichever tab initiated the batch fix. */

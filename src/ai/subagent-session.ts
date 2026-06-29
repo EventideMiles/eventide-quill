@@ -18,6 +18,22 @@ export interface SubagentChatMessage {
 }
 
 /**
+ * A serializable snapshot of a subagent's viewable state — what the co-writer
+ * panel renders (status card + drill-down conversation). Plain data by design
+ * (no live handles) so it can flow through the sidebar/main push paths and,
+ * later, persist (`.planning/pr-conversation-persistence.md`).
+ */
+export interface SubagentView {
+    id: string;
+    goal: string;
+    status: SubagentStatus;
+    summary: string | null;
+    error: string | null;
+    pathCount: number;
+    chatHistory: SubagentChatMessage[];
+}
+
+/**
  * A self-contained lorebook batch editor that runs in its OWN fresh context,
  * isolated from the parent conversation. The parent co-writer loop spawns one
  * via the `run_lorebook_batch` tool when a batch edit would otherwise bloat
@@ -228,6 +244,19 @@ export class SubagentSession {
             const msg = err instanceof Error ? err.message : String(err);
             return this.fail(`Subagent failed: ${msg}`);
         }
+    }
+
+    /** Snapshot of this subagent's viewable state for the panel. */
+    toView(): SubagentView {
+        return {
+            id: this.id,
+            goal: this.goal,
+            status: this.status,
+            summary: this.summary,
+            error: this.error,
+            pathCount: this.paths.length,
+            chatHistory: this.chatHistory
+        };
     }
 
     /** Current request token estimate (conversation + tools-field overhead). */

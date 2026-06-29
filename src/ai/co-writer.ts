@@ -28,7 +28,7 @@ import { ChangeSet } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
 import { createToolRegistry, type ToolContext, type ToolRegistry, type ToolResult } from './tools';
 import { injectImagesIntoMessages } from './vision';
-import { SubagentSession } from './subagent-session';
+import { SubagentSession, type SubagentView } from './subagent-session';
 import { resolveNoteFile } from './tools/lore-edit-helpers';
 import {
     clearDiffEdits,
@@ -2953,6 +2953,11 @@ export class CoWriterSession {
         for (let i = 0; i < runChunks.length; i++) {
             const chunkPaths = runChunks[i]!;
             const sub = new SubagentSession(plugin, provider, modelId, goal, chunkPaths, parentSignal);
+            // Surface the subagent's per-round + status changes on the parent
+            // panel so a drilled-in view streams and the status cards update
+            // live (the parent's onChatUpdate push includes subagent state).
+            sub.onChatUpdate = () => this.onChatUpdate?.();
+            sub.onStatusChange = () => this.onChatUpdate?.();
             this.subagents.set(sub.id, sub);
             this.onChatUpdate?.();
             const summary = await sub.run(); // throws AbortError on cancel → propagates, skips remaining chunks
@@ -2972,6 +2977,24 @@ export class CoWriterSession {
             );
         }
         return lines.join('\n');
+    }
+
+    /** Serializable snapshots of all subagents (status cards + drill-down views). */
+    getSubagentViews(): SubagentView[] {
+        return [...this.subagents.values()].map((s) => s.toView());
+    }
+
+    /** Drill down into a subagent's conversation (panel view switch). No-op if not found. */
+    navigateToSubagent(id: string): void {
+        if (!this.subagents.has(id)) return;
+        this.activeSubagentId = id;
+        this.onChatUpdate?.();
+    }
+
+    /** Return from a subagent drill-down to the parent conversation. */
+    navigateToParent(): void {
+        this.activeSubagentId = null;
+        this.onChatUpdate?.();
     }
 
     /**

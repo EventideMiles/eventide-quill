@@ -216,7 +216,7 @@ A **subagent** is a self-contained lorebook batch editor that runs in its OWN fr
 - **Edits are NOT isolated; the conversation IS.** A subagent's edits flow through `plugin.coWriterSession.loreEdits` (the shared review queue) via the tools' side effects — so a subagent-produced diff reviews exactly like an inline one, and **persists after the subagent closes** (removed only by the writer's approve/reject/new-chat). Only the subagent's `messages`/`chatHistory` are per-subagent and ephemeral.
 - **The parent is blocked while a subagent runs** — intentional and required for local models (one inference at a time). The subagent is the same model on the same provider, serialized as a synchronous tool call; it is NOT a concurrent process. Cancellation propagates via the parent's abort signal.
 
-Stage 1 (landed): the runner + registry + spawner — end-to-end functional, no new UI (a subagent looks like a long tool call with a richer result string). Stage 2 (planned): drill-down navigation (parent ↔ subagent conversation) + status cards. Deferred: stored/resumable conversation history (`.planning/pr-conversation-persistence.md`).
+Stage 1 + 2 (landed): the runner + registry + spawner, plus the drill-down UX — status cards in the parent view (running/succeeded/failed) and a "View" action that drills into the subagent's internal conversation (with a `← Back` that returns to the parent chat, preserved intact). Navigation state lives on the session (`activeSubagentId`); the panel switches views via `setSubagents`/`setActiveSubagent` pushed on `onChatUpdate`. Deferred: stored/resumable conversation history (`.planning/pr-conversation-persistence.md`).
 
 ## Vision & image support
 

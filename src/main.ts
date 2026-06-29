@@ -1727,6 +1727,10 @@ export default class EventideQuillPlugin extends Plugin {
                 this.lintPanel.coWriterSetCoachActive(session.coachActive);
                 this.lintPanel.coWriterSetLoreCoachPhase(session.loreCoachSession?.phase ?? 'discover');
                 this.lintPanel.coWriterSetLoreCoachActive(session.loreCoachActive);
+                // Subagent status cards + drill-down (driven by the subagents'
+                // own per-round/status callbacks, which fire onChatUpdate).
+                this.lintPanel.coWriterSetSubagents(session.getSubagentViews());
+                this.lintPanel.coWriterSetActiveSubagent(session.activeSubagentId);
             }
         };
         session.onOptionsLoading = (loading: boolean) => {
