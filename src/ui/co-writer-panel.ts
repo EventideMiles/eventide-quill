@@ -907,7 +907,20 @@ export class CoWriterPanel extends AbstractChatPanel {
                 }
             }
 
-            if (this.optionsLoading) {
+            // Regime B processing indicator OR generic streaming placeholder.
+            // When the proxy caption call is in flight, show a tool-use-style
+            // "Describing image…" line in place of "Thinking..." so the writer
+            // knows their image is being processed, not silently stalled.
+            if (this.describingImages) {
+                const indicator = scroll.createEl('div', {
+                    cls: 'quill-cowriter-panel__image-describing'
+                });
+                indicator.createEl('span', {
+                    cls: 'quill-cowriter-panel__image-describing-icon',
+                    text: '\u29c9'
+                });
+                indicator.createEl('span', { text: 'Describing image\u2026' });
+            } else if (this.optionsLoading) {
                 const bubble = scroll.createEl('div', {
                     cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--assistant quill-cowriter-panel__chat-bubble--streaming'
                 });

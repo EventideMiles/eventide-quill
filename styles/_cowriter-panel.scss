@@ -859,6 +859,29 @@
         }
     }
 
+    /* Regime B "Describing image…" indicator — renders in the chat area (in
+       place of the "Thinking..." placeholder) while the proxy caption call is
+       in flight. Matches the tool-use visual language: left border, muted
+       italic, small font. The icon pulses to signal active processing. */
+    &__image-describing {
+        display: flex;
+        align-items: center;
+        gap: $space-xs;
+        margin-top: $space-md;
+        margin-bottom: $space-md;
+        margin-left: 20px;
+        padding-left: $space-xs;
+        border-left: 2px solid var(--background-modifier-border);
+        font-size: var(--font-smallest);
+        color: var(--text-faint, var(--text-muted));
+        font-style: italic;
+    }
+
+    &__image-describing-icon {
+        opacity: 0.7;
+        animation: quill-describe-pulse 1.5s ease-in-out infinite;
+    }
+
     /* Compact button for co-writer panel */
     &__compact-btn {
         cursor: pointer;
@@ -1104,5 +1127,18 @@
 
     .quill-cowriter-panel__overflow-btn {
         display: inline-flex;
+    }
+}
+
+// Pulse animation for the Regime B "Describing image…" indicator icon.
+// Signals active processing (the proxy caption call is in flight) without
+// being distracting.
+@keyframes quill-describe-pulse {
+    0%,
+    100% {
+        opacity: 0.7;
+    }
+    50% {
+        opacity: 0.25;
     }
 }
