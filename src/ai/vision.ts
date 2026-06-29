@@ -4,13 +4,24 @@ import type { AiProvider, ChatMessage } from './provider';
 /**
  * Default proxy prompt used when the writer hasn't customized
  * `lorebookImageProxyPrompt`. Oriented toward the details a novelist actually
- * needs from reference art.
+ * needs from reference art. Structured for weak vision models — the numbered
+ * per-character list gives the model scaffolding so it doesn't stop after the
+ * first face in a group image.
  */
 export const DEFAULT_IMAGE_PROXY_PROMPT =
-    'Describe this image for a novelist. Focus on visible details that matter ' +
-    'for fiction: character appearance (face, build, age, ethnicity, clothing, ' +
-    'distinguishing features), setting, mood, and notable objects. Be concise ' +
-    'and concrete; avoid speculation about story or dialogue.';
+    'Describe this image in detail for a novelist. This description is the only ' +
+    'information the writing assistant will have about the image, so be thorough, ' +
+    'not brief.\n\n' +
+    'If MULTIPLE characters are visible, describe EACH one separately using a ' +
+    'numbered list (1, 2, 3, ...). For every character, cover:\n' +
+    '- Face: apparent age, ethnicity, hair (color, style, length), eye color, facial features\n' +
+    '- Build: height relative to others in the scene, body type, posture\n' +
+    '- Clothing: each visible garment, colors, style, condition\n' +
+    '- Distinguishing features: scars, tattoos, jewelry, accessories, weapons\n' +
+    'Also describe the setting (location, time of day, lighting, weather), the ' +
+    'mood or atmosphere, and any notable objects (books, maps, artifacts, tools).\n\n' +
+    'Stick to what is visible — do not speculate about story, dialogue, or ' +
+    'off-screen elements.';
 
 /** How an image should enter a conversation on a given provider. */
 export type ImageInjection =
@@ -236,8 +247,10 @@ async function captionWithModel(
         {
             role: 'system',
             content:
-                'You are a visual description assistant for a novelist. ' +
-                'Describe images concisely, concretely, and accurately.'
+                'You are a visual description assistant for a novelist. Describe images ' +
+                'thoroughly, covering every visible character and detail. Use numbered lists ' +
+                'for multiple characters. Be concrete and accurate — never speculate; describe ' +
+                'only what is visible.'
         },
         { role: 'user', content: prompt, images }
     ];
@@ -247,7 +260,7 @@ async function captionWithModel(
         model: modelId,
         messages,
         temperature: 0.3,
-        maxTokens: 512,
+        maxTokens: 1024,
         signal: opts.signal
     })) {
         if (chunk.text) caption += chunk.text;

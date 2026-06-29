@@ -1038,6 +1038,17 @@ export default class EventideQuillPlugin extends Plugin {
             saved.embeddingsTopKChunks = saved.manuscriptAnalysisTopKChunks;
             delete saved.manuscriptAnalysisTopKChunks;
         }
+        // Migration: lorebookImageProxyPrompt rewritten in 0.12 for more thorough
+        // multi-character descriptions (was "Be concise", now structured per-character).
+        // Upgrade users who still have the old default text so they benefit without
+        // having to manually reset. Users with a genuinely custom prompt are untouched.
+        if (
+            saved &&
+            typeof saved.lorebookImageProxyPrompt === 'string' &&
+            saved.lorebookImageProxyPrompt.startsWith('Describe this image for a novelist. Focus on visible details')
+        ) {
+            saved.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
+        }
         this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
     }
 
