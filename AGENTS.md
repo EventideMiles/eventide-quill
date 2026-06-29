@@ -158,7 +158,7 @@ src/
                          spawned by the run_lorebook_batch tool; see "Subagents"),
     tools/                # Tool-calling layer (see "Tool-calling architecture")
       tool.ts (Tool, ToolRegistry, ToolResult, ToolContext, DuplicateToolError),
-      tool-loop.ts (streamWithTools — exported but currently unused; co-writer inlines),
+      tool-loop.ts (streamWithTools — generic tool-loop runner; first real caller is critical analysis),
       index.ts (registries + factory wiring + createToolRegistry gating),
       context-helpers.ts, lore-edit-helpers.ts,
       manuscript-mentions.ts, lore-siblings.ts, vault-lookup.ts, grep-notes.ts,
@@ -183,7 +183,7 @@ src/
 
 The co-writer can call tools mid-conversation via the provider's native tool-calling API (OpenAI/Ollama `tools` + `tool_calls`). Two execution paths exist — both are vision-aware:
 
-- **`streamWithTools`** (`src/ai/tools/tool-loop.ts`) — a generic wrapper exported for reuse; currently has **no callers**.
+- **`streamWithTools`** (`src/ai/tools/tool-loop.ts`) — a generic tool-loop runner: streams text/thought chunks to the consumer while executing tool calls internally. First real caller: **critical analysis** (`analysis.ts` → `getAnalysis` routes through it when a tool registry is supplied, so the Review tab's critical engine can verify findings against the vault). The co-writer modes still inline their own loops (mode-specific behavior); migrating them onto `streamWithTools` is a future DRY consolidation.
 - **The co-writer's own loop** (`src/ai/co-writer.ts`) — discuss, coach, fulfill, and lorebook-coach modes each inline their own tool execution (`executeToolCallSafely`) so they can render tool rounds in the chat UI and track token growth round-by-round. **This is the active path.**
 
 Key contracts:

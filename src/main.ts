@@ -44,6 +44,7 @@ import {
     type AnalysisMode,
     type AnalysisScope
 } from './ai/analysis';
+import { createReadOnlyToolRegistry } from './ai/tools';
 import type { ChatMessage } from './ai/provider';
 
 import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
@@ -3386,7 +3387,9 @@ export default class EventideQuillPlugin extends Plugin {
                 customInstruction,
                 temperature: this.settings.analysisTemperature,
                 maxTokens: this.settings.analysisMaxOutputTokens,
-                existingMessages: initialWithLore
+                existingMessages: initialWithLore,
+                registry: createReadOnlyToolRegistry(this, this.settings.lorebookNetworkTools),
+                ctx: { plugin: this, signal: this.analysisAbort.signal }
             });
 
             let fullResponse = '';
