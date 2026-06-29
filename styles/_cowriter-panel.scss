@@ -110,6 +110,23 @@
         }
     }
 
+    /* Image thumbnails attached to a user chat bubble (paste/drop/attach). */
+    &__bubble-images {
+        display: flex;
+        gap: $space-sm;
+        margin-top: $space-sm;
+        flex-wrap: wrap;
+    }
+
+    &__bubble-image {
+        max-width: 80px;
+        max-height: 80px;
+        border-radius: $radius-sm;
+        // Works against the user bubble's --interactive-accent background.
+        border: 1px solid var(--text-on-accent);
+        object-fit: cover;
+    }
+
     /* Option cards */
     &__options-intro {
         font-size: var(--font-ui-small);
@@ -381,6 +398,56 @@
         position: relative;
         flex-shrink: 0;
         padding: 0 0 $space-xs 0;
+    }
+
+    /* Pending-image preview strip above the textarea (paste/drop/attach queue). */
+    &__attach-row {
+        display: flex;
+        gap: $space-sm;
+        padding: 0 0 $space-sm 0;
+        flex-wrap: wrap;
+    }
+
+    &__image-preview {
+        position: relative;
+        width: 56px;
+        height: 56px;
+        border-radius: $radius-sm;
+        border: 1px solid var(--background-modifier-border);
+        overflow: hidden;
+        flex-shrink: 0;
+    }
+
+    &__image-preview-img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    &__image-remove {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        width: 18px;
+        height: 18px;
+        padding: 0;
+        border: none;
+        border-radius: $radius-full;
+        background: var(--background-primary);
+        color: var(--text-normal);
+        font-size: 13px;
+        line-height: 1;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: var(--shadow-s);
+        transition: background $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+        }
     }
 
     &__mode-btn {
@@ -837,6 +904,54 @@
         }
     }
 
+    /* Paperclip attach-image button. Same dimensions as the other secondary
+       buttons; always visible (does not collapse under compact mode). */
+    &__attach-btn {
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-sm 10px;
+        font-size: var(--font-ui-smaller);
+        font-family: var(--font-interface);
+        background: transparent;
+        color: var(--text-muted);
+        transition: background $transition-fast, color $transition-fast;
+        height: 36px;
+        line-height: 1.4;
+        box-sizing: border-box;
+        flex-shrink: 0;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+    }
+
+    /* Hamburger overflow button — hidden by default; shown under compact-width
+       via the __bottom--compact modifier. Opens a native Obsidian Menu with the
+       secondary actions that no longer fit inline. */
+    &__overflow-btn {
+        display: none;
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-sm 10px;
+        font-size: var(--font-ui-smaller);
+        font-family: var(--font-interface);
+        background: transparent;
+        color: var(--text-muted);
+        transition: background $transition-fast, color $transition-fast;
+        height: 36px;
+        line-height: 1.4;
+        box-sizing: border-box;
+        flex-shrink: 0;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+    }
+
     /* Subagent status cards + drill-down view (run_lorebook_batch). */
     &__subagent-card {
         border: 1px solid var(--background-modifier-border);
@@ -971,4 +1086,23 @@
 // the block to avoid double-element nesting (&__x &__y would be ambiguous).
 .quill-cowriter-panel__mode-row--active .quill-cowriter-panel__mode-row-label {
     color: var(--text-normal);
+}
+
+// Compact-width responsive collapse. When the sidebar narrows below the
+// threshold (set in co-writer-panel.ts via ResizeObserver), the bottom area
+// gets the __bottom--compact modifier. The four secondary buttons hide and a
+// hamburger overflow button takes their place. Mode + Attach + Send stay
+// visible as primary actions. First responsive behavior in this block; mirrors
+// the sidebar's compact/watermark toggle in _sidebar.scss.
+.quill-cowriter-panel__bottom--compact {
+    .quill-cowriter-panel__ctx-add,
+    .quill-cowriter-panel__refresh-btn,
+    .quill-cowriter-panel__compact-btn,
+    .quill-cowriter-panel__new-chat-btn {
+        display: none;
+    }
+
+    .quill-cowriter-panel__overflow-btn {
+        display: inline-flex;
+    }
 }
