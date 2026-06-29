@@ -1737,6 +1737,9 @@ export default class EventideQuillPlugin extends Plugin {
         session.onOptionsLoading = (loading: boolean) => {
             this.lintPanel?.coWriterSetOptionsLoading(loading);
         };
+        session.onDescribingImages = (active: boolean) => {
+            this.lintPanel?.coWriterSetDescribingImages(active);
+        };
         session.onTokenEstimate = (conversationTokens: number, maxTokens: number) => {
             this.lintPanel?.coWriterSetContextTokenEstimate(conversationTokens);
             this.lintPanel?.coWriterSetMaxAllowedTokens(maxTokens);

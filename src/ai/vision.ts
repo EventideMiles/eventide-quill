@@ -28,24 +28,39 @@ export interface ImageInjectionOptions {
 }
 
 /**
- * Synchronous check for whether any vision regime is available — i.e. whether
- * the writer could meaningfully attach an image to a chat turn. Returns `true`
- * if either:
- *  - the default chat model is vision-capable (role `chat-image`, Regime A), or
- *  - a default image model is configured (Regime B proxy).
- *
- * Use this for UI guards (e.g. showing a Notice at capture time) without
- * kicking off an async proxy call. The authoritative routing decision still
- * happens in {@link resolveImageInjection}.
+ * Synchronous check for whether any vision regime is available. Delegates to
+ * {@link getImageRegime}; returns `true` for any regime other than `'none'`.
+ * Use for UI guards (e.g. showing a Notice at capture time) without kicking
+ * off an async proxy call.
  */
 export function isVisionConfigured(plugin: EventideQuillPlugin): boolean {
+    return getImageRegime(plugin) !== 'none';
+}
+
+/**
+ * Synchronously determine which vision regime applies on the current provider
+ * configuration, without making any API calls:
+ *
+ * - `'native'` — the default chat model has role `chat-image` (Regime A).
+ *   Images attach directly to the user message; the model sees pixels.
+ * - `'proxy'` — the chat model is text-only but a default image model is
+ *   configured (Regime B). The image model will make one isolated caption call;
+ *   the chat model never receives pixels.
+ * - `'none'` — neither regime is available. Callers should surface a Notice
+ *   and inject a placeholder rather than silently dropping the image.
+ *
+ * Use this to decide whether to show a "describing image…" indicator (only
+ * relevant under `'proxy'`) or to warn at capture time (when `'none'`). The
+ * authoritative routing still happens in {@link resolveImageInjection}.
+ */
+export function getImageRegime(plugin: EventideQuillPlugin): 'native' | 'proxy' | 'none' {
     const chat = plugin.getDefaultChatProvider();
     if (chat.provider && chat.modelId) {
         const chatModel = chat.provider.config.models.find((m) => m.id === chat.modelId);
-        if (chatModel && chatModel.role === 'chat-image') return true;
+        if (chatModel && chatModel.role === 'chat-image') return 'native';
     }
     const image = plugin.getDefaultImageProvider();
-    return Boolean(image.provider && image.modelId);
+    return image.provider && image.modelId ? 'proxy' : 'none';
 }
 
 /**

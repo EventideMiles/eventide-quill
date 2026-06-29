@@ -94,6 +94,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private chatHistory: CoWriterChatMessage[] = [];
     private currentOptions: CoWriterOption[] = [];
     private optionsLoading = false;
+    /** Whether the Regime B image-description proxy call is in flight (drives the "Describing…" button label). */
+    private describingImages = false;
     private inputMode: InputMode = 'coach';
     /** Preserved textarea value across re-renders so user-typed content survives generation. */
     private inputValue = '';
@@ -540,6 +542,12 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Set whether continuation options are currently being generated. */
     setOptionsLoading(loading: boolean): void {
         this.optionsLoading = loading;
+        this.scheduleRender();
+    }
+
+    /** Set whether the Regime B image-description proxy call is in flight. */
+    setDescribingImages(active: boolean): void {
+        this.describingImages = active;
         this.scheduleRender();
     }
 
@@ -1677,7 +1685,9 @@ export class CoWriterPanel extends AbstractChatPanel {
                 : generating
                   ? this.inputMode === 'fulfill'
                       ? 'Running\u2026'
-                      : 'Stop'
+                      : this.describingImages
+                        ? 'Describing\u2026'
+                        : 'Stop'
                   : this.inputMode === 'fulfill'
                     ? 'Run'
                     : 'Send'

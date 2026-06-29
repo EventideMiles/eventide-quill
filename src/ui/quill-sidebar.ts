@@ -900,6 +900,11 @@ export class QuillSidebarView extends ItemView {
         this.coWriterPanel?.setOptionsLoading(loading);
     }
 
+    /** Push the Regime B "describing image…" indicator state to the Co-writer panel. */
+    coWriterSetDescribingImages(active: boolean): void {
+        this.coWriterPanel?.setDescribingImages(active);
+    }
+
     /** Trigger a full refresh of the Co-writer panel (e.g., after context file changes). */
     coWriterRefresh(): void {
         if (this.activeTopTab === 'cowriter') {

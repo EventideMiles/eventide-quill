@@ -28,7 +28,12 @@ import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files
 import { ChangeSet } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
 import { createReadOnlyToolRegistry, createToolRegistry, executeToolCall, type ToolContext } from './tools';
-import { injectImagesIntoMessages, prepareUserMessageWithImages } from './vision';
+import {
+    getImageRegime,
+    injectImagesIntoMessages,
+    prepareUserMessageWithImages,
+    type PreparedUserMessage
+} from './vision';
 import { SubagentSession, type SubagentView, type SubagentConfig } from './subagent-session';
 import { resolveNoteFile } from './tools/lore-edit-helpers';
 import {
@@ -720,6 +725,12 @@ export class CoWriterSession {
     onThought: ((thought: string) => void) | null = null;
     onChatUpdate: (() => void) | null = null;
     onOptionsLoading: ((loading: boolean) => void) | null = null;
+    /**
+     * Fired when the Regime B proxy caption call starts/ends so the panel can
+     * show a "Describing image…" state during the round-trip. Only fires under
+     * the proxy regime (text-only chat + separate image model configured).
+     */
+    onDescribingImages: ((active: boolean) => void) | null = null;
     /** Called after a draft is accepted, to trigger fresh options. */
     onDraftAccepted: (() => void) | null = null;
     /** Called when the discuss-mode token estimate changes (conversation tokens only;
@@ -1323,7 +1334,7 @@ export class CoWriterSession {
         // Apply the two vision regimes to the writer's pasted/attached images: under Regime A
         // the images attach to this user message; under Regime B the proxy caption is folded
         // into the text; under unsupported a placeholder note is appended.
-        const prepared = await prepareUserMessageWithImages(plugin, prompt, images ?? [], this.abortController?.signal);
+        const prepared = await this.prepareImageMessage(plugin, prompt, images, this.abortController?.signal);
         this.discussCurrentMessages.push({
             role: 'user',
             content: prepared.content,
@@ -1606,12 +1617,7 @@ export class CoWriterSession {
         // Initialize coach session on first call
         if (!this.coachSession || (this.coachSession.phase === 'discern' && message)) {
             const prompt = getCoWriterCoachPrompt(proseForContext || '(empty document)', message);
-            const prepared = await prepareUserMessageWithImages(
-                plugin,
-                prompt,
-                images ?? [],
-                this.abortController?.signal
-            );
+            const prepared = await this.prepareImageMessage(plugin, prompt, images, this.abortController?.signal);
             this.coachSession = {
                 phase: 'discern',
                 response: '',
@@ -1647,10 +1653,10 @@ export class CoWriterSession {
                     this.coachSession.response || this.coachSession.summary,
                     phase === 'direction' ? this.coachSession.response : ''
                 );
-                const prepared = await prepareUserMessageWithImages(
+                const prepared = await this.prepareImageMessage(
                     plugin,
                     revisionPrompt,
-                    images ?? [],
+                    images,
                     this.abortController?.signal
                 );
                 this.discussCurrentMessages.push({
@@ -1666,10 +1672,10 @@ export class CoWriterSession {
                     phase === 'discern' ? 1 : 2,
                     this.coachSession.clarifyRound
                 );
-                const prepared = await prepareUserMessageWithImages(
+                const prepared = await this.prepareImageMessage(
                     plugin,
                     followUpPrompt,
-                    images ?? [],
+                    images,
                     this.abortController?.signal
                 );
                 this.discussCurrentMessages.push({
@@ -2143,12 +2149,7 @@ export class CoWriterSession {
         // Initialize session on first turn.
         if (!this.loreCoachSession) {
             const prompt = getLoreCoachUserPrompt(message);
-            const prepared = await prepareUserMessageWithImages(
-                plugin,
-                prompt,
-                images ?? [],
-                this.abortController?.signal
-            );
+            const prepared = await this.prepareImageMessage(plugin, prompt, images, this.abortController?.signal);
             this.loreCoachSession = {
                 phase: 'discover',
                 scope: message,
@@ -2169,12 +2170,7 @@ export class CoWriterSession {
         } else {
             this.loreCoachSession.rounds++;
             const prompt = getLoreCoachUserPrompt(message);
-            const prepared = await prepareUserMessageWithImages(
-                plugin,
-                prompt,
-                images ?? [],
-                this.abortController?.signal
-            );
+            const prepared = await this.prepareImageMessage(plugin, prompt, images, this.abortController?.signal);
             this.loreCoachMessages.push({
                 role: 'user',
                 content: prepared.content,
@@ -3685,6 +3681,32 @@ export class CoWriterSession {
     clearVoiceProfile(): void {
         this.voiceProfile = null;
         this.voiceProfileFile = null;
+    }
+
+    /**
+     * Wrap {@link prepareUserMessageWithImages} with a "describing image…"
+     * signal so the panel can show a dedicated state during the Regime B proxy
+     * caption call. The signal fires only under the proxy regime (text-only
+     * chat model + separate image model), not under native (where pixels just
+     * attach to the message with no extra round-trip). The "off" signal fires
+     * in a `finally` so the indicator clears even if the proxy call fails or is
+     * aborted (in which case prepareUserMessageWithImages returns a placeholder).
+     */
+    private async prepareImageMessage(
+        plugin: EventideQuillPlugin,
+        text: string,
+        images: string[] | undefined,
+        signal: AbortSignal | undefined
+    ): Promise<PreparedUserMessage> {
+        const imgs = images ?? [];
+        if (imgs.length === 0) return { content: text };
+        const proxy = getImageRegime(plugin) === 'proxy';
+        if (proxy) this.onDescribingImages?.(true);
+        try {
+            return await prepareUserMessageWithImages(plugin, text, imgs, signal);
+        } finally {
+            if (proxy) this.onDescribingImages?.(false);
+        }
     }
 
     /**
