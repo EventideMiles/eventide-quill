@@ -3606,6 +3606,20 @@ export class CoWriterSession {
         this.voiceProfileFile = null;
     }
 
+    /**
+     * Drop all subagent sessions and exit any drill-down view. Called from
+     * {@link resetChat} (new chat) and on every mode switch (via
+     * `clearCoWriterSubagents`), since a subagent queued for one mode shouldn't
+     * follow the writer into another. Any in-flight subagent is already
+     * aborted by `cancelGeneration` (which the caller has run, or will run);
+     * the sessions hold no further resources to release.
+     */
+    clearSubagents(): void {
+        this.subagents.clear();
+        this.activeSubagentId = null;
+        this.onChatUpdate?.();
+    }
+
     /** Reset the entire session including coach and context. */
     reset(): void {
         this.unlockEditor();
@@ -3615,6 +3629,7 @@ export class CoWriterSession {
         this.clearFulfill();
         this.clearDirect();
         this.clearLoreEdit();
+        this.clearSubagents();
         this.manuscriptPath = null;
         this.originalText = '';
         this.insertionStart = -1;
@@ -3646,6 +3661,7 @@ export class CoWriterSession {
         this.clearFulfill();
         this.clearDirect();
         this.clearLoreEdit();
+        this.clearSubagents();
         this.originalText = '';
         this.insertionStart = -1;
         this.insertionLength = 0;
