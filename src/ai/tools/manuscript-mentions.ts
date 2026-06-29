@@ -42,8 +42,10 @@ export const manuscriptMentionsTool: Tool = {
         const entities = await resolveEntities(ctx);
         if (entities.length === 0) {
             return (
-                'No manuscript entities available. Open a manuscript file and run ' +
-                'a Dashboard refresh first, or ensure the active document is a chapter.'
+                'No manuscript entities available — the dashboard has not been scanned for this ' +
+                'manuscript yet. Call `refresh_dashboard` (pass a manuscript or chapter file path, ' +
+                'or call it with a manuscript file already open) to load the manuscript context, ' +
+                'then retry manuscript_mentions.'
             );
         }
 

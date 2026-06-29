@@ -44,6 +44,7 @@ import {
     type AnalysisMode,
     type AnalysisScope
 } from './ai/analysis';
+import { createReadOnlyToolRegistry } from './ai/tools';
 import type { ChatMessage } from './ai/provider';
 
 import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
@@ -1727,6 +1728,10 @@ export default class EventideQuillPlugin extends Plugin {
                 this.lintPanel.coWriterSetCoachActive(session.coachActive);
                 this.lintPanel.coWriterSetLoreCoachPhase(session.loreCoachSession?.phase ?? 'discover');
                 this.lintPanel.coWriterSetLoreCoachActive(session.loreCoachActive);
+                // Subagent status cards + drill-down (driven by the subagents'
+                // own per-round/status callbacks, which fire onChatUpdate).
+                this.lintPanel.coWriterSetSubagents(session.getSubagentViews());
+                this.lintPanel.coWriterSetActiveSubagent(session.activeSubagentId);
             }
         };
         session.onOptionsLoading = (loading: boolean) => {
@@ -3345,6 +3350,8 @@ export default class EventideQuillPlugin extends Plugin {
         }
         const vaultContext = contextParts.length > 0 ? contextParts.join('\n\n') : '';
 
+        const analysisRegistry = createReadOnlyToolRegistry(this, this.settings.lorebookNetworkTools);
+
         const initialMessages = buildAnalysisMessages(mode, {
             text: resolved.text,
             scope: resolved.scope,
@@ -3355,7 +3362,8 @@ export default class EventideQuillPlugin extends Plugin {
             voiceMarker,
             characters,
             plotThreads,
-            customInstruction
+            customInstruction,
+            registry: analysisRegistry
         });
         // Lore reference embeds (gated on reviewLoreContext) injected between the
         // system prompt and user instruction so the first analysis payload
@@ -3382,7 +3390,9 @@ export default class EventideQuillPlugin extends Plugin {
                 customInstruction,
                 temperature: this.settings.analysisTemperature,
                 maxTokens: this.settings.analysisMaxOutputTokens,
-                existingMessages: initialWithLore
+                existingMessages: initialWithLore,
+                registry: analysisRegistry,
+                ctx: { plugin: this, signal: this.analysisAbort.signal }
             });
 
             let fullResponse = '';

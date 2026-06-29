@@ -1,5 +1,6 @@
 import { normalizePath, TFile } from 'obsidian';
 import type { Tool, ToolContext } from './tool';
+import { splitFrontmatter } from './lore-edit-helpers';
 
 /**
  * Read the text content of a note in the user's vault. Use to pull in
@@ -60,7 +61,7 @@ export const vaultLookupTool: Tool = {
             return `Note "${file.path}" is empty.`;
         }
 
-        return stripFrontmatter(raw);
+        return splitFrontmatter(raw).body;
     }
 };
 
@@ -83,16 +84,4 @@ function resolveVaultFile(query: string, ctx: ToolContext): TFile | null {
     // the vault root. Returns null if no note matches.
     const dest = app.metadataCache.getFirstLinkpathDest(query, '');
     return dest instanceof TFile ? dest : null;
-}
-
-/**
- * Strip a leading YAML frontmatter block (`---\n...\n---`) from a note.
- * Tools emit body text only — frontmatter would just consume the result
- * budget without aiding the model.
- *
- * If no frontmatter is present, returns the input unchanged.
- */
-function stripFrontmatter(text: string): string {
-    const match = text.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
-    return match ? text.slice(match[0].length) : text;
 }

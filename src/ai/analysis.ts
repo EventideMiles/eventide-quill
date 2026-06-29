@@ -1,6 +1,7 @@
 import { type AiProvider, type ChatChunk, type ChatMessage } from './provider';
 import { getAnalysisModePrompt } from './prompts';
 import { AI_MODE_CONFIGS } from './modes';
+import { streamWithTools, type ToolContext, type ToolRegistry } from './tools';
 import type { ExtractedEntity, VoiceMarker } from '../core/context-engine/types';
 import type { NarrativeVoicePreset } from '../types';
 import { buildCodeFence } from '../utils/text-analysis';
@@ -103,6 +104,11 @@ export interface AnalysisOptions {
     customInstruction?: string;
     /** Pre-built messages for follow-up turns (caller manages compaction). */
     existingMessages?: ChatMessage[];
+    /** Tool registry for verify-and-cite analysis. When present, getAnalysis
+     * routes through streamWithTools so the model can look things up. */
+    registry?: ToolRegistry | null;
+    /** Tool execution context (plugin + signal). Required when registry is set. */
+    ctx?: ToolContext;
 }
 
 /** Build the user instruction for an analysis request. */
@@ -136,6 +142,8 @@ function buildAnalysisUserMessage(options: AnalysisOptions): string {
  * messages on every API call so it survives compaction (mirrors feedback).
  */
 export function buildAnalysisMessages(mode: AnalysisMode, options: AnalysisOptions): ChatMessage[] {
+    const toolsAvailable = !!options.registry;
+    const networkToolsAvailable = !!options.registry?.has('fetch_url');
     return [
         {
             role: 'system',
@@ -143,7 +151,9 @@ export function buildAnalysisMessages(mode: AnalysisMode, options: AnalysisOptio
                 voiceMarker: options.voiceMarker,
                 characters: options.characters,
                 plotThreads: options.plotThreads,
-                vaultContext: options.vaultContext
+                vaultContext: options.vaultContext,
+                toolsAvailable,
+                networkToolsAvailable
             })
         },
         {
@@ -165,14 +175,32 @@ export async function* getAnalysis(
 ): AsyncGenerator<ChatChunk> {
     const messages = options.existingMessages ?? buildAnalysisMessages(mode, options);
 
-    const stream = provider.chatCompletion({
+    const baseOptions = {
         messages,
         model: options.model,
         temperature: options.temperature ?? DEFAULT_CRITICAL_TEMPERATURE,
         maxTokens: options.maxTokens ?? DEFAULT_CRITICAL_MAX_TOKENS,
         signal: options.signal
-    });
+    };
 
+    // When a tool registry is supplied, route through streamWithTools — the
+    // generic tool-loop runner. Text/thought chunks stream to the consumer
+    // exactly like a plain stream; tool calls execute internally so the writer
+    // sees only the findings report, not the tool rounds. When the registry is
+    // null (tools disabled) this falls through to a plain stream — identical to
+    // the pre-tool behavior.
+    if (options.registry) {
+        if (!options.ctx) {
+            throw new Error('AnalysisOptions.ctx is required when registry is provided.');
+        }
+        // Merge the caller's abort signal into the tool context so tool
+        // execution (executeToolCall) honors it even when ctx.signal was unset.
+        const ctx: ToolContext = options.ctx.signal ? options.ctx : { ...options.ctx, signal: options.signal };
+        yield* streamWithTools(provider, baseOptions, options.registry, ctx);
+        return;
+    }
+
+    const stream = provider.chatCompletion(baseOptions);
     for await (const chunk of stream) {
         yield chunk;
     }

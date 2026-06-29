@@ -836,6 +836,135 @@
             color: var(--text-normal);
         }
     }
+
+    /* Subagent status cards + drill-down view (run_lorebook_batch). */
+    &__subagent-card {
+        border: 1px solid var(--background-modifier-border);
+        border-left-width: 3px;
+        border-radius: $radius-sm;
+        padding: $space-sm;
+        margin-top: $space-sm;
+        display: flex;
+        flex-direction: column;
+        gap: $space-xs;
+
+        &--running { border-left-color: var(--interactive-accent); }
+        &--succeeded { border-left-color: var(--text-muted); }
+        &--failed { border-left-color: var(--text-error); }
+    }
+
+    &__subagent-card-header {
+        display: flex;
+        align-items: center;
+        gap: $space-xs;
+    }
+
+    &__subagent-kind {
+        font-size: var(--font-smallest);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text-faint, var(--text-muted));
+        flex-shrink: 0;
+    }
+
+    &__subagent-status {
+        font-size: var(--font-smallest);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        flex-shrink: 0;
+
+        &--running { color: var(--interactive-accent); }
+        &--succeeded { color: var(--text-muted); }
+        &--failed { color: var(--text-error); }
+    }
+
+    &__subagent-goal {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-normal);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    &__subagent-progress,
+    &__subagent-summary {
+        font-size: var(--font-smallest);
+        color: var(--text-muted);
+    }
+
+    &__subagent-error {
+        font-size: var(--font-smallest);
+        color: var(--text-error);
+    }
+
+    &__subagent-view {
+        align-self: flex-start;
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: var(--font-smallest);
+        padding: 2px $space-sm;
+        transition: background $transition-fast, color $transition-fast;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+    }
+
+    /* Drill-down view: back bar + the subagent's internal conversation. */
+    &__subagent-bar {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        padding: $space-sm 0;
+        margin-bottom: $space-xs;
+        border-bottom: 1px solid var(--background-modifier-border);
+        background: var(--background-secondary);
+    }
+
+    &__subagent-back {
+        display: inline-flex;
+        align-items: center;
+        gap: $space-xs;
+        cursor: pointer;
+        border: none;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: var(--font-ui-smaller);
+
+        &:hover {
+            color: var(--text-normal);
+        }
+    }
+
+    &__subagent-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: $space-sm;
+        font-size: var(--font-smallest);
+        color: var(--text-muted);
+        padding-bottom: $space-sm;
+    }
+
+    &__subagent-tool-result {
+        font-size: var(--font-smallest);
+        color: var(--text-faint, var(--text-muted));
+        font-style: italic;
+        background: var(--background-modifier-hover);
+        border-radius: $radius-sm;
+        padding: $space-xs $space-sm;
+        margin: $space-xs 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
 }
 
 // Active mode row emphasizes its label color. Cross-element rule kept outside

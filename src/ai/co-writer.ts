@@ -15,6 +15,7 @@ import {
     getCoWriterVoicePrompt,
     getLoreCoachSystemPrompt,
     getLoreCoachUserPrompt,
+    getResearchSystemPrompt,
     type ActiveSteering
 } from './prompts';
 import { compactConversation } from './compaction';
@@ -26,8 +27,10 @@ import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
 import { ChangeSet } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
-import { createToolRegistry, type ToolContext, type ToolRegistry, type ToolResult } from './tools';
+import { createReadOnlyToolRegistry, createToolRegistry, executeToolCall, type ToolContext } from './tools';
 import { injectImagesIntoMessages } from './vision';
+import { SubagentSession, type SubagentView, type SubagentConfig } from './subagent-session';
+import { resolveNoteFile } from './tools/lore-edit-helpers';
 import {
     clearDiffEdits,
     diffEditsField,
@@ -364,7 +367,21 @@ export async function loadAdditionalContext(
         'Reference file',
         plugin.settings.contextMaxCharsPerFile
     );
-    return [...embedMessages, ...fileMessages];
+    const messages = [...embedMessages, ...fileMessages];
+    // Explicit "already in context" note — without it the model frequently
+    // vault_lookup's these same files even though their full text is right above,
+    // wasting a round and duplicating content. Listing the paths makes the
+    // connection unmistakable.
+    if (regularPaths.length > 0) {
+        messages.push({
+            role: 'system',
+            content:
+                'The reference files above are already in your context (full text, capped per file). ' +
+                'Reuse their content directly rather than vault_lookup-ing or re-reading any of them:\n' +
+                regularPaths.map((p) => `- ${p}`).join('\n')
+        });
+    }
+    return messages;
 }
 
 /**
@@ -473,9 +490,9 @@ function buildNetworkToolsMessage(plugin: EventideQuillPlugin): ChatMessage | nu
         'Workflow: use the *_lookup tool to search, then use the *_page tool',
         'with the exact title from the results to retrieve the full extract.',
         '',
-        'Do not hesitate — if the writer mentions a topic that a wiki or',
-        'encyclopedia would know about, look it up. You do not need to ask',
-        'permission. Results count toward context — be judicious with very',
+        'Look things up freely — when the writer mentions a topic that a wiki or',
+        'encyclopedia would know about, go straight to the tool. You may proceed',
+        'without asking. Results count toward context — be judicious with very',
         'large pages.'
     );
     return { role: 'system', content: lines.join('\n') };
@@ -496,10 +513,11 @@ function buildInternalToolsMessage(plugin: EventideQuillPlugin): ChatMessage | n
         role: 'system',
         content: [
             'You have internal vault tools to ground your feedback in the manuscript and notes:',
-            '- manuscript_mentions: where a character, place, or plot thread appears in the active manuscript (pass empty to list every entity).',
-            "- vault_lookup: read a note's full text by path or name (frontmatter stripped).",
+            '- manuscript_mentions: where a character, place, or plot thread appears in the active manuscript (pass empty to list every entity the extractor found).',
+            "- vault_lookup: read a note's full text by path or name (frontmatter stripped). Reserve it for a SPECIFIC note you need in full.",
             '- grep_notes: search for text across vault files to find where something is mentioned.',
             '- lore_siblings: list other lore entries near a given one.',
+            'To learn the cast and world (characters, locations, plot threads), reach for manuscript_mentions — it lists the entities directly, saving a vault_lookup. If it returns "no entities," the dashboard has not been scanned: call refresh_dashboard (with a manuscript file path) and retry.',
             'Reach for these when a question of fact about the manuscript or vault would sharpen your answer. Tool results stay in context — read judiciously.'
         ].join('\n')
     };
@@ -522,7 +540,10 @@ function buildActiveFileMessage(plugin: EventideQuillPlugin): ChatMessage | null
             `The writer currently has "${activeFile.path}" open in the editor.\n` +
             'For edits to THIS file, recommend the writer use Direct or Fulfill mode ' +
             '(which stream changes live into the editor). Use edit_note / insert_note / ' +
-            'append_to_note tools for any OTHER note that is not currently open.'
+            'append_to_note tools for any OTHER note that is not currently open.\n' +
+            'Extracted details from this file (characters, locations, etc.) are already in ' +
+            'the "Vault context for reference" above — check there first and vault_lookup ' +
+            'this file only if you need the full prose beyond those excerpts.'
     };
 }
 
@@ -656,6 +677,18 @@ export class CoWriterSession {
 
     /** Chat message history for the panel display. */
     chatHistory: CoWriterChatMessage[] = [];
+
+    /**
+     * Subagent batch editors spawned via `run_lorebook_batch`, keyed by id.
+     * Each runs in its own fresh context (isolated from this conversation) but
+     * shares the {@link loreEdits} review queue via the tools' side effects.
+     * The stage-2 drill-down UI renders {@link SubagentSession.chatHistory} +
+     * {@link SubagentSession.status} from here. Plain serializable state so the
+     * deferred conversation-persistence feature can layer on later.
+     */
+    subagents = new Map<string, SubagentSession>();
+    /** Active subagent id for the drill-down view (stage 2); null = parent view. */
+    activeSubagentId: string | null = null;
 
     /**
      * API-level conversation history for the discuss mode.
@@ -1109,53 +1142,6 @@ export class CoWriterSession {
     }
 
     /**
-     * Execute one tool call with JSON argument parsing, result truncation,
-     * and full error containment. Non-abort failures surface to the model as
-     * an error string so it can recover; aborts (`AbortError` or an already-
-     * aborted signal) are rethrown so the outer tool loop's cleanup runs.
-     */
-    private async executeToolCallSafely(
-        call: ToolCallRequest,
-        registry: ToolRegistry,
-        ctx: ToolContext
-    ): Promise<ToolResult> {
-        const tool = registry.get(call.name);
-        if (!tool) return { text: `Error: tool "${call.name}" is not registered.` };
-
-        let parsedArgs: Record<string, unknown>;
-        try {
-            parsedArgs =
-                call.arguments.trim().length === 0 ? {} : (JSON.parse(call.arguments) as Record<string, unknown>);
-        } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { text: `Error: invalid JSON arguments: ${msg}` };
-        }
-
-        try {
-            // Propagate aborts so the outer tool loop's abort handling takes
-            // over (loading-state reset + editor unlock). Without this, a
-            // cancellation mid-tool-execution would be swallowed as model-visible
-            // error text and the loop would keep running. The outer catches in
-            // each mode recognize AbortError by name and run the same cleanup
-            // path used for aborted streams.
-            if (ctx.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-            const result = await tool.execute(parsedArgs, ctx);
-            const normalized: ToolResult = typeof result === 'string' ? { text: result } : result;
-            const maxChars = tool.maxResultTokens * 4;
-            if (normalized.text.length > maxChars) {
-                normalized.text = `${normalized.text.slice(0, maxChars)}\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
-            }
-            return normalized;
-        } catch (err) {
-            // Rethrow aborts — including tools that surface a generic Error
-            // after the signal has already fired (checked via signal.aborted).
-            if (ctx.signal?.aborted || (err instanceof Error && err.name === 'AbortError')) throw err;
-            const msg = err instanceof Error ? err.message : String(err);
-            return { text: `Error executing tool "${call.name}": ${msg}` };
-        }
-    }
-
-    /**
      * Annotate the last assistant message's toolUses with error info for
      * failed tool calls, so the panel can render them red and show the
      * reason on hover / right-click copy. Called after the execution loop
@@ -1269,14 +1255,14 @@ export class CoWriterSession {
             const systemPrompt: ChatMessage = {
                 role: 'system',
                 content:
-                    'You are a thoughtful, knowledgeable editor assisting a novelist in a discussion about their work. Respond with specific, craft-focused observations. Ask clarifying questions when helpful. Do not generate prose unless explicitly asked.'
+                    'You are a thoughtful, knowledgeable editor assisting a novelist in a discussion about their work. Respond with specific, craft-focused observations. Ask clarifying questions when helpful. Keep to analysis and discussion, generating prose only when the writer explicitly asks for it.'
             };
             this.discussCurrentMessages = [systemPrompt];
         }
 
         // Build the tool registry up front so its fixed per-request overhead
         // (the serialized `tools` field) is known before the budget math below.
-        const registry = createToolRegistry(plugin, false);
+        const registry = createToolRegistry(plugin, false, true);
         const toolDefs = registry?.toToolDefinitions();
         this.toolTokenOverhead = registry?.estimateTokens() ?? 0;
 
@@ -1445,7 +1431,7 @@ export class CoWriterSession {
                 const execResults: { failed: boolean; result: string }[] = [];
                 const collectedImages: string[] = [];
                 for (const call of result.toolCalls) {
-                    const toolResult = await this.executeToolCallSafely(call, registry, ctx);
+                    const toolResult = await executeToolCall(call, registry, ctx);
                     execResults.push({ failed: toolResult.text.startsWith('Error'), result: toolResult.text });
                     this.discussCurrentMessages.push({
                         role: 'tool',
@@ -1610,7 +1596,7 @@ export class CoWriterSession {
             const systemPrompt: ChatMessage = {
                 role: 'system',
                 content:
-                    'You are a thoughtful writing coach guiding a novelist through what to do next in their scene. Your job is to ASK QUESTIONS — at least 2-3 clarifying questions in every response until you have enough information to provide a plan. Do NOT just analyze or discuss the passage without asking questions. Follow the phased structure: discern intent, ask questions, plan, direct. Do not write prose for the writer.'
+                    'You are a thoughtful writing coach guiding a novelist through what to do next in their scene. Your job is to ASK QUESTIONS — at least 2-3 clarifying questions in every response until you have enough information to provide a plan. Lead every response with those questions rather than moving straight to analysis or discussion. Follow the phased structure: discern intent, ask questions, plan, direct. Keep your output to coaching, leaving prose writing to the writer.'
             };
 
             this.discussCurrentMessages = [systemPrompt, { role: 'user', content: prompt }];
@@ -1640,7 +1626,7 @@ export class CoWriterSession {
 
         // Build the tool registry up front so its fixed per-request overhead
         // (the serialized `tools` field) is known before the budget math below.
-        const registry = createToolRegistry(plugin, false);
+        const registry = createToolRegistry(plugin, false, true);
         const toolDefs = registry?.toToolDefinitions();
         this.toolTokenOverhead = registry?.estimateTokens() ?? 0;
 
@@ -1776,7 +1762,7 @@ export class CoWriterSession {
                 const coachExecResults: { failed: boolean; result: string }[] = [];
                 const coachCollectedImages: string[] = [];
                 for (const call of result.toolCalls) {
-                    const toolResult = await this.executeToolCallSafely(call, registry, ctx);
+                    const toolResult = await executeToolCall(call, registry, ctx);
                     coachExecResults.push({ failed: toolResult.text.startsWith('Error'), result: toolResult.text });
                     this.discussCurrentMessages.push({
                         role: 'tool',
@@ -2115,7 +2101,7 @@ export class CoWriterSession {
             this.loreCoachMessages.push({ role: 'user', content: getLoreCoachUserPrompt(message) });
         }
 
-        const registry = createToolRegistry(plugin, true);
+        const registry = createToolRegistry(plugin, true, true);
         const toolDefs = registry?.toToolDefinitions();
         this.toolTokenOverhead = registry?.estimateTokens() ?? 0;
         const maxTokens = chat.provider.config.maxContextTokens;
@@ -2319,7 +2305,7 @@ export class CoWriterSession {
                 const loreExecResults: { failed: boolean; result: string }[] = [];
                 const loreCollectedImages: string[] = [];
                 for (const call of toolCalls) {
-                    const toolResult = await this.executeToolCallSafely(call, registry, ctx);
+                    const toolResult = await executeToolCall(call, registry, ctx);
                     loreExecResults.push({ failed: toolResult.text.startsWith('Error'), result: toolResult.text });
                     this.loreCoachMessages.push({
                         role: 'tool',
@@ -2526,7 +2512,7 @@ export class CoWriterSession {
                     'Fulfill the inline directive at this point in the scene. Your prose will replace the directive comment and sit between the text above and the text below.',
                     'Read the surrounding prose carefully. Do NOT repeat or rephrase content that already appears before or after the directive — the reader has already seen it.',
                     'Insert exactly what the directive asks for. If it says "a paragraph," write one paragraph. If it asks for a specific detail, action, or description, write only that — not a summary of what is already there.',
-                    'Your prose must flow naturally into the text that follows it. Write in the established voice and perspective. Output only the prose — no labels, no explanations.',
+                    'Your prose must flow naturally into the text that follows it. Write in the established voice and perspective. Output only the prose, plain and without labels or explanations.',
                     ...(globalInstruction ? ['', `Overall direction for this sweep: ${globalInstruction}`] : []),
                     '',
                     `Directive: "${range.text}"`,
@@ -2864,6 +2850,183 @@ export class CoWriterSession {
     }
 
     /**
+     * Spawn and run a lorebook batch subagent. The subagent runs in its own
+     * fresh context (isolated from this conversation), edits through the shared
+     * {@link loreEdits} review queue via the tools' side effects, and returns a
+     * short summary that becomes the `run_lorebook_batch` tool result the parent
+     * sees. Registered in {@link subagents} so the stage-2 UI can show status
+     * and drill into its internal conversation.
+     *
+     * Awaits completion — the parent conversation is blocked for the duration.
+     * This is intentional and correct for local models (no concurrent
+     * inference; the subagent runs serialized as a synchronous tool call), and
+     * it's how the tool loop already treats any tool call. Aborts propagate:
+     * the parent's signal aborting cancels the subagent's in-flight streams.
+     */
+    async runLorebookBatch(
+        plugin: EventideQuillPlugin,
+        provider: AiProvider,
+        modelId: string,
+        goal: string,
+        paths: string[],
+        parentSignal?: AbortSignal
+    ): Promise<string> {
+        const maxTokens = provider.config.maxContextTokens;
+
+        // Resolve + size each file (cached reads). Unresolved paths are reported
+        // back so the model/user can see which were skipped.
+        const unresolved: string[] = [];
+        const sized: { path: string; tokens: number }[] = [];
+        for (const query of paths) {
+            const file = resolveNoteFile(plugin, query);
+            if (!file) {
+                unresolved.push(query);
+                continue;
+            }
+            const content = await plugin.app.vault.cachedRead(file);
+            sized.push({ path: file.path, tokens: Math.ceil(content.length / 4) });
+        }
+        if (sized.length === 0) {
+            return `Error: none of the requested files were found in the vault.${unresolved.length ? ` Missing: ${unresolved.join(', ')}` : ''}`;
+        }
+
+        // Chunk against the SUBAGENT's own fresh context (≈ the full window), NOT
+        // the parent's remaining — the batch runs in the subagent, which starts
+        // from ~zero. Pack file bodies to CHUNK_TARGET of the window per chunk;
+        // the edit rounds (~2× body) plus output fit in the rest, with the
+        // subagent's compaction as a safety net. Minimum one file per chunk.
+        const CHUNK_TARGET = 0.5;
+        const MAX_CHUNKS = 5;
+        const chunks: string[][] = [];
+        let cur: string[] = [];
+        let curTokens = 0;
+        for (const s of sized) {
+            if (cur.length > 0 && curTokens + s.tokens > maxTokens * CHUNK_TARGET) {
+                chunks.push(cur);
+                cur = [];
+                curTokens = 0;
+            }
+            cur.push(s.path);
+            curTokens += s.tokens;
+        }
+        if (cur.length > 0) chunks.push(cur);
+
+        const runChunks = chunks.slice(0, MAX_CHUNKS);
+        const deferred = chunks.slice(MAX_CHUNKS).flat();
+
+        // Lore batch subagents edit existing files — internal tools only, NO
+        // run_lorebook_batch (single-level nesting) and NO propose_entry.
+        const registry = createToolRegistry(plugin, false);
+        const batchSummaries: string[] = [];
+        for (let i = 0; i < runChunks.length; i++) {
+            const chunkPaths = runChunks[i]!;
+            const fileList = `\n\nFiles in this batch (${chunkPaths.length}):\n${chunkPaths.map((p) => `- ${p}`).join('\n')}`;
+            const sub = new SubagentSession(
+                plugin,
+                provider,
+                modelId,
+                {
+                    kind: 'lore',
+                    goal,
+                    paths: chunkPaths,
+                    systemPrompt: getLoreCoachSystemPrompt(),
+                    brief: `Task: ${goal}${fileList}\n\nEdit the files in this batch per the rules above. vault_lookup each file, then edit_note / insert_note / append_to_note (revise_edit if you hit an overlap). Keep each edit surgical. End with a one- or two-line summary of what you changed.`,
+                    registry
+                },
+                parentSignal
+            );
+            // Surface the subagent's per-round + status changes on the parent
+            // panel so a drilled-in view streams and the status cards update
+            // live (the parent's onChatUpdate push includes subagent state).
+            sub.onChatUpdate = () => this.onChatUpdate?.();
+            sub.onStatusChange = () => this.onChatUpdate?.();
+            this.subagents.set(sub.id, sub);
+            this.onChatUpdate?.();
+            const summary = await sub.run(); // throws AbortError on cancel → propagates, skips remaining chunks
+            batchSummaries.push(`Batch ${i + 1}/${runChunks.length} (${chunkPaths.length} file(s)): ${summary}`);
+            this.onChatUpdate?.();
+        }
+
+        const lines: string[] = [
+            `Subagent processed ${sized.length} file(s) across ${runChunks.length} batch(es). Every edit is in the review queue for the writer to approve or reject — the cards persist after the subagent closes.`
+        ];
+        if (unresolved.length > 0) lines.push(`Skipped (not found): ${unresolved.join(', ')}`);
+        lines.push(...batchSummaries);
+        if (deferred.length > 0) {
+            lines.push(
+                `\n${deferred.length} file(s) deferred to bound this run. Call run_lorebook_batch again with: ` +
+                    deferred.map((p) => `"${p}"`).join(', ')
+            );
+        }
+        return lines.join('\n');
+    }
+
+    /**
+     * Spawn a research subagent: investigates the vault for a single question
+     * in its own fresh context and returns a cited findings report. Read-only —
+     * no edits, no review queue. Registered in {@link subagents} so the panel
+     * shows its status + drill-down like any subagent. Awaits completion (the
+     * parent is blocked). Aborts propagate via the parent signal.
+     */
+    async runResearch(
+        plugin: EventideQuillPlugin,
+        provider: AiProvider,
+        modelId: string,
+        question: string,
+        parentSignal?: AbortSignal
+    ): Promise<string> {
+        const config: SubagentConfig = {
+            kind: 'research',
+            goal: question,
+            systemPrompt: getResearchSystemPrompt(),
+            brief: `Question to investigate:\n\n${question}\n\nSearch the vault, gather evidence, and end with a cited findings report. You do not see the conversation that spawned you — work only from the question and the vault.`,
+            registry: createReadOnlyToolRegistry(plugin, true)
+        };
+        return this.runSubagent(plugin, provider, modelId, config, parentSignal);
+    }
+
+    /**
+     * Shared single-run subagent driver used by the non-chunked kind (research).
+     * Creates the session, wires its UI callbacks, registers it,
+     * runs it, and returns its summary. Throws AbortError on cancel (propagates
+     * to the parent's cleanup); other failures come back as the summary string.
+     */
+    private async runSubagent(
+        plugin: EventideQuillPlugin,
+        provider: AiProvider,
+        modelId: string,
+        config: SubagentConfig,
+        parentSignal?: AbortSignal
+    ): Promise<string> {
+        const sub = new SubagentSession(plugin, provider, modelId, config, parentSignal);
+        sub.onChatUpdate = () => this.onChatUpdate?.();
+        sub.onStatusChange = () => this.onChatUpdate?.();
+        this.subagents.set(sub.id, sub);
+        this.onChatUpdate?.();
+        const summary = await sub.run();
+        this.onChatUpdate?.();
+        return summary;
+    }
+
+    /** Serializable snapshots of all subagents (status cards + drill-down views). */
+    getSubagentViews(): SubagentView[] {
+        return [...this.subagents.values()].map((s) => s.toView());
+    }
+
+    /** Drill down into a subagent's conversation (panel view switch). No-op if not found. */
+    navigateToSubagent(id: string): void {
+        if (!this.subagents.has(id)) return;
+        this.activeSubagentId = id;
+        this.onChatUpdate?.();
+    }
+
+    /** Return from a subagent drill-down to the parent conversation. */
+    navigateToParent(): void {
+        this.activeSubagentId = null;
+        this.onChatUpdate?.();
+    }
+
+    /**
      * Force an immediate compaction of the conversation history,
      * regardless of the token threshold. Summarizes older turns into
      * a context head and fires updated token estimates.
@@ -2985,7 +3148,7 @@ export class CoWriterSession {
         const userMessage = [
             `Continue the passage from the cursor position following this direction: ${option.label} — ${option.description}`,
             '',
-            'Write the next paragraph or paragraphs in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation — no labels, no explanations.',
+            'Write the next paragraph or paragraphs in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation, plain and without labels or explanations.',
             '',
             '--- Current document up to cursor ---',
             textBeforeCursor.slice(-8000)
@@ -3210,7 +3373,7 @@ export class CoWriterSession {
             ? [
                   `Continue the passage from the cursor position following this direction: ${direction}`,
                   stoppingPointInstruction ? `\n${stoppingPointInstruction}` : '',
-                  'Write the next paragraph or paragraphs in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation \u2014 no labels, no explanations.',
+                  'Write the next paragraph or paragraphs in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation, plain and without labels or explanations.',
                   '',
                   '--- Current document up to cursor ---',
                   proseForContext
@@ -3218,7 +3381,7 @@ export class CoWriterSession {
             : [
                   'Continue the passage naturally from the cursor position.',
                   '',
-                  'Read the document up to the cursor and continue writing in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation \u2014 no labels, no explanations.',
+                  'Read the document up to the cursor and continue writing in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation, plain and without labels or explanations.',
                   '',
                   '--- Current document up to cursor ---',
                   proseForContext

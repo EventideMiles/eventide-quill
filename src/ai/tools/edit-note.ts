@@ -25,8 +25,8 @@ export const editNoteTool: Tool = {
         'whenever you are changing, rephrasing, or rewriting existing wording, including a ' +
         'full paragraph. To ADD content without removing anything, use `insert_note` ' +
         'instead; to add at the END of a note, use `append_to_note`. old_text must be ' +
-        'character-for-character and unique in the note; never pass the whole file as ' +
-        'old_text.',
+        'character-for-character and unique in the note. Keep old_text to just the excerpt being ' +
+        'replaced (the whole file is too large to match uniquely).',
     parameters: {
         type: 'object',
         properties: {
