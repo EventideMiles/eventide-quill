@@ -28,6 +28,8 @@ import { ChangeSet } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
 import { createToolRegistry, type ToolContext, type ToolRegistry, type ToolResult } from './tools';
 import { injectImagesIntoMessages } from './vision';
+import { SubagentSession } from './subagent-session';
+import { resolveNoteFile } from './tools/lore-edit-helpers';
 import {
     clearDiffEdits,
     diffEditsField,
@@ -656,6 +658,18 @@ export class CoWriterSession {
 
     /** Chat message history for the panel display. */
     chatHistory: CoWriterChatMessage[] = [];
+
+    /**
+     * Subagent batch editors spawned via `run_lorebook_batch`, keyed by id.
+     * Each runs in its own fresh context (isolated from this conversation) but
+     * shares the {@link loreEdits} review queue via the tools' side effects.
+     * The stage-2 drill-down UI renders {@link SubagentSession.chatHistory} +
+     * {@link SubagentSession.status} from here. Plain serializable state so the
+     * deferred conversation-persistence feature can layer on later.
+     */
+    subagents = new Map<string, SubagentSession>();
+    /** Active subagent id for the drill-down view (stage 2); null = parent view. */
+    activeSubagentId: string | null = null;
 
     /**
      * API-level conversation history for the discuss mode.
@@ -2115,7 +2129,7 @@ export class CoWriterSession {
             this.loreCoachMessages.push({ role: 'user', content: getLoreCoachUserPrompt(message) });
         }
 
-        const registry = createToolRegistry(plugin, true);
+        const registry = createToolRegistry(plugin, true, true);
         const toolDefs = registry?.toToolDefinitions();
         this.toolTokenOverhead = registry?.estimateTokens() ?? 0;
         const maxTokens = chat.provider.config.maxContextTokens;
@@ -2861,6 +2875,103 @@ export class CoWriterSession {
             this.loreEdits.set(filePath, entry);
         }
         return entry;
+    }
+
+    /**
+     * Spawn and run a lorebook batch subagent. The subagent runs in its own
+     * fresh context (isolated from this conversation), edits through the shared
+     * {@link loreEdits} review queue via the tools' side effects, and returns a
+     * short summary that becomes the `run_lorebook_batch` tool result the parent
+     * sees. Registered in {@link subagents} so the stage-2 UI can show status
+     * and drill into its internal conversation.
+     *
+     * Awaits completion — the parent conversation is blocked for the duration.
+     * This is intentional and correct for local models (no concurrent
+     * inference; the subagent runs serialized as a synchronous tool call), and
+     * it's how the tool loop already treats any tool call. Aborts propagate:
+     * the parent's signal aborting cancels the subagent's in-flight streams.
+     */
+    async runLorebookBatch(
+        plugin: EventideQuillPlugin,
+        provider: AiProvider,
+        modelId: string,
+        goal: string,
+        paths: string[],
+        parentSignal?: AbortSignal
+    ): Promise<string> {
+        const maxTokens = provider.config.maxContextTokens;
+
+        // Resolve + size each file (cached reads). Unresolved paths are reported
+        // back so the model/user can see which were skipped.
+        const unresolved: string[] = [];
+        const sized: { path: string; tokens: number }[] = [];
+        for (const query of paths) {
+            const file = resolveNoteFile(plugin, query);
+            if (!file) {
+                unresolved.push(query);
+                continue;
+            }
+            const content = await plugin.app.vault.cachedRead(file);
+            sized.push({ path: file.path, tokens: Math.ceil(content.length / 4) });
+        }
+        if (sized.length === 0) {
+            return `Error: none of the requested files were found in the vault.${unresolved.length ? ` Missing: ${unresolved.join(', ')}` : ''}`;
+        }
+
+        // Chunk against the SUBAGENT's own fresh context (≈ the full window), NOT
+        // the parent's remaining — the batch runs in the subagent, which starts
+        // from ~zero. Pack file bodies to CHUNK_TARGET of the window per chunk;
+        // the edit rounds (~2× body) plus output fit in the rest, with the
+        // subagent's compaction as a safety net. Minimum one file per chunk.
+        const CHUNK_TARGET = 0.5;
+        const MAX_CHUNKS = 5;
+        const chunks: string[][] = [];
+        let cur: string[] = [];
+        let curTokens = 0;
+        for (const s of sized) {
+            if (cur.length > 0 && curTokens + s.tokens > maxTokens * CHUNK_TARGET) {
+                chunks.push(cur);
+                cur = [];
+                curTokens = 0;
+            }
+            cur.push(s.path);
+            curTokens += s.tokens;
+        }
+        if (cur.length > 0) chunks.push(cur);
+
+        const runChunks = chunks.slice(0, MAX_CHUNKS);
+        const deferred = chunks.slice(MAX_CHUNKS).flat();
+
+        // Run each chunk as its own SubagentSession, sequentially — the parent is
+        // blocked for the duration (a local model can't run concurrent inference).
+        // Edits flow to the shared loreEdits review queue via the tools' side
+        // effects, so they persist after each subagent CLOSES (they are removed
+        // only by the writer's approve/reject/new-chat — never by subagent
+        // lifecycle). Aborts propagate: cancelling the parent stops the current
+        // subagent and skips the rest; edits already produced remain reviewable.
+        const batchSummaries: string[] = [];
+        for (let i = 0; i < runChunks.length; i++) {
+            const chunkPaths = runChunks[i]!;
+            const sub = new SubagentSession(plugin, provider, modelId, goal, chunkPaths, parentSignal);
+            this.subagents.set(sub.id, sub);
+            this.onChatUpdate?.();
+            const summary = await sub.run(); // throws AbortError on cancel → propagates, skips remaining chunks
+            batchSummaries.push(`Batch ${i + 1}/${runChunks.length} (${chunkPaths.length} file(s)): ${summary}`);
+            this.onChatUpdate?.();
+        }
+
+        const lines: string[] = [
+            `Subagent processed ${sized.length} file(s) across ${runChunks.length} batch(es). Every edit is in the review queue for the writer to approve or reject — the cards persist after the subagent closes.`
+        ];
+        if (unresolved.length > 0) lines.push(`Skipped (not found): ${unresolved.join(', ')}`);
+        lines.push(...batchSummaries);
+        if (deferred.length > 0) {
+            lines.push(
+                `\n${deferred.length} file(s) deferred to bound this run. Call run_lorebook_batch again with: ` +
+                    deferred.map((p) => `"${p}"`).join(', ')
+            );
+        }
+        return lines.join('\n');
     }
 
     /**

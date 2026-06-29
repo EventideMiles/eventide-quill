@@ -13,6 +13,7 @@ import { manuscriptMentionsTool } from './manuscript-mentions';
 import { measureFolderTool } from './measure-folder';
 import { proposeEntryTool } from './propose-entry';
 import { reviseEditTool } from './revise-edit';
+import { runLorebookBatchTool } from './run-lorebook-batch';
 import { vaultLookupTool } from './vault-lookup';
 import type EventideQuillPlugin from '../../main';
 
@@ -33,6 +34,7 @@ export { manuscriptMentionsTool } from './manuscript-mentions';
 export { measureFolderTool } from './measure-folder';
 export { proposeEntryTool } from './propose-entry';
 export { reviseEditTool } from './revise-edit';
+export { runLorebookBatchTool } from './run-lorebook-batch';
 export { vaultLookupTool } from './vault-lookup';
 
 /**
@@ -71,14 +73,25 @@ export function createLoreCoachToolRegistry(): ToolRegistry {
  * - `coWriterToolsEnabled` off → returns null (no tools)
  * - `lorebookNetworkTools` on → registers all network tools
  * - `includeProposeEntry` → adds propose_entry (lorebook coach only)
+ * - `allowSubagents` → adds run_lorebook_batch (parent modes only; the
+ *   subagent itself passes false so it cannot spawn sub-subagents —
+ *   single-level nesting by construction)
  *
  * Network tools use factory functions because their maxResultTokens and
  * configuration (Fandom wikis, Wikipedia language) come from settings.
  */
-export function createToolRegistry(plugin: EventideQuillPlugin, includeProposeEntry: boolean): ToolRegistry | null {
+export function createToolRegistry(
+    plugin: EventideQuillPlugin,
+    includeProposeEntry: boolean,
+    allowSubagents = false
+): ToolRegistry | null {
     if (!plugin.settings.coWriterToolsEnabled) return null;
 
     const registry = includeProposeEntry ? createLoreCoachToolRegistry() : createInternalToolRegistry();
+
+    if (allowSubagents) {
+        registry.register(runLorebookBatchTool);
+    }
 
     if (plugin.settings.lorebookNetworkTools) {
         const maxTokens = plugin.settings.lorebookToolMaxTokens;

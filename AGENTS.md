@@ -154,6 +154,8 @@ src/
     image-utils.ts (decode → downscale → JPEG base64),
     co-writer.ts (~3.3k lines, largest file in repo — discuss/coach/fulfill/lorebook-coach
                   modes, each with its own tool loop; NOT streamWithTools),
+    subagent-session.ts (SubagentSession — isolated-context lorebook batch runner
+                         spawned by the run_lorebook_batch tool; see "Subagents"),
     tools/                # Tool-calling layer (see "Tool-calling architecture")
       tool.ts (Tool, ToolRegistry, ToolResult, ToolContext, DuplicateToolError),
       tool-loop.ts (streamWithTools — exported but currently unused; co-writer inlines),
@@ -161,6 +163,7 @@ src/
       context-helpers.ts, lore-edit-helpers.ts,
       manuscript-mentions.ts, lore-siblings.ts, vault-lookup.ts, grep-notes.ts,
       measure-folder.ts, calculate-file-sizes.ts, edit-note.ts, insert-note.ts, append-to-note.ts, revise-edit.ts,
+      run-lorebook-batch.ts (spawn tool → SubagentSession),
       propose-entry.ts, fetch-url.ts, fetch-image-url.ts,
       fandom-lookup.ts, wikipedia-lookup.ts, mediawiki.ts (shared MediaWiki client)
   ui/                  # Views, modals, panels
@@ -195,12 +198,25 @@ Tool tiers (gating):
 |------|-------|--------------|
 | Internal (default on) | `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit` | `coWriterToolsEnabled` |
 | Lorebook coach only | `propose_entry` (surfaces a lore draft to the UI) | `createLoreCoachToolRegistry` |
+| Parent modes only | `run_lorebook_batch` (spawns a `SubagentSession` — see "Subagents") | `allowSubagents` (currently the lorebook coach only; subagents pass `false` so they can't nest) |
 | Network (default on) | `fetch_url`, `fandom_lookup` / `fandom_page`, `wikipedia_lookup` / `wikipedia_page` | `lorebookNetworkTools` |
 | Image (default on) | `fetch_image_url`, `fandom_image` | `lorebookImageTools` |
 
 `fandom_image` (Fandom image lookup: lead image via `prop=pageimages`, gallery browsing via `prop=images` + `imageinfo`, with captions parsed from `<gallery>` wikitext) needs both `lorebookNetworkTools` and `lorebookImageTools`, plus the Fandom allowlist gate — it's registered inside the fandom block with an extra image-tools check.
 
 Fandom requires a non-empty allowlist (`lorebookFandomWikis`), or the `lorebookFandomAllowAllWikis` "danger" toggle to allow any wiki; an empty allowlist with that toggle off disables Fandom everywhere. `mediawiki.ts` is the shared MediaWiki client with per-host rate limiting. Convention: tool ids are `snake_case` verbs/nouns (`manuscript_mentions`, `fetch_url`).
+
+## Subagents
+
+A **subagent** is a self-contained lorebook batch editor that runs in its OWN fresh context, isolated from the parent conversation. It exists so a "full lorebook edit" (many `vault_lookup` → `edit_note` rounds) doesn't pile into the user's chat and bloat it permanently.
+
+- **`SubagentSession`** (`src/ai/subagent-session.ts`) — the runner. Holds its own `messages` (fresh: lorebook system prompt + the parent's task brief), its own `chatHistory` display buffer, a `status` (`running | succeeded | failed`), and a `summary`. It runs the same shape of tool loop as the lorebook coach (stream → assemble tool calls → execute → compact), but purpose-built and without disturbing the working coach loop. State is plain serializable data (no live editor/abort handles mixed in) so the deferred conversation-persistence feature can layer on later.
+- **`run_lorebook_batch` tool** (`src/ai/tools/run-lorebook-batch.ts`) — the spawner. Registered only in parent modes via `createToolRegistry(plugin, includeProposeEntry, allowSubagents=true)`; the subagent itself builds its registry with `allowSubagents=false`, so **subagents cannot spawn sub-subagents** (single-level nesting by construction). The model passes `{ goal, paths }`.
+- **Sizing lives where the context is.** The parent does NOT size the subagent's batch — it passes the full file list, and `CoWriterSession.runLorebookBatch` measures the files and chunks them against the subagent's own fresh window (≈ the full context, since the subagent starts from ~zero), running one `SubagentSession` per chunk sequentially. (`measure_folder` / `calculate_file_sizes` still report against the PARENT's remaining context — that's for the parent's WHEN decision: "is this batch big enough to warrant a subagent vs. editing inline?".) Chunks are capped (`MAX_CHUNKS`); leftover files are returned in the summary for a follow-up call.
+- **Edits are NOT isolated; the conversation IS.** A subagent's edits flow through `plugin.coWriterSession.loreEdits` (the shared review queue) via the tools' side effects — so a subagent-produced diff reviews exactly like an inline one, and **persists after the subagent closes** (removed only by the writer's approve/reject/new-chat). Only the subagent's `messages`/`chatHistory` are per-subagent and ephemeral.
+- **The parent is blocked while a subagent runs** — intentional and required for local models (one inference at a time). The subagent is the same model on the same provider, serialized as a synchronous tool call; it is NOT a concurrent process. Cancellation propagates via the parent's abort signal.
+
+Stage 1 (landed): the runner + registry + spawner — end-to-end functional, no new UI (a subagent looks like a long tool call with a richer result string). Stage 2 (planned): drill-down navigation (parent ↔ subagent conversation) + status cards. Deferred: stored/resumable conversation history (`.planning/pr-conversation-persistence.md`).
 
 ## Vision & image support
 
