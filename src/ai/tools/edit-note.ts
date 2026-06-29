@@ -1,32 +1,32 @@
 import type { Tool, ToolContext } from './tool';
-import { openNoteForEdit, pushLoreEditDiff, readNoteContent, resolveNoteFile } from './lore-edit-helpers';
+import { openNoteForEdit, overlapError, pushLoreEditDiff, readNoteContent, resolveNoteFile } from './lore-edit-helpers';
 
 /**
- * Propose an edit to an existing note. The model provides the exact `old_text`
- * to find and the `new_text` to replace it with. The note is opened in a new
- * tab and the edit is surfaced as a green inline diff (same review UX as
- * Direct/Fulfill/Transform) so the writer can approve or reject it in context.
+ * Propose a replacement to an existing note. The model provides the exact
+ * `old_text` to find and the `new_text` to replace it with. The note is opened
+ * in a new tab and the edit is surfaced as a green inline diff (same review UX
+ * as Direct/Fulfill/Transform) so the writer can approve or reject it in context.
  *
- * Only one pending lore edit is allowed at a time — calling this again while
- * a prior edit is pending replaces it (the prior edit is cleared from the diff).
+ * Multiple pending edits to the same file coexist (each surfaces as its own
+ * review card); edits to different files are independent.
  *
  * The tool does NOT write to the file. The writer must click "Approve" to
- * commit the edit or "Reject" to discard it.
+ * commit the edit or "Reject" to discard it. For adding content without
+ * removing anything (a new section or detail), use `insert_note` instead.
  */
 export const editNoteTool: Tool = {
     id: 'edit_note',
     description:
-        'Propose a targeted edit to a specific section of an existing note that ' +
-        'is NOT currently open in the editor. The note opens in a new tab with ' +
-        'the change shown as a diff. The writer reviews and approves or rejects ' +
-        'it AFTER you finish. For the file the writer currently has open, ' +
-        'recommend they use Direct or Fulfill mode instead. ' +
-        'CRITICAL: old_text must be the SMALLEST excerpt that uniquely identifies ' +
-        'the section being changed — one sentence, one paragraph, or a heading ' +
-        'plus its body. Do NOT pass the entire file. new_text is just the ' +
-        'replacement for that excerpt, not a rewrite of the whole document. ' +
-        'When editing multiple files, batch your edits per the context budget ' +
-        'and do NOT pause between files.',
+        'Propose a find-and-replace change to a note that is NOT currently open (it opens ' +
+        'in a new tab as a diff; the writer approves or rejects it after you finish). For ' +
+        'the open file, recommend Direct or Fulfill mode instead. Pass old_text = the ' +
+        'exact text to remove, copied verbatim (a phrase, a sentence, or a whole ' +
+        'paragraph — whatever you are replacing) and new_text = the replacement. Use this ' +
+        'whenever you are changing, rephrasing, or rewriting existing wording, including a ' +
+        'full paragraph. To ADD content without removing anything, use `insert_note` ' +
+        'instead; to add at the END of a note, use `append_to_note`. old_text must be ' +
+        'character-for-character and unique in the note; never pass the whole file as ' +
+        'old_text.',
     parameters: {
         type: 'object',
         properties: {
@@ -38,14 +38,13 @@ export const editNoteTool: Tool = {
             old_text: {
                 type: 'string',
                 description:
-                    'The SMALLEST excerpt that uniquely identifies the section to change. ' +
-                    'One sentence, one paragraph, or a heading + its body. NOT the entire file. ' +
-                    'Must match character-for-character (case-sensitive, including whitespace).'
+                    'The exact text to remove, copied verbatim from the note. May be a phrase, ' +
+                    'sentence, or whole paragraph — whatever you are replacing. Must be ' +
+                    'character-for-character and unique.'
             },
             new_text: {
                 type: 'string',
-                description:
-                    'The replacement for the excerpt identified by old_text. Just the new section, not a full rewrite.'
+                description: 'The replacement for old_text (include any line breaks).'
             }
         },
         required: ['path', 'old_text', 'new_text']
@@ -59,12 +58,14 @@ export const editNoteTool: Tool = {
 
         if (!path) return 'Error: "path" is required.';
         if (!oldText) return 'Error: "old_text" is required.';
-        // Distinguish an absent new_text (error) from an explicit empty
-        // string (valid — used to delete the old_text excerpt entirely).
-        if (args.new_text === undefined) {
-            return 'Error: "new_text" is required (pass an empty string to delete the excerpt).';
+        // new_text must be a string. An explicit empty string is valid (it
+        // deletes the old_text excerpt); any other non-string value is rejected
+        // rather than coerced to '' (which would silently produce an unintended
+        // empty edit).
+        if (typeof args.new_text !== 'string') {
+            return 'Error: "new_text" is required and must be a string.';
         }
-        const newText = typeof args.new_text === 'string' ? args.new_text : '';
+        const newText = args.new_text;
 
         const { plugin } = ctx;
         const file = resolveNoteFile(plugin, path);
@@ -73,17 +74,24 @@ export const editNoteTool: Tool = {
         const content = await readNoteContent(plugin, file.path);
         if (content === null) return `Error: could not read "${file.path}".`;
 
+        // Find the excerpt to replace — a replace range [from, to).
         const idx = content.indexOf(oldText);
         if (idx === -1) {
-            // Help the model recover: show what's actually in the note.
             const preview = content.slice(0, 300).trim();
             return `Error: old_text not found in "${file.path}". The note starts with:\n${preview}${content.length > 300 ? '\n...' : ''}`;
         }
-        // Reject non-unique matches so the edit doesn't silently hit the
-        // wrong occurrence when the excerpt appears more than once.
         if (content.indexOf(oldText, idx + 1) !== -1) {
             return `Error: old_text matches multiple places in "${file.path}". Pass a larger excerpt that uniquely identifies the section to change.`;
         }
+        const from = idx;
+        const to = idx + oldText.length;
+
+        // Reject overlaps BEFORE opening a tab, so a conflicting proposal
+        // doesn't spawn a review tab. Keeps pending edits on a file pairwise
+        // disjoint — the invariant that makes any approval order safe.
+        const existingEntry = plugin.coWriterSession.loreEdits.get(file.path);
+        const conflict = existingEntry ? overlapError(existingEntry.changeSet, from, to) : null;
+        if (conflict) return conflict;
 
         // Open the note and push the diff.
         const opened = await openNoteForEdit(plugin.app, file.path);
@@ -93,14 +101,14 @@ export const editNoteTool: Tool = {
         if (!opened.wasAlreadyOpen) {
             session.loreEditOpenedByTool.add(file.path);
         }
-        // One edit per file at a time — clearing the file's own ChangeSet
-        // doesn't affect edits pending for other files.
+        // Edits accumulate per file. Offsets are in original-document coordinates
+        // because lore edits are proposed, never applied, until the writer
+        // approves — so concurrent proposals don't shift each other's ranges.
         const entry = session.getOrCreateLoreEdit(file.path, file.basename);
-        entry.changeSet.clear();
 
-        entry.changeSet.add({
-            from: idx,
-            to: idx + oldText.length,
+        const created = entry.changeSet.add({
+            from,
+            to,
             newText,
             label: `Edit ${file.basename}`,
             originalText: oldText
@@ -109,6 +117,6 @@ export const editNoteTool: Tool = {
         pushLoreEditDiff(opened.cm, entry.changeSet, file.path);
         session.onLoreEditUpdate?.();
 
-        return `Edit proposed for "${file.basename}". The writer will see the diff and can approve or reject it. Continue with your response.`;
+        return `Edit proposed for "${file.basename}" (edit id ${created.id}). The writer will see the diff and can approve or reject it. Continue with your response.`;
     }
 };

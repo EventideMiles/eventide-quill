@@ -1,24 +1,26 @@
 import { normalizePath } from 'obsidian';
 import type { Tool, ToolContext } from './tool';
-import { getMaxContextTokens, tokenPercent } from './context-helpers';
+import { describeBatchFit } from './context-helpers';
 
 /**
  * Measure the total size of all markdown files in a folder (including
  * subfolders). Returns file count, total characters, estimated tokens,
- * per-file sizes, and what percentage of the context window the folder
- * would consume — so the model can decide instantly whether to batch
- * everything at once or split.
+ * per-file sizes, and whether the folder fits a single batch.
  *
- * Call this BEFORE a batch edit. The percentage tells you immediately
- * whether the folder fits: under ~60% = safe to process all at once.
+ * Fit is measured against the REMAINING context — the live conversation is
+ * already consuming part of the window, so the batch must fit what's left.
+ *
+ * Call this BEFORE a batch edit. Under ~60% of remaining = safe to process
+ * all at once.
  */
 export const measureFolderTool: Tool = {
     id: 'measure_folder',
     description:
         'Measure the total size of all markdown files in a folder (including ' +
         'subfolders). Returns file count, total characters, estimated tokens, ' +
-        'per-file sizes, and what percentage of the context window it would use. ' +
-        'Call this BEFORE any batch edit to decide whether everything fits at once.',
+        'per-file sizes, and how much of the REMAINING context (after the ' +
+        'current conversation) the folder would use. Call this BEFORE any batch ' +
+        'edit to decide whether everything fits at once.',
     parameters: {
         type: 'object',
         properties: {
@@ -55,26 +57,14 @@ export const measureFolderTool: Tool = {
         }
 
         const estTokens = Math.ceil(totalChars / 4);
-        const maxTokens = getMaxContextTokens(plugin);
-        const pct = tokenPercent(estTokens, maxTokens);
+        const consumed = ctx.consumedTokens?.() ?? 0;
 
         const lines = [
-            `${folderPath || '(vault root)'} — ${folderFiles.length} files, ${totalChars.toLocaleString()} chars, ~${estTokens.toLocaleString()} tokens`,
-            `(${pct} of ${maxTokens.toLocaleString()}-token context window)`,
+            `${folderPath || '(vault root)'} — ${folderFiles.length} files, ${totalChars.toLocaleString()} chars, ~${estTokens.toLocaleString()} tokens.`,
+            ...describeBatchFit(estTokens, plugin, consumed, folderFiles.length),
+            '',
             ...details
         ];
-
-        if (pct && !isNaN(parseInt(pct))) {
-            const pctNum = parseInt(pct);
-            if (pctNum <= 60) {
-                lines.push(`\nAll ${folderFiles.length} files fit comfortably in a single batch.`);
-            } else if (pctNum <= 80) {
-                lines.push(`\nFits in one batch but leaves little room — minimize text in your response.`);
-            } else {
-                const half = Math.ceil(folderFiles.length / 2);
-                lines.push(`\nToo large for one batch (${pctNum}%). Split: process ~${half} files per batch.`);
-            }
-        }
 
         return lines.join('\n');
     }

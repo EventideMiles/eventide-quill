@@ -10,6 +10,7 @@ export default tseslint.config(
 		'esbuild.config.mjs',
 		'prettier.config.mjs',
 		'version-bump.mjs',
+		'update-version.mjs',
 		'versions.json',
 		'main.js',
 		'package.json',

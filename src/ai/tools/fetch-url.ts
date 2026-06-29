@@ -139,7 +139,7 @@ function truncate(text: string, maxTokens: number, url: string): string {
  * time) and requestUrl's internal redirect-following are out of scope here —
  * the initial host gate is the defense.
  */
-function validatePublicHost(rawUrl: string): string | null {
+export function validatePublicHost(rawUrl: string): string | null {
     let parsed: URL;
     try {
         parsed = new URL(rawUrl);

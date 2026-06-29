@@ -70,7 +70,7 @@ import {
     pushDiffEdits,
     toDiffSnapshots
 } from './ui/change-diff-extension';
-import { ChangeSet, type ProposedEdit } from './core/change-set';
+import { ChangeSet } from './core/change-set';
 import { parseEmbedFolderPath, readVaultFiles, loreFolderEmbedPaths } from './utils/vault-files';
 import type { ManuscriptMetrics, ManuscriptSnapshot, ChapterRange } from './core/dashboard/types';
 import { listChaptersInFile, manuscriptMetrics } from './core/dashboard/metrics';
@@ -375,7 +375,7 @@ export default class EventideQuillPlugin extends Plugin {
                     else if (owner === 'transform') this.rejectTransformChange(id);
                     else if (owner === 'direct') this.rejectDirectChange(id);
                     else if (owner === 'lint-batch') this.rejectLintBatchChange(id);
-                    else if (owner === 'lore_edit' && filePath) this.rejectLoreEdit(filePath);
+                    else if (owner === 'lore_edit' && filePath) this.rejectLoreEdit(filePath, id);
                 }
             })
         );
@@ -1106,6 +1106,20 @@ export default class EventideQuillPlugin extends Plugin {
         return this.getProvider(key.providerId);
     }
 
+    /**
+     * Get the default image provider and model based on settings. Used by the
+     * vision proxy (Regime B) to caption images for a text-only chat model.
+     * May live on a different provider than chat — the proxy call is fully
+     * isolated (image + prompt → text), so it shares no state with the chat
+     * conversation. Returns `{ provider, modelId }` or `{ provider: null }`.
+     */
+    getDefaultImageProvider(): { provider: AiProvider | null; modelId?: string } {
+        const key = parseProviderKey(this.settings.aiDefaultImageProvider);
+        if (!key) return { provider: null };
+        const provider = this.getProvider(key.providerId);
+        return { provider, modelId: key.modelId || undefined };
+    }
+
     /** Open the Fix with AI modal for a lint result triggered from an in-editor tooltip. */
     private openInlineAiFix(result: LintResult, _view: EditorView): void {
         const view = findEditorView(this.app, this.lintActiveFile);
@@ -1762,13 +1776,11 @@ export default class EventideQuillPlugin extends Plugin {
         // The hook exists for future use (e.g., auto-scroll to the draft).
         session.onLoreDraftReady = () => {};
         session.onLoreEditUpdate = () => {
-            const edits = [...session.loreEdits.entries()]
-                .map(([filePath, entry]) => ({
-                    edit: entry.changeSet.edits[0] ?? null,
-                    filePath,
-                    fileBasename: entry.fileBasename
-                }))
-                .filter((e) => e.edit) as { edit: ProposedEdit; filePath: string; fileBasename: string }[];
+            const edits = [...session.loreEdits.entries()].flatMap(([filePath, entry]) =>
+                entry.changeSet.edits
+                    .filter((e) => e.state === 'pending')
+                    .map((edit) => ({ edit, filePath, fileBasename: entry.fileBasename }))
+            );
             this.lintPanel?.coWriterSetLoreEdits(edits);
         };
     }
@@ -1934,9 +1946,9 @@ export default class EventideQuillPlugin extends Plugin {
         this.coWriterSession.approveLoreEdit(filePath, id);
     }
 
-    /** Reject a pending lore edit for a specific file. */
-    rejectLoreEdit(filePath: string): void {
-        this.coWriterSession.rejectLoreEdit(filePath);
+    /** Reject a pending lore edit for a specific file by id. */
+    rejectLoreEdit(filePath: string, id: number): void {
+        this.coWriterSession.rejectLoreEdit(filePath, id);
     }
 
     /** Resolve the CodeMirror view of the active markdown editor, if any. */

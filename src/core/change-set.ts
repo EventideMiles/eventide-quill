@@ -103,6 +103,21 @@ export class ChangeSet {
     }
 
     /**
+     * Replace the `newText` of a pending edit in place — its location
+     * (`from`/`to`) and `originalText` are unchanged. Used by `revise_edit`
+     * to fold new content into an already-proposed edit. Returns false (no-op)
+     * if the edit does not exist or is no longer pending. The length delta is
+     * recomputed from `newText` at {@link approve} time, so later edits' offset
+     * remapping stays correct without any extra bookkeeping here.
+     */
+    updateText(id: number, newText: string): boolean {
+        const edit = this.get(id);
+        if (!edit || edit.state !== 'pending') return false;
+        edit.newText = newText;
+        return true;
+    }
+
+    /**
      * Approve every pending edit in document-insertion order. Returns the change
      * specs to dispatch sequentially (each dispatch's positions match the doc
      * state after the previous dispatch, because {@link approve} remaps in

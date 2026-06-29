@@ -1,12 +1,13 @@
 import type { Tool, ToolContext } from './tool';
-import { openNoteForEdit, pushLoreEditDiff, readNoteContent, resolveNoteFile } from './lore-edit-helpers';
+import { openNoteForEdit, overlapError, pushLoreEditDiff, readNoteContent, resolveNoteFile } from './lore-edit-helpers';
 
 /**
  * Propose appending content to the end of an existing note. The note opens
  * in a new tab with the appended content shown as a green inline diff. The
  * writer reviews and approves or rejects it.
  *
- * Only one pending lore edit at a time — clears any prior pending edit.
+ * Multiple pending edits to the same file coexist (each surfaces as its own
+ * review card); edits to different files are independent.
  */
 export const appendToNoteTool: Tool = {
     id: 'append_to_note',
@@ -56,6 +57,15 @@ export const appendToNoteTool: Tool = {
             sep = trailing >= 2 ? '' : '\n'.repeat(2 - trailing);
         }
         const newText = sep + content;
+        const appendAt = existing.length;
+
+        // Reject overlaps BEFORE opening a tab. An append targets the end of
+        // the original file; it can only conflict with another pending append
+        // (same zero-width point at EOF is allowed) or a pending edit whose
+        // range happens to reach EOF.
+        const existingEntry = plugin.coWriterSession.loreEdits.get(file.path);
+        const conflict = existingEntry ? overlapError(existingEntry.changeSet, appendAt, appendAt) : null;
+        if (conflict) return conflict;
 
         const opened = await openNoteForEdit(plugin.app, file.path);
         if (!opened) return `Error: could not open "${file.path}" for review.`;
@@ -64,12 +74,13 @@ export const appendToNoteTool: Tool = {
         if (!opened.wasAlreadyOpen) {
             session.loreEditOpenedByTool.add(file.path);
         }
+        // Edits accumulate per file. Offsets are in original-document coordinates
+        // because lore edits are proposed, never applied, until the writer approves.
         const entry = session.getOrCreateLoreEdit(file.path, file.basename);
-        entry.changeSet.clear();
 
-        entry.changeSet.add({
-            from: existing.length,
-            to: existing.length,
+        const created = entry.changeSet.add({
+            from: appendAt,
+            to: appendAt,
             newText,
             label: `Append to ${file.basename}`,
             originalText: ''
@@ -78,6 +89,6 @@ export const appendToNoteTool: Tool = {
         pushLoreEditDiff(opened.cm, entry.changeSet, file.path);
         session.onLoreEditUpdate?.();
 
-        return `Append proposed for "${file.basename}". The writer will see the new content as a diff and can approve or reject it.`;
+        return `Append proposed for "${file.basename}" (edit id ${created.id}). The writer will see the new content as a diff and can approve or reject it.`;
     }
 };

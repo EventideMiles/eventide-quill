@@ -2,6 +2,20 @@ import type EventideQuillPlugin from '../../main';
 import type { ToolDefinition } from '../provider';
 
 /**
+ * Structured tool result. `text` is always shown to the model as the tool's
+ * textual output; `images` (base64, no `data:` prefix) are routed through
+ * `resolveImageInjection` — attached directly when the chat model is
+ * vision-capable, or translated to a text caption when it isn't. A tool that
+ * only produces text can return a plain string instead.
+ */
+export interface ToolResult {
+    /** Textual result, always delivered to the model. */
+    text: string;
+    /** Optional image attachments (base64, no `data:` prefix). */
+    images?: string[];
+}
+
+/**
  * A tool the AI may invoke via the provider's native tool-calling API.
  *
  * The provider serializes the {@link parameters} JSON Schema into the
@@ -43,14 +57,18 @@ export interface Tool {
      */
     readonly requiresNetwork: boolean;
     /**
-     * Execute the tool and return its result as a string for the model.
-     * Throw on unrecoverable errors — the loop catches and surfaces them
-     * to the model as a tool-result error string, so the model can recover.
+     * Execute the tool and return its result. Most tools return a plain string;
+     * tools that produce images (e.g. `fetch_image_url`) return a
+     * {@link ToolResult} carrying base64 image data, which the tool-loop routes
+     * through `resolveImageInjection` before the model sees it.
+     *
+     * Throw on unrecoverable errors — the loop catches and surfaces them to the
+     * model as a tool-result error string, so the model can recover.
      *
      * @param args  The parsed arguments object emitted by the model.
      * @param ctx   Runtime context (plugin, abort signal, etc.).
      */
-    execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string>;
+    execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string | ToolResult>;
 }
 
 /**
@@ -67,6 +85,15 @@ export interface ToolContext {
     plugin: EventideQuillPlugin;
     /** Abort signal from the outer request; tools should respect it for long ops. */
     signal?: AbortSignal;
+    /**
+     * Approximate tokens already consumed by the active request's message
+     * prefix (conversation + prior tool results + tools-field overhead),
+     * computed at call time. Provided by the co-writer tool loops so
+     * sizing/planning tools (measure_folder, calculate_file_sizes) can report
+     * "will this batch fit" against the REMAINING context, not the whole
+     * window. Undefined when the tool is invoked outside a tracked loop.
+     */
+    consumedTokens?: () => number;
 }
 
 /**
@@ -134,5 +161,23 @@ export class ToolRegistry {
             description: t.description,
             parameters: t.parameters
         }));
+    }
+
+    /**
+     * Rough token cost of this registry's tool definitions as serialized to the
+     * request `tools` field. The bulk of the cost is each tool's description +
+     * JSON-schema parameters. Empirical: stringifies the definitions wrapped in
+     * the `{ type: 'function', function: ... }` shape the providers actually
+     * send (see {@link ToolDefinition}) and applies the chars/4 heuristic, so it
+     * self-adjusts to any tool add/remove or description edit — no hardcoded
+     * constants. Used to fold the fixed tools overhead into context-budget
+     * estimates so compaction reflects real size.
+     */
+    estimateTokens(): number {
+        const wrapped = this.toToolDefinitions().map((t) => ({
+            type: 'function' as const,
+            function: { name: t.name, description: t.description, parameters: t.parameters }
+        }));
+        return Math.ceil(JSON.stringify(wrapped).length / 4);
     }
 }

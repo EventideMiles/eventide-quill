@@ -86,7 +86,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     private fulfillActive = false;
     /** Direct-mode proposed continuation (mirrored from the session), rendered as a review card. */
     private directChange: ProposedEdit | null = null;
-    /** Pending lore edits (from edit_note / append_to_note tools), one card per file. */
+    /** Pending lore edits (from edit_note / insert_note / append_to_note tools), one card per file. */
     private loreEdits: { edit: ProposedEdit; filePath: string; fileBasename: string }[] = [];
     /** Whether the mode picker is open (replaces the mode-cycle-on-click behavior). */
     private modePickerOpen = false;
@@ -120,7 +120,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onEndLoreCoach: (() => void) | null = null;
     private onDiscardLoreDraft: ((draft: LoreDraftEntry) => void) | null = null;
     private onApproveLoreEdit: ((filePath: string, id: number) => void) | null = null;
-    private onRejectLoreEdit: ((filePath: string) => void) | null = null;
+    private onRejectLoreEdit: ((filePath: string, id: number) => void) | null = null;
 
     /**
      * Conversation token estimate pushed from the plugin layer.
@@ -292,8 +292,8 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.onApproveLoreEdit = handler;
     }
 
-    /** Set the handler invoked to reject a pending lore edit by file path. */
-    setRejectLoreEditHandler(handler: (filePath: string) => void): void {
+    /** Set the handler invoked to reject a pending lore edit by file path + id. */
+    setRejectLoreEditHandler(handler: (filePath: string, id: number) => void): void {
         this.onRejectLoreEdit = handler;
     }
 
@@ -778,12 +778,12 @@ export class CoWriterPanel extends AbstractChatPanel {
         }
 
         // Lore edit cards — one per pending edit (from edit_note /
-        // append_to_note tools). Multiple files can be pending simultaneously
+        // insert_note / append_to_note tools). Multiple files can be pending simultaneously
         // so the writer can review a "full lorebook edit" one file at a time.
         for (const entry of this.loreEdits) {
             const p = renderChangeCard(scroll, entry.edit, entry.fileBasename, this.app, this.renderEvents, {
                 onApprove: (id: number) => this.onApproveLoreEdit?.(entry.filePath, id),
-                onReject: () => this.onRejectLoreEdit?.(entry.filePath)
+                onReject: (id: number) => this.onRejectLoreEdit?.(entry.filePath, id)
             });
             if (p) {
                 this.renderPromises.push(p);

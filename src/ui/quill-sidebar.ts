@@ -731,8 +731,8 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setApproveLoreEditHandler((filePath, id) => {
                 this.plugin.approveLoreEdit(filePath, id);
             });
-            this.coWriterPanel.setRejectLoreEditHandler((filePath) => {
-                this.plugin.rejectLoreEdit(filePath);
+            this.coWriterPanel.setRejectLoreEditHandler((filePath, id) => {
+                this.plugin.rejectLoreEdit(filePath, id);
             });
         }
 
@@ -750,13 +750,11 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setLoreCoachActive(session.loreCoachActive);
             this.coWriterPanel.setFulfillState(session.fulfillChanges.edits, session.fulfillActive);
             this.coWriterPanel.setDirectChange(session.directChanges.edits[0] ?? null);
-            const loreEditsList = [...session.loreEdits.entries()]
-                .map(([filePath, entry]) => ({
-                    edit: entry.changeSet.edits[0] ?? null,
-                    filePath,
-                    fileBasename: entry.fileBasename
-                }))
-                .filter((e) => e.edit) as { edit: ProposedEdit; filePath: string; fileBasename: string }[];
+            const loreEditsList = [...session.loreEdits.entries()].flatMap(([filePath, entry]) =>
+                entry.changeSet.edits
+                    .filter((e) => e.state === 'pending')
+                    .map((edit) => ({ edit, filePath, fileBasename: entry.fileBasename }))
+            );
             this.coWriterPanel.setLoreEdits(loreEditsList);
         }
 

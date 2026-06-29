@@ -65,7 +65,13 @@ export function pushLoreEditDiff(cm: EditorView, changeSet: ChangeSet, filePath:
 }
 
 /**
- * Read a vault file's body text (with frontmatter stripped) by path.
+ * Read a vault file's raw text content by path. Returns the FULL file,
+ * frontmatter included — offsets are relative to the on-disk/CM document so
+ * they can be passed straight to a ChangeSet. Callers that need to match
+ * against the body only (the way the model sees it via `vault_lookup`) should
+ * pass the result through {@link splitFrontmatter} and add `bodyOffset` back
+ * when mapping a body-relative offset onto the raw document.
+ *
  * Returns null if the file doesn't exist or isn't readable.
  */
 export async function readNoteContent(plugin: EventideQuillPlugin, filePath: string): Promise<string | null> {
@@ -73,6 +79,55 @@ export async function readNoteContent(plugin: EventideQuillPlugin, filePath: str
     const file = plugin.app.vault.getAbstractFileByPath(normalized);
     if (!(file instanceof TFile)) return null;
     return plugin.app.vault.cachedRead(file);
+}
+
+/**
+ * Split a leading YAML frontmatter block (`---\n...\n---\n`) off a note.
+ * Returns the offset where the body begins (so body-relative offsets can be
+ * mapped back onto the raw document) and the body text itself. The model sees
+ * notes through `vault_lookup` with frontmatter stripped, so anchor/line
+ * matching MUST run against `body`; the `bodyOffset` is then added back to any
+ * insertion point so the edit lands correctly in the real file and never
+ * inside the YAML block. If there is no frontmatter, `bodyOffset` is 0 and
+ * `body` is the input unchanged.
+ */
+export function splitFrontmatter(raw: string): { bodyOffset: number; body: string } {
+    // Require the closing `---` to be on its own line: the delimiter must be
+    // followed by a line break or end-of-string. The looser `\r?\n?` tail
+    // previously accepted partial closers like `----` or `---not-close`,
+    // mis-slicing the body and reporting a wrong bodyOffset.
+    const match = raw.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/);
+    if (match) return { bodyOffset: match[0].length, body: raw.slice(match[0].length) };
+    return { bodyOffset: 0, body: raw };
+}
+
+/**
+ * Guard for the "any approval order is safe" invariant: pending edits on one
+ * file must be pairwise disjoint. Returns an error string (naming the
+ * conflicting pending edit id(s) and pointing at `revise_edit`) if a proposed
+ * `[from, to)` range overlaps any pending edit, or `null` if the range is
+ * clear and the caller may safely add it. Range overlap uses the standard
+ * half-open interval test `from < e.to && e.from < to`, so a zero-width
+ * insertion abutting (not inside) an existing edit is allowed.
+ *
+ * Why disjointness is sufficient: `ChangeSet.approve` shifts only edits whose
+ * `from >= approved.to`; with disjoint edits any approval order keeps every
+ * remaining edit's offsets valid against the current document.
+ */
+export function overlapError(changeSet: ChangeSet, from: number, to: number): string | null {
+    const ids: number[] = [];
+    for (const e of changeSet.edits) {
+        if (e.state !== 'pending') continue;
+        if (from < e.to && e.from < to) ids.push(e.id);
+    }
+    if (ids.length === 0) return null;
+    const singular = ids.length === 1;
+    return (
+        `Error: this change overlaps pending edit${singular ? '' : 's'} id ${ids.join(', ')} ` +
+        `on the same note. Use \`revise_edit\` with ${singular ? 'that id' : 'one of those ids'} ` +
+        `to fold your new content into the existing pending edit (emit its FULL new text), ` +
+        `or choose a non-overlapping range.`
+    );
 }
 
 /**

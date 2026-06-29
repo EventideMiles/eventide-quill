@@ -38,6 +38,7 @@ Scripts (see `package.json`):
 | `npm run sass` | `sass styles/main.scss styles.css` (one-shot build of styles.css from SCSS sources) |
 | `npm run sass:watch` | `sass --watch styles/main.scss styles.css` (rebuild on SCSS change during dev) |
 | `npm run version` | `node version-bump.mjs && git add manifest.json versions.json` (run via `npm version`) |
+| `npm run set-version -- <v>` | Chore: rewrite the version string everywhere it appears (release files + embedded copies like the MediaWiki User-Agent). Adds a new `versions.json` key without dropping history. Does **not** tag/commit/push. Supports `--dry-run`. |
 
 There is **no standalone `typecheck` script** — `tsc` runs inside `build`. There is **no `test` script and no test framework** (see Verification below).
 
@@ -115,6 +116,8 @@ Partials that consume design tokens must `@use 'base' as *;` (the `as *` brings 
 2. **Async by default.** No operation blocks the editor.
 3. **Pluggable providers.** Ollama and OpenAI-compatible are both first-class. LM Studio (OpenAI-compatible) is the primary local test target.
 4. **Mobile as a first-class target.** Test on phone before shipping desktop.
+5. **Capability-based model roles.** Models declare a `ModelRole` (`chat`/`embed`/`both`/`chat-image`/`image`); callers request a `ModelCapability` and `roleSatisfies()` resolves. No model-name sniffing — a non-vision model never receives pixels.
+6. **Tools on by default for discoverability.** Internal vault tools, network research tools (`fetch_url`, `fandom_*`, `wikipedia_*`), and image tools (`fetch_image_url`) are enabled by default so writers don't have to hunt for them; each can be turned off in settings to restrict outbound requests. Fandom additionally requires a non-empty allowlist (`lorebookFandomWikis`) — or the `lorebookFandomAllowAllWikis` "danger" toggle to allow any wiki.
 
 ## Source layout
 
@@ -122,8 +125,8 @@ Several files are large and intentionally monolithic; match the surrounding patt
 
 ```text
 src/
-  main.ts              # Plugin lifecycle (~1.7k lines)
-  settings.ts          # Settings schema + UI (~1.4k lines)
+  main.ts              # Plugin lifecycle + default-provider getters (~4.4k lines)
+  settings.ts          # Settings schema + UI (single source of truth, ~2.6k lines)
   types.ts             # Shared TypeScript interfaces (NARRATIVE_VOICE_PRESETS)
   core/
     change-set.ts
@@ -131,24 +134,91 @@ src/
     context-engine/       # Manuscript context engine
       context-assembler.ts, context-cache.ts, entity-extractor.ts,
       voice-analyzer.ts, types.ts
+    dashboard/            # Manuscript dashboard + lorebook
+      index.ts (barrel), manuscript-file.ts, metrics.ts, readability.ts,
+      presets.ts, types.ts, dale-chall-words.json (data asset),
+      lorebook-scanner.ts, lorebook-types.ts (LORE_ENTRY_TYPES, coverage)
     linter/               # Prose linter (Novelist Edition)
       apply-fix.ts, decorations.ts (CodeMirror decorations + debounced timers),
       fixes.ts, linter.ts, rules.ts, types.ts, word-lists.json (data asset)
-  ai/                  # Provider architecture, streaming, prompts
-    compaction.ts, co-writer.ts (~2k lines, largest file in repo),
-    feedback.ts, linter-ai.ts, modes.ts, ollama-provider.ts,
-    openai-provider.ts, prompts.ts, provider-registry.ts,
-    provider.ts (ProviderError), streaming.ts, transform.ts,
-    transport.ts (HttpError, StreamingUnavailableError, fetch exception)
+  ai/                  # Provider architecture, streaming, prompts, tools, vision
+    provider.ts (ModelRole, ModelCapability, roleSatisfies, resolveModel, ProviderError),
+    provider-registry.ts (createProvider, getProvider, parseProviderKey, generateModelId),
+    openai-provider.ts, ollama-provider.ts,
+    streaming.ts, transport.ts (HttpError, StreamingUnavailableError, the one fetch exception),
+    compaction.ts, embedding-cache.ts,
+    feedback.ts, linter-ai.ts, analysis.ts, batch-fix.ts,
+    manuscript-analysis.ts, manuscript-compaction.ts,
+    modes.ts, prompts.ts, transform.ts,
+    vision.ts (resolveImageInjection — two-regime image routing),
+    image-utils.ts (decode → downscale → JPEG base64),
+    co-writer.ts (~3.3k lines, largest file in repo — discuss/coach/fulfill/lorebook-coach
+                  modes, each with its own tool loop; NOT streamWithTools),
+    tools/                # Tool-calling layer (see "Tool-calling architecture")
+      tool.ts (Tool, ToolRegistry, ToolResult, ToolContext, DuplicateToolError),
+      tool-loop.ts (streamWithTools — exported but currently unused; co-writer inlines),
+      index.ts (registries + factory wiring + createToolRegistry gating),
+      context-helpers.ts, lore-edit-helpers.ts,
+      manuscript-mentions.ts, lore-siblings.ts, vault-lookup.ts, grep-notes.ts,
+      measure-folder.ts, calculate-file-sizes.ts, edit-note.ts, insert-note.ts, append-to-note.ts, revise-edit.ts,
+      propose-entry.ts, fetch-url.ts, fetch-image-url.ts,
+      fandom-lookup.ts, wikipedia-lookup.ts, mediawiki.ts (shared MediaWiki client)
   ui/                  # Views, modals, panels
-    change-card.ts, change-diff-extension.ts, chat-panel.ts, confirm-modal.ts,
-    context-panel.ts, co-writer-panel.ts (~1k lines), feedback-panel.ts,
-    fix-with-ai-modal.ts, quill-sidebar.ts (~800 lines), token-indicator.ts,
-    transform-modal.ts, vault-file-suggest-modal.ts
+    quill-sidebar.ts (~1.3k lines — tabs: linter/context/review/cowriter/dashboard/lorebook),
+    co-writer-panel.ts (~1.5k lines), context-panel.ts, review-panel.ts,
+    dashboard-panel.ts, lorebook-panel.ts, lore-entry-review.ts,
+    chat-panel.ts, chat-context-files.ts, document-header.ts,
+    change-card.ts, change-diff-extension.ts, token-indicator.ts,
+    confirm-modal.ts, transform-modal.ts, fix-with-ai-modal.ts,
+    filename-modal.ts, vault-file-suggest-modal.ts, file-mention-suggest.ts
   utils/               # Helpers, constants
     directives.ts, find-editor.ts, frontmatter.ts, text-analysis.ts,
     tokens.ts, vault-files.ts
 ```
+
+## Tool-calling architecture
+
+The co-writer can call tools mid-conversation via the provider's native tool-calling API (OpenAI/Ollama `tools` + `tool_calls`). Two execution paths exist — both are vision-aware:
+
+- **`streamWithTools`** (`src/ai/tools/tool-loop.ts`) — a generic wrapper exported for reuse; currently has **no callers**.
+- **The co-writer's own loop** (`src/ai/co-writer.ts`) — discuss, coach, fulfill, and lorebook-coach modes each inline their own tool execution (`executeToolCallSafely`) so they can render tool rounds in the chat UI and track token growth round-by-round. **This is the active path.**
+
+Key contracts:
+
+- `Tool` (`tools/tool.ts`) — `id`, `description`, `parameters` (JSON Schema), `maxResultTokens`, `requiresNetwork`, and `execute()` returning `Promise<string | ToolResult>`. `ToolResult` adds optional `images` (base64, for the vision layer).
+- `ToolRegistry` — unique-by-id registry (duplicate ids throw `DuplicateToolError`); `toToolDefinitions()` serializes to the provider's `tools` field.
+- `createToolRegistry(plugin, includeProposeEntry)` (`tools/index.ts`) — the single gating point. Returns `null` when `coWriterToolsEnabled` is off; otherwise registers the internal tools, adds `propose_entry` for the lorebook coach, and adds network/image tools when their toggles are on.
+
+Tool tiers (gating):
+
+| Tier | Tools | Gate setting |
+|------|-------|--------------|
+| Internal (default on) | `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit` | `coWriterToolsEnabled` |
+| Lorebook coach only | `propose_entry` (surfaces a lore draft to the UI) | `createLoreCoachToolRegistry` |
+| Network (default on) | `fetch_url`, `fandom_lookup` / `fandom_page`, `wikipedia_lookup` / `wikipedia_page` | `lorebookNetworkTools` |
+| Image (default on) | `fetch_image_url`, `fandom_image` | `lorebookImageTools` |
+
+`fandom_image` (Fandom image lookup: lead image via `prop=pageimages`, gallery browsing via `prop=images` + `imageinfo`, with captions parsed from `<gallery>` wikitext) needs both `lorebookNetworkTools` and `lorebookImageTools`, plus the Fandom allowlist gate — it's registered inside the fandom block with an extra image-tools check.
+
+Fandom requires a non-empty allowlist (`lorebookFandomWikis`), or the `lorebookFandomAllowAllWikis` "danger" toggle to allow any wiki; an empty allowlist with that toggle off disables Fandom everywhere. `mediawiki.ts` is the shared MediaWiki client with per-host rate limiting. Convention: tool ids are `snake_case` verbs/nouns (`manuscript_mentions`, `fetch_url`).
+
+## Vision & image support
+
+Images (character art, maps, reference photos) reach a model through three entry points (tool result, co-writer paste — planned, lorebook entry — planned), all funneled through `resolveImageInjection(plugin, images, opts)` in `src/ai/vision.ts`. Two regimes, picked at runtime from the configured models:
+
+- **Regime A (vision-native):** the default chat model has role `chat-image`. Images attach to the message as image content; the model sees pixels directly.
+- **Regime B (vision-proxy):** the chat model is text-only and a default image model is configured. The image model makes one isolated call (image + proxy prompt → caption text) and the caption is spliced into the conversation. The chat model never switches and never receives pixels — so a small local text model can pair with a cloud vision model.
+
+Regime B's proxy call is fully self-contained, so the image model may live on a **different provider** than chat (chosen via the Default image model picker, `aiDefaultImageProvider`). Regime A must stay on the chat provider — images ride on chat messages serialized by that provider.
+
+Provider serialization:
+
+- **OpenAI-compatible** (LM Studio, primary): `ChatMessage.images` → content array of `{type:'text'}` + `{type:'image_url', image_url:{url}}` parts.
+- **Ollama:** sibling `images: [base64]` field on the message.
+
+Images are base64 strings with no `data:` prefix, normalized to JPEG and downscaled (≤ `lorebookImageMaxDimension`, default 512) by `image-utils.ts` before they reach a provider, to protect local-model context budgets. The proxy prompt is customizable (`lorebookImageProxyPrompt`).
+
+Default-provider resolution (`main.ts`): `getDefaultChatProvider()` / `getDefaultEmbedProvider()` / `getDefaultImageProvider()` resolve a composite `"providerId/modelId"` setting key to `{ provider, modelId }`.
 
 ## Coding conventions
 
@@ -173,10 +243,11 @@ src/
 
 ### Error handling
 
-- Use typed error classes (extend `Error`) rather than throwing raw strings or generic `Error`. Three currently exist:
+- Use typed error classes (extend `Error`) rather than throwing raw strings or generic `Error`. Four currently exist:
     - `ProviderError` — `src/ai/provider.ts`
     - `HttpError` — `src/ai/transport.ts`
     - `StreamingUnavailableError` — `src/ai/transport.ts`
+    - `DuplicateToolError` — `src/ai/tools/tool.ts`
 - Propagate errors with `throw` rather than returning error objects, unless the function signature explicitly supports `Result<T, E>` or similar patterns.
 
 ## Coding rules — enforced vs. convention
@@ -208,8 +279,8 @@ The project does not use `eslint-config-prettier`. The obsidianmd ESLint rules a
 ## Security & compliance
 
 - No `innerHTML`. Use `createEl()` + `textContent`. (Currently zero uses in `src/`.)
-- No raw DOM listeners. Prefer Obsidian's `registerDomEvent()` on a `Component` — often a child `Component` stored on a local field (e.g. `this.renderEvents.registerDomEvent(...)` in `quill-sidebar.ts`, `co-writer-panel.ts`; `component.registerDomEvent(...)` in `context-panel.ts`). Raw `addEventListener` is currently used in 9 files (`settings.ts`, `ui/feedback-panel.ts`, `ui/fix-with-ai-modal.ts`, `core/linter/decorations.ts`, `ui/confirm-modal.ts`, `ui/change-diff-extension.ts`, `ui/transform-modal.ts`, `ui/chat-panel.ts`, `ui/co-writer-panel.ts`); the heaviest is `settings.ts` via the `.inputEl.addEventListener('blur', ...)` idiom for reading values out of `TextComponent`. Prefer `registerDomEvent()` for new code; if `addEventListener` is unavoidable, leave an inline comment.
-- No raw timers. Prefer teardown via the `Component` lifecycle (`register()` / child components). Raw `window.setTimeout` is currently used in `core/linter/decorations.ts` and `ui/co-writer-panel.ts` (defer-to-next-frame paints), each with an inline justification comment. `Plugin#registerInterval` is not currently used anywhere in the codebase; follow the same pattern — add a comment explaining why a raw timer is necessary.
+- No raw DOM listeners. Prefer Obsidian's `registerDomEvent()` on a `Component` — often a child `Component` stored on a local field (e.g. `this.renderEvents.registerDomEvent(...)` in `quill-sidebar.ts`, `co-writer-panel.ts`; `component.registerDomEvent(...)` in `context-panel.ts`). Raw `addEventListener` is currently used in 12 files (`settings.ts`, `core/linter/decorations.ts`, and `ui/` {`change-diff-extension`, `chat-context-files`, `chat-panel`, `confirm-modal`, `co-writer-panel`, `dashboard-panel`, `file-mention-suggest`, `filename-modal`, `fix-with-ai-modal`, `transform-modal`}.ts); the heaviest is `settings.ts` via the `.inputEl.addEventListener('blur', ...)` idiom for reading values out of `TextComponent`. Prefer `registerDomEvent()` for new code; if `addEventListener` is unavoidable, leave an inline comment.
+- No raw timers. Prefer teardown via the `Component` lifecycle (`register()` / child components). Raw `window.setTimeout` is currently used in 6 files — `core/linter/decorations.ts` and `ui/co-writer-panel.ts` (defer-to-next-frame paints), `ai/tools/mediawiki.ts` and `ai/tools/lore-edit-helpers.ts` (rate-limit sleeps), `main.ts`, and `ui/file-mention-suggest.ts`. `Plugin#registerInterval` is not currently used anywhere in the codebase; when a raw timer is unavoidable, add an inline comment explaining why.
 - No `fetch`. Use `requestUrl()` for HTTP (mobile-compatible). Sole exception: `fetch` in `src/ai/transport.ts` for SSE streaming, guarded by `isStreamingSupported()` with an inline `eslint-disable-next-line` comment.
 - Use `Component` lifecycle + `register()` for proper teardown.
 - All UI text is sentence-case.
@@ -223,18 +294,33 @@ The project does not use `eslint-config-prettier`. The obsidianmd ESLint rules a
 - Persist settings via `loadData()` / `saveData()`.
 - `src/settings.ts` is the single source of truth for the settings schema.
 
+### Tool-gating toggles — descriptions live in three places
+
+The three tool-gating settings each gate **more than one tool**, and each has its user-facing description duplicated across **three locations** that must be kept in sync: the schema-field JSDoc, the Welcome/privacy-tab toggle, and the General-tab toggle. When you change one copy, update all three and make sure every tool the gate covers is named — incomplete copies have been flagged in review before. The two tab labels are not even identical, so locate them by the setting field name, not by label string.
+
+| Setting field (`src/settings.ts`) | Gates | Welcome/privacy-tab `.setName` | General-tab `.setName` |
+|------|-------|------|------|
+| `coWriterToolsEnabled` | all internal tools (`manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit`) | `Co-writer tools` | `Co-writer tool use` |
+| `lorebookNetworkTools` | `fetch_url`, `fandom_lookup` / `fandom_page`, `wikipedia_lookup` / `wikipedia_page` | `Network research tools` | `Network tools` |
+| `lorebookImageTools` | `fetch_image_url`, `fandom_image` | `Image tool` | `Image tools` |
+
+Each row = one JSDoc + two `setDesc(...)` copies to keep aligned. The authoritative gate logic is `createToolRegistry()` in `src/ai/tools/index.ts` — if you add or move a tool between tiers, also update the gating table in "Tool-calling architecture" and every description for the affected toggle(s). `fandom_image` is the cross-toggle case: it needs both `lorebookNetworkTools` **and** `lorebookImageTools` (plus the Fandom allowlist), so its gate spans two rows.
+
 ## Key feature areas
 
 1. **Manuscript Context Engine** — auto-builds working context from open document.
-2. **Manuscript Dashboard** — chapter word counts, pacing analysis, dialogue ratios.
+2. **Manuscript Dashboard** — chapter word counts, pacing analysis, dialogue ratios, readability.
 3. **Prose Linter (Novelist Edition)** — deterministic rules for narrative prose.
 4. **AI Feedback Engine** — reads like a thoughtful editor, not a text generator.
 5. **Async Feedback Queue** — submit chapters, get reports when ready.
-6. **Collaborative Drafting** — writer leads, AI extends, turn by turn.
-7. **Selection Transformations** — rewrite selected passages in place.
-8. **Critical Analysis / Continuity Engine** — plot logic, character consistency.
-9. **Writer Guidance Layers** — inline directives (`<!-- quill: -->`) + plot map.
-10. **AI Generation Style Constraints** — 18 rules + 6 narrative perspective presets (`NARRATIVE_VOICE_PRESETS`).
+6. **Collaborative Drafting (Co-writer)** — writer leads, AI extends, turn by turn (discuss / coach / fulfill modes).
+7. **Co-writer Tool-calling** — the model can call internal vault tools and network research tools (Fandom, Wikipedia, fetch_url) mid-conversation. On by default; restrict in settings.
+8. **Lorebook + Lorebook Coach** — typed lore entries with coverage-gap detection, plus a coach mode that drafts entries from the manuscript.
+9. **Selection Transformations** — rewrite selected passages in place.
+10. **Critical Analysis / Continuity Engine** — plot logic, character consistency.
+11. **Vision / Image Support** — images (character art, maps, reference photos) reach a vision-capable chat model directly, or are translated to text by a separate image model when chat is text-only. See "Vision & image support".
+12. **Writer Guidance Layers** — inline directives (`<!-- quill: -->`) + plot map.
+13. **AI Generation Style Constraints** — 18 rules + 6 narrative perspective presets (`NARRATIVE_VOICE_PRESETS`).
 
 ## Version management
 
@@ -244,10 +330,22 @@ Before pushing a feature branch to origin for the first time, bump the version i
 - **Minor** (0.x.0): New features or feature-complete milestones (e.g., 0.2.0, 0.5.0).
 - **Patch** (0.0.x): Bugfixes when neither major nor minor applies.
 
-When bumping, always update all three files together:
+The version string lives in more than the three release files — it's also embedded in agent strings (e.g. `MEDIAWIKI_UA` in `src/ai/tools/mediawiki.ts`) so outbound requests identify the plugin. To bump it everywhere consistently, prefer the chore tool over hand-editing:
+
+```bash
+npm run set-version -- <new-version>      # writes
+npm run set-version -- <new-version> --dry-run   # preview only
+```
+
+This rewrites every literal occurrence of the current version across the repo (`package.json`, `manifest.json`, and any source file embedding it) and adds a new `versions.json` entry without dropping release history. In one run it updates all three release files **plus** the embedded copies. It does **not** tag, commit, or push — review with `git diff` and commit the chore yourself. (The legacy `npm version` / `version-bump.mjs` path is the release lifecycle hook and tags.)
+
+The files it updates, for reference:
 - `package.json` — `"version"`
 - `manifest.json` — `"version"` (keep `"minAppVersion"` unchanged unless a major bump adds new API requirements)
-- `versions.json` — add `"<new-version>": "<minAppVersion>"` entry
+- `versions.json` — add `"<new-version>": "<minAppVersion>"` entry (history preserved)
+- every embedded copy (User-Agents, etc.)
+
+> **If you introduce the version string in a new place**, extend `update-version.mjs` so the next bump catches it. The tool finds occurrences via a literal scan over `SCAN_EXT` (currently `.ts/.mts/.mjs/.js/.json/.md/.scss`) minus the `SKIP_*` sets (build outputs, lockfiles, `versions.json` which is special-cased). If you embed the version in a new file type or a skipped path, add it to that scope. Always embed the version as a single literal token (never split across string concatenation) so the replace stays safe.
 
 After bumping, run `npm run build` and `npm run lint` to verify.
 
@@ -268,6 +366,18 @@ Releases are cut by pushing an annotated tag matching the new version. The exist
     - `pr-merge-<feature>.md` — merge records (what landed, follow-ups)
     - `eventide-quill-features.md` — master feature catalog
     - `issue-<n>.md` — issue investigation notes
+
+## Keeping this file current
+
+AGENTS.md is the entry brief for any agent (human or AI) working in this repo, and it drifts fast. When you land a change that does any of the following, update this file in the same PR:
+
+- **Adds or removes a source file** → update the "Source layout" tree (and the line-count callouts for the monolithic files: `main.ts`, `settings.ts`, `co-writer.ts`, `co-writer-panel.ts`, `quill-sidebar.ts`).
+- **Adds a new subsystem** (e.g., `tools/`, `dashboard/`, vision) → add a short architecture section describing the contracts and where they live.
+- **Adds, removes, or renames a setting** → reflect it under "Key feature areas" or the relevant subsystem section; `src/settings.ts` is the source of truth, but AGENTS.md should mention major settings surfaces and their defaults.
+- **Changes the enforced tooling** (new ESLint/stylelint rule, new script, new typed `Error` class, a new global in `global.d.ts`) → update the relevant tables (Coding rules, Error handling, `__DEV__`).
+- **Changes security-relevant counts** (`addEventListener` / `setTimeout` / `fetch` call sites) → re-grep and update "Security & compliance".
+
+Treat AGENTS.md like a test: if you shipped the feature but didn't update this file, the change isn't done. Keep claims verifiable — counts and file lists should be re-grepped, not guessed.
 
 ## When in doubt
 
