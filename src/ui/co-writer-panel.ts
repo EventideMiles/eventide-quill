@@ -1,4 +1,4 @@
-import { App, MarkdownRenderer, Notice } from 'obsidian';
+import { App, MarkdownRenderer, Menu, Notice } from 'obsidian';
 import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { ConfirmModal } from './confirm-modal';
@@ -43,6 +43,14 @@ const COWRITER_MODES: { mode: InputMode; icon: string; label: string; desc: stri
  * under Regime A and downscale latency under Regime B.
  */
 const MAX_PENDING_IMAGES = 4;
+
+/**
+ * Below this bottom-area width (px), the button row collapses into compact
+ * mode: Add-context / Refresh / Compact / New-chat hide behind a hamburger
+ * overflow button. Mode + Attach + Send stay visible (primary actions).
+ * Mirrors the sidebar's ResizeObserver pattern at quill-sidebar.ts:100.
+ */
+const COMPACT_WIDTH_THRESHOLD = 420;
 
 /** Extract a display name from a vault path. */
 function fileNameFromPath(path: string): string {
@@ -170,6 +178,17 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Monotonic render counter; used to discard stale async finalizations. */
     private renderId = 0;
 
+    /**
+     * Whether the bottom area is currently in compact (narrow-sidebar)
+     * mode. Toggled by {@link resizeObserver} and read in renderBottomArea
+     * to add the `quill-cowriter-panel__bottom--compact` modifier, which
+     * hides the secondary buttons behind a hamburger overflow menu.
+     */
+    private compactWidth = false;
+
+    /** Observes the panel container width to toggle {@link compactWidth}. */
+    private resizeObserver: ResizeObserver | null = null;
+
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app);
         this.plugin = plugin;
@@ -179,12 +198,27 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (this.containerEl && this.keydownHandler) {
             this.containerEl.removeEventListener('keydown', this.keydownHandler);
         }
+        // Disconnect any prior observer before re-observing the new container.
+        this.resizeObserver?.disconnect();
         this.containerEl = containerEl;
         this.render();
         this.keydownHandler = (e: KeyboardEvent) => {
             this.handleKeydown(e);
         };
         containerEl.addEventListener('keydown', this.keydownHandler);
+        // Toggle compact mode when the sidebar narrows. Mirrors the sidebar's
+        // own ResizeObserver at quill-sidebar.ts:100 (the only other responsive
+        // pattern in the repo).
+        this.resizeObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const compact = entry.contentRect.width < COMPACT_WIDTH_THRESHOLD;
+                if (compact !== this.compactWidth) {
+                    this.compactWidth = compact;
+                    this.scheduleRender();
+                }
+            }
+        });
+        this.resizeObserver.observe(containerEl);
     }
 
     /** Set the handler invoked when the user sends a direction in Direct mode. */
@@ -1232,7 +1266,9 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the pinned bottom area (draft status, context pills, input row). */
     private renderBottomArea(): void {
-        const bottom = this.containerEl!.createEl('div', { cls: 'quill-cowriter-panel__bottom' });
+        const bottom = this.containerEl!.createEl('div', {
+            cls: `quill-cowriter-panel__bottom${this.compactWidth ? ' quill-cowriter-panel__bottom--compact' : ''}`
+        });
 
         // Coach mode UI
         if (this.inputMode === 'coach') {
@@ -1570,6 +1606,56 @@ export class CoWriterPanel extends AbstractChatPanel {
                     }
                 }
             ).open();
+        });
+
+        // Overflow hamburger — only visible under compact-width (see SCSS).
+        // Surfaces the secondary buttons (Add context / Refresh / Compact /
+        // New chat) as a native Obsidian Menu so the row doesn't overflow on
+        // a narrow sidebar or mobile screen.
+        const overflowBtn = btnRow.createEl('button', {
+            cls: 'quill-cowriter-panel__overflow-btn',
+            text: '\u22ef',
+            title: 'More actions',
+            attr: { type: 'button', 'aria-label': 'More actions' }
+        });
+        if (generating) overflowBtn.disabled = true;
+        this.renderEvents.registerDomEvent(overflowBtn, 'click', (e) => {
+            if (generating) return;
+            const menu = new Menu();
+            menu.addItem((item) =>
+                item
+                    .setTitle('Add file to context')
+                    .setIcon('plus')
+                    .onClick(() => {
+                        if (!addCtxBtn.disabled) addCtxBtn.click();
+                    })
+            );
+            menu.addItem((item) =>
+                item
+                    .setTitle('Refresh suggestions')
+                    .setIcon('refresh-cw')
+                    .onClick(() => {
+                        if (!refreshBtn.disabled) refreshBtn.click();
+                    })
+            );
+            menu.addItem((item) =>
+                item
+                    .setTitle('Compact conversation')
+                    .setIcon('fold-vertical')
+                    .onClick(() => {
+                        if (!compactBtn.disabled) compactBtn.click();
+                    })
+            );
+            menu.addSeparator();
+            menu.addItem((item) =>
+                item
+                    .setTitle('New chat')
+                    .setIcon('square-pen')
+                    .onClick(() => {
+                        if (!newChatBtn.disabled) newChatBtn.click();
+                    })
+            );
+            menu.showAtMouseEvent(e);
         });
 
         // Spacer to push send/stop to the right
