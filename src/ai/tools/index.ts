@@ -12,6 +12,7 @@ import { loreSiblingsTool } from './lore-siblings';
 import { manuscriptMentionsTool } from './manuscript-mentions';
 import { measureFolderTool } from './measure-folder';
 import { proposeEntryTool } from './propose-entry';
+import { reviseEditTool } from './revise-edit';
 import { vaultLookupTool } from './vault-lookup';
 import type EventideQuillPlugin from '../../main';
 
@@ -31,13 +32,14 @@ export { loreSiblingsTool } from './lore-siblings';
 export { manuscriptMentionsTool } from './manuscript-mentions';
 export { measureFolderTool } from './measure-folder';
 export { proposeEntryTool } from './propose-entry';
+export { reviseEditTool } from './revise-edit';
 export { vaultLookupTool } from './vault-lookup';
 
 /**
- * Build a registry containing the nine internal-only tools:
+ * Build a registry containing the ten internal-only tools:
  * `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`,
  * `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`,
- * `append_to_note`.
+ * `append_to_note`, `revise_edit`.
  */
 export function createInternalToolRegistry(): ToolRegistry {
     const registry = new ToolRegistry();
@@ -50,11 +52,12 @@ export function createInternalToolRegistry(): ToolRegistry {
     registry.register(editNoteTool);
     registry.register(insertNoteTool);
     registry.register(appendToNoteTool);
+    registry.register(reviseEditTool);
     return registry;
 }
 
 /**
- * Build a registry for the Lorebook Coach: the nine internal tools plus
+ * Build a registry for the Lorebook Coach: the ten internal tools plus
  * `propose_entry` (which surfaces a draft to the UI for review).
  */
 export function createLoreCoachToolRegistry(): ToolRegistry {

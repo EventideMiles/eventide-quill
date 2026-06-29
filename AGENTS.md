@@ -160,7 +160,7 @@ src/
       index.ts (registries + factory wiring + createToolRegistry gating),
       context-helpers.ts, lore-edit-helpers.ts,
       manuscript-mentions.ts, lore-siblings.ts, vault-lookup.ts, grep-notes.ts,
-      measure-folder.ts, calculate-file-sizes.ts, edit-note.ts, insert-note.ts, append-to-note.ts,
+      measure-folder.ts, calculate-file-sizes.ts, edit-note.ts, insert-note.ts, append-to-note.ts, revise-edit.ts,
       propose-entry.ts, fetch-url.ts, fetch-image-url.ts,
       fandom-lookup.ts, wikipedia-lookup.ts, mediawiki.ts (shared MediaWiki client)
   ui/                  # Views, modals, panels
@@ -193,7 +193,7 @@ Tool tiers (gating):
 
 | Tier | Tools | Gate setting |
 |------|-------|--------------|
-| Internal (default on) | `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note` | `coWriterToolsEnabled` |
+| Internal (default on) | `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit` | `coWriterToolsEnabled` |
 | Lorebook coach only | `propose_entry` (surfaces a lore draft to the UI) | `createLoreCoachToolRegistry` |
 | Network (default on) | `fetch_url`, `fandom_lookup` / `fandom_page`, `wikipedia_lookup` / `wikipedia_page` | `lorebookNetworkTools` |
 | Image (default on) | `fetch_image_url`, `fandom_image` | `lorebookImageTools` |
@@ -300,7 +300,7 @@ The three tool-gating settings each gate **more than one tool**, and each has it
 
 | Setting field (`src/settings.ts`) | Gates | Welcome/privacy-tab `.setName` | General-tab `.setName` |
 |------|-------|------|------|
-| `coWriterToolsEnabled` | all internal tools (`manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`) | `Co-writer tools` | `Co-writer tool use` |
+| `coWriterToolsEnabled` | all internal tools (`manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit`) | `Co-writer tools` | `Co-writer tool use` |
 | `lorebookNetworkTools` | `fetch_url`, `fandom_lookup` / `fandom_page`, `wikipedia_lookup` / `wikipedia_page` | `Network research tools` | `Network tools` |
 | `lorebookImageTools` | `fetch_image_url`, `fandom_image` | `Image tool` | `Image tools` |
 

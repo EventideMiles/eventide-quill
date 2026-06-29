@@ -98,6 +98,35 @@ export function splitFrontmatter(raw: string): { bodyOffset: number; body: strin
 }
 
 /**
+ * Guard for the "any approval order is safe" invariant: pending edits on one
+ * file must be pairwise disjoint. Returns an error string (naming the
+ * conflicting pending edit id(s) and pointing at `revise_edit`) if a proposed
+ * `[from, to)` range overlaps any pending edit, or `null` if the range is
+ * clear and the caller may safely add it. Range overlap uses the standard
+ * half-open interval test `from < e.to && e.from < to`, so a zero-width
+ * insertion abutting (not inside) an existing edit is allowed.
+ *
+ * Why disjointness is sufficient: `ChangeSet.approve` shifts only edits whose
+ * `from >= approved.to`; with disjoint edits any approval order keeps every
+ * remaining edit's offsets valid against the current document.
+ */
+export function overlapError(changeSet: ChangeSet, from: number, to: number): string | null {
+    const ids: number[] = [];
+    for (const e of changeSet.edits) {
+        if (e.state !== 'pending') continue;
+        if (from < e.to && e.from < to) ids.push(e.id);
+    }
+    if (ids.length === 0) return null;
+    const singular = ids.length === 1;
+    return (
+        `Error: this change overlaps pending edit${singular ? '' : 's'} id ${ids.join(', ')} ` +
+        `on the same note. Use \`revise_edit\` with ${singular ? 'that id' : 'one of those ids'} ` +
+        `to fold your new content into the existing pending edit (emit its FULL new text), ` +
+        `or choose a non-overlapping range.`
+    );
+}
+
+/**
  * Resolve a user-provided path to a TFile. Tries exact path first, then
  * falls back to a name lookup via the metadata cache.
  */

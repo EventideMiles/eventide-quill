@@ -1,5 +1,5 @@
 import type { Tool, ToolContext } from './tool';
-import { openNoteForEdit, pushLoreEditDiff, readNoteContent, resolveNoteFile } from './lore-edit-helpers';
+import { openNoteForEdit, overlapError, pushLoreEditDiff, readNoteContent, resolveNoteFile } from './lore-edit-helpers';
 
 /**
  * Propose a replacement to an existing note. The model provides the exact
@@ -86,6 +86,13 @@ export const editNoteTool: Tool = {
         const from = idx;
         const to = idx + oldText.length;
 
+        // Reject overlaps BEFORE opening a tab, so a conflicting proposal
+        // doesn't spawn a review tab. Keeps pending edits on a file pairwise
+        // disjoint — the invariant that makes any approval order safe.
+        const existingEntry = plugin.coWriterSession.loreEdits.get(file.path);
+        const conflict = existingEntry ? overlapError(existingEntry.changeSet, from, to) : null;
+        if (conflict) return conflict;
+
         // Open the note and push the diff.
         const opened = await openNoteForEdit(plugin.app, file.path);
         if (!opened) return `Error: could not open "${file.path}" for review.`;
@@ -99,7 +106,7 @@ export const editNoteTool: Tool = {
         // approves — so concurrent proposals don't shift each other's ranges.
         const entry = session.getOrCreateLoreEdit(file.path, file.basename);
 
-        entry.changeSet.add({
+        const created = entry.changeSet.add({
             from,
             to,
             newText,
@@ -110,6 +117,6 @@ export const editNoteTool: Tool = {
         pushLoreEditDiff(opened.cm, entry.changeSet, file.path);
         session.onLoreEditUpdate?.();
 
-        return `Edit proposed for "${file.basename}". The writer will see the diff and can approve or reject it. Continue with your response.`;
+        return `Edit proposed for "${file.basename}" (edit id ${created.id}). The writer will see the diff and can approve or reject it. Continue with your response.`;
     }
 };
