@@ -31,9 +31,7 @@ import {
     createReadOnlyToolRegistry,
     createToolRegistry,
     executeToolCall,
-    type ToolContext,
-    type ToolRegistry,
-    type ToolResult
+    type ToolContext
 } from './tools';
 import { injectImagesIntoMessages } from './vision';
 import { SubagentSession, type SubagentView, type SubagentConfig } from './subagent-session';
