@@ -509,7 +509,7 @@ function buildInternalToolsMessage(plugin: EventideQuillPlugin): ChatMessage | n
  * Build a system message informing the model which file the writer currently
  * has open. This lets the model distinguish between edits to the active file
  * (where Direct/Fulfill mode provides a streaming live-edit UX) and edits to
- * other notes (where the edit_note / append_to_note tools are the right path).
+ * other notes (where the edit_note / insert_note / append_to_note tools are the right path).
  *
  * Returns null when no markdown file is active.
  */
@@ -521,8 +521,8 @@ function buildActiveFileMessage(plugin: EventideQuillPlugin): ChatMessage | null
         content:
             `The writer currently has "${activeFile.path}" open in the editor.\n` +
             'For edits to THIS file, recommend the writer use Direct or Fulfill mode ' +
-            '(which stream changes live into the editor). Use edit_note / append_to_note ' +
-            'tools for any OTHER note that is not currently open.'
+            '(which stream changes live into the editor). Use edit_note / insert_note / ' +
+            'append_to_note tools for any OTHER note that is not currently open.'
     };
 }
 
@@ -732,7 +732,7 @@ export class CoWriterSession {
     /** Called when a new lore draft is ready for the review card. */
     onLoreDraftReady: (() => void) | null = null;
 
-    /** Pending note edits keyed by vault path (from edit_note / append_to_note tools). */
+    /** Pending note edits keyed by vault path (from edit_note / insert_note / append_to_note tools). */
     loreEdits: Map<string, { changeSet: ChangeSet; fileBasename: string }> = new Map();
     /**
      * Files that the tool opened in a new tab (not previously open). These
@@ -2626,7 +2626,7 @@ export class CoWriterSession {
         this.onDirectChangeUpdate?.();
     }
 
-    // ── Lore edit (edit_note / append_to_note tools) ─────────────────────
+    // ── Lore edit (edit_note / insert_note / append_to_note tools) ──────
 
     /**
      * Approve a pending lore edit: commit the ChangeSet edit to the target

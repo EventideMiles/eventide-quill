@@ -86,7 +86,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     private fulfillActive = false;
     /** Direct-mode proposed continuation (mirrored from the session), rendered as a review card. */
     private directChange: ProposedEdit | null = null;
-    /** Pending lore edits (from edit_note / append_to_note tools), one card per file. */
+    /** Pending lore edits (from edit_note / insert_note / append_to_note tools), one card per file. */
     private loreEdits: { edit: ProposedEdit; filePath: string; fileBasename: string }[] = [];
     /** Whether the mode picker is open (replaces the mode-cycle-on-click behavior). */
     private modePickerOpen = false;
@@ -778,7 +778,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         }
 
         // Lore edit cards — one per pending edit (from edit_note /
-        // append_to_note tools). Multiple files can be pending simultaneously
+        // insert_note / append_to_note tools). Multiple files can be pending simultaneously
         // so the writer can review a "full lorebook edit" one file at a time.
         for (const entry of this.loreEdits) {
             const p = renderChangeCard(scroll, entry.edit, entry.fileBasename, this.app, this.renderEvents, {

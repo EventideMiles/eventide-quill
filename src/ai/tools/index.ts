@@ -7,6 +7,7 @@ import { createFetchUrlTool } from './fetch-url';
 import { createWikipediaLookupTool, createWikipediaPageTool } from './wikipedia-lookup';
 import { editNoteTool } from './edit-note';
 import { grepNotesTool } from './grep-notes';
+import { insertNoteTool } from './insert-note';
 import { loreSiblingsTool } from './lore-siblings';
 import { manuscriptMentionsTool } from './manuscript-mentions';
 import { measureFolderTool } from './measure-folder';
@@ -25,6 +26,7 @@ export { createFetchUrlTool } from './fetch-url';
 export { createWikipediaLookupTool, createWikipediaPageTool } from './wikipedia-lookup';
 export { editNoteTool } from './edit-note';
 export { grepNotesTool } from './grep-notes';
+export { insertNoteTool } from './insert-note';
 export { loreSiblingsTool } from './lore-siblings';
 export { manuscriptMentionsTool } from './manuscript-mentions';
 export { measureFolderTool } from './measure-folder';
@@ -32,9 +34,10 @@ export { proposeEntryTool } from './propose-entry';
 export { vaultLookupTool } from './vault-lookup';
 
 /**
- * Build a registry containing the eight internal-only tools:
+ * Build a registry containing the nine internal-only tools:
  * `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`,
- * `measure_folder`, `calculate_file_sizes`, `edit_note`, `append_to_note`.
+ * `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`,
+ * `append_to_note`.
  */
 export function createInternalToolRegistry(): ToolRegistry {
     const registry = new ToolRegistry();
@@ -45,12 +48,13 @@ export function createInternalToolRegistry(): ToolRegistry {
     registry.register(measureFolderTool);
     registry.register(calculateFileSizesTool);
     registry.register(editNoteTool);
+    registry.register(insertNoteTool);
     registry.register(appendToNoteTool);
     return registry;
 }
 
 /**
- * Build a registry for the Lorebook Coach: the eight internal tools plus
+ * Build a registry for the Lorebook Coach: the nine internal tools plus
  * `propose_entry` (which surfaces a draft to the UI for review).
  */
 export function createLoreCoachToolRegistry(): ToolRegistry {
