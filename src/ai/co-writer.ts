@@ -373,7 +373,21 @@ export async function loadAdditionalContext(
         'Reference file',
         plugin.settings.contextMaxCharsPerFile
     );
-    return [...embedMessages, ...fileMessages];
+    const messages = [...embedMessages, ...fileMessages];
+    // Explicit "already in context" note — without it the model frequently
+    // vault_lookup's these same files even though their full text is right above,
+    // wasting a round and duplicating content. Listing the paths makes the
+    // connection unmistakable.
+    if (regularPaths.length > 0) {
+        messages.push({
+            role: 'system',
+            content:
+                'The reference files above are already in your context (full text, capped per file). ' +
+                'Do NOT vault_lookup or re-read any of these — reuse the content already here:\n' +
+                regularPaths.map((p) => `- ${p}`).join('\n')
+        });
+    }
+    return messages;
 }
 
 /**
@@ -531,7 +545,10 @@ function buildActiveFileMessage(plugin: EventideQuillPlugin): ChatMessage | null
             `The writer currently has "${activeFile.path}" open in the editor.\n` +
             'For edits to THIS file, recommend the writer use Direct or Fulfill mode ' +
             '(which stream changes live into the editor). Use edit_note / insert_note / ' +
-            'append_to_note tools for any OTHER note that is not currently open.'
+            'append_to_note tools for any OTHER note that is not currently open.\n' +
+            'Extracted details from this file (characters, locations, etc.) are already in ' +
+            'the "Vault context for reference" above — check there first and vault_lookup ' +
+            'this file only if you need the full prose beyond those excerpts.'
     };
 }
 
