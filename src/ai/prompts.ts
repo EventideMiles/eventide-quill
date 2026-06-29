@@ -4,7 +4,12 @@ import type { AnalysisMode } from './analysis';
 import type { ManuscriptAnalysisMode } from './manuscript-analysis';
 import type { ExtractedEntity, VoiceMarker } from '../core/context-engine/types';
 import { type LintResult, RULE_INFO } from '../core/linter/types';
-import { type NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS, type VoiceProfile } from '../types';
+import {
+    type NarrativeVoiceDefinition,
+    type NarrativeVoicePreset,
+    NARRATIVE_VOICE_PRESETS,
+    type VoiceProfile
+} from '../types';
 
 /** Wiki link behavior modes for AI prompt instructions. */
 export type WikiLinkBehavior = 'preserve' | 'adaptive';
@@ -25,20 +30,15 @@ export function getWikiLinkInstruction(behavior: WikiLinkBehavior): string {
  * This is the existing style-constraints prompt used for selection transformations,
  * co-writer continuations, and guided plot branching.
  */
-function getNarrativeSystemPrompt(
-    vaultContext: string,
-    narrativePreset: NarrativeVoicePreset,
-    wikiLinkBehavior: WikiLinkBehavior = 'preserve'
-): string {
-    const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === narrativePreset) ?? NARRATIVE_VOICE_PRESETS[0];
-    if (!def) {
-        throw new Error('NARRATIVE_VOICE_PRESETS must not be empty');
-    }
-
+/**
+ * Shared style rules + formatting (used by both the transform prompt and the
+ * co-writer generation prompt). Returns the "Follow these style rules strictly:"
+ * block through the formatting rules — everything up to (but NOT including)
+ * the "Output only..." line, which differs per caller.
+ */
+function buildStyleRules(def: NarrativeVoiceDefinition, wikiLinkBehavior: WikiLinkBehavior): string[] {
     const perspectiveRules = def.rules.map((r, i) => `${9 + i}. ${r}`).join('\n');
-
-    const parts = [
-        'You are a thoughtful prose editor for a novelist. You rewrite passages of narrative fiction.',
+    return [
         'Follow these style rules strictly:',
         '',
         '1. Punctuate with commas, colons, semicolons, or sentence breaks — leave em dashes out.',
@@ -57,7 +57,23 @@ function getNarrativeSystemPrompt(
         `${9 + def.rules.length}. ${getWikiLinkInstruction(wikiLinkBehavior)}`,
         `${9 + def.rules.length + 1}. Keep narrative text unbolded.`,
         `${9 + def.rules.length + 2}. Italics allowed sparingly for internal thoughts or emphasis.`,
-        `${9 + def.rules.length + 3}. Render the narrative as prose paragraphs rather than lists.`,
+        `${9 + def.rules.length + 3}. Render the narrative as prose paragraphs rather than lists.`
+    ];
+}
+
+function getNarrativeSystemPrompt(
+    vaultContext: string,
+    narrativePreset: NarrativeVoicePreset,
+    wikiLinkBehavior: WikiLinkBehavior = 'preserve'
+): string {
+    const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === narrativePreset) ?? NARRATIVE_VOICE_PRESETS[0];
+    if (!def) {
+        throw new Error('NARRATIVE_VOICE_PRESETS must not be empty');
+    }
+
+    const parts = [
+        'You are a thoughtful prose editor for a novelist. You rewrite passages of narrative fiction.',
+        ...buildStyleRules(def, wikiLinkBehavior),
         `${9 + def.rules.length + 4}. Output only the rewritten passage — plain prose, free of intros, apologies, or meta-commentary.`
     ];
 
@@ -317,25 +333,11 @@ export function getCoWriterGenerationPrompt(
         throw new Error('NARRATIVE_VOICE_PRESETS must not be empty');
     }
 
-    const perspectiveRules = def.rules.map((r, i) => `${9 + i}. ${r}`).join('\n');
-
     const parts = [
         'You are a thoughtful prose collaborator writing narrative fiction with a novelist.',
         'The writer has written a passage and you are extending it forward — continuing the scene in the same voice, perspective, and style.',
         '',
-        'Follow these style rules strictly:',
-        '',
-        '1. Punctuate with commas, colons, semicolons, or sentence breaks — leave em dashes out.',
-        '2. State what things are directly and affirmatively ("it is X") rather than via "it\'s not X, it\'s Y" constructions.',
-        '3. Choose fresh, concrete wording over these overused words: tapestry, testament, delve, vibrant, nestled, thriving, nascent, weaving, realm, unlock, game-changer, pivotal, intricate, elucidate.',
-        '4. End on action, dialogue, or unresolved tension, carrying momentum rather than a summary or moral.',
-        '5. Reveal emotion through physical reaction, blocking, and dialogue rather than naming the feeling outright.',
-        '6. Vary sentence cadence. Mix short, punchy sentences with longer, complex ones.',
-        '7. Render beats with concrete action, keeping filler adverbs (quietly, deliberately, gently, suddenly) out.',
-        '8. Write in active voice with confident verbs, committing to statements rather than hedging (might, could, perhaps, maybe).',
-        '',
-        `Narrative perspective — ${def.label}, ${def.tense}:`,
-        perspectiveRules,
+        ...buildStyleRules(def, wikiLinkBehavior ?? 'preserve'),
         '',
         "--- Voice profile of the writer's passage ---",
         `Sentence length distribution: ${voiceProfile.sentenceLengthDistribution}`,
@@ -352,11 +354,6 @@ export function getCoWriterGenerationPrompt(
         '- Stay at the current narrative position, advancing beat by beat.',
         "- Stay within the established POV character's senses and knowledge.",
         '',
-        'Formatting:',
-        `${9 + def.rules.length}. ${getWikiLinkInstruction(wikiLinkBehavior ?? 'preserve')}`,
-        `${9 + def.rules.length + 1}. Keep narrative text unbolded.`,
-        `${9 + def.rules.length + 2}. Italics allowed sparingly for internal thoughts or emphasis.`,
-        `${9 + def.rules.length + 3}. Render the narrative as prose paragraphs rather than lists.`,
         `${9 + def.rules.length + 4}. Output only the continuation — plain prose, free of intros, apologies, or meta-commentary.`
     ];
 
