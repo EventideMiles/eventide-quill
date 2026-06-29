@@ -28,6 +28,27 @@ export interface ImageInjectionOptions {
 }
 
 /**
+ * Synchronous check for whether any vision regime is available — i.e. whether
+ * the writer could meaningfully attach an image to a chat turn. Returns `true`
+ * if either:
+ *  - the default chat model is vision-capable (role `chat-image`, Regime A), or
+ *  - a default image model is configured (Regime B proxy).
+ *
+ * Use this for UI guards (e.g. showing a Notice at capture time) without
+ * kicking off an async proxy call. The authoritative routing decision still
+ * happens in {@link resolveImageInjection}.
+ */
+export function isVisionConfigured(plugin: EventideQuillPlugin): boolean {
+    const chat = plugin.getDefaultChatProvider();
+    if (chat.provider && chat.modelId) {
+        const chatModel = chat.provider.config.models.find((m) => m.id === chat.modelId);
+        if (chatModel && chatModel.role === 'chat-image') return true;
+    }
+    const image = plugin.getDefaultImageProvider();
+    return Boolean(image.provider && image.modelId);
+}
+
+/**
  * Decide how an image (or set of images) should enter a conversation.
  *
  * - **Regime A** (vision-native): the configured default chat model has role
@@ -129,6 +150,58 @@ export async function injectImagesIntoMessages(
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         messages.push({ role: 'user', content: `[Image could not be described: ${msg}]` });
+    }
+}
+
+/** Shape returned by {@link prepareUserMessageWithImages}: the fields a caller needs to push a user {@link ChatMessage}. */
+export interface PreparedUserMessage {
+    content: string;
+    /** Present only under Regime A (vision-native chat model). */
+    images?: string[];
+}
+
+/**
+ * Apply the two vision regimes to the writer's OWN chat message (paste, drop,
+ * attach). Returns the `content` (and, under Regime A, the `images`) the caller
+ * should use when pushing the user {@link ChatMessage}.
+ *
+ * - **Native** (vision-capable chat model): return the original text plus the
+ *   images; the provider serializes the pixels onto the user message.
+ * - **Described** (text-only chat + image model configured): run the proxy
+ *   caption call once and fold the caption into the text. The chat model never
+ *   switches models or receives pixels.
+ * - **Unsupported**: append a placeholder note so the model knows an image was
+ *   attached but couldn't be interpreted, instead of silently dropping it.
+ *
+ * The analogue of {@link injectImagesIntoMessages} for the user's own message
+ * rather than tool output. The two helpers are deliberately kept separate:
+ * tool output is a synthetic side-message with its own framing; paste is the
+ * writer's primary message and its text must be preserved verbatim. Never
+ * throws — failures become a placeholder appended to the text.
+ *
+ * @param text   The writer's message text (kept verbatim in every regime).
+ * @param images Base64 JPEG strings (no `data:` prefix). Empty → no-op.
+ * @param signal Abort signal; passed through to the Regime B proxy call.
+ */
+export async function prepareUserMessageWithImages(
+    plugin: EventideQuillPlugin,
+    text: string,
+    images: string[],
+    signal?: AbortSignal
+): Promise<PreparedUserMessage> {
+    if (images.length === 0) return { content: text };
+    try {
+        const injection = await resolveImageInjection(plugin, images, { intent: text, signal });
+        if (injection.kind === 'native') {
+            return { content: text, images: injection.images };
+        }
+        if (injection.kind === 'described') {
+            return { content: `${text}\n\n[Image description from the vision model]: ${injection.text}` };
+        }
+        return { content: `${text}\n\n[An image was attached but cannot be interpreted: ${injection.reason}]` };
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: `${text}\n\n[Image could not be described: ${msg}]` };
     }
 }
 
