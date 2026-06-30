@@ -6,7 +6,7 @@
  */
 
 import type { ChatMessage } from '../ai/provider';
-import { estimateTokens } from '../utils/tokens';
+import { estimateTokens, IMAGE_TOKEN_COST } from '../utils/tokens';
 
 /** One row in a token-breakdown tooltip. */
 export interface TokenBreakdownSection {
@@ -101,7 +101,7 @@ export function buildRequestBreakdown(messages: ChatMessage[], toolOverhead: num
     for (const msg of messages) {
         const text = typeof msg.content === 'string' ? msg.content : '';
         const textTokens = estimateTokens(text);
-        const imageTokens = msg.images && msg.images.length > 0 ? msg.images.length * 512 : 0;
+        const imageTokens = msg.images && msg.images.length > 0 ? msg.images.length * IMAGE_TOKEN_COST : 0;
         const msgTokens = textTokens + imageTokens;
 
         if (msg.role === 'system') {

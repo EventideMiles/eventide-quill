@@ -1701,15 +1701,22 @@ export default class EventideQuillPlugin extends Plugin {
                     typeof maxChars === 'number' && maxChars >= 0 && Number.isFinite(maxChars)
                         ? Math.floor(maxChars)
                         : undefined;
-                const combined = texts.join('\n\n---\n\n');
-                // Strip image-gallery sections at injection time too — covers
-                // embedding caches built before the chunker learned to strip
-                // them. The marker preserves "this entry has images" awareness.
-                const { stripped: galleryStripped } = stripGallerySections(
-                    combined,
-                    this.settings.loreEntryImageSectionHeaders
-                );
-                const excerpt = safeMax !== undefined ? galleryStripped.slice(0, safeMax) : galleryStripped;
+                // Check if this folder is a lorebook folder — gallery sections
+                // only exist in lore entries, and the gallery-stripping marker
+                // guidance (get_lore_image) should only appear for lore content.
+                const isLoreFolder =
+                    parsed && this.settings.lorebookFolders.some((f) => normalizePath(f) === parsed.folderPath);
+                const joined = isLoreFolder
+                    ? texts
+                          // Strip gallery sections from each chunk individually so
+                          // section state doesn't leak across unrelated content and
+                          // get_lore_image guidance stays scoped to lore entries.
+                          // Covers embedding caches built before the chunker learned
+                          // to strip them, so old caches still produce clean context.
+                          .map((t) => stripGallerySections(t, this.settings.loreEntryImageSectionHeaders).stripped)
+                          .join('\n\n---\n\n')
+                    : texts.join('\n\n---\n\n');
+                const excerpt = safeMax !== undefined ? joined.slice(0, safeMax) : joined;
 
                 messages.push({
                     role: 'system',

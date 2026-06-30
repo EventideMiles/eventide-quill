@@ -39,7 +39,13 @@ import { stripGallerySections } from '../core/dashboard/lorebook-scanner';
  * retrieval-time (top-K) is purely a token-budget measure on similarity-
  * matched chunks that the model is browsing, not editing against.
  */
-import { createReadOnlyToolRegistry, createToolRegistry, executeToolCall, type ToolContext } from './tools';
+import {
+    attachLoreImageTool,
+    createReadOnlyToolRegistry,
+    createToolRegistry,
+    executeToolCall,
+    type ToolContext
+} from './tools';
 import {
     getImageRegime,
     injectImagesIntoMessages,
@@ -3143,6 +3149,9 @@ export class CoWriterSession {
         // Lore batch subagents edit existing files — internal tools only, NO
         // run_lorebook_batch (single-level nesting) and NO propose_entry.
         const registry = createToolRegistry(plugin, false);
+        if (registry && plugin.settings.loreEntryImageAttachments) {
+            registry.register(attachLoreImageTool);
+        }
         const batchSummaries: string[] = [];
         for (let i = 0; i < runChunks.length; i++) {
             const chunkPaths = runChunks[i]!;

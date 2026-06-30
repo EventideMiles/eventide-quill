@@ -131,17 +131,12 @@ export function createToolRegistry(
 
     const registry = includeProposeEntry ? createLoreCoachToolRegistry(plugin) : createInternalToolRegistry();
 
-    // attach_lore_image applies to BOTH the lorebook coach (already added
-    // by createLoreCoachToolRegistry above) AND batch subagents editing
-    // existing entries. When this registry is the subagent path
-    // (includeProposeEntry=false), attach_lore_image still earns its place
-    // because the batch subagent edits existing entries — exactly the use
-    // case the tool serves. propose_entry stays gated by
-    // includeProposeEntry (only the lorebook coach creates new entries;
-    // subagents only edit existing ones).
-    if (!includeProposeEntry && plugin.settings.loreEntryImageAttachments) {
-        registry.register(attachLoreImageTool);
-    }
+    // attach_lore_image is NOT registered here for the !includeProposeEntry
+    // path (general discuss/coach modes). It belongs to the lorebook coach
+    // (already registered in createLoreCoachToolRegistry above) and the
+    // lore-batch subagent (registered explicitly in runLorebookBatch).
+    // This avoids leaking a lore-mutating tool into modes that should only
+    // access read-only / editing tools.
 
     if (allowSubagents) {
         registry.register(runLorebookBatchTool);

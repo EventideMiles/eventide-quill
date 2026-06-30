@@ -112,18 +112,18 @@ async function saveDraftToVault(draft: LoreDraftEntry, plugin: EventideQuillPlug
     const frontmatter = draft.entryType ? `---\nquill-type: ${draft.entryType}\n---\n\n` : '';
     let content = `${frontmatter}${draft.content.trim()}\n`;
 
-    // Write any proposed images to the attachments folder before creating the
-    // note. The draft's content is expected to already contain the matching
-    // ![[file]] embeds; we just persist the bytes. Filenames are sanitized
-    // and uniqueness-resolved against the vault to avoid collisions and
-    // accidental overwrites.
+    // Proposed images: write bytes to the attachments folder and update the
+    // content with resolved filenames and gallery-section safety net. Keep
+    // the resolved filenames so we can clean up if the subsequent note-
+    // creation step fails, preventing orphaned (2), (3) copies on retries.
+    let resolved: Array<{ original: string; resolved: string }> = [];
     if (draft.proposedImages && draft.proposedImages.length > 0) {
         try {
             // Pass the soon-to-be-created note's target path so Obsidian's
             // "./"-relative attachment-folder modes resolve against the new
             // note's parent folder (matching how Obsidian handles pastes
             // into a freshly-created note).
-            const resolved = await writeProposedImages(draft.proposedImages, plugin, targetPath);
+            resolved = await writeProposedImages(draft.proposedImages, plugin, targetPath);
             // If any image's filename changed during uniqueness resolution,
             // rewrite the embed in the content so the saved note points at
             // the actual file the writer will see.
@@ -149,6 +149,8 @@ async function saveDraftToVault(draft: LoreDraftEntry, plugin: EventideQuillPlug
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             new Notice(`Quill: Failed to save one or more proposed images — ${message}`);
+            // Clean up any files that were written before the failure.
+            await cleanupResolvedImages(resolved, plugin);
             return false;
         }
     }
@@ -161,12 +163,16 @@ async function saveDraftToVault(draft: LoreDraftEntry, plugin: EventideQuillPlug
         const file = plugin.app.vault.getAbstractFileByPath(targetPath);
         if (file instanceof TFile) {
             // Should not happen due to resolveUniquePath, but guard defensively.
+            await cleanupResolvedImages(resolved, plugin);
             new Notice(`Quill: "${targetPath}" already exists. Rename and try again.`);
             return false;
         }
         await plugin.app.vault.create(targetPath, content);
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        // The note was not created — clean up orphaned image files so retries
+        // don't produce (2), (3) copies of every attachment.
+        await cleanupResolvedImages(resolved, plugin);
         new Notice(`Quill: Failed to save entry — ${message}`);
         return false;
     }
@@ -590,6 +596,28 @@ async function resolveUniqueAttachmentPath(basePath: string, plugin: EventideQui
     return candidate;
 }
 
+/**
+ * Delete every file in `resolved` from the vault, best-effort. Used to clean
+ * up orphaned attachment files when a subsequent step (note creation, embed
+ * insertion) fails, preventing duplicate (2), (3) writes on retries.
+ */
+async function cleanupResolvedImages(
+    resolved: Array<{ original: string; resolved: string }>,
+    plugin: EventideQuillPlugin
+): Promise<void> {
+    for (const r of resolved) {
+        try {
+            const file = plugin.app.vault.getAbstractFileByPath(r.resolved);
+            if (file instanceof TFile) {
+                await plugin.app.fileManager.trashFile(file);
+            }
+        } catch {
+            // Best-effort cleanup — if the file can't be deleted, it will be
+            // handled by resolveUniqueAttachmentPath on the next retry.
+        }
+    }
+}
+
 /** Strip the folder from a vault path, returning just the filename. */
 function extractFilename(path: string): string {
     const slash = path.lastIndexOf('/');
@@ -671,11 +699,12 @@ async function approveAttachmentToVault(
     proposal: { filePath: string; images: ProposedImage[] },
     plugin: EventideQuillPlugin
 ): Promise<boolean> {
+    let resolved: Array<{ original: string; resolved: string }> = [];
     try {
         // Pass the existing entry's path so Obsidian's "./"-relative
         // attachment-folder modes resolve against the entry's parent
         // folder (matching how Obsidian handles pastes into an open note).
-        const resolved = await writeProposedImages(proposal.images, plugin, proposal.filePath);
+        resolved = await writeProposedImages(proposal.images, plugin, proposal.filePath);
         // After the bytes are written, insert each embed. Use the resolved
         // filename (which may differ from the suggested one if uniqueness
         // resolution kicked in).
@@ -694,6 +723,9 @@ async function approveAttachmentToVault(
         }
         return true;
     } catch (err) {
+        // Any step failed — clean up all files we wrote so retries don't
+        // create (2), (3) copies of every attachment.
+        await cleanupResolvedImages(resolved, plugin);
         const msg = err instanceof Error ? err.message : String(err);
         new Notice(`Quill: Failed to attach images — ${msg}`);
         return false;

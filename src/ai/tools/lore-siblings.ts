@@ -39,7 +39,13 @@ export const loreSiblingsTool: Tool = {
             return 'No lorebook folders are configured. Add at least one folder in settings → lorebook.';
         }
 
-        const entries = scanLorebook(plugin.app, plugin.settings.lorebookFolders, plugin.settings.lorebookFolderTypes);
+        const entries = scanLorebook(
+            plugin.app,
+            plugin.settings.lorebookFolders,
+            plugin.settings.lorebookFolderTypes,
+            plugin.settings.loreEntryImageSectionHeaders,
+            plugin.settings.loreEntryImageMaxPerEntry
+        );
         if (entries.length === 0) {
             return 'Lorebook folders are configured but contain no markdown entries yet.';
         }

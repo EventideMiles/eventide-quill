@@ -299,15 +299,18 @@ function parseEmbedCaption(original: string): string | undefined {
 }
 
 /**
- * Extract labeled images from a lore note's gallery section using only the
+ * Extract labeled images from a lore note's gallery sections using only the
  * metadata cache — no file reads, fully synchronous.
  *
- * The gallery section is the first heading whose text (normalized) appears
- * in `headerSet`. Within that section (until the next heading of the same
- * or higher level), every image embed is recorded. The implicit label is
- * the nearest preceding subheading (any heading with level strictly greater
- * than the gallery section's level). Missing files are kept with
- * `file: undefined` so the writer can see what's expected but not present.
+ * Every heading whose text (normalized) appears in `headerSet` is treated
+ * as a gallery section. Within each section (until the next heading of the
+ * same or higher level), every image embed is recorded. The implicit label
+ * is the nearest preceding subheading (any heading with level strictly
+ * greater than the gallery section's level) that falls INSIDE that gallery
+ * section's range. Missing files are kept with `file: undefined` so the
+ * writer can see what's expected but not present. Results are collected
+ * across ALL matching gallery sections in document order, capped by
+ * `maxPerEntry` combined.
  */
 function extractEntryImages(
     app: App,
@@ -323,67 +326,83 @@ function extractEntryImages(
     // Sort headings by line so we can scan top-down.
     const headings = [...cache.headings].sort((a, b) => a.position.start.line - b.position.start.line);
 
-    // Find the gallery-section heading: first match in document order.
-    let galleryIdx = -1;
+    // Find ALL gallery-section heading indices (not just the first), so
+    // every matching gallery section is scanned in document order — matching
+    // the behavior of stripGallerySections and get_lore_image.
+    const galleryIdxs: number[] = [];
     for (let i = 0; i < headings.length; i++) {
         const h = headings[i];
         if (h && headerSet.has(normalizeHeaderValue(h.heading))) {
-            galleryIdx = i;
-            break;
+            galleryIdxs.push(i);
         }
     }
-    if (galleryIdx === -1) return [];
+    if (galleryIdxs.length === 0) return [];
 
-    const galleryHeading = headings[galleryIdx];
-    // Defensive — galleryIdx is guaranteed in range, but noUncheckedIndexedAccess
-    // can't prove that statically.
-    if (!galleryHeading) return [];
-    const galleryLevel = galleryHeading.level;
-    const galleryStart = galleryHeading.position.start.line;
-
-    // The section ends at the next heading of the same or higher level
-    // (shallower), or EOF. Subheadings (deeper) are part of the section.
-    let galleryEnd = Infinity;
-    for (let i = galleryIdx + 1; i < headings.length; i++) {
-        const h = headings[i];
-        if (h && h.level <= galleryLevel) {
-            galleryEnd = h.position.start.line;
-            break;
-        }
-    }
-
-    // For each embed in the gallery section, find its nearest preceding
-    // subheading (level > galleryLevel, line < embed line, max line).
     const images: LoreEntryImage[] = [];
-    for (const embed of cache.embeds) {
-        const line = embed.position.start.line;
-        if (line <= galleryStart || line >= galleryEnd) continue;
 
-        // `link` is the embed target; `original` keeps the ![[...]] token
-        // (used to recover the caption).
-        const filename = embed.link.split('|')[0]?.trim() ?? embed.link;
-        if (!filename || !isImageFile(filename)) continue;
+    for (const galleryIdx of galleryIdxs) {
+        const galleryHeading = headings[galleryIdx];
+        if (!galleryHeading) continue;
+        const galleryLevel = galleryHeading.level;
+        const galleryStart = galleryHeading.position.start.line;
 
-        let label = '';
-        for (let i = headings.length - 1; i >= 0; i--) {
+        // The section ends at the next heading of the same or higher level
+        // (shallower), or EOF. Subheadings (deeper) are part of the section.
+        let galleryEnd = Infinity;
+        for (let i = galleryIdx + 1; i < headings.length; i++) {
             const h = headings[i];
-            if (h && h.position.start.line < line && h.level > galleryLevel) {
-                label = h.heading.trim();
+            if (h && h.level <= galleryLevel) {
+                galleryEnd = h.position.start.line;
                 break;
             }
         }
 
-        // Resolve the embed target to a TFile. `getFirstLinkpathDest` honors
-        // the entry's folder + Obsidian's link resolution (relative paths,
-        // shortest-path heuristics).
-        const resolved = app.metadataCache.getFirstLinkpathDest(embed.link, file.path);
+        // For each embed in the gallery section, find its nearest preceding
+        // subheading (level > galleryLevel, line < embed line,
+        // line > galleryStart — boundaries so we don't walk past the
+        // gallery section into unrelated headings above it).
+        for (const embed of cache.embeds) {
+            if (images.length >= maxPerEntry) break;
+            const line = embed.position.start.line;
+            if (line <= galleryStart || line >= galleryEnd) continue;
 
-        images.push({
-            filename,
-            label,
-            caption: parseEmbedCaption(embed.original),
-            file: resolved instanceof TFile ? resolved : undefined
-        });
+            // `link` is the embed target; `original` keeps the ![[...]] token
+            // (used to recover the caption).
+            const filename = embed.link.split('|')[0]?.trim() ?? embed.link;
+            if (!filename || !isImageFile(filename)) continue;
+
+            let label = '';
+            for (let i = headings.length - 1; i >= 0; i--) {
+                const h = headings[i];
+                // Bound the backward scan: candidate heading must be inside
+                // this gallery section (after galleryStart, before the embed
+                // line) to avoid picking up unrelated headings above the
+                // gallery heading.
+                if (
+                    h &&
+                    h.position.start.line < line &&
+                    h.position.start.line > galleryStart &&
+                    h.level > galleryLevel
+                ) {
+                    label = h.heading.trim();
+                    break;
+                }
+            }
+
+            // Resolve the embed target to a TFile. `getFirstLinkpathDest` honors
+            // the entry's folder + Obsidian's link resolution (relative paths,
+            // shortest-path heuristics).
+            const resolved = app.metadataCache.getFirstLinkpathDest(embed.link, file.path);
+
+            images.push({
+                filename,
+                label,
+                caption: parseEmbedCaption(embed.original),
+                file: resolved instanceof TFile ? resolved : undefined
+            });
+
+            if (images.length >= maxPerEntry) break;
+        }
 
         if (images.length >= maxPerEntry) break;
     }

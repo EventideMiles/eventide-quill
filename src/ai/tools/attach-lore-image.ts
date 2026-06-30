@@ -1,4 +1,4 @@
-import { TFile } from 'obsidian';
+import { TFile, normalizePath } from 'obsidian';
 import type { ProposedImage } from '../../core/dashboard/lorebook-types';
 import type { Tool, ToolContext } from './tool';
 
@@ -114,9 +114,11 @@ export const attachLoreImageTool: Tool = {
             );
         }
 
-        // Resolve the file in the vault — fail fast with a clear message if
-        // the model invented or mistyped a path.
-        const file = ctx.plugin.app.vault.getAbstractFileByPath(entryPath);
+        // Normalize the path before vault lookup — model-supplied paths may
+        // contain redundant separators or trailing slashes that would defeat
+        // the file lookup and/or fail the Obsidian automated review.
+        const normalizedPath = normalizePath(entryPath);
+        const file = ctx.plugin.app.vault.getAbstractFileByPath(normalizedPath);
         if (!(file instanceof TFile)) {
             return `Error: no note found at "${entryPath}". Pass the vault-relative path to an existing lore note.`;
         }

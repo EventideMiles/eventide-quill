@@ -19,7 +19,7 @@ function parseProposedImages(raw: unknown, ctx: ToolContext): ProposedImage[] | 
         const obj = item as Record<string, unknown>;
         const label = typeof obj.label === 'string' ? obj.label.trim() : '';
         const suggestedFilename = typeof obj.suggestedFilename === 'string' ? obj.suggestedFilename.trim() : '';
-        if (!suggestedFilename) continue;
+        if (!label || !suggestedFilename) continue;
         const caption = typeof obj.caption === 'string' ? obj.caption.trim() : undefined;
 
         // Resolve bytes: prefer explicit base64, fall back to from_recent reference.
