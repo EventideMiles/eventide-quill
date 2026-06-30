@@ -200,6 +200,16 @@ div[class*='quill-settings-content-'].is-hidden {
         margin-top: $space-xl;
     }
 
+    &__welcome-tip {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-normal);
+        padding: $space-md $space-lg;
+        background: var(--background-primary-alt);
+        border-radius: $radius-sm;
+        border-left: 3px solid var(--interactive-accent);
+        margin-top: $space-sm;
+    }
+
     // --- Footer (reserved for future donation / support links) ---
     // Fixed at the bottom via the flex layout — does not scroll with content.
     // Intentionally collapsed to 0 height while empty so it doesn't waste

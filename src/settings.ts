@@ -707,6 +707,15 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 'description — the text model never receives the pixels. Local providers keep images on your ' +
                 'machine just like manuscript text.'
         });
+
+        content.createEl('div', {
+            cls: 'quill-settings__welcome-tip',
+            text:
+                'Tip: images with one or two characters produce the richest descriptions. The model can ' +
+                "focus on fine details (scars, jewelry, fabric texture) when it isn't spreading its " +
+                'token budget across a crowd. For group shots, it will still cover every visible ' +
+                'character — but each gets a shorter share. Crop tightly for best results.'
+        });
     }
 
     /** Render the general settings tab. */
