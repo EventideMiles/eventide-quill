@@ -27,6 +27,7 @@ import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
 import { ChangeSet } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry, ProposedImage } from '../core/dashboard/lorebook-types';
+import { stripGallerySections } from '../core/dashboard/lorebook-scanner';
 import { createReadOnlyToolRegistry, createToolRegistry, executeToolCall, type ToolContext } from './tools';
 import {
     getImageRegime,
@@ -330,8 +331,17 @@ async function resolveEmbedPathsToMessages(
             }
 
             const content = texts.join('\n\n');
+            // Strip image-gallery sections at injection time — covers caches
+            // built before the chunker learned to strip them. The marker
+            // preserves "this entry has images" awareness and points the
+            // model at get_lore_image.
+            const { stripped: galleryStripped } = stripGallerySections(
+                content,
+                plugin.settings.loreEntryImageSectionHeaders
+            );
             const charLimit = maxChars ?? 10000;
-            const truncated = content.length > charLimit ? content.slice(0, charLimit) + '...' : content;
+            const truncated =
+                galleryStripped.length > charLimit ? galleryStripped.slice(0, charLimit) + '...' : galleryStripped;
             const displayK = parsed.mode === 'full' ? 'all chunks' : `top-${topK}`;
             messages.push({
                 role: 'system',

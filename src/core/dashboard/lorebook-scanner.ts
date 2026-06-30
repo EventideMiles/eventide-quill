@@ -160,6 +160,95 @@ export function scanLorebook(
 /** Image file extensions the scanner recognizes in `![[...]]` embeds. */
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'];
 
+/**
+ * Strip image-gallery sections from a lore entry body, replacing each with
+ * a one-line marker. Used by the embedding pipeline (`warmEmbeddingsForFolder`)
+ * at chunk time and by both `resolveEmbedPathsToMessages` paths at top-K
+ * injection time, so chunks containing `![[file.png]]` embed syntax don't
+ * leak into the model's auto-injected context. The text form is useless to
+ * the model (it can't see images through text) and the filenames can prime
+ * hallucination; stripping nudges the model toward `get_lore_image` instead.
+ *
+ * Gallery sections are recognized by heading (case-insensitive, trimmed)
+ * matching one of `sectionHeaders`. **Multiple** sections in one note are
+ * all stripped — they all match the same convention. Each becomes a marker
+ * like:
+ *
+ *   `[Gallery section "Reference": 3 images — use get_lore_image to view]`
+ *
+ * The marker preserves awareness that the entry has images and how to
+ * fetch them, without dumping useless embed syntax. Returns the stripped
+ * body and the total image-embed count across all stripped sections.
+ */
+export function stripGallerySections(body: string, sectionHeaders: string[]): { stripped: string; imageCount: number } {
+    if (sectionHeaders.length === 0) return { stripped: body, imageCount: 0 };
+
+    const headerSet = new Set(sectionHeaders.map((h) => h.trim().toLowerCase()));
+    const lines = body.split('\n');
+    const out: string[] = [];
+
+    let inGallery = false;
+    let galleryLevel = 0;
+    let galleryHeading = '';
+    let sectionImageCount = 0;
+    let totalImageCount = 0;
+
+    const emitMarker = () => {
+        if (sectionImageCount > 0) {
+            out.push(
+                `[Gallery section "${galleryHeading}": ${sectionImageCount} image${sectionImageCount === 1 ? '' : 's'} — use get_lore_image to view]`
+            );
+            out.push('');
+        }
+        inGallery = false;
+        sectionImageCount = 0;
+    };
+
+    for (const line of lines) {
+        const headingMatch = line.match(/^(#{1,6})\s+(.+?)\s*$/);
+        if (headingMatch && headingMatch[1] && headingMatch[2]) {
+            const level = headingMatch[1].length;
+            const heading = headingMatch[2].trim().toLowerCase();
+
+            if (inGallery && level <= galleryLevel) {
+                // Section ends at a same-or-shallower heading.
+                emitMarker();
+                out.push(line);
+            } else if (!inGallery && headerSet.has(heading)) {
+                // Section starts.
+                inGallery = true;
+                galleryLevel = level;
+                galleryHeading = headingMatch[2].trim();
+                // Skip the heading line itself — the marker replaces it.
+            }
+            // Subheadings (level > galleryLevel) inside a gallery section
+            // get dropped along with the rest of the section body.
+        } else if (!inGallery) {
+            out.push(line);
+        } else {
+            // Inside a gallery section: count image embeds, drop the line.
+            const embed = line.match(/!\[\[([^\]]+)\]\]/);
+            if (embed && embed[1]) {
+                const filename = embed[1].split('|')[0]!.toLowerCase().trim();
+                if (IMAGE_EXTENSIONS.some((ext) => filename.endsWith('.' + ext))) {
+                    sectionImageCount++;
+                    totalImageCount++;
+                }
+            }
+        }
+    }
+
+    if (inGallery) emitMarker();
+
+    return {
+        stripped: out
+            .join('\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim(),
+        imageCount: totalImageCount
+    };
+}
+
 /** Lowercase + trim a heading for case-insensitive matching against the configured set. */
 function normalizeHeaderValue(h: string): string {
     return h.trim().toLowerCase();

@@ -80,7 +80,8 @@ import {
     findLoreFolder,
     computeDocumentCoverage,
     computeManuscriptCoverage,
-    parseAliases
+    parseAliases,
+    stripGallerySections
 } from './core/dashboard/lorebook-scanner';
 import type { LoreCoverage, LoreEntryType } from './core/dashboard/lorebook-types';
 import {
@@ -1700,7 +1701,14 @@ export default class EventideQuillPlugin extends Plugin {
                         ? Math.floor(maxChars)
                         : undefined;
                 const combined = texts.join('\n\n---\n\n');
-                const excerpt = safeMax !== undefined ? combined.slice(0, safeMax) : combined;
+                // Strip image-gallery sections at injection time too — covers
+                // embedding caches built before the chunker learned to strip
+                // them. The marker preserves "this entry has images" awareness.
+                const { stripped: galleryStripped } = stripGallerySections(
+                    combined,
+                    this.settings.loreEntryImageSectionHeaders
+                );
+                const excerpt = safeMax !== undefined ? galleryStripped.slice(0, safeMax) : galleryStripped;
 
                 messages.push({
                     role: 'system',
@@ -3040,6 +3048,16 @@ export default class EventideQuillPlugin extends Plugin {
                 const { text: bodyText } = stripFrontmatter(raw);
                 if (!bodyText.trim()) continue;
 
+                // Strip image-gallery sections before chunking so the embed
+                // cache never holds `![[file.png]]` syntax (useless to the
+                // model and primes hallucination). The marker that replaces
+                // each section preserves awareness that the entry has images
+                // and how to fetch them via get_lore_image.
+                const { stripped: galleryStrippedBody } = stripGallerySections(
+                    bodyText,
+                    this.settings.loreEntryImageSectionHeaders
+                );
+
                 // Prepend Obsidian's built-in aliases as a header so the AI
                 // can connect nicknames to the character/entry when retrieved
                 // via embedding similarity. Without this, "Connie" in the
@@ -3047,7 +3065,9 @@ export default class EventideQuillPlugin extends Plugin {
                 const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
                 const aliases = parseAliases(frontmatter?.['aliases']);
                 const textForChunking =
-                    aliases.length > 0 ? `Also known as: ${aliases.join(', ')}\n\n${bodyText}` : bodyText;
+                    aliases.length > 0
+                        ? `Also known as: ${aliases.join(', ')}\n\n${galleryStrippedBody}`
+                        : galleryStrippedBody;
 
                 const chunks = chunkManuscript(textForChunking, {
                     targetTokenSize: Math.floor(this.settings.embeddingChunkTokenSize * 0.85),
