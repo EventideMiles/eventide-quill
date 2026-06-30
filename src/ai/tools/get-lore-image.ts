@@ -4,10 +4,12 @@ import type { LoreEntryImage } from '../../core/dashboard/lorebook-types';
 import type { Tool, ToolContext, ToolResult } from './tool';
 
 /**
- * Fetch a reference image attached to a lore entry. Use after `lore_siblings`
- * showed an entry has images (the trailing `(images: …)` list). Returns the
- * image bytes; the chat model sees them directly when vision-capable, or the
- * configured image model describes them when it isn't.
+ * Fetch a reference image attached to a lore entry. Use whenever a lore
+ * entry has images — you'll see them via `lore_siblings` (the trailing
+ * `(images: …)` list) OR via `vault_lookup` (![[file.png]] embeds in the
+ * body, plus the appended hint). Returns the image bytes; the chat model
+ * sees them directly when vision-capable, or the configured image model
+ * describes them when it isn't.
  *
  * Pass a specific `label` (e.g., "Alternate form") to pick one form from a
  * multi-form entry. Omit `label` to fetch the entry's first image.
@@ -21,13 +23,14 @@ import type { Tool, ToolContext, ToolResult } from './tool';
 export const getLoreImageTool: Tool = {
     id: 'get_lore_image',
     description:
-        'Fetch a reference image attached to a lore entry. Pass the entry ' +
-        'name (matches the file basename or any alias) and an optional label ' +
-        'to pick one form from a multi-form entry (e.g., "Alternate form"). ' +
-        'Returns the image bytes; you see them directly when vision-capable, ' +
-        'or the configured image model describes them. Omit `label` for the ' +
-        "entry's first image. Use only after `lore_siblings` listed images " +
-        'for the entry.',
+        'Fetch a reference image attached to a lore entry so you can actually ' +
+        'see it. Pass the entry name (matches the file basename or any alias) ' +
+        'and an optional label to pick one form from a multi-form entry (e.g., ' +
+        '"Alternate form"). Returns the image bytes; you see them directly when ' +
+        'vision-capable, or the configured image model describes them. Omit ' +
+        "`label` for the entry's first image. Use whenever you see images are " +
+        'available (from lore_siblings or from a vault_lookup hint) — do not ' +
+        'guess visual details from filenames or context when you can fetch the pixels.',
     parameters: {
         type: 'object',
         properties: {
