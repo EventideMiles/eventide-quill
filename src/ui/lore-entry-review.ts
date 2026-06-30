@@ -128,6 +128,24 @@ async function saveDraftToVault(draft: LoreDraftEntry, plugin: EventideQuillPlug
             // rewrite the embed in the content so the saved note points at
             // the actual file the writer will see.
             content = rewriteImageEmbeds(content, resolved);
+            // Safety net: weaker models often skip authoring the gallery
+            // section structure even when they attached images. If any
+            // proposed-image embed is missing from the content, append a
+            // fresh gallery section (or top up an existing one) so the
+            // saved note actually shows the images rather than leaving
+            // orphaned bytes on disk.
+            content = ensureGallerySectionInContent(
+                content,
+                draft.proposedImages.map((img) => ({
+                    ...img,
+                    // Use the resolved filename (post-uniqueness) so the
+                    // embed points at the actual file that was written.
+                    suggestedFilename: resolved.find((r) => r.original === img.suggestedFilename)?.resolved
+                        ? extractFilename(resolved.find((r) => r.original === img.suggestedFilename)!.resolved)
+                        : img.suggestedFilename
+                })),
+                plugin.settings.loreEntryImageSectionHeaders
+            );
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             new Notice(`Quill: Failed to save one or more proposed images — ${message}`);
@@ -388,6 +406,73 @@ export function rewriteImageEmbeds(content: string, resolved: Array<{ original: 
         out = out.replace(re, (_m, caption) => `![[${resolvedName}${caption ?? ''}]]`);
     }
     return out;
+}
+
+/**
+ * Ensure a recognized gallery section exists in the content with embeds for
+ * every proposed image. Used at Path A save time as a safety net — the
+ * lorebook coach prompt instructs the model to author the gallery section
+ * itself, but weaker models often skip it and just attach the images array.
+ * Without this, the saved note has the image bytes on disk but no embed
+ * pointing at them, so the writer sees a broken/empty gallery.
+ *
+ * Behavior:
+ *   - If the content already has every proposed-image embed (regardless of
+ *     where the model put them), return content unchanged. We don't move
+ *     embeds around — the model's placement stands.
+ *   - If some embeds are missing AND a recognized gallery section heading
+ *     exists, append the missing embeds at the end of content (the model's
+ *     gallery section is incomplete; we top it up rather than create a
+ *     second gallery).
+ *   - If some embeds are missing AND no gallery section heading exists,
+ *     append a fresh `## {primaryHeader}` section containing the missing
+ *     embeds, each under its proposed label (as a subheading).
+ *
+ * Caption (if present) is included via the `![[file|caption]]` slot.
+ */
+export function ensureGallerySectionInContent(
+    content: string,
+    images: ProposedImage[],
+    sectionHeaders: string[]
+): string {
+    if (images.length === 0) return content;
+
+    // Find every ![[...]] embed target in the content (case-insensitive).
+    const embedTargets = new Set<string>();
+    const embedPattern = /!\[\[([^\]]+)\]\]/g;
+    let m: RegExpExecArray | null;
+    while ((m = embedPattern.exec(content)) !== null) {
+        const target = m[1]?.split('|')[0]?.trim().toLowerCase();
+        if (target) embedTargets.add(target);
+    }
+    const missing = images.filter((img) => !embedTargets.has(img.suggestedFilename.toLowerCase()));
+    if (missing.length === 0) return content;
+
+    // Check for an existing recognized gallery section heading.
+    const headerSet = new Set(sectionHeaders.map((h) => h.trim().toLowerCase()));
+    const hasGallery = content.split('\n').some((line) => {
+        const hm = line.match(/^#{1,6}\s+(.+?)\s*$/);
+        return hm && hm[1] ? headerSet.has(hm[1].trim().toLowerCase()) : false;
+    });
+
+    // Build the missing-embeds block. Each image contributes either a
+    // subheading + embed (when labeled) or just an embed.
+    const block = missing
+        .map((img) => {
+            const captionSuffix = img.caption ? `|${img.caption}` : '';
+            const embed = `![[${img.suggestedFilename}${captionSuffix}]]`;
+            return img.label ? `### ${img.label}\n${embed}` : embed;
+        })
+        .join('\n\n');
+
+    const trimmedContent = content.replace(/\s+$/, '');
+    if (hasGallery) {
+        // Existing gallery section but some embeds missing — top it up.
+        return `${trimmedContent}\n\n${block}\n`;
+    }
+    // No gallery section — append a fresh one under the primary configured header.
+    const primaryHeader = sectionHeaders[0] ?? 'Reference';
+    return `${trimmedContent}\n\n## ${primaryHeader}\n\n${block}\n`;
 }
 
 /**
