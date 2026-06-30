@@ -1,12 +1,17 @@
 import { App, MarkdownRenderer, Menu, Notice } from 'obsidian';
-import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
+import {
+    buildFileLabel,
+    formatTokenIndicatorText,
+    formatBreakdownTooltip,
+    type TokenBreakdown
+} from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { ConfirmModal } from './confirm-modal';
 import { FileMentionSuggest } from './file-mention-suggest';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
 import { buildEmbedFolderPath, embedFolderLabel, parseEmbedFolderPath, resolveAtMentions } from '../utils/vault-files';
 import { renderChangeBulkBar, renderChangeCard } from './change-card';
-import { renderLoreDraftCard } from './lore-entry-review';
+import { renderLoreDraftCard, renderLoreImageAttachmentCard } from './lore-entry-review';
 import { downscaleToJpegBase64, isImageContentType } from '../ai/image-utils';
 import { isVisionConfigured } from '../ai/vision';
 import type EventideQuillPlugin from '../main';
@@ -16,7 +21,8 @@ import type {
     CoWriterOption,
     CoachPhase,
     LoreCoachPhase,
-    LoreDraftEntry
+    LoreDraftEntry,
+    ProposedImage
 } from '../ai/co-writer';
 import type { ProposedEdit } from '../core/change-set';
 import type { SubagentView } from '../ai/subagent-session';
@@ -130,6 +136,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private directChange: ProposedEdit | null = null;
     /** Pending lore edits (from edit_note / insert_note / append_to_note tools), one card per file. */
     private loreEdits: { edit: ProposedEdit; filePath: string; fileBasename: string }[] = [];
+    /** Pending lore image attachments (from the attach_lore_image tool), one card per file. */
+    private proposedLoreImagesList: { filePath: string; fileBasename: string; images: ProposedImage[] }[] = [];
     /** Whether the mode picker is open (replaces the mode-cycle-on-click behavior). */
     private modePickerOpen = false;
     /** Current lorebook coach phase, if lorebook coach mode is active. */
@@ -163,6 +171,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onDiscardLoreDraft: ((draft: LoreDraftEntry) => void) | null = null;
     private onApproveLoreEdit: ((filePath: string, id: number) => void) | null = null;
     private onRejectLoreEdit: ((filePath: string, id: number) => void) | null = null;
+    private onApproveProposedLoreImage: ((filePath: string) => void) | null = null;
+    private onRejectProposedLoreImage: ((filePath: string) => void) | null = null;
     /**
      * Fired on every mode switch (regardless of direction). Used to clear
      * session-scoped state that shouldn't follow the writer across modes —
@@ -177,6 +187,13 @@ export class CoWriterPanel extends AbstractChatPanel {
      * Vault context item tokens are added separately in computeTotalTokens().
      */
     private contextEstimate = 0;
+    /**
+     * Per-section breakdown of {@link contextEstimate} (tool definitions,
+     * system prompt, chat history, each injected-context source). Set
+     * alongside contextEstimate; surfaced as a hover tooltip on the token
+     * indicator so writers can see where the budget is going.
+     */
+    private contextBreakdown: TokenBreakdown | null = null;
 
     /**
      * Token estimate for additional context files (added via the ± button).
@@ -378,6 +395,22 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.scheduleRender();
     }
 
+    /** Replace the pending lore image attachments list and re-render. */
+    setProposedLoreImages(proposals: { filePath: string; fileBasename: string; images: ProposedImage[] }[]): void {
+        this.proposedLoreImagesList = proposals;
+        this.scheduleRender();
+    }
+
+    /** Set the handler invoked to approve a pending lore image attachment set by file path. */
+    setApproveProposedLoreImageHandler(handler: (filePath: string) => void): void {
+        this.onApproveProposedLoreImage = handler;
+    }
+
+    /** Set the handler invoked to reject a pending lore image attachment set by file path. */
+    setRejectProposedLoreImageHandler(handler: (filePath: string) => void): void {
+        this.onRejectProposedLoreImage = handler;
+    }
+
     /** Set the handler invoked to approve a pending lore edit by file path + id. */
     setApproveLoreEditHandler(handler: (filePath: string, id: number) => void): void {
         this.onApproveLoreEdit = handler;
@@ -507,12 +540,15 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /**
      * Set the conversation token estimate for the token indicator.
-     * Called from the plugin layer with conversation-only tokens
-     * (system prompt + context heads + chat turns). Vault context item
-     * tokens are added on top by computeTotalTokens().
+     * Called from the plugin layer with a per-section breakdown of the
+     * request (system prompt, tool definitions, chat history, injected
+     * context sources) so the indicator's hover tooltip can show where
+     * the tokens are going. Vault context item tokens are added on top
+     * by computeTotalTokens().
      */
-    setContextTokenEstimate(tokens: number): void {
-        this.contextEstimate = tokens;
+    setContextTokenEstimate(breakdown: TokenBreakdown): void {
+        this.contextEstimate = breakdown.total;
+        this.contextBreakdown = breakdown;
         this.updateTokenIndicator();
     }
 
@@ -975,6 +1011,17 @@ export class CoWriterPanel extends AbstractChatPanel {
             if (p) {
                 this.renderPromises.push(p);
             }
+        }
+
+        // Lore image attachment cards — one per pending file (from the
+        // attach_lore_image tool). Each card shows the file's proposed
+        // images with Approve-all / Reject-all buttons. On approve, the
+        // bytes are written and the embeds inserted into the gallery section.
+        for (const proposal of this.proposedLoreImagesList) {
+            renderLoreImageAttachmentCard(scroll, proposal, this.plugin, this.renderEvents, {
+                onApprove: (filePath: string) => this.onApproveProposedLoreImage?.(filePath),
+                onReject: (filePath: string) => this.onRejectProposedLoreImage?.(filePath)
+            });
         }
 
         // Subagent status cards — one per spawned batch (running / succeeded /
@@ -1448,10 +1495,12 @@ export class CoWriterPanel extends AbstractChatPanel {
             const totalTokens = this.computeTotalTokens();
             const vaultContextCount = this.getVaultContextFiles().length;
             const label = this.buildContextLabel(contextFiles.length, vaultContextCount);
-            bottom.createEl('div', {
+            const breakdown = this.computeBreakdown();
+            const indicator = bottom.createEl('div', {
                 cls: 'quill-cowriter-panel__token-indicator',
                 text: formatTokenIndicatorText(label, totalTokens, this.maxAllowedTokens)
             });
+            indicator.setAttribute('title', formatBreakdownTooltip(breakdown, this.maxAllowedTokens));
         }
     }
 
@@ -1947,8 +1996,46 @@ export class CoWriterPanel extends AbstractChatPanel {
         const contextFiles = this.getContextFiles();
         const vaultContextCount = this.getVaultContextFiles().length;
         const label = this.buildContextLabel(contextFiles.length, vaultContextCount);
-        const totalTokens = this.computeTotalTokens();
-        indicator.setText(formatTokenIndicatorText(label, totalTokens, this.maxAllowedTokens));
+        const breakdown = this.computeBreakdown();
+        indicator.setText(formatTokenIndicatorText(label, breakdown.total, this.maxAllowedTokens));
+        // Multi-line hover tooltip with per-section token counts + percentages
+        // so writers can see exactly what's consuming context (tool defs are
+        // usually the surprise). Built fresh each update — cheap.
+        indicator.setAttribute('title', formatBreakdownTooltip(breakdown, this.maxAllowedTokens));
+    }
+
+    /**
+     * Build the full token breakdown shown in the indicator's hover tooltip.
+     * Combines the session-side breakdown (tool defs, system prompt, chat
+     * history, injected context) with the panel-side sources (additional
+     * context files, plot map, vault context items) so the tooltip reflects
+     * the actual displayed total.
+     */
+    private computeBreakdown(): TokenBreakdown {
+        const sections = [...(this.contextBreakdown?.sections ?? [])];
+        if (this.additionalContextTokens > 0) {
+            sections.push({ label: 'Additional context files', tokens: this.additionalContextTokens });
+        }
+        if (this.plotMapTokens > 0) {
+            sections.push({ label: 'Plot map', tokens: this.plotMapTokens });
+        }
+        const assembly = this.plugin.currentAssembly;
+        if (assembly) {
+            let vaultTokens = 0;
+            let vaultCount = 0;
+            for (const item of assembly.contextItems) {
+                vaultTokens += item.tokenEstimate;
+                vaultCount++;
+            }
+            if (vaultTokens > 0) {
+                sections.push({
+                    label: 'Vault context (similarity)',
+                    tokens: vaultTokens,
+                    detail: `${vaultCount} file${vaultCount === 1 ? '' : 's'}`
+                });
+            }
+        }
+        return { sections, total: this.computeTotalTokens() };
     }
 
     /**

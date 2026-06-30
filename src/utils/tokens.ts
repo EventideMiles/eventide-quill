@@ -13,7 +13,7 @@
  * here because it only triggers mid-loop compaction a little sooner, whereas
  * undercounting lets image turns silently grow past the context window.
  */
-const IMAGE_TOKEN_COST = 512;
+export const IMAGE_TOKEN_COST = 512;
 
 /**
  * Estimate token count using the chars-per-4 heuristic.

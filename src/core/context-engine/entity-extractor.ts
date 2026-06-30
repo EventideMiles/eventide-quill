@@ -258,7 +258,7 @@ function isRomanNumeral(word: string): boolean {
 
 /**
  * Split a multi-word name into its meaningful components (excluding titles and suffixes).
- * "Mrs. Norrell" → ["Norrell"], "Freddy Lupin" → ["Freddy", "Lupin"],
+ * "Mrs. Norrell" → ["Norrell"], "Sarah Connor" → ["Sarah", "Connor"],
  * "Martin King Jr." → ["Martin", "King"], "John Paul II" → ["John", "Paul"].
  */
 function splitNameComponents(name: string): string[] {
@@ -427,7 +427,7 @@ function isStoplistName(name: string): boolean {
  *
  * Algorithm:
  * 1. Build a component-word index from multi-word candidates already in the map
- *    (from dialogue / possessive passes). E.g. "Freddy Lupin" → { "Freddy" → ["Freddy Lupin"], "Lupin" → ["Freddy Lupin"] }.
+ *    (from dialogue / possessive passes). E.g. "Sarah Connor" → { "Sarah" → ["Sarah Connor"], "Connor" → ["Sarah Connor"] }.
  * 2. For each single-word candidate, check if it matches exactly one multi-word
  *    name's component. If so, merge counts/lines and record the single word as
  *    an alias. If the word matches multiple multi-word names (ambiguous, e.g.
@@ -637,7 +637,7 @@ export function extractPlotThreads(
  * Run all extraction steps and deduplicate by priority.
  *
  * Locations are detected BEFORE characters so that location-like names
- * (e.g. "Howlington") are excluded from the character candidate pool. This
+ * (e.g. "Westbrook") are excluded from the character candidate pool. This
  * reduces misclassification of place names as characters.
  */
 export function extractAllEntities(text: string): ExtractedEntity[] {

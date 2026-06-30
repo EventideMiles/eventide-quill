@@ -1,3 +1,4 @@
+import type { TFile } from 'obsidian';
 import type { EntityType } from '../context-engine/types';
 
 /**
@@ -47,6 +48,34 @@ export function entityTypeToLoreType(type: EntityType): LoreEntryType {
     return type;
 }
 
+/**
+ * An image embedded in a lore entry's gallery section. Extracted by the
+ * scanner from the note body (not frontmatter) so Obsidian's rename/move
+ * tracking keeps the embed valid automatically — frontmatter YAML paths
+ * would break silently on rename.
+ *
+ * `label` is the nearest subheading text within the gallery section (e.g.,
+ * "Default form", "Alternate form"), giving multi-form characters a free
+ * per-image label without a frontmatter grammar. Empty when the image sits
+ * directly under the gallery header with no subheading.
+ *
+ * `caption` comes from the Obsidian embed's caption slot (`![[file|caption]]`).
+ *
+ * `file` is the resolved attachment `TFile`, or `undefined` if the embed
+ * points at a missing file (writer sees a "missing" badge; context
+ * attachment silently skips).
+ */
+export interface LoreEntryImage {
+    /** Vault attachment filename as written in the embed, e.g., "freddy-wolfed.png". */
+    filename: string;
+    /** Nearest subheading text in the gallery section, trimmed. Empty if unsectioned. */
+    label: string;
+    /** Caption from `![[file|caption]]` syntax, if present. */
+    caption?: string;
+    /** Resolved attachment TFile, or undefined when the file is missing. */
+    file?: TFile;
+}
+
 /** A single lore entry discovered in a configured lorebook folder. */
 export interface LoreEntry {
     /** Source file path in the vault. */
@@ -64,6 +93,15 @@ export interface LoreEntry {
      * the file basename plus aliases, lowercased and trimmed, de-duplicated.
      */
     matchNames: string[];
+    /**
+     * Images parsed from the entry's gallery section (any heading whose text
+     * matches a configured `loreEntryImageSectionHeaders` value). Empty when
+     * the entry has no recognized gallery section, no image embeds, or the
+     * scanner was run with an empty section-header list. Beyond
+     * `loreEntryImageMaxPerEntry` the overflow is silently dropped (the
+     * cap is a budget tool, not a content rule).
+     */
+    images: LoreEntryImage[];
 }
 
 /** A manuscript entity with no corresponding lore entry (coverage gap). */
@@ -99,6 +137,28 @@ export interface LoreCoverage {
 export const LORE_COVERAGE_GAP_MIN_OCCURRENCES = 3;
 
 /**
+ * An image the agent (lorebook coach or batch subagent) wants to attach to a
+ * lore entry, awaiting the writer's review. Carries the bytes in memory from
+ * agent-time to approval-time; on Reject the bytes are dropped without ever
+ * touching the vault.
+ *
+ * `label` becomes the subheading under the gallery section heading (created
+ * if missing). `caption` becomes the `![[file|caption]]` slot. The writer
+ * sees the suggested filename and can override it in the review UI before
+ * approving.
+ */
+export interface ProposedImage {
+    /** Suggested subheading under the gallery section (e.g., "Human form"). */
+    label: string;
+    /** Optional caption for the `![[file|caption]]` slot. */
+    caption?: string;
+    /** Suggested vault attachment filename, e.g., "freddy-lupin-human.png". */
+    suggestedFilename: string;
+    /** Image bytes as base64 JPEG (no `data:` prefix), already downscaled. */
+    base64: string;
+}
+
+/**
  * A proposed lore entry draft produced by the Lorebook Coach (or, in future
  * PRs, by the sweep action) and awaiting the writer's review before being
  * saved as a {@link LoreEntry} on disk. Lives here (alongside `LoreEntry`)
@@ -112,4 +172,12 @@ export interface LoreDraftEntry {
     entryType: LoreEntryType | null;
     /** Full markdown body (frontmatter is reconstructed at save time). */
     content: string;
+    /**
+     * Optional images the coach proposed alongside the text draft (Path A:
+     * new entry with images). Each is held as base64 in memory and written
+     * to the vault attachments folder only on approval. The draft's
+     * `content` SHOULD already contain the matching `![[file]]` embeds
+     * placed under a gallery section; the writer can edit before saving.
+     */
+    proposedImages?: ProposedImage[];
 }

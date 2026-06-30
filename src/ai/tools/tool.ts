@@ -217,6 +217,16 @@ export async function executeToolCall(
         if (normalized.text.length > maxChars) {
             normalized.text = `${normalized.text.slice(0, maxChars)}\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
         }
+        // Buffer image-bearing results so the model can reference them later
+        // via `from_recent` in propose_entry / attach_lore_image. The model
+        // can't quote bytes it has seen (they enter the conversation as image
+        // content blocks or proxy captions, not base64 strings), so a ring
+        // buffer + reference-by-index is the only path for "attach what I
+        // just saw." Best-effort — if the session isn't available (early
+        // init, etc.), the images simply aren't buffered.
+        if (normalized.images && normalized.images.length > 0) {
+            ctx.plugin.coWriterSession.pushRecentImages(normalized.images);
+        }
         return normalized;
     } catch (err) {
         if (ctx.signal?.aborted || (err instanceof Error && err.name === 'AbortError')) throw err;

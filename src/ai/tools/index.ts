@@ -1,17 +1,19 @@
 import { ToolRegistry } from './tool';
 import { appendToNoteTool } from './append-to-note';
+import { attachLoreImageTool } from './attach-lore-image';
 import { calculateFileSizesTool } from './calculate-file-sizes';
 import { createFandomImageTool, createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
 import { createFetchImageUrlTool } from './fetch-image-url';
 import { createFetchUrlTool } from './fetch-url';
-import { createWikipediaLookupTool, createWikipediaPageTool } from './wikipedia-lookup';
+import { createWikipediaLookupTool, createWikipediaPageTool, createWikipediaImageTool } from './wikipedia-lookup';
 import { editNoteTool } from './edit-note';
+import { getLoreImageTool } from './get-lore-image';
 import { grepNotesTool } from './grep-notes';
 import { insertNoteTool } from './insert-note';
 import { loreSiblingsTool } from './lore-siblings';
 import { manuscriptMentionsTool } from './manuscript-mentions';
 import { measureFolderTool } from './measure-folder';
-import { proposeEntryTool } from './propose-entry';
+import { createProposeEntryTool } from './propose-entry';
 import { refreshDashboardTool } from './refresh-dashboard';
 import { runResearchTool } from './research';
 import { reviseEditTool } from './revise-edit';
@@ -23,18 +25,20 @@ export { ToolRegistry, executeToolCall } from './tool';
 export type { Tool, ToolContext, ToolResult } from './tool';
 export { streamWithTools } from './tool-loop';
 export { appendToNoteTool } from './append-to-note';
+export { attachLoreImageTool } from './attach-lore-image';
 export { calculateFileSizesTool } from './calculate-file-sizes';
 export { createFandomImageTool, createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
 export { createFetchImageUrlTool } from './fetch-image-url';
 export { createFetchUrlTool } from './fetch-url';
-export { createWikipediaLookupTool, createWikipediaPageTool } from './wikipedia-lookup';
+export { createWikipediaLookupTool, createWikipediaPageTool, createWikipediaImageTool } from './wikipedia-lookup';
 export { editNoteTool } from './edit-note';
+export { getLoreImageTool } from './get-lore-image';
 export { grepNotesTool } from './grep-notes';
 export { insertNoteTool } from './insert-note';
 export { loreSiblingsTool } from './lore-siblings';
 export { manuscriptMentionsTool } from './manuscript-mentions';
 export { measureFolderTool } from './measure-folder';
-export { proposeEntryTool } from './propose-entry';
+export { createProposeEntryTool } from './propose-entry';
 export { refreshDashboardTool } from './refresh-dashboard';
 export { reviseEditTool } from './revise-edit';
 export { runLorebookBatchTool } from './run-lorebook-batch';
@@ -42,10 +46,10 @@ export { runResearchTool } from './research';
 export { vaultLookupTool } from './vault-lookup';
 
 /**
- * Build a registry containing the eleven internal-only tools:
+ * Build a registry containing the twelve internal-only tools:
  * `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`,
  * `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`,
- * `append_to_note`, `revise_edit`, `refresh_dashboard`.
+ * `append_to_note`, `revise_edit`, `refresh_dashboard`, `get_lore_image`.
  */
 export function createInternalToolRegistry(): ToolRegistry {
     const registry = new ToolRegistry();
@@ -60,6 +64,7 @@ export function createInternalToolRegistry(): ToolRegistry {
     registry.register(appendToNoteTool);
     registry.register(reviseEditTool);
     registry.register(refreshDashboardTool);
+    registry.register(getLoreImageTool);
     return registry;
 }
 
@@ -88,12 +93,19 @@ export function createReadOnlyToolRegistry(plugin: EventideQuillPlugin, includeE
 }
 
 /**
- * Build a registry for the Lorebook Coach: the ten internal tools plus
- * `propose_entry` (which surfaces a draft to the UI for review).
+ * Build a registry for the Lorebook Coach: the twelve internal tools plus
+ * `propose_entry` (which surfaces a draft to the UI for review). When the
+ * writer has enabled agent image attachments (`loreEntryImageAttachments`),
+ * `propose_entry` is built with the `images` parameter in its schema, and
+ * `attach_lore_image` is registered for batch edits to existing entries.
  */
-export function createLoreCoachToolRegistry(): ToolRegistry {
+export function createLoreCoachToolRegistry(plugin: EventideQuillPlugin): ToolRegistry {
     const registry = createInternalToolRegistry();
-    registry.register(proposeEntryTool);
+    const allowImages = plugin.settings.loreEntryImageAttachments;
+    registry.register(createProposeEntryTool(allowImages));
+    if (allowImages) {
+        registry.register(attachLoreImageTool);
+    }
     return registry;
 }
 
@@ -117,7 +129,14 @@ export function createToolRegistry(
 ): ToolRegistry | null {
     if (!plugin.settings.coWriterToolsEnabled) return null;
 
-    const registry = includeProposeEntry ? createLoreCoachToolRegistry() : createInternalToolRegistry();
+    const registry = includeProposeEntry ? createLoreCoachToolRegistry(plugin) : createInternalToolRegistry();
+
+    // attach_lore_image is NOT registered here for the !includeProposeEntry
+    // path (general discuss/coach modes). It belongs to the lorebook coach
+    // (already registered in createLoreCoachToolRegistry above) and the
+    // lore-batch subagent (registered explicitly in runLorebookBatch).
+    // This avoids leaking a lore-mutating tool into modes that should only
+    // access read-only / editing tools.
 
     if (allowSubagents) {
         registry.register(runLorebookBatchTool);
@@ -142,6 +161,19 @@ function registerExternalTools(registry: ToolRegistry, plugin: EventideQuillPlug
         registry.register(createFetchUrlTool(maxTokens));
         registry.register(createWikipediaLookupTool(maxTokens, plugin.settings.lorebookWikipediaLang));
         registry.register(createWikipediaPageTool(maxTokens, plugin.settings.lorebookWikipediaLang));
+        // wikipedia_image: lead portraits via prop=pageimages. Same cross-toggle
+        // gate as fandom_image (network tools + image tools) — fetches bytes
+        // from upload.wikimedia.org so it needs the network gate, and routes
+        // through the vision layer so it needs the image gate.
+        if (plugin.settings.lorebookImageTools) {
+            registry.register(
+                createWikipediaImageTool(
+                    maxTokens,
+                    plugin.settings.lorebookImageMaxDimension,
+                    plugin.settings.lorebookWikipediaLang
+                )
+            );
+        }
         // Fandom tools are registered when EITHER a non-empty allowlist is
         // configured OR the "allow any wiki" danger setting is on. An empty
         // allowlist with allow-all off means Fandom disabled everywhere.

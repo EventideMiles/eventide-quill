@@ -105,7 +105,7 @@ export interface EventideQuillSettings {
     lorebookWikipediaLang: string;
     /** Per-tool result truncation cap (approximate tokens). */
     lorebookToolMaxTokens: number;
-    /** Gate for image-fetching tools (fetch_image_url, fandom_image). Default: on. */
+    /** Gate for image-fetching tools (fetch_image_url, fandom_image, wikipedia_image). Default: on. */
     lorebookImageTools: boolean;
     /** Max image dimension (longest side, px) before downscale. Keeps vision payloads small. */
     lorebookImageMaxDimension: number;
@@ -121,6 +121,38 @@ export interface EventideQuillSettings {
      * chat model. Customizable per-writer focus.
      */
     lorebookImageProxyPrompt: string;
+    /**
+     * Heading texts (case-insensitive, trimmed) that mark a lore entry's
+     * image-gallery section. The lorebook scanner parses image embeds within
+     * any section under one of these headings. Empty disables image
+     * extraction entirely. Defaults cover the common conventions.
+     */
+    loreEntryImageSectionHeaders: string[];
+    /**
+     * Soft cap on the number of images extracted per lore entry. Overflow is
+     * silently dropped at scan time — the cap is a token/latency budget tool,
+     * not a content rule. The writer can still place more embeds in the
+     * note body; only the scanner's `images` array is bounded.
+     */
+    loreEntryImageMaxPerEntry: number;
+    /**
+     * Agent image-attachment gate. When on, the lorebook coach can include an
+     * `images` parameter when calling `propose_entry`, and the
+     * `attach_lore_image` tool is registered for batch edits. Both flow
+     * through the existing review queue — nothing is written without the
+     * writer's approval. When off, the parameter is removed from the tool's
+     * schema (so the model cannot attempt it) and the tool is not registered,
+     * but the writer's manual image attachment via `![[file]]` embeds keeps
+     * working unchanged. Default: on.
+     */
+    loreEntryImageAttachments: boolean;
+    /**
+     * Folder where agent-attached images are written on approval. Empty (the
+     * default) defers to Obsidian's configured attachment folder
+     * (`app.vault.getConfig('attachmentFolderPath')`). Vault-relative path;
+     * `normalizePath()`-wrapped before any vault write.
+     */
+    loreEntryImageAttachmentFolder: string;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -221,7 +253,11 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     lorebookImageTools: true,
     lorebookImageMaxDimension: 512,
     lorebookImageMaxDescriptionTokens: 2048,
-    lorebookImageProxyPrompt: DEFAULT_IMAGE_PROXY_PROMPT
+    lorebookImageProxyPrompt: DEFAULT_IMAGE_PROXY_PROMPT,
+    loreEntryImageSectionHeaders: ['Reference', 'Reference images', 'Gallery', 'Forms', 'Appearance', 'Art'],
+    loreEntryImageMaxPerEntry: 4,
+    loreEntryImageAttachments: true,
+    loreEntryImageAttachmentFolder: ''
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -643,6 +679,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 desc: 'Queries Wikipedia (configurable language) for reference material.'
             },
             {
+                name: 'wikipedia_image',
+                desc: 'Fetches the lead image from a Wikipedia page (most often a portrait for biographies).'
+            },
+            {
                 name: 'fetch_image_url',
                 desc: 'Downloads an image from a URL so a vision model can interpret it.'
             }
@@ -678,12 +718,29 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         new Setting(content)
             .setName('Image tool')
             .setDesc(
-                'Allows image-fetching tools for a vision model — gates fetch_image_url and fandom_image. ' +
+                'Allows image-fetching tools for a vision model — gates fetch_image_url, fandom_image, and wikipedia_image. ' +
                     'No effect unless a vision-capable chat model or a dedicated image model is configured.'
             )
             .addToggle((toggle) =>
                 toggle.setValue(this.plugin.settings.lorebookImageTools).onChange(async (value) => {
                     this.plugin.settings.lorebookImageTools = value;
+                    await this.plugin.saveSettings();
+                    this.display();
+                })
+            );
+
+        new Setting(content)
+            .setName('Agent image attachments')
+            .setDesc(
+                'Lets the lorebook coach and batch tools propose image attachments for your review. ' +
+                    'On: the coach can attach images when drafting an entry, and the batch tool can attach ' +
+                    'images to existing entries. Every attachment flows through the review queue — nothing ' +
+                    'is written without your approval. Off: the agent cannot attach images, but you can ' +
+                    'still add them manually via ![[file]] embeds. Does not affect other tools.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.loreEntryImageAttachments).onChange(async (value) => {
+                    this.plugin.settings.loreEntryImageAttachments = value;
                     await this.plugin.saveSettings();
                     this.display();
                 })
@@ -1111,9 +1168,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .setName('Image tools')
             .setDesc(
                 'Allow the co-writer to call image-fetching tools — fetch_image_url (download any ' +
-                    'image URL) and fandom_image (Fandom lead/gallery images). Images are downscaled ' +
-                    'before delivery. Requires a vision-capable chat model (role "Chat + image") or a ' +
-                    'dedicated image model (role "Image") to have any effect. Default: on.'
+                    'image URL), fandom_image (Fandom lead/gallery images), and wikipedia_image ' +
+                    '(Wikipedia lead portraits). Images are downscaled before delivery. Requires a ' +
+                    'vision-capable chat model (role "Chat + image") or a dedicated image model ' +
+                    '(role "Image") to have any effect. Default: on.'
             )
             .addToggle((toggle) =>
                 toggle.setValue(this.plugin.settings.lorebookImageTools).onChange(async (value) => {
@@ -1183,6 +1241,83 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }
                     void this.plugin.saveSettings();
                 })
+            );
+
+        new Setting(content).setName('Lore entry images').setHeading();
+        new Setting(content)
+            .setName('Image gallery section headings')
+            .setDesc(
+                "Comma-separated headings that mark a lore entry's image-gallery section (case-insensitive). " +
+                    'The scanner parses image embeds (e.g., `![[file.png]]`) under any matching heading and ' +
+                    'surfaces them to the AI via the get_lore_image tool. Subheadings within the gallery ' +
+                    'section become per-image labels (useful for multi-form characters). Example headings: ' +
+                    "'Reference', 'Gallery', 'Forms', 'Appearance'."
+            )
+            .addText((text) =>
+                text
+                    .setValue(this.plugin.settings.loreEntryImageSectionHeaders.join(', '))
+                    .inputEl.addEventListener('blur', () => {
+                        const value = text.inputEl.value
+                            .split(',')
+                            .map((s) => s.trim())
+                            .filter((s) => s.length > 0);
+                        this.plugin.settings.loreEntryImageSectionHeaders = value;
+                        void this.plugin.saveSettings();
+                    })
+            );
+
+        new Setting(content)
+            .setName('Max images per lore entry')
+            .setDesc(
+                'Soft cap on the number of images the scanner extracts per entry. Overflow is silently ' +
+                    'dropped — the cap is a budget tool, not a content rule. The writer can still place ' +
+                    'more embeds in the note body. Default: 4.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.loreEntryImageMaxPerEntry))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 1 && n <= 20) {
+                            this.plugin.settings.loreEntryImageMaxPerEntry = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.loreEntryImageMaxPerEntry));
+                            new Notice('Value must be a number between 1 and 20');
+                        }
+                    })
+            );
+
+        new Setting(content)
+            .setName('Agent image attachments')
+            .setDesc(
+                'Allow the lorebook coach and batch tools to propose image attachments for your review. ' +
+                    'On: the coach can attach images when drafting an entry, and the batch tool can attach ' +
+                    'images to existing entries. Every attachment flows through the review queue — nothing ' +
+                    'is written without your approval. Off: the agent cannot attach images, but you can ' +
+                    'still add them manually via ![[file]] embeds. Does not affect other tools. Default: on.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.loreEntryImageAttachments).onChange(async (value) => {
+                    this.plugin.settings.loreEntryImageAttachments = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
+            .setName('Attachment folder')
+            .setDesc(
+                'Where agent-attached images are written on approval. Empty uses Obsidian’s configured ' +
+                    'attachment folder. Vault-relative path (e.g., "Attachments/Lore").'
+            )
+            .addText((text) =>
+                text
+                    .setValue(this.plugin.settings.loreEntryImageAttachmentFolder)
+                    .inputEl.addEventListener('blur', () => {
+                        const value = text.inputEl.value.trim();
+                        this.plugin.settings.loreEntryImageAttachmentFolder = value;
+                        void this.plugin.saveSettings();
+                    })
             );
 
         new Setting(content)
@@ -1336,6 +1471,13 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookImageMaxDescriptionTokens =
                         DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
                     this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
+                    this.plugin.settings.loreEntryImageSectionHeaders = [
+                        ...DEFAULT_SETTINGS.loreEntryImageSectionHeaders
+                    ];
+                    this.plugin.settings.loreEntryImageMaxPerEntry = DEFAULT_SETTINGS.loreEntryImageMaxPerEntry;
+                    this.plugin.settings.loreEntryImageAttachments = DEFAULT_SETTINGS.loreEntryImageAttachments;
+                    this.plugin.settings.loreEntryImageAttachmentFolder =
+                        DEFAULT_SETTINGS.loreEntryImageAttachmentFolder;
                     await this.plugin.saveSettings();
                     this.display();
                 })
@@ -2611,6 +2753,13 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookImageMaxDescriptionTokens =
                         DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
                     this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
+                    this.plugin.settings.loreEntryImageSectionHeaders = [
+                        ...DEFAULT_SETTINGS.loreEntryImageSectionHeaders
+                    ];
+                    this.plugin.settings.loreEntryImageMaxPerEntry = DEFAULT_SETTINGS.loreEntryImageMaxPerEntry;
+                    this.plugin.settings.loreEntryImageAttachments = DEFAULT_SETTINGS.loreEntryImageAttachments;
+                    this.plugin.settings.loreEntryImageAttachmentFolder =
+                        DEFAULT_SETTINGS.loreEntryImageAttachmentFolder;
                     this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                     this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
                     this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;

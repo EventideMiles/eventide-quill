@@ -14,6 +14,7 @@ import { DEFAULT_SETTINGS, EventideQuillSettings, EventideQuillSettingTab } from
 import { lint } from './core/linter/linter';
 import { getLintExtension, setLintResults, toggleLintActive } from './core/linter/decorations';
 import { QUILL_VIEW_TYPE, QuillSidebarView } from './ui/quill-sidebar';
+import type { TokenBreakdown } from './ui/token-indicator';
 import { LintResult, FIXABLE_RULES, RULE_INFO } from './core/linter/types';
 import { FIXES } from './core/linter/fixes';
 import { applyReplacement } from './core/linter/apply-fix';
@@ -80,7 +81,8 @@ import {
     findLoreFolder,
     computeDocumentCoverage,
     computeManuscriptCoverage,
-    parseAliases
+    parseAliases,
+    stripGallerySections
 } from './core/dashboard/lorebook-scanner';
 import type { LoreCoverage, LoreEntryType } from './core/dashboard/lorebook-types';
 import {
@@ -114,7 +116,7 @@ function isExcludedPath(path: string, configDir: string): boolean {
  * Enrich entity display names using vault file basenames.
  *
  * When a vault file's basename contains a richer form of an entity's name
- * (e.g., the manuscript says "Freddy" but a file is named "Freddy Lupin.md"),
+ * (e.g., the manuscript says "Sarah" but a file is named "Sarah Connor.md"),
  * the entity's display name is updated to the richer form and the original
  * name is kept as an alias for text matching.
  *
@@ -123,7 +125,7 @@ function isExcludedPath(path: string, configDir: string): boolean {
  * enrichment changes.
  *
  * Ambiguity guard: if a word appears in multiple file basenames (e.g.,
- * "Freddy Lupin.md" and "Freddy Jones.md"), it is not used for enrichment.
+ * "Sarah Connor.md" and "Sarah Jones.md"), it is not used for enrichment.
  *
  * @param entities  Extracted entities (mutated in place).
  * @param files     All markdown files in the vault.
@@ -1699,8 +1701,22 @@ export default class EventideQuillPlugin extends Plugin {
                     typeof maxChars === 'number' && maxChars >= 0 && Number.isFinite(maxChars)
                         ? Math.floor(maxChars)
                         : undefined;
-                const combined = texts.join('\n\n---\n\n');
-                const excerpt = safeMax !== undefined ? combined.slice(0, safeMax) : combined;
+                // Check if this folder is a lorebook folder — gallery sections
+                // only exist in lore entries, and the gallery-stripping marker
+                // guidance (get_lore_image) should only appear for lore content.
+                const isLoreFolder =
+                    parsed && this.settings.lorebookFolders.some((f) => normalizePath(f) === parsed.folderPath);
+                const joined = isLoreFolder
+                    ? texts
+                          // Strip gallery sections from each chunk individually so
+                          // section state doesn't leak across unrelated content and
+                          // get_lore_image guidance stays scoped to lore entries.
+                          // Covers embedding caches built before the chunker learned
+                          // to strip them, so old caches still produce clean context.
+                          .map((t) => stripGallerySections(t, this.settings.loreEntryImageSectionHeaders).stripped)
+                          .join('\n\n---\n\n')
+                    : texts.join('\n\n---\n\n');
+                const excerpt = safeMax !== undefined ? joined.slice(0, safeMax) : joined;
 
                 messages.push({
                     role: 'system',
@@ -1774,8 +1790,8 @@ export default class EventideQuillPlugin extends Plugin {
         session.onDescribingImages = (active: boolean) => {
             this.lintPanel?.coWriterSetDescribingImages(active);
         };
-        session.onTokenEstimate = (conversationTokens: number, maxTokens: number) => {
-            this.lintPanel?.coWriterSetContextTokenEstimate(conversationTokens);
+        session.onTokenEstimate = (breakdown: TokenBreakdown, maxTokens: number) => {
+            this.lintPanel?.coWriterSetContextTokenEstimate(breakdown);
             this.lintPanel?.coWriterSetMaxAllowedTokens(maxTokens);
         };
         session.onDiscussStartStreaming = () => {
@@ -1824,6 +1840,14 @@ export default class EventideQuillPlugin extends Plugin {
                     .map((edit) => ({ edit, filePath, fileBasename: entry.fileBasename }))
             );
             this.lintPanel?.coWriterSetLoreEdits(edits);
+        };
+        session.onProposedLoreImagesUpdate = () => {
+            const proposals = [...session.proposedLoreImages.entries()].map(([filePath, entry]) => ({
+                filePath,
+                fileBasename: entry.fileBasename,
+                images: entry.images
+            }));
+            this.lintPanel?.coWriterSetProposedLoreImages(proposals);
         };
     }
 
@@ -1991,6 +2015,23 @@ export default class EventideQuillPlugin extends Plugin {
     /** Reject a pending lore edit for a specific file by id. */
     rejectLoreEdit(filePath: string, id: number): void {
         this.coWriterSession.rejectLoreEdit(filePath, id);
+    }
+
+    /**
+     * Approve a pending lore image attachment set for a specific file. Drops
+     * the entry from the queue; the actual byte-write + embed-insert happens
+     * in the review UI (`approveAttachmentToVault` in lore-entry-review.ts)
+     * before this is called via the card's onApprove callback.
+     */
+    approveProposedLoreImage(filePath: string): void {
+        this.coWriterSession.proposedLoreImages.delete(filePath);
+        this.coWriterSession.onProposedLoreImagesUpdate?.();
+    }
+
+    /** Reject a pending lore image attachment set for a specific file. */
+    rejectProposedLoreImage(filePath: string): void {
+        this.coWriterSession.proposedLoreImages.delete(filePath);
+        this.coWriterSession.onProposedLoreImagesUpdate?.();
     }
 
     /** Resolve the CodeMirror view of the active markdown editor, if any. */
@@ -2403,7 +2444,7 @@ export default class EventideQuillPlugin extends Plugin {
         this.coWriterSession.resetChat(clearContext);
         this.lintPanel?.coWriterSetCoachActive(false);
         this.lintPanel?.coWriterSetCoachPhase('discern');
-        this.lintPanel?.coWriterSetContextTokenEstimate(0);
+        this.lintPanel?.coWriterSetContextTokenEstimate({ sections: [], total: 0 });
         if (clearContext) {
             this.lintPanel?.coWriterSetAdditionalContextTokens(0);
         }
@@ -3015,14 +3056,26 @@ export default class EventideQuillPlugin extends Plugin {
                 const { text: bodyText } = stripFrontmatter(raw);
                 if (!bodyText.trim()) continue;
 
+                // Strip image-gallery sections before chunking so the embed
+                // cache never holds `![[file.png]]` syntax (useless to the
+                // model and primes hallucination). The marker that replaces
+                // each section preserves awareness that the entry has images
+                // and how to fetch them via get_lore_image.
+                const { stripped: galleryStrippedBody } = stripGallerySections(
+                    bodyText,
+                    this.settings.loreEntryImageSectionHeaders
+                );
+
                 // Prepend Obsidian's built-in aliases as a header so the AI
                 // can connect nicknames to the character/entry when retrieved
-                // via embedding similarity. Without this, "Dripsy" in the
-                // manuscript text won't match the "Freddy Lupin" lore chunk.
+                // via embedding similarity. Without this, "Connie" in the
+                // manuscript text won't match the "Sarah Connor" lore chunk.
                 const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
                 const aliases = parseAliases(frontmatter?.['aliases']);
                 const textForChunking =
-                    aliases.length > 0 ? `Also known as: ${aliases.join(', ')}\n\n${bodyText}` : bodyText;
+                    aliases.length > 0
+                        ? `Also known as: ${aliases.join(', ')}\n\n${galleryStrippedBody}`
+                        : galleryStrippedBody;
 
                 const chunks = chunkManuscript(textForChunking, {
                     targetTokenSize: Math.floor(this.settings.embeddingChunkTokenSize * 0.85),
@@ -3851,7 +3904,13 @@ export default class EventideQuillPlugin extends Plugin {
         // if the active file no longer matches so stale coverage is never
         // published (the active-leaf-change path can trigger overlapping reads).
         if (activePath !== (this.app.workspace.getActiveFile()?.path ?? null)) return;
-        const loreEntries = scanLorebook(this.app, this.settings.lorebookFolders, this.settings.lorebookFolderTypes);
+        const loreEntries = scanLorebook(
+            this.app,
+            this.settings.lorebookFolders,
+            this.settings.lorebookFolderTypes,
+            this.settings.loreEntryImageSectionHeaders,
+            this.settings.loreEntryImageMaxPerEntry
+        );
         this.currentLoreDocumentCoverage = computeDocumentCoverage(docText, loreEntries, activePath);
         this.lintPanel?.refreshLorebookPanel();
     }
@@ -3901,7 +3960,13 @@ export default class EventideQuillPlugin extends Plugin {
             return;
         }
 
-        const loreEntries = scanLorebook(this.app, this.settings.lorebookFolders, this.settings.lorebookFolderTypes);
+        const loreEntries = scanLorebook(
+            this.app,
+            this.settings.lorebookFolders,
+            this.settings.lorebookFolderTypes,
+            this.settings.loreEntryImageSectionHeaders,
+            this.settings.loreEntryImageMaxPerEntry
+        );
         this.currentLoreManuscriptCoverage = computeManuscriptCoverage(
             manuscriptText,
             loreEntries,

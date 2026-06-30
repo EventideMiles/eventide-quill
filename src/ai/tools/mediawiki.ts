@@ -1,4 +1,5 @@
 import { requestUrl } from 'obsidian';
+import { downscaleToJpegBase64, isImageContentType } from '../image-utils';
 
 /**
  * Shared MediaWiki API client. Both Fandom and Wikipedia serve the same
@@ -10,7 +11,7 @@ import { requestUrl } from 'obsidian';
  */
 
 /** Custom User-Agent to comply with Wikimedia's API policy (200 req/min tier). */
-export const MEDIAWIKI_UA = 'EventideQuill/0.12.0 (https://github.com/EventideMiles/eventide-quill)';
+export const MEDIAWIKI_UA = 'EventideQuill/0.13.0 (https://github.com/EventideMiles/eventide-quill)';
 
 /** Minimum interval (ms) between requests to the same host. */
 const MIN_INTERVAL_MS = 500;
@@ -476,4 +477,33 @@ function stripHtml(html: string): string {
         .replace(/&quot;/g, '"')
         .replace(/&amp;/g, '&')
         .replace(/&#039;/g, "'");
+}
+
+/**
+ * Download an image from a MediaWiki thumbnail/original URL and downscale it
+ * to a vision-ready JPEG base64. Throws on HTTP failure or non-image
+ * responses so callers can catch and surface a textual error to the model.
+ *
+ * Shared by `fandom_image` and `wikipedia_image`. Uses {@link MEDIAWIKI_UA}
+ * to comply with the Wikimedia API policy and Fandom's hotlink rules.
+ */
+export async function downloadAndDownscaleImage(
+    url: string,
+    maxDimension: number
+): Promise<{ base64: string; contentType: string }> {
+    const response = await requestUrl({
+        url,
+        method: 'GET',
+        throw: false,
+        headers: { Accept: 'image/*', 'User-Agent': MEDIAWIKI_UA }
+    });
+    if (response.status !== 200) {
+        throw new Error(`HTTP ${response.status}`);
+    }
+    const contentType = response.headers['content-type'] ?? '';
+    if (!isImageContentType(contentType)) {
+        throw new Error(`response was not a raster image (content-type "${contentType}")`);
+    }
+    const base64 = await downscaleToJpegBase64(response.arrayBuffer, maxDimension, contentType);
+    return { base64, contentType };
 }

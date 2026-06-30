@@ -137,7 +137,7 @@ src/
     dashboard/            # Manuscript dashboard + lorebook
       index.ts (barrel), manuscript-file.ts, metrics.ts, readability.ts,
       presets.ts, types.ts, dale-chall-words.json (data asset),
-      lorebook-scanner.ts, lorebook-types.ts (LORE_ENTRY_TYPES, coverage)
+      lorebook-scanner.ts (gallery-section image extraction), lorebook-types.ts (LORE_ENTRY_TYPES, LoreEntryImage, coverage)
     linter/               # Prose linter (Novelist Edition)
       apply-fix.ts, decorations.ts (CodeMirror decorations + debounced timers),
       fixes.ts, linter.ts, rules.ts, types.ts, word-lists.json (data asset)
@@ -164,7 +164,7 @@ src/
       manuscript-mentions.ts, lore-siblings.ts, vault-lookup.ts, grep-notes.ts,
       measure-folder.ts, calculate-file-sizes.ts, edit-note.ts, insert-note.ts, append-to-note.ts, revise-edit.ts,
       run-lorebook-batch.ts, research.ts (subagent spawners → SubagentSession),
-      propose-entry.ts, fetch-url.ts, fetch-image-url.ts,
+      propose-entry.ts, fetch-url.ts, fetch-image-url.ts, get-lore-image.ts,
       fandom-lookup.ts, wikipedia-lookup.ts, mediawiki.ts (shared MediaWiki client)
   ui/                  # Views, modals, panels
     quill-sidebar.ts (~1.3k lines — tabs: linter/context/review/cowriter/dashboard/lorebook),
@@ -196,13 +196,14 @@ Tool tiers (gating):
 
 | Tier | Tools | Gate setting |
 |------|-------|--------------|
-| Internal (default on) | `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit` | `coWriterToolsEnabled` |
-| Lorebook coach only | `propose_entry` (surfaces a lore draft to the UI) | `createLoreCoachToolRegistry` |
+| Internal (default on) | `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit`, `get_lore_image` | `coWriterToolsEnabled` |
+| Lorebook coach only | `propose_entry` (surfaces a lore draft to the UI; accepts an optional `images` parameter when `loreEntryImageAttachments` is on) | `createLoreCoachToolRegistry` |
 | Parent modes only | `run_lorebook_batch` (lore edits), `run_research` (vault Q&A) — each spawns a `SubagentSession`, see "Subagents" | `allowSubagents` (all parent modes: discuss/coach/lorebook; subagents pass `false` so they can't nest) |
 | Network (default on) | `fetch_url`, `fandom_lookup` / `fandom_page`, `wikipedia_lookup` / `wikipedia_page` | `lorebookNetworkTools` |
-| Image (default on) | `fetch_image_url`, `fandom_image` | `lorebookImageTools` |
+| Image (default on) | `fetch_image_url`, `fandom_image`, `wikipedia_image` | `lorebookImageTools` |
+| Agent image attach (default on) | optional `images` parameter on `propose_entry`; `attach_lore_image` (lorebook coach + batch only) | `loreEntryImageAttachments` |
 
-`fandom_image` (Fandom image lookup: lead image via `prop=pageimages`, gallery browsing via `prop=images` + `imageinfo`, with captions parsed from `<gallery>` wikitext) needs both `lorebookNetworkTools` and `lorebookImageTools`, plus the Fandom allowlist gate — it's registered inside the fandom block with an extra image-tools check.
+`fandom_image` (Fandom image lookup: lead image via `prop=pageimages`, gallery browsing via `prop=images` + `imageinfo`, with captions parsed from `<gallery>` wikitext) needs both `lorebookNetworkTools` and `lorebookImageTools`, plus the Fandom allowlist gate — it's registered inside the fandom block with an extra image-tools check. `wikipedia_image` (Wikipedia lead portraits via the same `prop=pageimages`) follows the same cross-toggle pattern — registered inside the network-tools block with an image-tools sub-check, no gallery-listing path (Wikipedia biographies don't follow Fandom's `<title>/Gallery` convention).
 
 Fandom requires a non-empty allowlist (`lorebookFandomWikis`), or the `lorebookFandomAllowAllWikis` "danger" toggle to allow any wiki; an empty allowlist with that toggle off disables Fandom everywhere. `mediawiki.ts` is the shared MediaWiki client with per-host rate limiting. Convention: tool ids are `snake_case` verbs/nouns (`manuscript_mentions`, `fetch_url`).
 
@@ -223,7 +224,7 @@ Landed: the runner + registry + both spawners, plus the drill-down UX — status
 
 ## Vision & image support
 
-Images (character art, maps, reference photos) reach a model through three entry points (tool result, co-writer paste, lorebook entry — planned), all funneled through `resolveImageInjection(plugin, images, opts)` in `src/ai/vision.ts`. Two regimes, picked at runtime from the configured models:
+Images (character art, maps, reference photos) reach a model through three entry points (tool result, co-writer paste, lorebook entry), all funneled through `resolveImageInjection(plugin, images, opts)` in `src/ai/vision.ts`. Two regimes, picked at runtime from the configured models:
 
 - **Regime A (vision-native):** the default chat model has role `chat-image`. Images attach to the message as image content; the model sees pixels directly.
 - **Regime B (vision-proxy):** the chat model is text-only and a default image model is configured. The image model makes one isolated call (image + proxy prompt → caption text) and the caption is spliced into the conversation. The chat model never switches and never receives pixels — so a small local text model can pair with a cloud vision model.
@@ -231,6 +232,14 @@ Images (character art, maps, reference photos) reach a model through three entry
 Regime B's proxy call is fully self-contained, so the image model may live on a **different provider** than chat (chosen via the Default image model picker, `aiDefaultImageProvider`). Regime A must stay on the chat provider — images ride on chat messages serialized by that provider.
 
 **Co-writer paste** (landed): the writer can paste, drag-and-drop, or paperclip-attach images into the discuss / coach / lorebook chat input (direct / fulfill stay text-only). All three paths funnel through a shared `addImageFiles()` helper on `CoWriterPanel` that downscales via `downscaleToJpegBase64`, enforces a 4-image cap (`MAX_PENDING_IMAGES`), and rejects files above a 50MB raw-byte ceiling (`MAX_IMAGE_BYTES`) to guard against OOM before decode. A thumbnail preview row sits above the textarea; thumbnails also render under the user bubble for sent messages. The send path threads `images?` through `panel → sidebar → main → session.sendDiscussion/sendCoach/sendLoreCoach`, each of which routes through a `prepareImageMessage` wrapper that calls `prepareUserMessageWithImages(plugin, text, images, signal)` (in `src/ai/vision.ts`) to apply the regime: native → attach pixels to the user message; described → fold the proxy caption into the text; unsupported → append a placeholder note. Under Regime B (text-only chat + image model), the wrapper fires `onDescribingImages(true/false)` so the panel can show a "Describing…" button label during the proxy round-trip. The analogue of `injectImagesIntoMessages` (tool-output path) for the user's own message. Synchronous `isVisionConfigured(plugin)` and `getImageRegime(plugin)` helpers (in `src/ai/vision.ts`) let the panel warn via Notice at capture time when neither regime is available. The co-writer button row also collapses responsively below 420px width (ResizeObserver on the panel container, mirroring the sidebar's pattern): Add-context / Refresh / Compact / New-chat fold into a hamburger overflow (native Obsidian `Menu`); Mode + Attach + Send stay visible.
+
+**Lorebook entry images** (landed): the writer attaches reference images to a lore entry by placing `![[file.png]]` embeds under a recognized gallery section heading (defaults: Reference / Gallery / Forms / Appearance / Art; configurable via `loreEntryImageSectionHeaders`). The scanner (`extractEntryImages` in `lorebook-scanner.ts`) parses image embeds purely from `metadataCache.getFileCache()` (headings + embeds) — no file reads, fully synchronous. Subheadings within the gallery section become per-image labels (e.g., a multi-form character can carry separate "Default form" / "Alternate form" subheadings, each with its own embed). `LoreEntry.images` carries `{ filename, label, caption?, file? }`; the resolved `TFile` is `undefined` for missing attachments (the dashboard badge still counts them). The AI reaches these images on-demand via the `get_lore_image` tool (pass the entry name + optional label), which reads the bytes, downscales, and returns a `ToolResult` whose `images` flow through the standard tool-loop image routing. `lore_siblings` surfaces available labels per entry so the model knows what it can request. Per-entry cap is `loreEntryImageMaxPerEntry` (default 4).
+
+**Agent image attachment** (landed, gated by `loreEntryImageAttachments` — default on): the lorebook coach and `run_lorebook_batch` subagents can attach images to entries via two paths that both flow through the existing review queue — nothing reaches the vault without the writer's approval. Path A: `propose_entry` accepts an optional `images` array (factory `createProposeEntryTool(allowImages)` — when the toggle is off, the parameter is removed from the JSON Schema entirely so the model cannot attempt it). Path B: `attach_lore_image` (separate tool, registered only when the toggle is on) attaches images to existing entries. Both tools stage proposals in the session; the review UI (`lore-entry-review.ts`) renders thumbnails and writes the bytes via `vault.createBinary(normalizePath(...))` plus embed insertion on the writer's approval.
+
+**Reference-based attachment via `from_recent`** (landed): the model cannot pass `base64` bytes itself in most flows — bytes it has seen (from `fandom_image` / `wikipedia_image` / `fetch_image_url` / `get_lore_image`, or pasted by the writer) enter the conversation as image content blocks (Regime A) or proxy captions (Regime B), never as base64 strings. So both `propose_entry.images[]` and `attach_lore_image` accept an alternative `from_recent: { index }` parameter that references `CoWriterSession.recentImages` — a FIFO ring buffer (cap 12, most-recent first) of every image-bearing tool result and paste. `executeToolCall` (`src/ai/tools/tool.ts`) auto-pushes image-bearing results to the buffer; `prepareImageMessage` (`src/ai/co-writer.ts`) pushes pasted bytes before regime routing. Buffer is cleared on reset / resetChat.
+
+**Gallery-section stripping at retrieval time only** (landed): `![[file.png]]` embed syntax in lore entries would waste tokens and prime hallucination if it leaked into auto-injected context. `stripGallerySections` in `lorebook-scanner.ts` replaces each gallery section with a one-line marker like `[Gallery section "Gallery": 3 images available — use get_lore_image with entry + label to view. Labels: Default form, Alternate form, Third form.]`. Applied at two **retrieval** sites only: the embedding chunker (`warmEmbeddingsForFolder`) and top-K injection (both `resolveEmbedPathsToMessages` paths). NOT applied to `vault_lookup` or active-file `proseForContext` — those are **editing** contexts where the model needs a verbatim view to construct anchors for `insert_note` / `edit_note`. Stripping at the editing view breaks anchors (the model quotes marker text that doesn't exist in the actual file); the marker preserves heading/label names so the model knows what's fetchable via `get_lore_image` without dumping useless syntax.
 
 Provider serialization:
 
@@ -321,11 +330,12 @@ The three tool-gating settings each gate **more than one tool**, and each has it
 
 | Setting field (`src/settings.ts`) | Gates | Welcome/privacy-tab `.setName` | General-tab `.setName` |
 |------|-------|------|------|
-| `coWriterToolsEnabled` | all internal tools (`manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit`) | `Co-writer tools` | `Co-writer tool use` |
+| `coWriterToolsEnabled` | all internal tools (`manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit`, `get_lore_image`) | `Co-writer tools` | `Co-writer tool use` |
+| `loreEntryImageAttachments` | the `images` parameter on `propose_entry`; the `attach_lore_image` tool (lorebook coach + batch only) | `Agent image attachments` | `Agent image attachments` |
 | `lorebookNetworkTools` | `fetch_url`, `fandom_lookup` / `fandom_page`, `wikipedia_lookup` / `wikipedia_page` | `Network research tools` | `Network tools` |
-| `lorebookImageTools` | `fetch_image_url`, `fandom_image` | `Image tool` | `Image tools` |
+| `lorebookImageTools` | `fetch_image_url`, `fandom_image`, `wikipedia_image` | `Image tool` | `Image tools` |
 
-Each row = one JSDoc + two `setDesc(...)` copies to keep aligned. The authoritative gate logic is `createToolRegistry()` in `src/ai/tools/index.ts` — if you add or move a tool between tiers, also update the gating table in "Tool-calling architecture" and every description for the affected toggle(s). `fandom_image` is the cross-toggle case: it needs both `lorebookNetworkTools` **and** `lorebookImageTools` (plus the Fandom allowlist), so its gate spans two rows.
+Each row = one JSDoc + two `setDesc(...)` copies to keep aligned. The authoritative gate logic is `createToolRegistry()` in `src/ai/tools/index.ts` — if you add or move a tool between tiers, also update the gating table in "Tool-calling architecture" and every description for the affected toggle(s). `fandom_image` and `wikipedia_image` are the cross-toggle cases: each needs both `lorebookNetworkTools` **and** `lorebookImageTools` (plus the Fandom allowlist, for `fandom_image`), so its gate spans two rows.
 
 ## Key feature areas
 

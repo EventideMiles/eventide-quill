@@ -2,6 +2,7 @@ import { Component, ItemView, MarkdownView, Notice, setIcon, WorkspaceLeaf } fro
 import { LintResult, RULE_INFO, FIXABLE_RULES } from '../core/linter/types';
 import { FIXES } from '../core/linter/fixes';
 import { renderChangeCard, renderChangeBulkBar } from './change-card';
+import type { TokenBreakdown } from './token-indicator';
 import { applyReplacement } from '../core/linter/apply-fix';
 import { findEditorView } from '../utils/find-editor';
 import { FixWithAiModal } from './fix-with-ai-modal';
@@ -11,7 +12,14 @@ import { CoWriterPanel } from './co-writer-panel';
 import { renderDashboardTab, renderDashboardSettingsTab } from './dashboard-panel';
 import { renderLorebookTab } from './lorebook-panel';
 import type { InputMode } from './co-writer-panel';
-import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase, LoreCoachPhase } from '../ai/co-writer';
+import type {
+    CoWriterChatMessage,
+    CoWriterOption,
+    DraftState,
+    CoachPhase,
+    LoreCoachPhase,
+    ProposedImage
+} from '../ai/co-writer';
 import type { SubagentView } from '../ai/subagent-session';
 import type { ProposedEdit } from '../core/change-set';
 import type EventideQuillPlugin from '../main';
@@ -742,6 +750,12 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setRejectLoreEditHandler((filePath, id) => {
                 this.plugin.rejectLoreEdit(filePath, id);
             });
+            this.coWriterPanel.setApproveProposedLoreImageHandler((filePath) => {
+                this.plugin.approveProposedLoreImage(filePath);
+            });
+            this.coWriterPanel.setRejectProposedLoreImageHandler((filePath) => {
+                this.plugin.rejectProposedLoreImage(filePath);
+            });
             this.coWriterPanel.setNavigateToSubagentHandler((id) => {
                 this.plugin.coWriterSession.navigateToSubagent(id);
             });
@@ -770,6 +784,12 @@ export class QuillSidebarView extends ItemView {
                     .map((edit) => ({ edit, filePath, fileBasename: entry.fileBasename }))
             );
             this.coWriterPanel.setLoreEdits(loreEditsList);
+            const proposedLoreImagesList = [...session.proposedLoreImages.entries()].map(([filePath, entry]) => ({
+                filePath,
+                fileBasename: entry.fileBasename,
+                images: entry.images
+            }));
+            this.coWriterPanel.setProposedLoreImages(proposedLoreImagesList);
             this.coWriterPanel.setSubagents(session.getSubagentViews());
             this.coWriterPanel.setActiveSubagent(session.activeSubagentId);
         }
@@ -923,8 +943,8 @@ export class QuillSidebarView extends ItemView {
 
     /** Set the conversation token estimate for the Co-writer token indicator.
      * The panel adds vault context item tokens on top to compute the total. */
-    coWriterSetContextTokenEstimate(tokens: number): void {
-        this.coWriterPanel?.setContextTokenEstimate(tokens);
+    coWriterSetContextTokenEstimate(breakdown: TokenBreakdown): void {
+        this.coWriterPanel?.setContextTokenEstimate(breakdown);
     }
 
     /** Set the additional context file token estimate for the Co-writer token indicator. */
@@ -1010,6 +1030,13 @@ export class QuillSidebarView extends ItemView {
     /** Push the pending lore edits to the co-writer panel. */
     coWriterSetLoreEdits(edits: { edit: ProposedEdit; filePath: string; fileBasename: string }[]): void {
         this.coWriterPanel?.setLoreEdits(edits);
+    }
+
+    /** Push the pending lore image attachments to the co-writer panel. */
+    coWriterSetProposedLoreImages(
+        proposals: { filePath: string; fileBasename: string; images: ProposedImage[] }[]
+    ): void {
+        this.coWriterPanel?.setProposedLoreImages(proposals);
     }
 
     /** Push the spawned subagent list (status cards + drill-down state). */

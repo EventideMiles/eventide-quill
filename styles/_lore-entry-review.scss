@@ -123,4 +123,62 @@
             color: var(--text-normal);
         }
     }
+
+    // Proposed-image thumbnail row. Rendered inside both draft cards (Path A:
+    // new entry with images) and attachment cards (Path B: images to an
+    // existing entry). Thumbnails are downscaled already; we cap display
+    // size for layout consistency, not for token budget.
+    &__images {
+        display: flex;
+        flex-wrap: wrap;
+        gap: $space-sm;
+        margin: $space-sm 0;
+    }
+
+    &__image {
+        display: flex;
+        flex-direction: column;
+        gap: $space-xs;
+        padding: $space-xs;
+        background: var(--background-primary-alt);
+        border-radius: $radius-sm;
+        max-width: 140px;
+    }
+
+    &__image-img {
+        width: 100%;
+        height: auto;
+        max-height: 100px;
+        object-fit: contain;
+        border-radius: $radius-sm;
+    }
+
+    &__image-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        font-size: var(--font-smallest);
+        color: var(--text-muted);
+        word-break: break-all;
+    }
+
+    &__image-label {
+        font-weight: 600;
+        color: var(--text-normal);
+    }
+
+    &__image-filename {
+        color: var(--text-faint, var(--text-muted));
+    }
+
+    &__image-caption {
+        font-style: italic;
+    }
+
+    // Variant modifier for attachment-only cards (Path B). Same shell, but
+    // a different accent so writers can visually distinguish "new entry
+    // draft with images" from "images being added to an existing entry."
+    &--attachment {
+        border-left-color: var(--color-blue, var(--interactive-accent));
+    }
 }

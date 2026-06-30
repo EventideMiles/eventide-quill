@@ -39,7 +39,13 @@ export const loreSiblingsTool: Tool = {
             return 'No lorebook folders are configured. Add at least one folder in settings → lorebook.';
         }
 
-        const entries = scanLorebook(plugin.app, plugin.settings.lorebookFolders, plugin.settings.lorebookFolderTypes);
+        const entries = scanLorebook(
+            plugin.app,
+            plugin.settings.lorebookFolders,
+            plugin.settings.lorebookFolderTypes,
+            plugin.settings.loreEntryImageSectionHeaders,
+            plugin.settings.loreEntryImageMaxPerEntry
+        );
         if (entries.length === 0) {
             return 'Lorebook folders are configured but contain no markdown entries yet.';
         }
@@ -97,7 +103,20 @@ function formatEntry(entry: {
     type: LoreEntryTypeOrUntyped;
     aliases: string[];
     folder: string;
+    images?: { label: string }[];
 }): string {
     const aliases = entry.aliases.length > 0 ? ` (aliases: ${entry.aliases.join(', ')})` : '';
-    return `- ${entry.fileBasename} [${LORE_TYPE_LABELS[entry.type]}] — ${entry.folder}${aliases}`;
+    // Surface labeled image availability so the model knows it can call
+    // `get_lore_image` for this entry. Labels are listed (deduped, in order)
+    // so the model can request a specific form/state by name.
+    let images = '';
+    if (entry.images && entry.images.length > 0) {
+        const labels = entry.images
+            .map((img) => img.label || '(unlabeled)')
+            // De-duplicate adjacent identical labels (multiple images under
+            // one subheading would otherwise repeat it).
+            .filter((label, i, arr) => i === 0 || label !== arr[i - 1]);
+        images = ` (images: ${labels.join(', ')})`;
+    }
+    return `- ${entry.fileBasename} [${LORE_TYPE_LABELS[entry.type]}] — ${entry.folder}${aliases}${images}`;
 }

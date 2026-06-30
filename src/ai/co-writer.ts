@@ -4,6 +4,8 @@ import type EventideQuillPlugin from '../main';
 import { type VoiceProfile } from '../types';
 import { findEditorView } from '../utils/find-editor';
 import { type AiProvider, type ChatMessage, type ToolCallRequest, type ToolDefinition } from './provider';
+import type { TokenBreakdown } from '../ui/token-indicator';
+import { buildRequestBreakdown } from '../ui/token-indicator';
 import {
     getCoWriterDiscussPrompt,
     getCoWriterGenerationPrompt,
@@ -26,8 +28,24 @@ import { EmbeddingCache, rankBySimilarity } from './embedding-cache';
 import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
 import { ChangeSet } from '../core/change-set';
-import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
-import { createReadOnlyToolRegistry, createToolRegistry, executeToolCall, type ToolContext } from './tools';
+import type { LoreEntryType, LoreDraftEntry, ProposedImage } from '../core/dashboard/lorebook-types';
+import { stripGallerySections } from '../core/dashboard/lorebook-scanner';
+
+/**
+ * Strip gallery sections from injected top-K lore chunks (only — see callers
+ * in resolveEmbedPathsToMessages). NOT used for active-file proseForContext
+ * or vault_lookup output, because the model relies on those views being
+ * verbatim to construct anchors for insert_note / edit_note. Stripping at
+ * retrieval-time (top-K) is purely a token-budget measure on similarity-
+ * matched chunks that the model is browsing, not editing against.
+ */
+import {
+    attachLoreImageTool,
+    createReadOnlyToolRegistry,
+    createToolRegistry,
+    executeToolCall,
+    type ToolContext
+} from './tools';
 import {
     getImageRegime,
     injectImagesIntoMessages,
@@ -330,8 +348,17 @@ async function resolveEmbedPathsToMessages(
             }
 
             const content = texts.join('\n\n');
+            // Strip image-gallery sections at injection time — covers caches
+            // built before the chunker learned to strip them. The marker
+            // preserves "this entry has images" awareness and points the
+            // model at get_lore_image.
+            const { stripped: galleryStripped } = stripGallerySections(
+                content,
+                plugin.settings.loreEntryImageSectionHeaders
+            );
             const charLimit = maxChars ?? 10000;
-            const truncated = content.length > charLimit ? content.slice(0, charLimit) + '...' : content;
+            const truncated =
+                galleryStripped.length > charLimit ? galleryStripped.slice(0, charLimit) + '...' : galleryStripped;
             const displayK = parsed.mode === 'full' ? 'all chunks' : `top-${topK}`;
             messages.push({
                 role: 'system',
@@ -500,6 +527,14 @@ function buildNetworkToolsMessage(plugin: EventideQuillPlugin): ChatMessage | nu
         'without asking. Results count toward context — be judicious with very',
         'large pages.'
     );
+    // wikipedia_image is registered only when image tools are also on, since
+    // it returns an image (routed through the vision layer). Same cross-toggle
+    // gate as fandom_image above.
+    if (plugin.settings.lorebookImageTools) {
+        lines.push(
+            `- wikipedia_image: fetch the lead image for a Wikipedia topic (${lang}) — most often a portrait for biographies, cover art for works, or a photograph for places. Use it to see what a person, place, or object looks like.`
+        );
+    }
     return { role: 'system', content: lines.join('\n') };
 }
 
@@ -521,7 +556,8 @@ function buildInternalToolsMessage(plugin: EventideQuillPlugin): ChatMessage | n
             '- manuscript_mentions: where a character, place, or plot thread appears in the active manuscript (pass empty to list every entity the extractor found).',
             "- vault_lookup: read a note's full text by path or name (frontmatter stripped). Reserve it for a SPECIFIC note you need in full.",
             '- grep_notes: search for text across vault files to find where something is mentioned.',
-            '- lore_siblings: list other lore entries near a given one.',
+            "- lore_siblings: list other lore entries near a given one. Shows each entry's image labels (when present) as `(images: Default form, Alternate form)`.",
+            '- get_lore_image: when a lore entry has images (you saw them via lore_siblings OR you saw ![[file.png]] embeds in a vault_lookup result), call this to actually SEE the image. Pass the entry name and an optional label to pick one form from a multi-form entry. Particularly important for character appearance, locations, maps, and any visual reference — do not describe art from filename or context alone when you can fetch the pixels.',
             'To learn the cast and world (characters, locations, plot threads), reach for manuscript_mentions — it lists the entities directly, saving a vault_lookup. If it returns "no entities," the dashboard has not been scanned: call refresh_dashboard (with a manuscript file path) and retry.',
             'Reach for these when a question of fact about the manuscript or vault would sharpen your answer. Tool results stay in context — read judiciously.'
         ].join('\n')
@@ -620,7 +656,7 @@ export interface LoreCoachSession {
 // Re-export LoreDraftEntry from its canonical home in lorebook-types so
 // existing call sites (panel, review UI, main.ts) keep importing from here
 // without churn. New code should import from '../core/dashboard/lorebook-types'.
-export type { LoreDraftEntry } from '../core/dashboard/lorebook-types';
+export type { LoreDraftEntry, ProposedImage } from '../core/dashboard/lorebook-types';
 
 /** A single continuation option suggested by the AI. */
 export interface CoWriterOption {
@@ -735,7 +771,7 @@ export class CoWriterSession {
     onDraftAccepted: (() => void) | null = null;
     /** Called when the discuss-mode token estimate changes (conversation tokens only;
      * the panel adds vault context item tokens on top to compute the total). */
-    onTokenEstimate: ((conversationTokens: number, maxTokens: number) => void) | null = null;
+    onTokenEstimate: ((breakdown: TokenBreakdown, maxTokens: number) => void) | null = null;
     /**
      * Fixed per-request token overhead of the active mode's tool definitions
      * (the serialized `tools` field). Set when a mode builds its registry so
@@ -779,6 +815,23 @@ export class CoWriterSession {
     loreCoachMessages: ChatMessage[] = [];
     /** The most recent lore draft produced this session, awaiting review. */
     currentLoreDraft: LoreDraftEntry | null = null;
+    /**
+     * Ring buffer of recent images the model has seen — from tool results
+     * that carried `images` (fandom_image, wikipedia_image, fetch_image_url,
+     * get_lore_image) or from user-pasted chat images. The model can't
+     * quote bytes it has already seen back into a tool call (they enter the
+     * conversation as image content blocks under Regime A, or as proxy
+     * captions under Regime B — never as a base64 string), so
+     * `propose_entry` and `attach_lore_image` accept a `from_recent`
+     * reference (index into this buffer) as the alternative to passing
+     * `base64` directly.
+     *
+     * FIFO with most-recent first; index 0 is always the last image the
+     * model saw. Capped to bound memory — each downscaled JPEG is ~50KB,
+     * so 12 images ≈ 600KB peak.
+     */
+    recentImages: string[] = [];
+    private static readonly RECENT_IMAGES_CAP = 12;
     /** Called when lorebook coach state changes (phase advance, end coach). */
     onLoreCoachUpdate: (() => void) | null = null;
     /** Called when a new lore draft is ready for the review card. */
@@ -786,6 +839,16 @@ export class CoWriterSession {
 
     /** Pending note edits keyed by vault path (from edit_note / insert_note / append_to_note tools). */
     loreEdits: Map<string, { changeSet: ChangeSet; fileBasename: string }> = new Map();
+    /**
+     * Pending image attachments keyed by vault path (from the
+     * `attach_lore_image` tool). Path B of the lore-entry-images feature:
+     * the agent attaches images to EXISTING entries (vs. Path A's
+     * `propose_entry` images, which travel with a new-entry draft). Each
+     * file's images are reviewed individually; on approval the bytes are
+     * written to the attachments folder and the `![[file]]` embed is
+     * inserted into the entry's gallery section.
+     */
+    proposedLoreImages: Map<string, { fileBasename: string; images: ProposedImage[] }> = new Map();
     /**
      * Files that the tool opened in a new tab (not previously open). These
      * tabs are closed when the edit is approved or rejected so multi-file
@@ -804,6 +867,8 @@ export class CoWriterSession {
     private loreEditWriteQueue: Map<string, Promise<void>> = new Map();
     /** Called when a lore edit is proposed, approved, or rejected. */
     onLoreEditUpdate: (() => void) | null = null;
+    /** Called when proposed lore images are added, approved, or rejected. */
+    onProposedLoreImagesUpdate: (() => void) | null = null;
 
     /** Fulfill-mode proposed edits (one per directive), in document order. */
     fulfillChanges: ChangeSet = new ChangeSet();
@@ -1157,7 +1222,18 @@ export class CoWriterSession {
      * own), use {@link estimateTokens} directly.
      */
     private estimateRequestTokens(messages: ChatMessage[]): number {
-        return estimateTokens(messages) + this.toolTokenOverhead;
+        return this.estimateRequestBreakdown(messages).total;
+    }
+
+    /**
+     * Per-section breakdown of what's consuming the request's tokens — tool
+     * definitions, system prompt, each injected-context source, chat history.
+     * Used by the token indicator's hover tooltip so writers can see exactly
+     * where the budget is going (the typical surprise is that tool definitions
+     * are the largest single chunk). Sibling of {@link estimateRequestTokens}.
+     */
+    private estimateRequestBreakdown(messages: ChatMessage[]): TokenBreakdown {
+        return buildRequestBreakdown(messages, this.toolTokenOverhead);
     }
 
     /**
@@ -1300,7 +1376,7 @@ export class CoWriterSession {
 
         // Push conversation-only token estimate to the panel.
         // The panel adds vault context item tokens on top to get the total.
-        this.onTokenEstimate?.(conversationTokens, maxTokens);
+        this.onTokenEstimate?.(this.estimateRequestBreakdown(hypotheticalConversation), maxTokens);
 
         // --- AI-powered compaction ---
         if (totalTokens / maxTokens >= compactPct) {
@@ -1312,7 +1388,7 @@ export class CoWriterSession {
                 if (result) {
                     this.discussCurrentMessages = result.messages;
                     this.onTokenEstimate?.(
-                        this.estimateRequestTokens([
+                        this.estimateRequestBreakdown([
                             ...this.discussCurrentMessages,
                             { role: 'user' as const, content: prompt }
                         ]),
@@ -1460,7 +1536,7 @@ export class CoWriterSession {
                 // Update token estimate so the indicator reflects tool-result
                 // growth — tool results stay in the conversation and keep
                 // getting re-sent, so the user needs to see their cost.
-                this.onTokenEstimate?.(this.estimateRequestTokens(this.discussCurrentMessages), maxTokens);
+                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
 
                 // No tools called (or tools disabled) → this round is final.
                 if (result.toolCalls.length === 0 || !registry) break;
@@ -1488,7 +1564,7 @@ export class CoWriterSession {
                 this.annotateToolUseErrors(execResults);
 
                 // Re-estimate after tool results were appended.
-                this.onTokenEstimate?.(this.estimateRequestTokens(this.discussCurrentMessages), maxTokens);
+                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
 
                 // Mid-loop compaction: if tool results have filled the context
                 // past the compaction threshold, summarize older turns to free
@@ -1502,7 +1578,10 @@ export class CoWriterSession {
                         });
                         if (cResult) {
                             this.discussCurrentMessages = cResult.messages;
-                            this.onTokenEstimate?.(this.estimateRequestTokens(this.discussCurrentMessages), maxTokens);
+                            this.onTokenEstimate?.(
+                                this.estimateRequestBreakdown(this.discussCurrentMessages),
+                                maxTokens
+                            );
                         }
                     } catch (compErr: unknown) {
                         // Propagate aborts to the outer catch so the normal
@@ -1715,7 +1794,7 @@ export class CoWriterSession {
         const conversationTokens = this.estimateRequestTokens(this.discussCurrentMessages);
         const totalTokens = conversationTokens + injectedTokens;
 
-        this.onTokenEstimate?.(conversationTokens, maxTokens);
+        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
 
         // Compaction (same as discuss mode)
         if (totalTokens / maxTokens >= compactPct) {
@@ -1726,7 +1805,7 @@ export class CoWriterSession {
                 });
                 if (result) {
                     this.discussCurrentMessages = result.messages;
-                    this.onTokenEstimate?.(this.estimateRequestTokens(this.discussCurrentMessages), maxTokens);
+                    this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
                 }
             } catch (err: unknown) {
                 if (err instanceof Error && err.name === 'AbortError') {
@@ -1833,7 +1912,7 @@ export class CoWriterSession {
                     toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined
                 });
 
-                this.onTokenEstimate?.(this.estimateRequestTokens(this.discussCurrentMessages), maxTokens);
+                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
 
                 if (result.toolCalls.length === 0 || !registry) break;
 
@@ -1855,7 +1934,7 @@ export class CoWriterSession {
                 await injectImagesIntoMessages(plugin, coachCollectedImages, this.discussCurrentMessages, ctx.signal);
 
                 this.annotateToolUseErrors(coachExecResults);
-                this.onTokenEstimate?.(this.estimateRequestTokens(this.discussCurrentMessages), maxTokens);
+                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
 
                 // Mid-loop compaction (same as discuss).
                 if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens >= compactPct) {
@@ -1866,7 +1945,10 @@ export class CoWriterSession {
                         });
                         if (cResult) {
                             this.discussCurrentMessages = cResult.messages;
-                            this.onTokenEstimate?.(this.estimateRequestTokens(this.discussCurrentMessages), maxTokens);
+                            this.onTokenEstimate?.(
+                                this.estimateRequestBreakdown(this.discussCurrentMessages),
+                                maxTokens
+                            );
                         }
                     } catch (compErr: unknown) {
                         // Propagate aborts to the outer catch so the normal
@@ -2231,7 +2313,7 @@ export class CoWriterSession {
 
         const compactPct = Math.max(50, Math.min(95, this.settingsOrDefault(plugin).contextCompactAtPercent)) / 100;
         const conversationTokens = this.estimateRequestTokens(this.loreCoachMessages);
-        this.onTokenEstimate?.(conversationTokens, maxTokens);
+        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
 
         if (conversationTokens / maxTokens >= compactPct) {
             const sentenceCount = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
@@ -2239,7 +2321,7 @@ export class CoWriterSession {
                 const result = await compactConversation(chat.provider, this.loreCoachMessages, sentenceCount);
                 if (result) {
                     this.loreCoachMessages = result.messages;
-                    this.onTokenEstimate?.(this.estimateRequestTokens(this.loreCoachMessages), maxTokens);
+                    this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
                 }
             } catch (err: unknown) {
                 if (err instanceof Error && err.name === 'AbortError') {
@@ -2445,7 +2527,7 @@ export class CoWriterSession {
 
                 // Update token estimate so the indicator reflects tool-result
                 // growth, then sync the chat so the user sees progress.
-                this.onTokenEstimate?.(this.estimateRequestTokens(this.loreCoachMessages), maxTokens);
+                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
 
                 // Mid-loop compaction: if tool results have filled the context,
                 // summarize older turns to free room for the next batch.
@@ -2457,7 +2539,7 @@ export class CoWriterSession {
                         });
                         if (cResult) {
                             this.loreCoachMessages = cResult.messages;
-                            this.onTokenEstimate?.(this.estimateRequestTokens(this.loreCoachMessages), maxTokens);
+                            this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
                         }
                     } catch (compErr: unknown) {
                         // Propagate aborts to the outer catch so the normal
@@ -2476,7 +2558,7 @@ export class CoWriterSession {
             this.onDiscussFinished?.();
             this.optionsLoading = false;
             this.onOptionsLoading?.(false);
-            this.onTokenEstimate?.(this.estimateRequestTokens(this.loreCoachMessages), maxTokens);
+            this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
             this.onChatUpdate?.();
             this.onLoreCoachUpdate?.();
         } catch (err: unknown) {
@@ -2952,6 +3034,54 @@ export class CoWriterSession {
     }
 
     /**
+     * Get or create a per-file proposed-images entry. Multiple images may
+     * accumulate against the same file across rounds (e.g., a multi-form
+     * character getting one image per form via separate `attach_lore_image`
+     * calls); they share one review card per file.
+     */
+    getOrCreateProposedLoreImages(
+        filePath: string,
+        fileBasename: string
+    ): { fileBasename: string; images: ProposedImage[] } {
+        let entry = this.proposedLoreImages.get(filePath);
+        if (!entry) {
+            entry = { fileBasename, images: [] };
+            this.proposedLoreImages.set(filePath, entry);
+        }
+        return entry;
+    }
+
+    /** Clear all pending lore image attachments (e.g., on reset / new chat). */
+    clearProposedLoreImages(): void {
+        this.proposedLoreImages.clear();
+    }
+
+    /**
+     * Push image bytes the model has just seen onto the recent-images ring
+     * buffer. Called from the tool loop after every image-bearing tool
+     * result and from the chat send paths when the writer pastes. Most-
+     * recent first; trims to {@link RECENT_IMAGES_CAP}. No-op when empty.
+     */
+    pushRecentImages(images: string[]): void {
+        if (images.length === 0) return;
+        this.recentImages = [...images, ...this.recentImages].slice(0, CoWriterSession.RECENT_IMAGES_CAP);
+    }
+
+    /**
+     * Resolve a `from_recent.index` reference to actual bytes from the
+     * recent-images buffer. Returns null when the index is out of range
+     * (the tool surfaces a clear error to the model in that case).
+     */
+    resolveRecentImage(index: number): string | null {
+        return index >= 0 && index < this.recentImages.length ? (this.recentImages[index] ?? null) : null;
+    }
+
+    /** Clear the recent-images buffer (e.g., on reset / new chat). */
+    clearRecentImages(): void {
+        this.recentImages = [];
+    }
+
+    /**
      * Spawn and run a lorebook batch subagent. The subagent runs in its own
      * fresh context (isolated from this conversation), edits through the shared
      * {@link loreEdits} review queue via the tools' side effects, and returns a
@@ -3019,6 +3149,9 @@ export class CoWriterSession {
         // Lore batch subagents edit existing files — internal tools only, NO
         // run_lorebook_batch (single-level nesting) and NO propose_entry.
         const registry = createToolRegistry(plugin, false);
+        if (registry && plugin.settings.loreEntryImageAttachments) {
+            registry.register(attachLoreImageTool);
+        }
         const batchSummaries: string[] = [];
         for (let i = 0; i < runChunks.length; i++) {
             const chunkPaths = runChunks[i]!;
@@ -3148,7 +3281,7 @@ export class CoWriterSession {
             });
             if (result) {
                 this.discussCurrentMessages = result.messages;
-                this.onTokenEstimate?.(this.estimateRequestTokens(this.discussCurrentMessages), maxTokens);
+                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
                 this.onChatUpdate?.();
             }
         } catch (err: unknown) {
@@ -3725,6 +3858,12 @@ export class CoWriterSession {
     ): Promise<PreparedUserMessage> {
         const imgs = images ?? [];
         if (imgs.length === 0) return { content: text };
+        // Buffer the pasted bytes so the model can reference them via
+        // `from_recent` in propose_entry / attach_lore_image ("attach the
+        // image the writer just pasted"). Done BEFORE regime routing so
+        // the buffer holds the original bytes regardless of whether the
+        // chat model is vision-native (Regime A) or text-only (Regime B).
+        this.pushRecentImages(imgs);
         const proxy = getImageRegime(plugin) === 'proxy';
         if (proxy) this.onDescribingImages?.(true);
         try {
@@ -3757,6 +3896,8 @@ export class CoWriterSession {
         this.clearFulfill();
         this.clearDirect();
         this.clearLoreEdit();
+        this.clearProposedLoreImages();
+        this.clearRecentImages();
         this.clearSubagents();
         this.manuscriptPath = null;
         this.originalText = '';
@@ -3789,6 +3930,8 @@ export class CoWriterSession {
         this.clearFulfill();
         this.clearDirect();
         this.clearLoreEdit();
+        this.clearProposedLoreImages();
+        this.clearRecentImages();
         this.clearSubagents();
         this.originalText = '';
         this.insertionStart = -1;
