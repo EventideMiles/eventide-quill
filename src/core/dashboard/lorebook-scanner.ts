@@ -305,8 +305,8 @@ function matchNamesInText(names: string[], text: string): boolean {
 /**
  * True if any entry's {@link LoreEntry.matchNames} contains the normalized
  * entity name as a word-level substring. Catches cases where the extractor
- * yields a single token — e.g. "Howlington" — while the entry is named
- * "Howlington Academy". The entity name must appear at a word boundary
+ * yields a single token — e.g. "Westbrook" — while the entry is named
+ * "Westbrook Academy". The entity name must appear at a word boundary
  * within at least one of the entry's match names.
  */
 function isLikelyCovered(normalizedName: string, entries: LoreEntry[], type?: LoreEntryType): boolean {

@@ -135,6 +135,24 @@ export interface EventideQuillSettings {
      * note body; only the scanner's `images` array is bounded.
      */
     loreEntryImageMaxPerEntry: number;
+    /**
+     * Agent image-attachment gate. When on, the lorebook coach can include an
+     * `images` parameter when calling `propose_entry`, and the
+     * `attach_lore_image` tool is registered for batch edits. Both flow
+     * through the existing review queue — nothing is written without the
+     * writer's approval. When off, the parameter is removed from the tool's
+     * schema (so the model cannot attempt it) and the tool is not registered,
+     * but the writer's manual image attachment via `![[file]]` embeds keeps
+     * working unchanged. Default: on.
+     */
+    loreEntryImageAttachments: boolean;
+    /**
+     * Folder where agent-attached images are written on approval. Empty (the
+     * default) defers to Obsidian's configured attachment folder
+     * (`app.vault.getConfig('attachmentFolderPath')`). Vault-relative path;
+     * `normalizePath()`-wrapped before any vault write.
+     */
+    loreEntryImageAttachmentFolder: string;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -237,7 +255,9 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     lorebookImageMaxDescriptionTokens: 2048,
     lorebookImageProxyPrompt: DEFAULT_IMAGE_PROXY_PROMPT,
     loreEntryImageSectionHeaders: ['Reference', 'Reference images', 'Gallery', 'Forms', 'Appearance', 'Art'],
-    loreEntryImageMaxPerEntry: 4
+    loreEntryImageMaxPerEntry: 4,
+    loreEntryImageAttachments: true,
+    loreEntryImageAttachmentFolder: ''
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -704,6 +724,23 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addToggle((toggle) =>
                 toggle.setValue(this.plugin.settings.lorebookImageTools).onChange(async (value) => {
                     this.plugin.settings.lorebookImageTools = value;
+                    await this.plugin.saveSettings();
+                    this.display();
+                })
+            );
+
+        new Setting(content)
+            .setName('Agent image attachments')
+            .setDesc(
+                'Lets the lorebook coach and batch tools propose image attachments for your review. ' +
+                    'On: the coach can attach images when drafting an entry, and the batch tool can attach ' +
+                    'images to existing entries. Every attachment flows through the review queue — nothing ' +
+                    'is written without your approval. Off: the agent cannot attach images, but you can ' +
+                    'still add them manually via ![[file]] embeds. Does not affect other tools.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.loreEntryImageAttachments).onChange(async (value) => {
+                    this.plugin.settings.loreEntryImageAttachments = value;
                     await this.plugin.saveSettings();
                     this.display();
                 })
@@ -1252,6 +1289,38 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(content)
+            .setName('Agent image attachments')
+            .setDesc(
+                'Allow the lorebook coach and batch tools to propose image attachments for your review. ' +
+                    'On: the coach can attach images when drafting an entry, and the batch tool can attach ' +
+                    'images to existing entries. Every attachment flows through the review queue — nothing ' +
+                    'is written without your approval. Off: the agent cannot attach images, but you can ' +
+                    'still add them manually via ![[file]] embeds. Does not affect other tools. Default: on.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.loreEntryImageAttachments).onChange(async (value) => {
+                    this.plugin.settings.loreEntryImageAttachments = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
+            .setName('Attachment folder')
+            .setDesc(
+                'Where agent-attached images are written on approval. Empty uses Obsidian’s configured ' +
+                    'attachment folder. Vault-relative path (e.g., "Attachments/Lore").'
+            )
+            .addText((text) =>
+                text
+                    .setValue(this.plugin.settings.loreEntryImageAttachmentFolder)
+                    .inputEl.addEventListener('blur', () => {
+                        const value = text.inputEl.value.trim();
+                        this.plugin.settings.loreEntryImageAttachmentFolder = value;
+                        void this.plugin.saveSettings();
+                    })
+            );
+
+        new Setting(content)
             .setName('Lorebook folders')
             .setDesc(
                 'Folders scanned for lore entries. Any Markdown file under one of these folders is treated as a lore entry. Set a per-folder type default so every file inherits it without frontmatter; leave as mixed to type files individually via the quill-type key.'
@@ -1406,6 +1475,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         ...DEFAULT_SETTINGS.loreEntryImageSectionHeaders
                     ];
                     this.plugin.settings.loreEntryImageMaxPerEntry = DEFAULT_SETTINGS.loreEntryImageMaxPerEntry;
+                    this.plugin.settings.loreEntryImageAttachments = DEFAULT_SETTINGS.loreEntryImageAttachments;
+                    this.plugin.settings.loreEntryImageAttachmentFolder =
+                        DEFAULT_SETTINGS.loreEntryImageAttachmentFolder;
                     await this.plugin.saveSettings();
                     this.display();
                 })
@@ -2685,6 +2757,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         ...DEFAULT_SETTINGS.loreEntryImageSectionHeaders
                     ];
                     this.plugin.settings.loreEntryImageMaxPerEntry = DEFAULT_SETTINGS.loreEntryImageMaxPerEntry;
+                    this.plugin.settings.loreEntryImageAttachments = DEFAULT_SETTINGS.loreEntryImageAttachments;
+                    this.plugin.settings.loreEntryImageAttachmentFolder =
+                        DEFAULT_SETTINGS.loreEntryImageAttachmentFolder;
                     this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                     this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
                     this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;

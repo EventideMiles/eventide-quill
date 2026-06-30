@@ -55,7 +55,7 @@ export function entityTypeToLoreType(type: EntityType): LoreEntryType {
  * would break silently on rename.
  *
  * `label` is the nearest subheading text within the gallery section (e.g.,
- * "Human form", "Wolfed state"), giving multi-form characters a free
+ * "Default form", "Alternate form"), giving multi-form characters a free
  * per-image label without a frontmatter grammar. Empty when the image sits
  * directly under the gallery header with no subheading.
  *
@@ -137,6 +137,28 @@ export interface LoreCoverage {
 export const LORE_COVERAGE_GAP_MIN_OCCURRENCES = 3;
 
 /**
+ * An image the agent (lorebook coach or batch subagent) wants to attach to a
+ * lore entry, awaiting the writer's review. Carries the bytes in memory from
+ * agent-time to approval-time; on Reject the bytes are dropped without ever
+ * touching the vault.
+ *
+ * `label` becomes the subheading under the gallery section heading (created
+ * if missing). `caption` becomes the `![[file|caption]]` slot. The writer
+ * sees the suggested filename and can override it in the review UI before
+ * approving.
+ */
+export interface ProposedImage {
+    /** Suggested subheading under the gallery section (e.g., "Human form"). */
+    label: string;
+    /** Optional caption for the `![[file|caption]]` slot. */
+    caption?: string;
+    /** Suggested vault attachment filename, e.g., "freddy-lupin-human.png". */
+    suggestedFilename: string;
+    /** Image bytes as base64 JPEG (no `data:` prefix), already downscaled. */
+    base64: string;
+}
+
+/**
  * A proposed lore entry draft produced by the Lorebook Coach (or, in future
  * PRs, by the sweep action) and awaiting the writer's review before being
  * saved as a {@link LoreEntry} on disk. Lives here (alongside `LoreEntry`)
@@ -150,4 +172,12 @@ export interface LoreDraftEntry {
     entryType: LoreEntryType | null;
     /** Full markdown body (frontmatter is reconstructed at save time). */
     content: string;
+    /**
+     * Optional images the coach proposed alongside the text draft (Path A:
+     * new entry with images). Each is held as base64 in memory and written
+     * to the vault attachments folder only on approval. The draft's
+     * `content` SHOULD already contain the matching `![[file]]` embeds
+     * placed under a gallery section; the writer can edit before saving.
+     */
+    proposedImages?: ProposedImage[];
 }

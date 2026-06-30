@@ -13,8 +13,8 @@ import type { Tool, ToolContext } from './tool';
  *   2. If the cache is empty, extract on the fly from the active document.
  *
  * Matching is case-insensitive substring against the entity's name OR any
- * of its aliases, so the model can pass a nickname ("Dripsy") and match the
- * canonical entity ("Freddy Lupin") when aliases are present.
+ * of its aliases, so the model can pass a nickname ("Connie") and match the
+ * canonical entity ("Sarah Connor") when aliases are present.
  */
 export const manuscriptMentionsTool: Tool = {
     id: 'manuscript_mentions',

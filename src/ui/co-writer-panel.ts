@@ -6,7 +6,7 @@ import { FileMentionSuggest } from './file-mention-suggest';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
 import { buildEmbedFolderPath, embedFolderLabel, parseEmbedFolderPath, resolveAtMentions } from '../utils/vault-files';
 import { renderChangeBulkBar, renderChangeCard } from './change-card';
-import { renderLoreDraftCard } from './lore-entry-review';
+import { renderLoreDraftCard, renderLoreImageAttachmentCard } from './lore-entry-review';
 import { downscaleToJpegBase64, isImageContentType } from '../ai/image-utils';
 import { isVisionConfigured } from '../ai/vision';
 import type EventideQuillPlugin from '../main';
@@ -16,7 +16,8 @@ import type {
     CoWriterOption,
     CoachPhase,
     LoreCoachPhase,
-    LoreDraftEntry
+    LoreDraftEntry,
+    ProposedImage
 } from '../ai/co-writer';
 import type { ProposedEdit } from '../core/change-set';
 import type { SubagentView } from '../ai/subagent-session';
@@ -130,6 +131,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private directChange: ProposedEdit | null = null;
     /** Pending lore edits (from edit_note / insert_note / append_to_note tools), one card per file. */
     private loreEdits: { edit: ProposedEdit; filePath: string; fileBasename: string }[] = [];
+    /** Pending lore image attachments (from the attach_lore_image tool), one card per file. */
+    private proposedLoreImagesList: { filePath: string; fileBasename: string; images: ProposedImage[] }[] = [];
     /** Whether the mode picker is open (replaces the mode-cycle-on-click behavior). */
     private modePickerOpen = false;
     /** Current lorebook coach phase, if lorebook coach mode is active. */
@@ -163,6 +166,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onDiscardLoreDraft: ((draft: LoreDraftEntry) => void) | null = null;
     private onApproveLoreEdit: ((filePath: string, id: number) => void) | null = null;
     private onRejectLoreEdit: ((filePath: string, id: number) => void) | null = null;
+    private onApproveProposedLoreImage: ((filePath: string) => void) | null = null;
+    private onRejectProposedLoreImage: ((filePath: string) => void) | null = null;
     /**
      * Fired on every mode switch (regardless of direction). Used to clear
      * session-scoped state that shouldn't follow the writer across modes —
@@ -376,6 +381,22 @@ export class CoWriterPanel extends AbstractChatPanel {
     setLoreEdits(edits: { edit: ProposedEdit; filePath: string; fileBasename: string }[]): void {
         this.loreEdits = edits;
         this.scheduleRender();
+    }
+
+    /** Replace the pending lore image attachments list and re-render. */
+    setProposedLoreImages(proposals: { filePath: string; fileBasename: string; images: ProposedImage[] }[]): void {
+        this.proposedLoreImagesList = proposals;
+        this.scheduleRender();
+    }
+
+    /** Set the handler invoked to approve a pending lore image attachment set by file path. */
+    setApproveProposedLoreImageHandler(handler: (filePath: string) => void): void {
+        this.onApproveProposedLoreImage = handler;
+    }
+
+    /** Set the handler invoked to reject a pending lore image attachment set by file path. */
+    setRejectProposedLoreImageHandler(handler: (filePath: string) => void): void {
+        this.onRejectProposedLoreImage = handler;
     }
 
     /** Set the handler invoked to approve a pending lore edit by file path + id. */
@@ -975,6 +996,17 @@ export class CoWriterPanel extends AbstractChatPanel {
             if (p) {
                 this.renderPromises.push(p);
             }
+        }
+
+        // Lore image attachment cards — one per pending file (from the
+        // attach_lore_image tool). Each card shows the file's proposed
+        // images with Approve-all / Reject-all buttons. On approve, the
+        // bytes are written and the embeds inserted into the gallery section.
+        for (const proposal of this.proposedLoreImagesList) {
+            renderLoreImageAttachmentCard(scroll, proposal, this.plugin, this.renderEvents, {
+                onApprove: (filePath: string) => this.onApproveProposedLoreImage?.(filePath),
+                onReject: (filePath: string) => this.onRejectProposedLoreImage?.(filePath)
+            });
         }
 
         // Subagent status cards — one per spawned batch (running / succeeded /

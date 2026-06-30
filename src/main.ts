@@ -114,7 +114,7 @@ function isExcludedPath(path: string, configDir: string): boolean {
  * Enrich entity display names using vault file basenames.
  *
  * When a vault file's basename contains a richer form of an entity's name
- * (e.g., the manuscript says "Freddy" but a file is named "Freddy Lupin.md"),
+ * (e.g., the manuscript says "Sarah" but a file is named "Sarah Connor.md"),
  * the entity's display name is updated to the richer form and the original
  * name is kept as an alias for text matching.
  *
@@ -123,7 +123,7 @@ function isExcludedPath(path: string, configDir: string): boolean {
  * enrichment changes.
  *
  * Ambiguity guard: if a word appears in multiple file basenames (e.g.,
- * "Freddy Lupin.md" and "Freddy Jones.md"), it is not used for enrichment.
+ * "Sarah Connor.md" and "Sarah Jones.md"), it is not used for enrichment.
  *
  * @param entities  Extracted entities (mutated in place).
  * @param files     All markdown files in the vault.
@@ -1825,6 +1825,14 @@ export default class EventideQuillPlugin extends Plugin {
             );
             this.lintPanel?.coWriterSetLoreEdits(edits);
         };
+        session.onProposedLoreImagesUpdate = () => {
+            const proposals = [...session.proposedLoreImages.entries()].map(([filePath, entry]) => ({
+                filePath,
+                fileBasename: entry.fileBasename,
+                images: entry.images
+            }));
+            this.lintPanel?.coWriterSetProposedLoreImages(proposals);
+        };
     }
 
     /**
@@ -1991,6 +1999,23 @@ export default class EventideQuillPlugin extends Plugin {
     /** Reject a pending lore edit for a specific file by id. */
     rejectLoreEdit(filePath: string, id: number): void {
         this.coWriterSession.rejectLoreEdit(filePath, id);
+    }
+
+    /**
+     * Approve a pending lore image attachment set for a specific file. Drops
+     * the entry from the queue; the actual byte-write + embed-insert happens
+     * in the review UI (`approveAttachmentToVault` in lore-entry-review.ts)
+     * before this is called via the card's onApprove callback.
+     */
+    approveProposedLoreImage(filePath: string): void {
+        this.coWriterSession.proposedLoreImages.delete(filePath);
+        this.coWriterSession.onProposedLoreImagesUpdate?.();
+    }
+
+    /** Reject a pending lore image attachment set for a specific file. */
+    rejectProposedLoreImage(filePath: string): void {
+        this.coWriterSession.proposedLoreImages.delete(filePath);
+        this.coWriterSession.onProposedLoreImagesUpdate?.();
     }
 
     /** Resolve the CodeMirror view of the active markdown editor, if any. */
@@ -3017,8 +3042,8 @@ export default class EventideQuillPlugin extends Plugin {
 
                 // Prepend Obsidian's built-in aliases as a header so the AI
                 // can connect nicknames to the character/entry when retrieved
-                // via embedding similarity. Without this, "Dripsy" in the
-                // manuscript text won't match the "Freddy Lupin" lore chunk.
+                // via embedding similarity. Without this, "Connie" in the
+                // manuscript text won't match the "Sarah Connor" lore chunk.
                 const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
                 const aliases = parseAliases(frontmatter?.['aliases']);
                 const textForChunking =

@@ -26,7 +26,7 @@ import { EmbeddingCache, rankBySimilarity } from './embedding-cache';
 import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
 import { ChangeSet } from '../core/change-set';
-import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
+import type { LoreEntryType, LoreDraftEntry, ProposedImage } from '../core/dashboard/lorebook-types';
 import { createReadOnlyToolRegistry, createToolRegistry, executeToolCall, type ToolContext } from './tools';
 import {
     getImageRegime,
@@ -628,7 +628,7 @@ export interface LoreCoachSession {
 // Re-export LoreDraftEntry from its canonical home in lorebook-types so
 // existing call sites (panel, review UI, main.ts) keep importing from here
 // without churn. New code should import from '../core/dashboard/lorebook-types'.
-export type { LoreDraftEntry } from '../core/dashboard/lorebook-types';
+export type { LoreDraftEntry, ProposedImage } from '../core/dashboard/lorebook-types';
 
 /** A single continuation option suggested by the AI. */
 export interface CoWriterOption {
@@ -795,6 +795,16 @@ export class CoWriterSession {
     /** Pending note edits keyed by vault path (from edit_note / insert_note / append_to_note tools). */
     loreEdits: Map<string, { changeSet: ChangeSet; fileBasename: string }> = new Map();
     /**
+     * Pending image attachments keyed by vault path (from the
+     * `attach_lore_image` tool). Path B of the lore-entry-images feature:
+     * the agent attaches images to EXISTING entries (vs. Path A's
+     * `propose_entry` images, which travel with a new-entry draft). Each
+     * file's images are reviewed individually; on approval the bytes are
+     * written to the attachments folder and the `![[file]]` embed is
+     * inserted into the entry's gallery section.
+     */
+    proposedLoreImages: Map<string, { fileBasename: string; images: ProposedImage[] }> = new Map();
+    /**
      * Files that the tool opened in a new tab (not previously open). These
      * tabs are closed when the edit is approved or rejected so multi-file
      * edits don't leave a trail of tabs behind. Files the writer already had
@@ -812,6 +822,8 @@ export class CoWriterSession {
     private loreEditWriteQueue: Map<string, Promise<void>> = new Map();
     /** Called when a lore edit is proposed, approved, or rejected. */
     onLoreEditUpdate: (() => void) | null = null;
+    /** Called when proposed lore images are added, approved, or rejected. */
+    onProposedLoreImagesUpdate: (() => void) | null = null;
 
     /** Fulfill-mode proposed edits (one per directive), in document order. */
     fulfillChanges: ChangeSet = new ChangeSet();
@@ -2960,6 +2972,29 @@ export class CoWriterSession {
     }
 
     /**
+     * Get or create a per-file proposed-images entry. Multiple images may
+     * accumulate against the same file across rounds (e.g., a multi-form
+     * character getting one image per form via separate `attach_lore_image`
+     * calls); they share one review card per file.
+     */
+    getOrCreateProposedLoreImages(
+        filePath: string,
+        fileBasename: string
+    ): { fileBasename: string; images: ProposedImage[] } {
+        let entry = this.proposedLoreImages.get(filePath);
+        if (!entry) {
+            entry = { fileBasename, images: [] };
+            this.proposedLoreImages.set(filePath, entry);
+        }
+        return entry;
+    }
+
+    /** Clear all pending lore image attachments (e.g., on reset / new chat). */
+    clearProposedLoreImages(): void {
+        this.proposedLoreImages.clear();
+    }
+
+    /**
      * Spawn and run a lorebook batch subagent. The subagent runs in its own
      * fresh context (isolated from this conversation), edits through the shared
      * {@link loreEdits} review queue via the tools' side effects, and returns a
@@ -3765,6 +3800,7 @@ export class CoWriterSession {
         this.clearFulfill();
         this.clearDirect();
         this.clearLoreEdit();
+        this.clearProposedLoreImages();
         this.clearSubagents();
         this.manuscriptPath = null;
         this.originalText = '';
@@ -3797,6 +3833,7 @@ export class CoWriterSession {
         this.clearFulfill();
         this.clearDirect();
         this.clearLoreEdit();
+        this.clearProposedLoreImages();
         this.clearSubagents();
         this.originalText = '';
         this.insertionStart = -1;

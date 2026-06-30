@@ -1,5 +1,6 @@
 import { ToolRegistry } from './tool';
 import { appendToNoteTool } from './append-to-note';
+import { attachLoreImageTool } from './attach-lore-image';
 import { calculateFileSizesTool } from './calculate-file-sizes';
 import { createFandomImageTool, createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
 import { createFetchImageUrlTool } from './fetch-image-url';
@@ -12,7 +13,7 @@ import { insertNoteTool } from './insert-note';
 import { loreSiblingsTool } from './lore-siblings';
 import { manuscriptMentionsTool } from './manuscript-mentions';
 import { measureFolderTool } from './measure-folder';
-import { proposeEntryTool } from './propose-entry';
+import { createProposeEntryTool } from './propose-entry';
 import { refreshDashboardTool } from './refresh-dashboard';
 import { runResearchTool } from './research';
 import { reviseEditTool } from './revise-edit';
@@ -24,6 +25,7 @@ export { ToolRegistry, executeToolCall } from './tool';
 export type { Tool, ToolContext, ToolResult } from './tool';
 export { streamWithTools } from './tool-loop';
 export { appendToNoteTool } from './append-to-note';
+export { attachLoreImageTool } from './attach-lore-image';
 export { calculateFileSizesTool } from './calculate-file-sizes';
 export { createFandomImageTool, createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
 export { createFetchImageUrlTool } from './fetch-image-url';
@@ -36,7 +38,7 @@ export { insertNoteTool } from './insert-note';
 export { loreSiblingsTool } from './lore-siblings';
 export { manuscriptMentionsTool } from './manuscript-mentions';
 export { measureFolderTool } from './measure-folder';
-export { proposeEntryTool } from './propose-entry';
+export { createProposeEntryTool } from './propose-entry';
 export { refreshDashboardTool } from './refresh-dashboard';
 export { reviseEditTool } from './revise-edit';
 export { runLorebookBatchTool } from './run-lorebook-batch';
@@ -91,12 +93,19 @@ export function createReadOnlyToolRegistry(plugin: EventideQuillPlugin, includeE
 }
 
 /**
- * Build a registry for the Lorebook Coach: the ten internal tools plus
- * `propose_entry` (which surfaces a draft to the UI for review).
+ * Build a registry for the Lorebook Coach: the twelve internal tools plus
+ * `propose_entry` (which surfaces a draft to the UI for review). When the
+ * writer has enabled agent image attachments (`loreEntryImageAttachments`),
+ * `propose_entry` is built with the `images` parameter in its schema, and
+ * `attach_lore_image` is registered for batch edits to existing entries.
  */
-export function createLoreCoachToolRegistry(): ToolRegistry {
+export function createLoreCoachToolRegistry(plugin: EventideQuillPlugin): ToolRegistry {
     const registry = createInternalToolRegistry();
-    registry.register(proposeEntryTool);
+    const allowImages = plugin.settings.loreEntryImageAttachments;
+    registry.register(createProposeEntryTool(allowImages));
+    if (allowImages) {
+        registry.register(attachLoreImageTool);
+    }
     return registry;
 }
 
@@ -120,7 +129,7 @@ export function createToolRegistry(
 ): ToolRegistry | null {
     if (!plugin.settings.coWriterToolsEnabled) return null;
 
-    const registry = includeProposeEntry ? createLoreCoachToolRegistry() : createInternalToolRegistry();
+    const registry = includeProposeEntry ? createLoreCoachToolRegistry(plugin) : createInternalToolRegistry();
 
     if (allowSubagents) {
         registry.register(runLorebookBatchTool);

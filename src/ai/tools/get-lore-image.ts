@@ -9,7 +9,7 @@ import type { Tool, ToolContext, ToolResult } from './tool';
  * image bytes; the chat model sees them directly when vision-capable, or the
  * configured image model describes them when it isn't.
  *
- * Pass a specific `label` (e.g., "Wolfed state") to pick one form from a
+ * Pass a specific `label` (e.g., "Alternate form") to pick one form from a
  * multi-form entry. Omit `label` to fetch the entry's first image.
  *
  * Source: the lorebook scanner (`scanLorebook`) over
@@ -23,7 +23,7 @@ export const getLoreImageTool: Tool = {
     description:
         'Fetch a reference image attached to a lore entry. Pass the entry ' +
         'name (matches the file basename or any alias) and an optional label ' +
-        'to pick one form from a multi-form entry (e.g., "Wolfed state"). ' +
+        'to pick one form from a multi-form entry (e.g., "Alternate form"). ' +
         'Returns the image bytes; you see them directly when vision-capable, ' +
         'or the configured image model describes them. Omit `label` for the ' +
         "entry's first image. Use only after `lore_siblings` listed images " +
@@ -41,7 +41,7 @@ export const getLoreImageTool: Tool = {
                 type: 'string',
                 description:
                     'Optional label of the specific image to fetch (e.g., ' +
-                    '"Human form", "Wolfed state"). Must match a label from ' +
+                    '"Default form", "Alternate form"). Must match a label from ' +
                     "the `(images: …)` list. Omit for the entry's first image."
             }
         },
@@ -54,7 +54,7 @@ export const getLoreImageTool: Tool = {
         const { plugin } = ctx;
         const entryQuery = typeof args.entry === 'string' ? args.entry.trim() : '';
         if (!entryQuery) {
-            return { text: 'Error: "entry" is required. Pass the lore entry name (e.g., "Freddy Lupin").' };
+            return { text: 'Error: "entry" is required. Pass the lore entry name (e.g., "Sarah Connor").' };
         }
         const labelQuery = typeof args.label === 'string' ? args.label.trim().toLowerCase() : '';
 
@@ -118,8 +118,8 @@ export const getLoreImageTool: Tool = {
 /**
  * Find the first lore entry whose basename OR any alias matches `query`,
  * case-insensitively. Basename match takes priority; alias match is the
- * fallback so nicknames ("Dripsy") resolve to the canonical entry ("Freddy
- * Lupin") when aliases are present.
+ * fallback so nicknames ("Connie") resolve to the canonical entry ("Sarah
+ * Connor") when aliases are present.
  */
 function findEntryByQuery(
     entries: { fileBasename: string; aliases: string[] }[],
@@ -135,7 +135,7 @@ function findEntryByQuery(
             return e as { fileBasename: string; aliases: string[]; images: LoreEntryImage[] };
         }
     }
-    // Substring fallback — catches "Freddy" matching "Freddy Lupin".
+    // Substring fallback — catches "Sarah" matching "Sarah Connor".
     for (const e of entries) {
         if (e.fileBasename.toLowerCase().includes(needle)) {
             return e as { fileBasename: string; aliases: string[]; images: LoreEntryImage[] };

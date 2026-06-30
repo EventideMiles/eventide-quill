@@ -130,7 +130,7 @@ export function createFandomPageTool(maxResultTokens: number, allowedWikis: stri
                 },
                 title: {
                     type: 'string',
-                    description: 'Exact page title as returned by fandom_lookup (e.g., "Winslow Spectre").'
+                    description: 'Exact page title as returned by fandom_lookup (e.g., "Luke Skywalker").'
                 }
             },
             required: ['wiki', 'title']
