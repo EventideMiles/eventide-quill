@@ -2,6 +2,7 @@ import { Component, ItemView, MarkdownView, Notice, setIcon, WorkspaceLeaf } fro
 import { LintResult, RULE_INFO, FIXABLE_RULES } from '../core/linter/types';
 import { FIXES } from '../core/linter/fixes';
 import { renderChangeCard, renderChangeBulkBar } from './change-card';
+import type { TokenBreakdown } from './token-indicator';
 import { applyReplacement } from '../core/linter/apply-fix';
 import { findEditorView } from '../utils/find-editor';
 import { FixWithAiModal } from './fix-with-ai-modal';
@@ -942,8 +943,8 @@ export class QuillSidebarView extends ItemView {
 
     /** Set the conversation token estimate for the Co-writer token indicator.
      * The panel adds vault context item tokens on top to compute the total. */
-    coWriterSetContextTokenEstimate(tokens: number): void {
-        this.coWriterPanel?.setContextTokenEstimate(tokens);
+    coWriterSetContextTokenEstimate(breakdown: TokenBreakdown): void {
+        this.coWriterPanel?.setContextTokenEstimate(breakdown);
     }
 
     /** Set the additional context file token estimate for the Co-writer token indicator. */

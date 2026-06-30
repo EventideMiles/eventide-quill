@@ -14,6 +14,7 @@ import { DEFAULT_SETTINGS, EventideQuillSettings, EventideQuillSettingTab } from
 import { lint } from './core/linter/linter';
 import { getLintExtension, setLintResults, toggleLintActive } from './core/linter/decorations';
 import { QUILL_VIEW_TYPE, QuillSidebarView } from './ui/quill-sidebar';
+import type { TokenBreakdown } from './ui/token-indicator';
 import { LintResult, FIXABLE_RULES, RULE_INFO } from './core/linter/types';
 import { FIXES } from './core/linter/fixes';
 import { applyReplacement } from './core/linter/apply-fix';
@@ -1782,8 +1783,8 @@ export default class EventideQuillPlugin extends Plugin {
         session.onDescribingImages = (active: boolean) => {
             this.lintPanel?.coWriterSetDescribingImages(active);
         };
-        session.onTokenEstimate = (conversationTokens: number, maxTokens: number) => {
-            this.lintPanel?.coWriterSetContextTokenEstimate(conversationTokens);
+        session.onTokenEstimate = (breakdown: TokenBreakdown, maxTokens: number) => {
+            this.lintPanel?.coWriterSetContextTokenEstimate(breakdown);
             this.lintPanel?.coWriterSetMaxAllowedTokens(maxTokens);
         };
         session.onDiscussStartStreaming = () => {
@@ -2436,7 +2437,7 @@ export default class EventideQuillPlugin extends Plugin {
         this.coWriterSession.resetChat(clearContext);
         this.lintPanel?.coWriterSetCoachActive(false);
         this.lintPanel?.coWriterSetCoachPhase('discern');
-        this.lintPanel?.coWriterSetContextTokenEstimate(0);
+        this.lintPanel?.coWriterSetContextTokenEstimate({ sections: [], total: 0 });
         if (clearContext) {
             this.lintPanel?.coWriterSetAdditionalContextTokens(0);
         }
