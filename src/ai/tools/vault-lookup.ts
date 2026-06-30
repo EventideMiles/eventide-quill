@@ -1,7 +1,6 @@
 import { normalizePath, TFile } from 'obsidian';
 import type { Tool, ToolContext } from './tool';
 import { splitFrontmatter } from './lore-edit-helpers';
-import { stripGallerySections } from '../../core/dashboard/lorebook-scanner';
 
 /**
  * Read the text content of a note in the user's vault. Use to pull in
@@ -13,9 +12,17 @@ import { stripGallerySections } from '../../core/dashboard/lorebook-scanner';
  * Path lookups are exact; name lookups search the metadata cache and resolve
  * the first match.
  *
- * Result is the note's body text with frontmatter stripped. If the file
- * doesn't exist or isn't readable, returns a clear error string so the
- * model can recover (e.g., ask the user for the correct path).
+ * Result is the note's body text with frontmatter stripped, EXACTLY as it
+ * appears in the file. If the file doesn't exist or isn't readable, returns
+ * a clear error string so the model can recover (e.g., ask the user for the
+ * correct path).
+ *
+ * IMPORTANT: vault_lookup returns the verbatim body so the model can quote
+ * distinctive snippets as `anchor` arguments to `insert_note` / `edit_note`.
+ * Stripping or rewriting the body here breaks the editing flow — the model
+ * would anchor on text that doesn't exist in the actual file. Gallery
+ * stripping for token-budget purposes happens at embedding-chunk time and
+ * top-K injection time, NOT here.
  *
  * Security: the only file-access path is `vault.getAbstractFileByPath` /
  * `metadataCache.getFirstLinkpathDest` plus `vault.cachedRead`. Both honor
@@ -29,10 +36,11 @@ export const vaultLookupTool: Tool = {
     description:
         'Read the text content of a note in the vault. Pass a vault-relative ' +
         'path (e.g., "Lore/Characters/Sarah Connor.md") or a note name ' +
-        '(e.g., "Sarah Connor"). Returns the body text without frontmatter. ' +
-        'IMPORTANT: results stay in context for ALL subsequent turns — read ' +
-        'files judiciously, especially during multi-file edits. Read one file, ' +
-        'make your edit, then move to the next.',
+        '(e.g., "Sarah Connor"). Returns the body text WITHOUT frontmatter, ' +
+        'verbatim — quote distinctive snippets from the result as the `anchor` ' +
+        'for insert_note / edit_note. IMPORTANT: results stay in context for ' +
+        'ALL subsequent turns — read files judiciously, especially during ' +
+        'multi-file edits. Read one file, make your edit, then move to the next.',
     parameters: {
         type: 'object',
         properties: {
@@ -62,13 +70,14 @@ export const vaultLookupTool: Tool = {
             return `Note "${file.path}" is empty.`;
         }
 
-        const body = splitFrontmatter(raw).body;
-        // Strip gallery sections from the returned body so ![[file.png]] syntax
-        // doesn't leak into the model's context. The marker that replaces each
-        // section preserves the gallery heading, per-label image counts, and
-        // points the model at get_lore_image — so the model still knows what
-        // images exist and how to fetch them, without the useless embed text.
-        return stripGallerySections(body, ctx.plugin.settings.loreEntryImageSectionHeaders).stripped;
+        // Return the verbatim body. Do NOT strip gallery sections here — the
+        // model uses this output to construct anchors for insert_note /
+        // edit_note, and any rewriting (including the gallery-section marker
+        // that replaces embed syntax elsewhere) would make those anchors
+        // fail against the actual file. Embed text is small and harmless in
+        // this context; the token-budget stripping happens at chunk time
+        // and top-K injection time, which don't feed the editing tools.
+        return splitFrontmatter(raw).body;
     }
 };
 

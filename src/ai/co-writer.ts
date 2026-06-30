@@ -32,17 +32,13 @@ import type { LoreEntryType, LoreDraftEntry, ProposedImage } from '../core/dashb
 import { stripGallerySections } from '../core/dashboard/lorebook-scanner';
 
 /**
- * Strip image-gallery sections from text bound for the model's context, so
- * the active document's gallery doesn't leak `![[file.png]]` syntax into
- * prompts. The marker replaces it with "this entry has images, here are
- * the labels, use get_lore_image." No-op when the text has no recognized
- * gallery section or when the writer hasn't configured any headers.
+ * Strip gallery sections from injected top-K lore chunks (only — see callers
+ * in resolveEmbedPathsToMessages). NOT used for active-file proseForContext
+ * or vault_lookup output, because the model relies on those views being
+ * verbatim to construct anchors for insert_note / edit_note. Stripping at
+ * retrieval-time (top-K) is purely a token-budget measure on similarity-
+ * matched chunks that the model is browsing, not editing against.
  */
-function stripGalleryForContext(plugin: EventideQuillPlugin, text: string): string {
-    const headers = plugin.settings.loreEntryImageSectionHeaders;
-    if (headers.length === 0) return text;
-    return stripGallerySections(text, headers).stripped;
-}
 import { createReadOnlyToolRegistry, createToolRegistry, executeToolCall, type ToolContext } from './tools';
 import {
     getImageRegime,
@@ -975,13 +971,13 @@ export class CoWriterSession {
             const endPos = editor.offsetToPos(fullText.length);
             editor.setCursor(endPos);
             editor.scrollIntoView({ from: endPos, to: endPos }, true);
-            proseForOptions = stripGalleryForContext(plugin, fullText.slice(-4000));
+            proseForOptions = fullText.slice(-4000);
         } else {
             const cursor = editor.getCursor();
             fullText = editor.getValue();
             const cursorOffset = editor.posToOffset(cursor);
             const textBeforeCursor = fullText.slice(0, cursorOffset);
-            proseForOptions = stripGalleryForContext(plugin, textBeforeCursor.slice(-4000));
+            proseForOptions = textBeforeCursor.slice(-4000);
         }
 
         // Add user's message to chat history
@@ -1309,10 +1305,7 @@ export class CoWriterSession {
 
         const fullText = editor?.getValue() ?? '';
         const proseForContext = editor
-            ? stripGalleryForContext(
-                  plugin,
-                  editor.getValue().slice(0, editor.posToOffset(editor.getCursor())).slice(-4000)
-              )
+            ? editor.getValue().slice(0, editor.posToOffset(editor.getCursor())).slice(-4000)
             : '';
 
         // Build injected context — vault + additional files.
@@ -1667,10 +1660,7 @@ export class CoWriterSession {
 
         const fullText = editor?.getValue() ?? '';
         const proseForContext = editor
-            ? stripGalleryForContext(
-                  plugin,
-                  editor.getValue().slice(0, editor.posToOffset(editor.getCursor())).slice(-4000)
-              )
+            ? editor.getValue().slice(0, editor.posToOffset(editor.getCursor())).slice(-4000)
             : '';
 
         // Build injected context
@@ -2101,7 +2091,7 @@ export class CoWriterSession {
         const fullText = editor.getValue();
         const cursorOffset = editor.posToOffset(cursor);
         const textBeforeCursor = fullText.slice(0, cursorOffset);
-        const proseForOptions = stripGalleryForContext(plugin, textBeforeCursor.slice(-4000));
+        const proseForOptions = textBeforeCursor.slice(-4000);
 
         const coachSummary = this.buildCoachSummary();
         const prompt = getCoWriterCoachToOptions(proseForOptions || '(empty document)', coachSummary, direction);
@@ -3599,7 +3589,7 @@ export class CoWriterSession {
             plugin.settings.wikiLinkBehavior
         );
 
-        const proseForContext = stripGalleryForContext(plugin, textBeforeCursor.slice(-12000));
+        const proseForContext = textBeforeCursor.slice(-12000);
 
         // Parse stopping point from direction
         const stoppingPoint = direction ? parseStoppingPoint(direction) : null;
