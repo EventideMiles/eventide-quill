@@ -320,6 +320,10 @@ export class QuillSidebarView extends ItemView {
         this.addChild(this.renderEvents);
 
         this.tabBar.empty();
+        // Tear down the co-writer panel's resize observer + keydown listener
+        // so they can't fire on — or repopulate — another tab's UI while the
+        // co-writer tab is inactive. setContainer re-establishes both on return.
+        this.coWriterPanel?.detach();
         this.content.empty();
 
         this.renderTopTabBar();

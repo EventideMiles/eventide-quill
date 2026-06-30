@@ -880,6 +880,10 @@
     &__image-describing-icon {
         opacity: 0.7;
         animation: quill-describe-pulse 1.5s ease-in-out infinite;
+
+        @media (prefers-reduced-motion: reduce) {
+            animation: none;
+        }
     }
 
     /* Compact button for co-writer panel */

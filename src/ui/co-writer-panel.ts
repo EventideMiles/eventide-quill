@@ -105,6 +105,13 @@ export class CoWriterPanel extends AbstractChatPanel {
      * on new chat. Capped at {@link MAX_PENDING_IMAGES}.
      */
     private pendingImages: string[] = [];
+    /**
+     * Monotonic counter bumped every time {@link pendingImages} is cleared.
+     * {@link addImageFiles} captures this before its async downscale work and
+     * re-checks before each push so stale results (cleared mid-flight by a
+     * send, mode switch, or new chat) are discarded.
+     */
+    private imageGeneration = 0;
     /** Whether the last message is streaming (in-progress assistant response). */
     private discussStreaming = false;
     /** Current coach phase, if coach mode is active. */
@@ -230,6 +237,22 @@ export class CoWriterPanel extends AbstractChatPanel {
             }
         });
         this.resizeObserver.observe(containerEl);
+    }
+
+    /**
+     * Disconnect the resize observer and remove the keydown listener so the
+     * panel cannot fire on — or repopulate — another tab's UI after the
+     * sidebar clears or reuses the shared content container. Called by the
+     * sidebar before every re-render; {@link setContainer} re-establishes
+     * both when the co-writer tab is re-activated.
+     */
+    detach(): void {
+        this.resizeObserver?.disconnect();
+        this.resizeObserver = null;
+        if (this.containerEl && this.keydownHandler) {
+            this.containerEl.removeEventListener('keydown', this.keydownHandler);
+            this.keydownHandler = null;
+        }
     }
 
     /** Set the handler invoked when the user sends a direction in Direct mode. */
@@ -411,10 +434,14 @@ export class CoWriterPanel extends AbstractChatPanel {
         const oldMode = this.inputMode;
         this.inputMode = mode;
         this.modePickerOpen = false;
-        // Drop any queued images — an image attached for one mode shouldn't
-        // follow the writer into another (a lorebook reference image shouldn't
-        // land in a discuss turn, etc.).
-        this.pendingImages = [];
+        // Drop any queued images when the mode actually changes — an image
+        // attached for one mode shouldn't follow the writer into another (a
+        // lorebook reference image shouldn't land in a discuss turn, etc.).
+        // A no-op reselect (clicking the already-active mode) preserves them.
+        if (oldMode !== mode) {
+            this.imageGeneration++;
+            this.pendingImages = [];
+        }
         // Entering or leaving a stateful mode resets the chat so the new mode
         // starts fresh: fulfill holds its own ChangeSet, lorebook holds its
         // own session state, and neither should inherit the other's history.
@@ -1624,6 +1651,7 @@ export class CoWriterPanel extends AbstractChatPanel {
                 'New chat',
                 'Start a new chat? The conversation will be cleared. Manuscript and vault context files will be kept.',
                 () => {
+                    this.imageGeneration++;
                     this.pendingImages = [];
                     this.onNewChat?.(false);
                 },
@@ -1631,6 +1659,7 @@ export class CoWriterPanel extends AbstractChatPanel {
                 {
                     text: 'Clear context too',
                     handler: () => {
+                        this.imageGeneration++;
                         this.pendingImages = [];
                         this.onNewChat?.(true);
                     }
@@ -1779,10 +1808,15 @@ export class CoWriterPanel extends AbstractChatPanel {
         });
 
         // Drag-and-drop image capture onto the textarea area. preventDefault on
-        // dragover is required for the drop event to fire.
+        // dragover is required for the drop event to fire — but only advertise
+        // acceptance for image files so non-image drops (e.g. a .md note) fall
+        // through to the host instead of being silently swallowed.
         this.renderEvents.registerDomEvent(taRow, 'dragover', (e: DragEvent) => {
             if (this.inputMode === 'direct' || this.inputMode === 'fulfill') return;
-            e.preventDefault();
+            const hasImage = Array.from(e.dataTransfer?.items ?? []).some(
+                (item) => item.kind === 'file' && isImageContentType(item.type)
+            );
+            if (hasImage) e.preventDefault();
         });
         this.renderEvents.registerDomEvent(taRow, 'drop', (e: DragEvent) => {
             if (this.inputMode === 'direct' || this.inputMode === 'fulfill') return;
@@ -1821,6 +1855,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             // prose-continuation and stay text-only, so their pendingImages is
             // always empty by construction (capture is disabled there).
             const sentImages = this.pendingImages.length > 0 ? [...this.pendingImages] : undefined;
+            this.imageGeneration++;
             this.pendingImages = [];
             if (this.inputMode === 'direct') {
                 this.optionsLoading = true;
@@ -1956,11 +1991,13 @@ export class CoWriterPanel extends AbstractChatPanel {
     private async addImageFiles(files: File[] | FileList): Promise<void> {
         if (this.inputMode === 'direct' || this.inputMode === 'fulfill') return;
         const maxDim = this.plugin.settings.lorebookImageMaxDimension;
+        const gen = this.imageGeneration;
         let added = 0;
         let capWarned = false;
         let typeWarned = false;
         let sizeWarned = false;
         for (const file of Array.from(files)) {
+            if (gen !== this.imageGeneration) return; // queue cleared mid-flight
             if (!isImageContentType(file.type)) {
                 if (!typeWarned) {
                     new Notice('Quill: Only image files can be attached.');
@@ -1988,6 +2025,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             try {
                 const bytes = await file.arrayBuffer();
                 const b64 = await downscaleToJpegBase64(bytes, maxDim, file.type);
+                if (gen !== this.imageGeneration) return; // queue cleared during downscale
                 this.pendingImages.push(b64);
                 added++;
             } catch (err) {

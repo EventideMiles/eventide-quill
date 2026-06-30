@@ -1335,6 +1335,14 @@ export class CoWriterSession {
         // the images attach to this user message; under Regime B the proxy caption is folded
         // into the text; under unsupported a placeholder note is appended.
         const prepared = await this.prepareImageMessage(plugin, prompt, images, this.abortController?.signal);
+        // Guard against an abort race: cancelGeneration may have cleared
+        // this.abortController during the Regime B proxy-caption await.
+        if (!this.abortController || this.abortController.signal.aborted) {
+            this.unlockEditor();
+            this.optionsLoading = false;
+            this.onOptionsLoading?.(false);
+            return;
+        }
         this.discussCurrentMessages.push({
             role: 'user',
             content: prepared.content,
@@ -1684,6 +1692,15 @@ export class CoWriterSession {
                     ...(prepared.images ? { images: prepared.images } : {})
                 });
             }
+        }
+
+        // Guard against an abort race: cancelGeneration may have cleared
+        // this.abortController during a Regime B proxy-caption await above.
+        if (!this.abortController || this.abortController.signal.aborted) {
+            this.unlockEditor();
+            this.optionsLoading = false;
+            this.onOptionsLoading?.(false);
+            return;
         }
 
         // Build the tool registry up front so its fixed per-request overhead
@@ -2176,6 +2193,14 @@ export class CoWriterSession {
                 content: prepared.content,
                 ...(prepared.images ? { images: prepared.images } : {})
             });
+        }
+
+        // Guard against an abort race: cancelGeneration may have cleared
+        // this.abortController during a Regime B proxy-caption await above.
+        if (!this.abortController || this.abortController.signal.aborted) {
+            this.optionsLoading = false;
+            this.onOptionsLoading?.(false);
+            return;
         }
 
         const registry = createToolRegistry(plugin, true, true);

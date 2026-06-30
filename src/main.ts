@@ -1043,14 +1043,32 @@ export default class EventideQuillPlugin extends Plugin {
         // grounding ("every detail should be grounded in something visible",
         // "leave it out if unclear", "stop when done"). Upgrade users who still
         // have either old default so they benefit without manually resetting.
-        // Users with a genuinely custom prompt are untouched.
+        // Uses exact string comparison so a custom prompt that merely starts
+        // with the old text is never clobbered.
+        const LEGACY_IMAGE_PROXY_PROMPT_V1 =
+            'Describe this image for a novelist. Focus on visible details that matter ' +
+            'for fiction: character appearance (face, build, age, ethnicity, clothing, ' +
+            'distinguishing features), setting, mood, and notable objects. Be concise ' +
+            'and concrete; avoid speculation about story or dialogue.';
+        const LEGACY_IMAGE_PROXY_PROMPT_V2 =
+            'Describe this image in detail for a novelist. This description is the only ' +
+            'information the writing assistant will have about the image, so be thorough, ' +
+            'not brief.\n\n' +
+            'If MULTIPLE characters are visible, describe EACH one separately using a ' +
+            'numbered list (1, 2, 3, ...). For every character, cover:\n' +
+            '- Face: apparent age, ethnicity, hair (color, style, length), eye color, facial features\n' +
+            '- Build: height relative to others in the scene, body type, posture\n' +
+            '- Clothing: each visible garment, colors, style, condition\n' +
+            '- Distinguishing features: scars, tattoos, jewelry, accessories, weapons\n' +
+            'Also describe the setting (location, time of day, lighting, weather), the ' +
+            'mood or atmosphere, and any notable objects (books, maps, artifacts, tools).\n\n' +
+            'Stick to what is visible — do not speculate about story, dialogue, or ' +
+            'off-screen elements.';
         if (
             saved &&
             typeof saved.lorebookImageProxyPrompt === 'string' &&
-            (saved.lorebookImageProxyPrompt.startsWith(
-                'Describe this image for a novelist. Focus on visible details'
-            ) ||
-                saved.lorebookImageProxyPrompt.startsWith('Describe this image in detail for a novelist.'))
+            (saved.lorebookImageProxyPrompt === LEGACY_IMAGE_PROXY_PROMPT_V1 ||
+                saved.lorebookImageProxyPrompt === LEGACY_IMAGE_PROXY_PROMPT_V2)
         ) {
             saved.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
         }

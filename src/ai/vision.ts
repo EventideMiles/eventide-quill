@@ -108,20 +108,15 @@ export async function resolveImageInjection(
 ): Promise<ImageInjection> {
     if (images.length === 0) return { kind: 'native', images: [] };
 
-    // Regime A — the configured chat model is itself vision-capable, so
-    // images flow straight into the conversation as image content.
-    const chat = plugin.getDefaultChatProvider();
-    if (chat.provider && chat.modelId) {
-        const chatModel = chat.provider.config.models.find((m) => m.id === chat.modelId);
-        if (chatModel && chatModel.role === 'chat-image') {
-            return { kind: 'native', images };
-        }
-    }
+    // Delegate regime detection to {@link getImageRegime} so UI guards and
+    // injection routing always agree on what "native", "proxy", and "none"
+    // mean — the detection logic lives in one place.
+    const regime = getImageRegime(plugin);
 
-    // Regime B — route to the configured default image model (possibly on a
-    // different provider). The proxy call is self-contained.
-    const image = plugin.getDefaultImageProvider();
-    if (!image.provider || !image.modelId) {
+    // Regime A — images flow straight into the conversation as image content.
+    if (regime === 'native') return { kind: 'native', images };
+
+    if (regime === 'none') {
         return {
             kind: 'unsupported',
             reason:
@@ -130,7 +125,10 @@ export async function resolveImageInjection(
         };
     }
 
-    const caption = await captionWithModel(plugin, image.provider, image.modelId, images, opts);
+    // Regime B — route to the configured default image model (possibly on a
+    // different provider). The proxy call is self-contained.
+    const image = plugin.getDefaultImageProvider();
+    const caption = await captionWithModel(plugin, image.provider!, image.modelId!, images, opts);
     return { kind: 'described', text: caption };
 }
 
