@@ -119,7 +119,11 @@ async function saveDraftToVault(draft: LoreDraftEntry, plugin: EventideQuillPlug
     // accidental overwrites.
     if (draft.proposedImages && draft.proposedImages.length > 0) {
         try {
-            const resolved = await writeProposedImages(draft.proposedImages, plugin);
+            // Pass the soon-to-be-created note's target path so Obsidian's
+            // "./"-relative attachment-folder modes resolve against the new
+            // note's parent folder (matching how Obsidian handles pastes
+            // into a freshly-created note).
+            const resolved = await writeProposedImages(draft.proposedImages, plugin, targetPath);
             // If any image's filename changed during uniqueness resolution,
             // rewrite the embed in the content so the saved note points at
             // the actual file the writer will see.
@@ -250,20 +254,82 @@ export function renderProposedImageThumbnails(
 }
 
 /**
- * Resolve the folder where agent-attached images should be written. Falls
- * back to Obsidian's configured attachment folder when the setting is empty.
- * Always returns a `normalizePath()`-wrapped value (possibly empty for the
- * vault root).
+ * Resolve the folder where agent-attached images should be written.
+ *
+ * Resolution order:
+ * 1. Plugin setting `loreEntryImageAttachmentFolder` (non-empty) — always
+ *    wins, treated as a vault-relative absolute path. `normalizePath`-wrapped.
+ * 2. Obsidian's configured attachment folder (`getConfig('attachmentFolderPath')`)
+ *    — handles the three modes Obsidian supports:
+ *      - Vault root: returns ''.
+ *      - Absolute path (e.g., "Attachments"): returned as-is.
+ *      - Relative ("./" = same folder as current file, "./subfolder" =
+ *        subfolder of current file's folder): resolved against the parent
+ *        folder of `currentFilePath`. Without a current file, the relative
+ *        part is treated as vault-root-relative (best-effort fallback).
+ *
+ * `currentFilePath` matters for Path A (new entry) and Path B (existing
+ * entry). For Path A it should be the soon-to-be-created note's target
+ * path — the parent folder of the new note is what "./" resolves against,
+ * matching how Obsidian handles pastes into a freshly-created note.
  */
-export function resolveAttachmentFolder(plugin: EventideQuillPlugin): string {
+export function resolveAttachmentFolder(plugin: EventideQuillPlugin, currentFilePath?: string): string {
     const configured = plugin.settings.loreEntryImageAttachmentFolder.trim();
     if (configured.length > 0) return normalizePath(configured);
+
     // `Vault#getConfig` is undocumented in the public type defs but is the
     // standard community-plugin way to read Obsidian's attachment-folder
     // setting; cast through unknown to satisfy the typecheck.
     const vaultWithConfig = plugin.app.vault as unknown as { getConfig?: (key: string) => unknown };
     const obsidian = vaultWithConfig.getConfig?.('attachmentFolderPath');
-    return typeof obsidian === 'string' && obsidian.length > 0 ? normalizePath(obsidian) : '';
+    if (typeof obsidian !== 'string' || obsidian.length === 0) return '';
+
+    // "./" = same folder as current file; "./sub" = subfolder of current
+    // file's parent. Resolve against currentFilePath's parent folder.
+    if (obsidian.startsWith('./')) {
+        const subPath = obsidian.slice(2).trim();
+        if (!currentFilePath) {
+            // No current file to resolve against — fall back to vault root
+            // (with the subPath if any, treated as absolute). This is the
+            // best-effort path; the writer should ideally configure the
+            // plugin setting instead of relying on a relative Obsidian
+            // setting for agent-attached images.
+            return subPath ? normalizePath(subPath) : '';
+        }
+        const lastSlash = currentFilePath.lastIndexOf('/');
+        const parentFolder = lastSlash > 0 ? currentFilePath.slice(0, lastSlash) : '';
+        return normalizePath(
+            subPath.length > 0 ? (parentFolder.length > 0 ? `${parentFolder}/${subPath}` : subPath) : parentFolder
+        );
+    }
+
+    // Absolute path in vault (Obsidian's "In the folder specified below" mode).
+    return normalizePath(obsidian);
+}
+
+/**
+ * Ensure every parent directory in `folder` exists, creating them as needed.
+ * `vault.createBinary` does NOT create intermediate folders — if any
+ * component doesn't exist, the write fails with ENOENT. Walks the path
+ * component-by-component and `mkdir`s any missing levels. No-op when the
+ * folder already exists or when `folder` is empty (vault root).
+ */
+export async function ensureAttachmentFolderExists(plugin: EventideQuillPlugin, folder: string): Promise<void> {
+    if (!folder || folder === '/' || folder === '\\') return;
+    const normalized = normalizePath(folder);
+    if (await plugin.app.vault.adapter.exists(normalized)) return;
+    // Walk components in order so nested paths like "a/b/c" create a, then
+    // a/b, then a/b/c. mkdir is not reliably recursive across adapter
+    // implementations, so the explicit walk is the safe path.
+    const parts = normalized.split(/[\\/]/).filter(Boolean);
+    let current = '';
+    for (const part of parts) {
+        current = current ? `${current}/${part}` : part;
+        const candidate = normalizePath(current);
+        if (!(await plugin.app.vault.adapter.exists(candidate))) {
+            await plugin.app.vault.adapter.mkdir(candidate);
+        }
+    }
 }
 
 /**
@@ -277,12 +343,22 @@ export function resolveAttachmentFolder(plugin: EventideQuillPlugin): string {
  * hard rule (AGENTS.md: "Always normalizePath() on user-defined or
  * constructed file paths") — the Obsidian plugin review flags unwrapped
  * paths independently of any lint config.
+ *
+ * `currentFilePath` is passed through to {@link resolveAttachmentFolder}
+ * so Obsidian's "./"-relative attachment-folder modes resolve correctly
+ * (relative to the new note's parent for Path A, the existing entry's
+ * parent for Path B).
  */
 export async function writeProposedImages(
     images: ProposedImage[],
-    plugin: EventideQuillPlugin
+    plugin: EventideQuillPlugin,
+    currentFilePath?: string
 ): Promise<Array<{ original: string; resolved: string }>> {
-    const folder = resolveAttachmentFolder(plugin);
+    const folder = resolveAttachmentFolder(plugin, currentFilePath);
+    // Ensure the folder exists before writing — covers the case where a
+    // relative subfolder (./assets under a fresh lorebook folder) hasn't
+    // been created yet. No-op when the folder already exists.
+    await ensureAttachmentFolderExists(plugin, folder);
     const resolved: Array<{ original: string; resolved: string }> = [];
     for (const image of images) {
         const basePath = folder.length > 0 ? `${folder}/${image.suggestedFilename}` : image.suggestedFilename;
@@ -511,7 +587,10 @@ async function approveAttachmentToVault(
     plugin: EventideQuillPlugin
 ): Promise<boolean> {
     try {
-        const resolved = await writeProposedImages(proposal.images, plugin);
+        // Pass the existing entry's path so Obsidian's "./"-relative
+        // attachment-folder modes resolve against the entry's parent
+        // folder (matching how Obsidian handles pastes into an open note).
+        const resolved = await writeProposedImages(proposal.images, plugin, proposal.filePath);
         // After the bytes are written, insert each embed. Use the resolved
         // filename (which may differ from the suggested one if uniqueness
         // resolution kicked in).
