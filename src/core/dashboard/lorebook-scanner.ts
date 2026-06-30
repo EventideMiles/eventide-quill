@@ -2,6 +2,7 @@ import { App, TFile, normalizePath } from 'obsidian';
 import type { ExtractedEntity } from '../context-engine/types';
 import {
     LoreEntry,
+    LoreEntryImage,
     LoreCoverage,
     LoreCoverageGap,
     LoreEntryType,
@@ -71,9 +72,11 @@ export function findLoreFolder(filePath: string, loreFolders: string[]): string 
 /**
  * Scan all configured lorebook folders and build the lore entry index.
  *
- * Synchronous — uses the Obsidian metadata cache for frontmatter (no file
- * reads). Recomputed on every dashboard refresh; persistence is deferred
- * (see PR plan) unless scan cost becomes noticeable on large vaults.
+ * Synchronous — uses the Obsidian metadata cache for frontmatter AND for the
+ * gallery-section image parser (`fileCache.headings` + `fileCache.embeds`),
+ * so adding image extraction does not introduce file reads. Recomputed on
+ * every dashboard refresh; persistence is deferred unless scan cost becomes
+ * noticeable on large vaults.
  *
  * Entry type resolution order:
  * 1. The file's `quill-type` frontmatter (always wins — per-file override).
@@ -81,20 +84,34 @@ export function findLoreFolder(filePath: string, loreFolders: string[]): string 
  *    mark an entire folder as one type without frontmatter on every file.
  * 3. `untyped` — surfaces in the panel but skips coverage mapping.
  *
- * @param app         The Obsidian app (for vault + metadata cache).
- * @param folders     Vault-relative lorebook folder paths.
- * @param folderTypes Optional per-folder type defaults. Absent key = mixed.
+ * Image extraction is gated by `imageSectionHeaders` — when the array is
+ * empty, the per-file gallery scan is skipped entirely (zero cost, no
+ * `images` field populated). Pass the writer's configured
+ * `loreEntryImageSectionHeaders` to enable it.
+ *
+ * @param app                The Obsidian app (for vault + metadata cache).
+ * @param folders            Vault-relative lorebook folder paths.
+ * @param folderTypes        Optional per-folder type defaults. Absent key = mixed.
+ * @param imageSectionHeaders Lowercased, trimmed heading texts that mark a
+ *                           gallery section (e.g., `['reference', 'gallery']`).
+ *                           Empty disables image extraction.
+ * @param imageMaxPerEntry   Soft cap on images kept per entry. Overflow is
+ *                           silently dropped; the cap is a budget tool, not a
+ *                           content rule.
  * @returns Entries in stable order (folder, then file path).
  */
 export function scanLorebook(
     app: App,
     folders: string[],
-    folderTypes: Record<string, LoreEntryType> = {}
+    folderTypes: Record<string, LoreEntryType> = {},
+    imageSectionHeaders: string[] = [],
+    imageMaxPerEntry = 4
 ): LoreEntry[] {
     if (folders.length === 0) return [];
 
     const normalized = [...new Set(folders.map((f) => normalizePath(f)))];
     const markdownFiles: TFile[] = app.vault.getMarkdownFiles();
+    const headerSet = new Set(imageSectionHeaders.map((h) => normalizeHeaderValue(h)));
 
     const entries: LoreEntry[] = [];
     for (const file of markdownFiles) {
@@ -118,13 +135,16 @@ export function scanLorebook(
         matchSet.delete('');
         const matchNames = [...matchSet];
 
+        const images = headerSet.size > 0 ? extractEntryImages(app, file, cache, headerSet, imageMaxPerEntry) : [];
+
         entries.push({
             filePath: file.path,
             fileBasename: baseName,
             folder,
             type,
             aliases,
-            matchNames
+            matchNames,
+            images
         });
     }
 
@@ -133,6 +153,129 @@ export function scanLorebook(
         return a.filePath.localeCompare(b.filePath);
     });
     return entries;
+}
+
+// ── Gallery-section image extraction ────────────────────────────────────────
+
+/** Image file extensions the scanner recognizes in `![[...]]` embeds. */
+const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'];
+
+/** Lowercase + trim a heading for case-insensitive matching against the configured set. */
+function normalizeHeaderValue(h: string): string {
+    return h.trim().toLowerCase();
+}
+
+/** True if `filename` ends in one of the recognized image extensions. */
+function isImageFile(filename: string): boolean {
+    const lower = filename.toLowerCase();
+    return IMAGE_EXTENSIONS.some((ext) => lower.endsWith('.' + ext));
+}
+
+/**
+ * Parse the caption out of an embed's original text. Obsidian's
+ * `![[file|caption]]` syntax puts the caption after the pipe; the cache's
+ * `link` field strips it, but `original` keeps the whole token. Returns
+ * undefined when no caption is present.
+ */
+function parseEmbedCaption(original: string): string | undefined {
+    // Match `![[anything|caption]]` capturing the caption. Greedy on the
+    // filename side so captions containing `|` (rare) split at the LAST pipe.
+    const match = original.match(/^\s*!\[\[[^\]]*\|([^\]]+)\]\]\s*$/);
+    const caption = match?.[1]?.trim();
+    return caption && caption.length > 0 ? caption : undefined;
+}
+
+/**
+ * Extract labeled images from a lore note's gallery section using only the
+ * metadata cache — no file reads, fully synchronous.
+ *
+ * The gallery section is the first heading whose text (normalized) appears
+ * in `headerSet`. Within that section (until the next heading of the same
+ * or higher level), every image embed is recorded. The implicit label is
+ * the nearest preceding subheading (any heading with level strictly greater
+ * than the gallery section's level). Missing files are kept with
+ * `file: undefined` so the writer can see what's expected but not present.
+ */
+function extractEntryImages(
+    app: App,
+    file: TFile,
+    cache: ReturnType<App['metadataCache']['getFileCache']>,
+    headerSet: Set<string>,
+    maxPerEntry: number
+): LoreEntryImage[] {
+    if (!cache?.headings || cache.headings.length === 0 || !cache.embeds || cache.embeds.length === 0) {
+        return [];
+    }
+
+    // Sort headings by line so we can scan top-down.
+    const headings = [...cache.headings].sort((a, b) => a.position.start.line - b.position.start.line);
+
+    // Find the gallery-section heading: first match in document order.
+    let galleryIdx = -1;
+    for (let i = 0; i < headings.length; i++) {
+        const h = headings[i];
+        if (h && headerSet.has(normalizeHeaderValue(h.heading))) {
+            galleryIdx = i;
+            break;
+        }
+    }
+    if (galleryIdx === -1) return [];
+
+    const galleryHeading = headings[galleryIdx];
+    // Defensive — galleryIdx is guaranteed in range, but noUncheckedIndexedAccess
+    // can't prove that statically.
+    if (!galleryHeading) return [];
+    const galleryLevel = galleryHeading.level;
+    const galleryStart = galleryHeading.position.start.line;
+
+    // The section ends at the next heading of the same or higher level
+    // (shallower), or EOF. Subheadings (deeper) are part of the section.
+    let galleryEnd = Infinity;
+    for (let i = galleryIdx + 1; i < headings.length; i++) {
+        const h = headings[i];
+        if (h && h.level <= galleryLevel) {
+            galleryEnd = h.position.start.line;
+            break;
+        }
+    }
+
+    // For each embed in the gallery section, find its nearest preceding
+    // subheading (level > galleryLevel, line < embed line, max line).
+    const images: LoreEntryImage[] = [];
+    for (const embed of cache.embeds) {
+        const line = embed.position.start.line;
+        if (line <= galleryStart || line >= galleryEnd) continue;
+
+        // `link` is the embed target; `original` keeps the ![[...]] token
+        // (used to recover the caption).
+        const filename = embed.link.split('|')[0]?.trim() ?? embed.link;
+        if (!filename || !isImageFile(filename)) continue;
+
+        let label = '';
+        for (let i = headings.length - 1; i >= 0; i--) {
+            const h = headings[i];
+            if (h && h.position.start.line < line && h.level > galleryLevel) {
+                label = h.heading.trim();
+                break;
+            }
+        }
+
+        // Resolve the embed target to a TFile. `getFirstLinkpathDest` honors
+        // the entry's folder + Obsidian's link resolution (relative paths,
+        // shortest-path heuristics).
+        const resolved = app.metadataCache.getFirstLinkpathDest(embed.link, file.path);
+
+        images.push({
+            filename,
+            label,
+            caption: parseEmbedCaption(embed.original),
+            file: resolved instanceof TFile ? resolved : undefined
+        });
+
+        if (images.length >= maxPerEntry) break;
+    }
+
+    return images;
 }
 
 // ── Substring matching ──────────────────────────────────────────────────────

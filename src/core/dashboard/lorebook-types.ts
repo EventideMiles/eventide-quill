@@ -1,3 +1,4 @@
+import type { TFile } from 'obsidian';
 import type { EntityType } from '../context-engine/types';
 
 /**
@@ -47,6 +48,34 @@ export function entityTypeToLoreType(type: EntityType): LoreEntryType {
     return type;
 }
 
+/**
+ * An image embedded in a lore entry's gallery section. Extracted by the
+ * scanner from the note body (not frontmatter) so Obsidian's rename/move
+ * tracking keeps the embed valid automatically — frontmatter YAML paths
+ * would break silently on rename.
+ *
+ * `label` is the nearest subheading text within the gallery section (e.g.,
+ * "Human form", "Wolfed state"), giving multi-form characters a free
+ * per-image label without a frontmatter grammar. Empty when the image sits
+ * directly under the gallery header with no subheading.
+ *
+ * `caption` comes from the Obsidian embed's caption slot (`![[file|caption]]`).
+ *
+ * `file` is the resolved attachment `TFile`, or `undefined` if the embed
+ * points at a missing file (writer sees a "missing" badge; context
+ * attachment silently skips).
+ */
+export interface LoreEntryImage {
+    /** Vault attachment filename as written in the embed, e.g., "freddy-wolfed.png". */
+    filename: string;
+    /** Nearest subheading text in the gallery section, trimmed. Empty if unsectioned. */
+    label: string;
+    /** Caption from `![[file|caption]]` syntax, if present. */
+    caption?: string;
+    /** Resolved attachment TFile, or undefined when the file is missing. */
+    file?: TFile;
+}
+
 /** A single lore entry discovered in a configured lorebook folder. */
 export interface LoreEntry {
     /** Source file path in the vault. */
@@ -64,6 +93,15 @@ export interface LoreEntry {
      * the file basename plus aliases, lowercased and trimmed, de-duplicated.
      */
     matchNames: string[];
+    /**
+     * Images parsed from the entry's gallery section (any heading whose text
+     * matches a configured `loreEntryImageSectionHeaders` value). Empty when
+     * the entry has no recognized gallery section, no image embeds, or the
+     * scanner was run with an empty section-header list. Beyond
+     * `loreEntryImageMaxPerEntry` the overflow is silently dropped (the
+     * cap is a budget tool, not a content rule).
+     */
+    images: LoreEntryImage[];
 }
 
 /** A manuscript entity with no corresponding lore entry (coverage gap). */

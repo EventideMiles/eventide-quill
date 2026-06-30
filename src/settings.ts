@@ -121,6 +121,20 @@ export interface EventideQuillSettings {
      * chat model. Customizable per-writer focus.
      */
     lorebookImageProxyPrompt: string;
+    /**
+     * Heading texts (case-insensitive, trimmed) that mark a lore entry's
+     * image-gallery section. The lorebook scanner parses image embeds within
+     * any section under one of these headings. Empty disables image
+     * extraction entirely. Defaults cover the common conventions.
+     */
+    loreEntryImageSectionHeaders: string[];
+    /**
+     * Soft cap on the number of images extracted per lore entry. Overflow is
+     * silently dropped at scan time — the cap is a token/latency budget tool,
+     * not a content rule. The writer can still place more embeds in the
+     * note body; only the scanner's `images` array is bounded.
+     */
+    loreEntryImageMaxPerEntry: number;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -221,7 +235,9 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     lorebookImageTools: true,
     lorebookImageMaxDimension: 512,
     lorebookImageMaxDescriptionTokens: 2048,
-    lorebookImageProxyPrompt: DEFAULT_IMAGE_PROXY_PROMPT
+    lorebookImageProxyPrompt: DEFAULT_IMAGE_PROXY_PROMPT,
+    loreEntryImageSectionHeaders: ['Reference', 'Reference images', 'Gallery', 'Forms', 'Appearance', 'Art'],
+    loreEntryImageMaxPerEntry: 4
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -1185,6 +1201,51 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 })
             );
 
+        new Setting(content).setName('Lore entry images').setHeading();
+        new Setting(content)
+            .setName('Image gallery section headings')
+            .setDesc(
+                "Comma-separated headings that mark a lore entry's image-gallery section (case-insensitive). " +
+                    'The scanner parses image embeds (e.g., `![[file.png]]`) under any matching heading and ' +
+                    'surfaces them to the AI via the get_lore_image tool. Subheadings within the gallery ' +
+                    'section become per-image labels (useful for multi-form characters). Example headings: ' +
+                    "'Reference', 'Gallery', 'Forms', 'Appearance'."
+            )
+            .addText((text) =>
+                text
+                    .setValue(this.plugin.settings.loreEntryImageSectionHeaders.join(', '))
+                    .inputEl.addEventListener('blur', () => {
+                        const value = text.inputEl.value
+                            .split(',')
+                            .map((s) => s.trim())
+                            .filter((s) => s.length > 0);
+                        this.plugin.settings.loreEntryImageSectionHeaders = value;
+                        void this.plugin.saveSettings();
+                    })
+            );
+
+        new Setting(content)
+            .setName('Max images per lore entry')
+            .setDesc(
+                'Soft cap on the number of images the scanner extracts per entry. Overflow is silently ' +
+                    'dropped — the cap is a budget tool, not a content rule. The writer can still place ' +
+                    'more embeds in the note body. Default: 4.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.loreEntryImageMaxPerEntry))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 1 && n <= 20) {
+                            this.plugin.settings.loreEntryImageMaxPerEntry = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.loreEntryImageMaxPerEntry));
+                            new Notice('Value must be a number between 1 and 20');
+                        }
+                    })
+            );
+
         new Setting(content)
             .setName('Lorebook folders')
             .setDesc(
@@ -1336,6 +1397,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookImageMaxDescriptionTokens =
                         DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
                     this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
+                    this.plugin.settings.loreEntryImageSectionHeaders = [
+                        ...DEFAULT_SETTINGS.loreEntryImageSectionHeaders
+                    ];
+                    this.plugin.settings.loreEntryImageMaxPerEntry = DEFAULT_SETTINGS.loreEntryImageMaxPerEntry;
                     await this.plugin.saveSettings();
                     this.display();
                 })
@@ -2611,6 +2676,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookImageMaxDescriptionTokens =
                         DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
                     this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
+                    this.plugin.settings.loreEntryImageSectionHeaders = [
+                        ...DEFAULT_SETTINGS.loreEntryImageSectionHeaders
+                    ];
+                    this.plugin.settings.loreEntryImageMaxPerEntry = DEFAULT_SETTINGS.loreEntryImageMaxPerEntry;
                     this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                     this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
                     this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;

@@ -162,4 +162,16 @@
         padding: 2px $space-xs;
         flex-shrink: 0;
     }
+
+    // Image-count chip on entry rows. Rendered only when an entry has at
+    // least one parsed image. Visually distinct from the type badge so a
+    // glance distinguishes "what kind of entry" from "has reference art".
+    &__entry-images {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-faint, var(--text-muted));
+        background: var(--background-modifier-hover);
+        border-radius: $radius-sm;
+        padding: 2px $space-xs;
+        flex-shrink: 0;
+    }
 }

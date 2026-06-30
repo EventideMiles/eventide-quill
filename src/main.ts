@@ -3851,7 +3851,13 @@ export default class EventideQuillPlugin extends Plugin {
         // if the active file no longer matches so stale coverage is never
         // published (the active-leaf-change path can trigger overlapping reads).
         if (activePath !== (this.app.workspace.getActiveFile()?.path ?? null)) return;
-        const loreEntries = scanLorebook(this.app, this.settings.lorebookFolders, this.settings.lorebookFolderTypes);
+        const loreEntries = scanLorebook(
+            this.app,
+            this.settings.lorebookFolders,
+            this.settings.lorebookFolderTypes,
+            this.settings.loreEntryImageSectionHeaders,
+            this.settings.loreEntryImageMaxPerEntry
+        );
         this.currentLoreDocumentCoverage = computeDocumentCoverage(docText, loreEntries, activePath);
         this.lintPanel?.refreshLorebookPanel();
     }
@@ -3901,7 +3907,13 @@ export default class EventideQuillPlugin extends Plugin {
             return;
         }
 
-        const loreEntries = scanLorebook(this.app, this.settings.lorebookFolders, this.settings.lorebookFolderTypes);
+        const loreEntries = scanLorebook(
+            this.app,
+            this.settings.lorebookFolders,
+            this.settings.lorebookFolderTypes,
+            this.settings.loreEntryImageSectionHeaders,
+            this.settings.loreEntryImageMaxPerEntry
+        );
         this.currentLoreManuscriptCoverage = computeManuscriptCoverage(
             manuscriptText,
             loreEntries,

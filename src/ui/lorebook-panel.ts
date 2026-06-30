@@ -251,6 +251,16 @@ function renderLoreEntryRow(container: HTMLElement, entry: LoreEntry, referenced
         text: LORE_TYPE_LABELS[entry.type]
     });
     row.createEl('span', { cls: 'quill-lorebook-panel__entry-name', text: entry.fileBasename });
+    // Image-count chip — visible only when the entry has at least one parsed
+    // image. Surfaces what's available to the AI via `get_lore_image` without
+    // a separate panel; the writer gets a quick visual of which entries are
+    // visually populated. Missing files (badge but no TFile) still count.
+    if (entry.images.length > 0) {
+        row.createEl('span', {
+            cls: 'quill-lorebook-panel__entry-images',
+            text: `${entry.images.length} img${entry.images.length === 1 ? '' : 's'}`
+        });
+    }
 }
 
 /**

@@ -6,6 +6,7 @@ import { createFetchImageUrlTool } from './fetch-image-url';
 import { createFetchUrlTool } from './fetch-url';
 import { createWikipediaLookupTool, createWikipediaPageTool } from './wikipedia-lookup';
 import { editNoteTool } from './edit-note';
+import { getLoreImageTool } from './get-lore-image';
 import { grepNotesTool } from './grep-notes';
 import { insertNoteTool } from './insert-note';
 import { loreSiblingsTool } from './lore-siblings';
@@ -29,6 +30,7 @@ export { createFetchImageUrlTool } from './fetch-image-url';
 export { createFetchUrlTool } from './fetch-url';
 export { createWikipediaLookupTool, createWikipediaPageTool } from './wikipedia-lookup';
 export { editNoteTool } from './edit-note';
+export { getLoreImageTool } from './get-lore-image';
 export { grepNotesTool } from './grep-notes';
 export { insertNoteTool } from './insert-note';
 export { loreSiblingsTool } from './lore-siblings';
@@ -42,10 +44,10 @@ export { runResearchTool } from './research';
 export { vaultLookupTool } from './vault-lookup';
 
 /**
- * Build a registry containing the eleven internal-only tools:
+ * Build a registry containing the twelve internal-only tools:
  * `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`,
  * `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`,
- * `append_to_note`, `revise_edit`, `refresh_dashboard`.
+ * `append_to_note`, `revise_edit`, `refresh_dashboard`, `get_lore_image`.
  */
 export function createInternalToolRegistry(): ToolRegistry {
     const registry = new ToolRegistry();
@@ -60,6 +62,7 @@ export function createInternalToolRegistry(): ToolRegistry {
     registry.register(appendToNoteTool);
     registry.register(reviseEditTool);
     registry.register(refreshDashboardTool);
+    registry.register(getLoreImageTool);
     return registry;
 }
 
