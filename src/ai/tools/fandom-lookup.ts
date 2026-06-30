@@ -1,8 +1,7 @@
-import { requestUrl } from 'obsidian';
-import { downscaleToJpegBase64, isImageContentType } from '../image-utils';
+import { isImageContentType } from '../image-utils';
 import type { Tool, ToolContext, ToolResult } from './tool';
 import {
-    MEDIAWIKI_UA,
+    downloadAndDownscaleImage,
     mediawikiCharacterGallery,
     mediawikiExtract,
     mediawikiImageInfo,
@@ -241,7 +240,7 @@ export function createFandomImageTool(
                             text: `"${image}" on ${host} is not a raster image (mime "${info.mime}") — likely a video. Pick a different file from the gallery list.`
                         };
                     }
-                    const { base64, contentType } = await downloadAndDownscale(info.imageUrl, maxDimension);
+                    const { base64, contentType } = await downloadAndDownscaleImage(info.imageUrl, maxDimension);
                     return {
                         text: `Fetched "${image}" from ${host} (${contentType}, downscaled to ≤${maxDimension}px).`,
                         images: [base64]
@@ -269,7 +268,10 @@ export function createFandomImageTool(
                 const leadImage = await mediawikiPageImage(host, title, maxDimension);
                 if (leadImage) {
                     try {
-                        const { base64, contentType } = await downloadAndDownscale(leadImage.imageUrl, maxDimension);
+                        const { base64, contentType } = await downloadAndDownscaleImage(
+                            leadImage.imageUrl,
+                            maxDimension
+                        );
                         return {
                             text:
                                 `Fetched the lead image for "${title}" from ${host} (${contentType}, ` +
@@ -297,30 +299,4 @@ export function createFandomImageTool(
             }
         }
     };
-}
-
-/**
- * Download an image URL and downscale it to a vision-ready JPEG base64. Throws
- * on HTTP failure or non-image responses so callers can catch and surface a
- * textual error to the model.
- */
-async function downloadAndDownscale(
-    url: string,
-    maxDimension: number
-): Promise<{ base64: string; contentType: string }> {
-    const response = await requestUrl({
-        url,
-        method: 'GET',
-        throw: false,
-        headers: { Accept: 'image/*', 'User-Agent': MEDIAWIKI_UA }
-    });
-    if (response.status !== 200) {
-        throw new Error(`HTTP ${response.status}`);
-    }
-    const contentType = response.headers['content-type'] ?? '';
-    if (!isImageContentType(contentType)) {
-        throw new Error(`response was not a raster image (content-type "${contentType}")`);
-    }
-    const base64 = await downscaleToJpegBase64(response.arrayBuffer, maxDimension, contentType);
-    return { base64, contentType };
 }

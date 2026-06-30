@@ -500,6 +500,14 @@ function buildNetworkToolsMessage(plugin: EventideQuillPlugin): ChatMessage | nu
         'without asking. Results count toward context — be judicious with very',
         'large pages.'
     );
+    // wikipedia_image is registered only when image tools are also on, since
+    // it returns an image (routed through the vision layer). Same cross-toggle
+    // gate as fandom_image above.
+    if (plugin.settings.lorebookImageTools) {
+        lines.push(
+            `- wikipedia_image: fetch the lead image for a Wikipedia topic (${lang}) — most often a portrait for biographies, cover art for works, or a photograph for places. Use it to see what a person, place, or object looks like.`
+        );
+    }
     return { role: 'system', content: lines.join('\n') };
 }
 

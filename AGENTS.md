@@ -200,9 +200,9 @@ Tool tiers (gating):
 | Lorebook coach only | `propose_entry` (surfaces a lore draft to the UI) | `createLoreCoachToolRegistry` |
 | Parent modes only | `run_lorebook_batch` (lore edits), `run_research` (vault Q&A) — each spawns a `SubagentSession`, see "Subagents" | `allowSubagents` (all parent modes: discuss/coach/lorebook; subagents pass `false` so they can't nest) |
 | Network (default on) | `fetch_url`, `fandom_lookup` / `fandom_page`, `wikipedia_lookup` / `wikipedia_page` | `lorebookNetworkTools` |
-| Image (default on) | `fetch_image_url`, `fandom_image` | `lorebookImageTools` |
+| Image (default on) | `fetch_image_url`, `fandom_image`, `wikipedia_image` | `lorebookImageTools` |
 
-`fandom_image` (Fandom image lookup: lead image via `prop=pageimages`, gallery browsing via `prop=images` + `imageinfo`, with captions parsed from `<gallery>` wikitext) needs both `lorebookNetworkTools` and `lorebookImageTools`, plus the Fandom allowlist gate — it's registered inside the fandom block with an extra image-tools check.
+`fandom_image` (Fandom image lookup: lead image via `prop=pageimages`, gallery browsing via `prop=images` + `imageinfo`, with captions parsed from `<gallery>` wikitext) needs both `lorebookNetworkTools` and `lorebookImageTools`, plus the Fandom allowlist gate — it's registered inside the fandom block with an extra image-tools check. `wikipedia_image` (Wikipedia lead portraits via the same `prop=pageimages`) follows the same cross-toggle pattern — registered inside the network-tools block with an image-tools sub-check, no gallery-listing path (Wikipedia biographies don't follow Fandom's `<title>/Gallery` convention).
 
 Fandom requires a non-empty allowlist (`lorebookFandomWikis`), or the `lorebookFandomAllowAllWikis` "danger" toggle to allow any wiki; an empty allowlist with that toggle off disables Fandom everywhere. `mediawiki.ts` is the shared MediaWiki client with per-host rate limiting. Convention: tool ids are `snake_case` verbs/nouns (`manuscript_mentions`, `fetch_url`).
 
@@ -325,9 +325,9 @@ The three tool-gating settings each gate **more than one tool**, and each has it
 |------|-------|------|------|
 | `coWriterToolsEnabled` | all internal tools (`manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit`, `get_lore_image`) | `Co-writer tools` | `Co-writer tool use` |
 | `lorebookNetworkTools` | `fetch_url`, `fandom_lookup` / `fandom_page`, `wikipedia_lookup` / `wikipedia_page` | `Network research tools` | `Network tools` |
-| `lorebookImageTools` | `fetch_image_url`, `fandom_image` | `Image tool` | `Image tools` |
+| `lorebookImageTools` | `fetch_image_url`, `fandom_image`, `wikipedia_image` | `Image tool` | `Image tools` |
 
-Each row = one JSDoc + two `setDesc(...)` copies to keep aligned. The authoritative gate logic is `createToolRegistry()` in `src/ai/tools/index.ts` — if you add or move a tool between tiers, also update the gating table in "Tool-calling architecture" and every description for the affected toggle(s). `fandom_image` is the cross-toggle case: it needs both `lorebookNetworkTools` **and** `lorebookImageTools` (plus the Fandom allowlist), so its gate spans two rows.
+Each row = one JSDoc + two `setDesc(...)` copies to keep aligned. The authoritative gate logic is `createToolRegistry()` in `src/ai/tools/index.ts` — if you add or move a tool between tiers, also update the gating table in "Tool-calling architecture" and every description for the affected toggle(s). `fandom_image` and `wikipedia_image` are the cross-toggle cases: each needs both `lorebookNetworkTools` **and** `lorebookImageTools` (plus the Fandom allowlist, for `fandom_image`), so its gate spans two rows.
 
 ## Key feature areas
 

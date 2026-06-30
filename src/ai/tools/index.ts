@@ -4,7 +4,7 @@ import { calculateFileSizesTool } from './calculate-file-sizes';
 import { createFandomImageTool, createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
 import { createFetchImageUrlTool } from './fetch-image-url';
 import { createFetchUrlTool } from './fetch-url';
-import { createWikipediaLookupTool, createWikipediaPageTool } from './wikipedia-lookup';
+import { createWikipediaLookupTool, createWikipediaPageTool, createWikipediaImageTool } from './wikipedia-lookup';
 import { editNoteTool } from './edit-note';
 import { getLoreImageTool } from './get-lore-image';
 import { grepNotesTool } from './grep-notes';
@@ -28,7 +28,7 @@ export { calculateFileSizesTool } from './calculate-file-sizes';
 export { createFandomImageTool, createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
 export { createFetchImageUrlTool } from './fetch-image-url';
 export { createFetchUrlTool } from './fetch-url';
-export { createWikipediaLookupTool, createWikipediaPageTool } from './wikipedia-lookup';
+export { createWikipediaLookupTool, createWikipediaPageTool, createWikipediaImageTool } from './wikipedia-lookup';
 export { editNoteTool } from './edit-note';
 export { getLoreImageTool } from './get-lore-image';
 export { grepNotesTool } from './grep-notes';
@@ -145,6 +145,19 @@ function registerExternalTools(registry: ToolRegistry, plugin: EventideQuillPlug
         registry.register(createFetchUrlTool(maxTokens));
         registry.register(createWikipediaLookupTool(maxTokens, plugin.settings.lorebookWikipediaLang));
         registry.register(createWikipediaPageTool(maxTokens, plugin.settings.lorebookWikipediaLang));
+        // wikipedia_image: lead portraits via prop=pageimages. Same cross-toggle
+        // gate as fandom_image (network tools + image tools) — fetches bytes
+        // from upload.wikimedia.org so it needs the network gate, and routes
+        // through the vision layer so it needs the image gate.
+        if (plugin.settings.lorebookImageTools) {
+            registry.register(
+                createWikipediaImageTool(
+                    maxTokens,
+                    plugin.settings.lorebookImageMaxDimension,
+                    plugin.settings.lorebookWikipediaLang
+                )
+            );
+        }
         // Fandom tools are registered when EITHER a non-empty allowlist is
         // configured OR the "allow any wiki" danger setting is on. An empty
         // allowlist with allow-all off means Fandom disabled everywhere.

@@ -105,7 +105,7 @@ export interface EventideQuillSettings {
     lorebookWikipediaLang: string;
     /** Per-tool result truncation cap (approximate tokens). */
     lorebookToolMaxTokens: number;
-    /** Gate for image-fetching tools (fetch_image_url, fandom_image). Default: on. */
+    /** Gate for image-fetching tools (fetch_image_url, fandom_image, wikipedia_image). Default: on. */
     lorebookImageTools: boolean;
     /** Max image dimension (longest side, px) before downscale. Keeps vision payloads small. */
     lorebookImageMaxDimension: number;
@@ -659,6 +659,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 desc: 'Queries Wikipedia (configurable language) for reference material.'
             },
             {
+                name: 'wikipedia_image',
+                desc: 'Fetches the lead image from a Wikipedia page (most often a portrait for biographies).'
+            },
+            {
                 name: 'fetch_image_url',
                 desc: 'Downloads an image from a URL so a vision model can interpret it.'
             }
@@ -694,7 +698,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         new Setting(content)
             .setName('Image tool')
             .setDesc(
-                'Allows image-fetching tools for a vision model — gates fetch_image_url and fandom_image. ' +
+                'Allows image-fetching tools for a vision model — gates fetch_image_url, fandom_image, and wikipedia_image. ' +
                     'No effect unless a vision-capable chat model or a dedicated image model is configured.'
             )
             .addToggle((toggle) =>
@@ -1127,9 +1131,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .setName('Image tools')
             .setDesc(
                 'Allow the co-writer to call image-fetching tools — fetch_image_url (download any ' +
-                    'image URL) and fandom_image (Fandom lead/gallery images). Images are downscaled ' +
-                    'before delivery. Requires a vision-capable chat model (role "Chat + image") or a ' +
-                    'dedicated image model (role "Image") to have any effect. Default: on.'
+                    'image URL), fandom_image (Fandom lead/gallery images), and wikipedia_image ' +
+                    '(Wikipedia lead portraits). Images are downscaled before delivery. Requires a ' +
+                    'vision-capable chat model (role "Chat + image") or a dedicated image model ' +
+                    '(role "Image") to have any effect. Default: on.'
             )
             .addToggle((toggle) =>
                 toggle.setValue(this.plugin.settings.lorebookImageTools).onChange(async (value) => {
