@@ -28,6 +28,19 @@ import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files
 import { ChangeSet } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry, ProposedImage } from '../core/dashboard/lorebook-types';
 import { stripGallerySections } from '../core/dashboard/lorebook-scanner';
+
+/**
+ * Strip image-gallery sections from text bound for the model's context, so
+ * the active document's gallery doesn't leak `![[file.png]]` syntax into
+ * prompts. The marker replaces it with "this entry has images, here are
+ * the labels, use get_lore_image." No-op when the text has no recognized
+ * gallery section or when the writer hasn't configured any headers.
+ */
+function stripGalleryForContext(plugin: EventideQuillPlugin, text: string): string {
+    const headers = plugin.settings.loreEntryImageSectionHeaders;
+    if (headers.length === 0) return text;
+    return stripGallerySections(text, headers).stripped;
+}
 import { createReadOnlyToolRegistry, createToolRegistry, executeToolCall, type ToolContext } from './tools';
 import {
     getImageRegime,
@@ -943,13 +956,13 @@ export class CoWriterSession {
             const endPos = editor.offsetToPos(fullText.length);
             editor.setCursor(endPos);
             editor.scrollIntoView({ from: endPos, to: endPos }, true);
-            proseForOptions = fullText.slice(-4000);
+            proseForOptions = stripGalleryForContext(plugin, fullText.slice(-4000));
         } else {
             const cursor = editor.getCursor();
             fullText = editor.getValue();
             const cursorOffset = editor.posToOffset(cursor);
             const textBeforeCursor = fullText.slice(0, cursorOffset);
-            proseForOptions = textBeforeCursor.slice(-4000);
+            proseForOptions = stripGalleryForContext(plugin, textBeforeCursor.slice(-4000));
         }
 
         // Add user's message to chat history
@@ -1266,7 +1279,10 @@ export class CoWriterSession {
 
         const fullText = editor?.getValue() ?? '';
         const proseForContext = editor
-            ? editor.getValue().slice(0, editor.posToOffset(editor.getCursor())).slice(-4000)
+            ? stripGalleryForContext(
+                  plugin,
+                  editor.getValue().slice(0, editor.posToOffset(editor.getCursor())).slice(-4000)
+              )
             : '';
 
         // Build injected context — vault + additional files.
@@ -1618,7 +1634,10 @@ export class CoWriterSession {
 
         const fullText = editor?.getValue() ?? '';
         const proseForContext = editor
-            ? editor.getValue().slice(0, editor.posToOffset(editor.getCursor())).slice(-4000)
+            ? stripGalleryForContext(
+                  plugin,
+                  editor.getValue().slice(0, editor.posToOffset(editor.getCursor())).slice(-4000)
+              )
             : '';
 
         // Build injected context
@@ -2046,7 +2065,7 @@ export class CoWriterSession {
         const fullText = editor.getValue();
         const cursorOffset = editor.posToOffset(cursor);
         const textBeforeCursor = fullText.slice(0, cursorOffset);
-        const proseForOptions = textBeforeCursor.slice(-4000);
+        const proseForOptions = stripGalleryForContext(plugin, textBeforeCursor.slice(-4000));
 
         const coachSummary = this.buildCoachSummary();
         const prompt = getCoWriterCoachToOptions(proseForOptions || '(empty document)', coachSummary, direction);
@@ -3519,7 +3538,7 @@ export class CoWriterSession {
             plugin.settings.wikiLinkBehavior
         );
 
-        const proseForContext = textBeforeCursor.slice(-12000);
+        const proseForContext = stripGalleryForContext(plugin, textBeforeCursor.slice(-12000));
 
         // Parse stopping point from direction
         const stoppingPoint = direction ? parseStoppingPoint(direction) : null;

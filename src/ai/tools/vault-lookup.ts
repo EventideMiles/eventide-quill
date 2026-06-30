@@ -1,6 +1,7 @@
 import { normalizePath, TFile } from 'obsidian';
 import type { Tool, ToolContext } from './tool';
 import { splitFrontmatter } from './lore-edit-helpers';
+import { stripGallerySections } from '../../core/dashboard/lorebook-scanner';
 
 /**
  * Read the text content of a note in the user's vault. Use to pull in
@@ -62,35 +63,14 @@ export const vaultLookupTool: Tool = {
         }
 
         const body = splitFrontmatter(raw).body;
-        return appendImageHint(body, file, ctx);
+        // Strip gallery sections from the returned body so ![[file.png]] syntax
+        // doesn't leak into the model's context. The marker that replaces each
+        // section preserves the gallery heading, per-label image counts, and
+        // points the model at get_lore_image — so the model still knows what
+        // images exist and how to fetch them, without the useless embed text.
+        return stripGallerySections(body, ctx.plugin.settings.loreEntryImageSectionHeaders).stripped;
     }
 };
-
-/**
- * If the note contains image embeds (`![[file.png]]`) inside a configured
- * gallery section, append a one-line hint telling the model those images
- * exist and how to fetch them. Without this, the model sees the embed
- * syntax as plain text and tends to either hallucinate visual details or
- * ask the writer for them, rather than calling `get_lore_image` to see
- * the pixels directly.
- */
-function appendImageHint(body: string, file: TFile, ctx: ToolContext): string {
-    const cache = ctx.plugin.app.metadataCache.getFileCache(file);
-    const embeds = cache?.embeds ?? [];
-    const imageExtensions = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'];
-    const imageEmbeds = embeds.filter((e) => {
-        const filename = e.link.split('|')[0]?.toLowerCase() ?? '';
-        return imageExtensions.some((ext) => filename.endsWith('.' + ext));
-    });
-    if (imageEmbeds.length === 0) return body;
-
-    const name = file.basename;
-    return (
-        body +
-        `\n\n[This note contains ${imageEmbeds.length} image embed${imageEmbeds.length === 1 ? '' : 's'}. ` +
-        `Call get_lore_image with entry "${name}" (and an optional label) to actually see ${imageEmbeds.length === 1 ? 'it' : 'them'} — do not guess visual details from the filename.]`
-    );
-}
 
 /**
  * Resolve a query to a vault file. If the query looks like a path (contains

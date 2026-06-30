@@ -162,7 +162,8 @@ const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'];
 
 /**
  * Strip image-gallery sections from a lore entry body, replacing each with
- * a one-line marker. Used by the embedding pipeline (`warmEmbeddingsForFolder`)
+ * a one-line marker that preserves the gallery heading AND the per-label
+ * image counts. Used by the embedding pipeline (`warmEmbeddingsForFolder`)
  * at chunk time and by both `resolveEmbedPathsToMessages` paths at top-K
  * injection time, so chunks containing `![[file.png]]` embed syntax don't
  * leak into the model's auto-injected context. The text form is useless to
@@ -171,14 +172,17 @@ const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'];
  *
  * Gallery sections are recognized by heading (case-insensitive, trimmed)
  * matching one of `sectionHeaders`. **Multiple** sections in one note are
- * all stripped — they all match the same convention. Each becomes a marker
- * like:
+ * all stripped — they all match the same convention. Each becomes a
+ * marker like:
  *
- *   `[Gallery section "Reference": 3 images — use get_lore_image to view]`
+ *   `[Gallery section "Gallery": 3 images available — use get_lore_image with entry + label to view. Labels: Default form, Alternate form, Third form.]`
  *
- * The marker preserves awareness that the entry has images and how to
- * fetch them, without dumping useless embed syntax. Returns the stripped
- * body and the total image-embed count across all stripped sections.
+ * The label list preserves the subheading names so the model knows which
+ * labels it can pass to `get_lore_image`'s `label` parameter without
+ * needing a separate `lore_siblings` or `vault_lookup` call. Embeds with
+ * no preceding subheading are counted under `(unlabeled)`. Returns the
+ * stripped body and the total image-embed count across all stripped
+ * sections.
  */
 export function stripGallerySections(body: string, sectionHeaders: string[]): { stripped: string; imageCount: number } {
     if (sectionHeaders.length === 0) return { stripped: body, imageCount: 0 };
@@ -186,22 +190,36 @@ export function stripGallerySections(body: string, sectionHeaders: string[]): { 
     const headerSet = new Set(sectionHeaders.map((h) => h.trim().toLowerCase()));
     const lines = body.split('\n');
     const out: string[] = [];
+    let totalImageCount = 0;
 
+    // Per-section state. Reset by emitMarker() between sections.
     let inGallery = false;
     let galleryLevel = 0;
     let galleryHeading = '';
+    let currentLabel = '';
     let sectionImageCount = 0;
-    let totalImageCount = 0;
+    const labelCounts = new Map<string, number>();
 
     const emitMarker = () => {
         if (sectionImageCount > 0) {
+            // Preserve label names so the model can target a specific image
+            // via get_lore_image's `label` parameter without an extra call.
+            // Build "Name" or "Name (N)" depending on per-label count.
+            const labelParts = [...labelCounts.entries()].map(([name, count]) =>
+                count === 1 ? name : `${name} (${count})`
+            );
+            const hasLabels = labelParts.length > 0;
+            const labelClause = hasLabels ? ` Labels: ${labelParts.join(', ')}.` : '';
+            const useClause = hasLabels ? ' with entry + label' : ' with the entry name';
             out.push(
-                `[Gallery section "${galleryHeading}": ${sectionImageCount} image${sectionImageCount === 1 ? '' : 's'} — use get_lore_image to view]`
+                `[Gallery section "${galleryHeading}": ${sectionImageCount} image${sectionImageCount === 1 ? '' : 's'} available — use get_lore_image${useClause} to view.${labelClause}]`
             );
             out.push('');
         }
         inGallery = false;
         sectionImageCount = 0;
+        labelCounts.clear();
+        currentLabel = '';
     };
 
     for (const line of lines) {
@@ -219,20 +237,26 @@ export function stripGallerySections(body: string, sectionHeaders: string[]): { 
                 inGallery = true;
                 galleryLevel = level;
                 galleryHeading = headingMatch[2].trim();
+                currentLabel = '';
                 // Skip the heading line itself — the marker replaces it.
+            } else if (inGallery && level > galleryLevel) {
+                // Subheading inside the gallery section becomes the current
+                // label for any embeds that follow. Heading line dropped.
+                currentLabel = headingMatch[2].trim();
             }
-            // Subheadings (level > galleryLevel) inside a gallery section
-            // get dropped along with the rest of the section body.
+            // Headings outside a gallery section pass through unchanged.
         } else if (!inGallery) {
             out.push(line);
         } else {
-            // Inside a gallery section: count image embeds, drop the line.
+            // Inside a gallery section: count image embeds by current label.
             const embed = line.match(/!\[\[([^\]]+)\]\]/);
             if (embed && embed[1]) {
                 const filename = embed[1].split('|')[0]!.toLowerCase().trim();
                 if (IMAGE_EXTENSIONS.some((ext) => filename.endsWith('.' + ext))) {
                     sectionImageCount++;
                     totalImageCount++;
+                    const key = currentLabel || '(unlabeled)';
+                    labelCounts.set(key, (labelCounts.get(key) ?? 0) + 1);
                 }
             }
         }
