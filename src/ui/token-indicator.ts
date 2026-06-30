@@ -49,15 +49,35 @@ function categorizeSystemMessage(content: string): { label: string; detail?: str
 }
 
 /**
+ * Detect the synthetic user-role messages that `injectImagesIntoMessages`
+ * (vision.ts) pushes after an image-bearing tool result. These are
+ * system-generated wrappers, not real user turns — counting them as "chat
+ * turns" inflates the count and confuses writers (a single user prompt that
+ * triggered 4 tool calls, 2 of which returned images, would otherwise show
+ * as 12 turns). Identified by their stable opening phrase. Real user
+ * messages that happen to start with `[` are still distinguishable because
+ * they won't match any of these specific prefixes.
+ */
+function isSyntheticImageInjectionMessage(content: string): boolean {
+    return (
+        content.startsWith('[Attached image(s)') ||
+        content.startsWith('[Image description from the vision model]') ||
+        content.startsWith('[An image was returned') ||
+        content.startsWith('[Image could not be described')
+    );
+}
+
+/**
  * Build a per-request token breakdown from the messages being sent plus the
  * fixed tool-definition overhead. Splits role:'system' messages by category
  * (so the writer can see how much each context source contributes), and
- * buckets role:'user' / 'assistant' messages as "Chat history." Images
- * attached to a message are folded into that message's section.
+ * buckets role:'user' / 'assistant' / 'tool' messages as "Chat history."
  *
- * Used by the token indicator's hover tooltip so writers can see exactly
- * where their context budget is going — the typical surprise is that tool
- * definitions are the largest single chunk.
+ * The "turns" count in the Chat history detail excludes the tool-call
+ * mechanics — `role: 'tool'` results and synthetic image-injection user
+ * messages are token-counted but not turn-counted, so the number reflects
+ * real conversational turns (user prompts + assistant replies, including
+ * tool-call-bearing replies) rather than the expanded message-array length.
  */
 export function buildRequestBreakdown(messages: ChatMessage[], toolOverhead: number): TokenBreakdown {
     /** Accumulate tokens per category label, preserving first-seen order. */
@@ -88,8 +108,17 @@ export function buildRequestBreakdown(messages: ChatMessage[], toolOverhead: num
             const { label, detail } = categorizeSystemMessage(text);
             bump(label, msgTokens, detail);
         } else {
-            chatTurns++;
+            // All non-system messages contribute tokens to chat history.
             chatTokens += msgTokens;
+            // But the "turns" count excludes tool mechanics — only count
+            // real user prompts and assistant replies (tool-call-bearing
+            // or final text). Skip role: 'tool' results and the synthetic
+            // user-role wrappers pushed by injectImagesIntoMessages.
+            const isToolResult = msg.role === 'tool';
+            const isSyntheticImage = msg.role === 'user' && isSyntheticImageInjectionMessage(text);
+            if (!isToolResult && !isSyntheticImage && (msg.role === 'user' || msg.role === 'assistant')) {
+                chatTurns++;
+            }
         }
     }
 
