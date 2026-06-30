@@ -28,10 +28,14 @@ export const attachLoreImageTool: Tool = {
     description:
         'Propose attaching a reference image to an existing lore entry. Pass ' +
         'the entry path, a label (subheading for the gallery section, e.g., ' +
-        '"Alternate form"), a suggested attachment filename, and the image as ' +
-        'base64 JPEG bytes (no data: prefix). The writer reviews every ' +
-        'attachment before it is written. Use for entries that already exist ' +
-        'where `propose_entry` would be wrong.',
+        '"Alternate form"), a suggested attachment filename, and the image ' +
+        'EITHER as `base64` (rare; you usually do not have bytes as a string) ' +
+        'OR via `from_recent: { index }` referencing an image you have already ' +
+        'seen — fetched via fandom_image / wikipedia_image / fetch_image_url / ' +
+        'get_lore_image, or pasted by the writer. `from_recent.index` is 0-based ' +
+        'with 0 = most recent. The writer reviews every attachment before it is ' +
+        'written. Use for entries that already exist where `propose_entry` would ' +
+        'be wrong.',
     parameters: {
         type: 'object',
         properties: {
@@ -49,18 +53,33 @@ export const attachLoreImageTool: Tool = {
             },
             suggested_filename: {
                 type: 'string',
-                description: 'Vault attachment filename for the bytes, e.g., "freddy-lupin-human.png".'
+                description: 'Vault attachment filename for the bytes, e.g., "sarah-connor-default.png".'
             },
             base64: {
                 type: 'string',
-                description: 'Downscaled JPEG bytes as base64, no data: prefix.'
+                description:
+                    'Downscaled JPEG bytes as base64, no data: prefix. Rare — you usually do not ' +
+                    'have bytes as a string. Prefer `from_recent` for images you have already seen.'
+            },
+            from_recent: {
+                type: 'object',
+                properties: {
+                    index: {
+                        type: 'number',
+                        description: '0-based index into recent images you have seen (0 = most recent).'
+                    }
+                },
+                required: ['index'],
+                description:
+                    'Reference to an image you have already seen (fetched via a tool or pasted by ' +
+                    'the writer). Prefer this over base64.'
             },
             caption: {
                 type: 'string',
                 description: 'Optional caption for the ![[file|caption]] slot.'
             }
         },
-        required: ['entry_path', 'label', 'suggested_filename', 'base64']
+        required: ['entry_path', 'label', 'suggested_filename']
     },
     maxResultTokens: 100,
     requiresNetwork: false,
@@ -69,13 +88,31 @@ export const attachLoreImageTool: Tool = {
         const entryPath = typeof args.entry_path === 'string' ? args.entry_path.trim() : '';
         const label = typeof args.label === 'string' ? args.label.trim() : '';
         const suggestedFilename = typeof args.suggested_filename === 'string' ? args.suggested_filename.trim() : '';
-        const base64 = typeof args.base64 === 'string' ? args.base64.trim() : '';
         const captionRaw = typeof args.caption === 'string' ? args.caption.trim() : '';
 
         if (!entryPath) return 'Error: "entry_path" is required.';
         if (!label) return 'Error: "label" is required (the subheading the image sits under).';
         if (!suggestedFilename) return 'Error: "suggested_filename" is required.';
-        if (!base64) return 'Error: "base64" is required (downscaled JPEG bytes, no data: prefix).';
+
+        // Resolve bytes: prefer explicit base64, fall back to from_recent reference.
+        let base64: string | undefined;
+        const explicitBase64 = typeof args.base64 === 'string' ? args.base64.trim() : '';
+        if (explicitBase64) {
+            base64 = explicitBase64;
+        } else if (args.from_recent && typeof args.from_recent === 'object') {
+            const idxRaw = (args.from_recent as Record<string, unknown>).index;
+            if (typeof idxRaw === 'number' && Number.isFinite(idxRaw)) {
+                base64 = ctx.plugin.coWriterSession.resolveRecentImage(Math.floor(idxRaw)) ?? undefined;
+            }
+        }
+        if (!base64) {
+            return (
+                'Error: image bytes required. Either pass `base64` directly (rare; you usually ' +
+                'do not have them as a string) OR `from_recent: { index }` referencing a recent ' +
+                'image you have seen (0 = most recent). Recent images available: ' +
+                `${ctx.plugin.coWriterSession.recentImages.length}.`
+            );
+        }
 
         // Resolve the file in the vault — fail fast with a clear message if
         // the model invented or mistyped a path.

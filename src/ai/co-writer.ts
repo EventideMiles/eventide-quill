@@ -811,6 +811,23 @@ export class CoWriterSession {
     loreCoachMessages: ChatMessage[] = [];
     /** The most recent lore draft produced this session, awaiting review. */
     currentLoreDraft: LoreDraftEntry | null = null;
+    /**
+     * Ring buffer of recent images the model has seen — from tool results
+     * that carried `images` (fandom_image, wikipedia_image, fetch_image_url,
+     * get_lore_image) or from user-pasted chat images. The model can't
+     * quote bytes it has already seen back into a tool call (they enter the
+     * conversation as image content blocks under Regime A, or as proxy
+     * captions under Regime B — never as a base64 string), so
+     * `propose_entry` and `attach_lore_image` accept a `from_recent`
+     * reference (index into this buffer) as the alternative to passing
+     * `base64` directly.
+     *
+     * FIFO with most-recent first; index 0 is always the last image the
+     * model saw. Capped to bound memory — each downscaled JPEG is ~50KB,
+     * so 12 images ≈ 600KB peak.
+     */
+    recentImages: string[] = [];
+    private static readonly RECENT_IMAGES_CAP = 12;
     /** Called when lorebook coach state changes (phase advance, end coach). */
     onLoreCoachUpdate: (() => void) | null = null;
     /** Called when a new lore draft is ready for the review card. */
@@ -3025,6 +3042,31 @@ export class CoWriterSession {
     }
 
     /**
+     * Push image bytes the model has just seen onto the recent-images ring
+     * buffer. Called from the tool loop after every image-bearing tool
+     * result and from the chat send paths when the writer pastes. Most-
+     * recent first; trims to {@link RECENT_IMAGES_CAP}. No-op when empty.
+     */
+    pushRecentImages(images: string[]): void {
+        if (images.length === 0) return;
+        this.recentImages = [...images, ...this.recentImages].slice(0, CoWriterSession.RECENT_IMAGES_CAP);
+    }
+
+    /**
+     * Resolve a `from_recent.index` reference to actual bytes from the
+     * recent-images buffer. Returns null when the index is out of range
+     * (the tool surfaces a clear error to the model in that case).
+     */
+    resolveRecentImage(index: number): string | null {
+        return index >= 0 && index < this.recentImages.length ? (this.recentImages[index] ?? null) : null;
+    }
+
+    /** Clear the recent-images buffer (e.g., on reset / new chat). */
+    clearRecentImages(): void {
+        this.recentImages = [];
+    }
+
+    /**
      * Spawn and run a lorebook batch subagent. The subagent runs in its own
      * fresh context (isolated from this conversation), edits through the shared
      * {@link loreEdits} review queue via the tools' side effects, and returns a
@@ -3798,6 +3840,12 @@ export class CoWriterSession {
     ): Promise<PreparedUserMessage> {
         const imgs = images ?? [];
         if (imgs.length === 0) return { content: text };
+        // Buffer the pasted bytes so the model can reference them via
+        // `from_recent` in propose_entry / attach_lore_image ("attach the
+        // image the writer just pasted"). Done BEFORE regime routing so
+        // the buffer holds the original bytes regardless of whether the
+        // chat model is vision-native (Regime A) or text-only (Regime B).
+        this.pushRecentImages(imgs);
         const proxy = getImageRegime(plugin) === 'proxy';
         if (proxy) this.onDescribingImages?.(true);
         try {
@@ -3831,6 +3879,7 @@ export class CoWriterSession {
         this.clearDirect();
         this.clearLoreEdit();
         this.clearProposedLoreImages();
+        this.clearRecentImages();
         this.clearSubagents();
         this.manuscriptPath = null;
         this.originalText = '';
@@ -3864,6 +3913,7 @@ export class CoWriterSession {
         this.clearDirect();
         this.clearLoreEdit();
         this.clearProposedLoreImages();
+        this.clearRecentImages();
         this.clearSubagents();
         this.originalText = '';
         this.insertionStart = -1;

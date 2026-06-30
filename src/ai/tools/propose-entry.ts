@@ -3,11 +3,15 @@ import type { ProposedImage } from '../../core/dashboard/lorebook-types';
 import type { Tool, ToolContext } from './tool';
 
 /**
- * Pull and validate the `images` argument when the toggle is on. Returns
- * `null` if the argument is absent or every entry is invalid; returns the
- * valid images otherwise. Trims and drops entries missing required fields.
+ * Pull and validate the `images` argument when the toggle is on. Each item
+ * must provide EITHER `base64` (direct bytes — rare; the model rarely has
+ * them as a string) OR `from_recent: { index }` (reference to a recent
+ * image the model has seen via fandom_image / wikipedia_image /
+ * fetch_image_url / get_lore_image, or one the writer pasted). Resolves
+ * `from_recent` against the session's recent-images buffer. Returns `null`
+ * if the argument is absent or every entry fails validation.
  */
-function parseProposedImages(raw: unknown): ProposedImage[] | null {
+function parseProposedImages(raw: unknown, ctx: ToolContext): ProposedImage[] | null {
     if (!Array.isArray(raw) || raw.length === 0) return null;
     const out: ProposedImage[] = [];
     for (const item of raw) {
@@ -15,10 +19,29 @@ function parseProposedImages(raw: unknown): ProposedImage[] | null {
         const obj = item as Record<string, unknown>;
         const label = typeof obj.label === 'string' ? obj.label.trim() : '';
         const suggestedFilename = typeof obj.suggestedFilename === 'string' ? obj.suggestedFilename.trim() : '';
-        const base64 = typeof obj.base64 === 'string' ? obj.base64.trim() : '';
-        if (!suggestedFilename || !base64) continue;
+        if (!suggestedFilename) continue;
         const caption = typeof obj.caption === 'string' ? obj.caption.trim() : undefined;
-        out.push({ label, suggestedFilename, base64, caption: caption && caption.length > 0 ? caption : undefined });
+
+        // Resolve bytes: prefer explicit base64, fall back to from_recent reference.
+        let base64: string | undefined;
+        if (typeof obj.base64 === 'string' && obj.base64.trim().length > 0) {
+            base64 = obj.base64.trim();
+        } else if (obj.from_recent && typeof obj.from_recent === 'object') {
+            const idxRaw = (obj.from_recent as Record<string, unknown>).index;
+            if (typeof idxRaw === 'number' && Number.isFinite(idxRaw)) {
+                const resolved = ctx.plugin.coWriterSession.resolveRecentImage(Math.floor(idxRaw));
+                if (resolved === null) continue; // index out of range — drop
+                base64 = resolved;
+            }
+        }
+        if (!base64) continue;
+
+        out.push({
+            label,
+            suggestedFilename,
+            base64,
+            caption: caption && caption.length > 0 ? caption : undefined
+        });
     }
     return out.length > 0 ? out : null;
 }
@@ -61,12 +84,16 @@ export function createProposeEntryTool(allowImages: boolean): Tool {
                   type: 'array',
                   description:
                       'Optional reference images to attach to the entry. Each item needs: ' +
-                      '`label` (subheading under the gallery section, e.g., "Human form"), ' +
-                      '`suggestedFilename` (vault attachment filename, e.g., "freddy-lupin-human.png"), ' +
-                      'and `base64` (downscaled JPEG bytes, no data: prefix). Optional `caption`. ' +
-                      'Place matching ![[suggestedFilename]] embeds in the content body under a ' +
-                      'gallery section heading (e.g., "## Reference"). The writer reviews every ' +
-                      'image before it is written to the vault.'
+                      '`label` (subheading under the gallery section, e.g., "Default form"), ' +
+                      '`suggestedFilename` (vault attachment filename, e.g., "sarah-connor-default.png"), ' +
+                      'and EITHER `base64` (downscaled JPEG bytes, no data: prefix — rare; you ' +
+                      'usually do not have these as a string) OR `from_recent: { index }` to ' +
+                      'reference an image you have already seen. `from_recent.index` is 0-based ' +
+                      'with 0 = most recent image (from fandom_image / wikipedia_image / ' +
+                      'fetch_image_url / get_lore_image, OR one the writer pasted in chat). ' +
+                      'Optional `caption`. Place matching ![[suggestedFilename]] embeds in the ' +
+                      'content body under a gallery section heading (e.g., "## Reference"). ' +
+                      'The writer reviews every image before it is written to the vault.'
               }
           }
         : {};
@@ -123,7 +150,7 @@ export function createProposeEntryTool(allowImages: boolean): Tool {
             // is on, but parse defensively — the model could hallucinate the
             // field anyway. parseProposedImages drops malformed entries and
             // returns null for empty/absent, so this is a safe no-op then.
-            const proposedImages = allowImages ? parseProposedImages(args.images) : null;
+            const proposedImages = allowImages ? parseProposedImages(args.images, ctx) : null;
 
             // Construct and stash the draft on the session. The coach reads
             // currentLoreDraft after this tool returns and attaches it to the
