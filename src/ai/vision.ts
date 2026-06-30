@@ -3,25 +3,28 @@ import type { AiProvider, ChatMessage } from './provider';
 
 /**
  * Default proxy prompt used when the writer hasn't customized
- * `lorebookImageProxyPrompt`. Oriented toward the details a novelist actually
- * needs from reference art. Structured for weak vision models — the numbered
- * per-character list gives the model scaffolding so it doesn't stop after the
- * first face in a group image.
+ * `lorebookImageProxyPrompt`. Structured for weak vision models: the numbered
+ * per-character list gives the model scaffolding so it covers every face in a
+ * group image, while the grounding instructions keep it from inventing details
+ * it can't actually see (a common failure mode for smaller models like
+ * Gemma-4-a4b when the token budget is generous).
  */
 export const DEFAULT_IMAGE_PROXY_PROMPT =
-    'Describe this image in detail for a novelist. This description is the only ' +
-    'information the writing assistant will have about the image, so be thorough, ' +
-    'not brief.\n\n' +
-    'If MULTIPLE characters are visible, describe EACH one separately using a ' +
-    'numbered list (1, 2, 3, ...). For every character, cover:\n' +
-    '- Face: apparent age, ethnicity, hair (color, style, length), eye color, facial features\n' +
-    '- Build: height relative to others in the scene, body type, posture\n' +
-    '- Clothing: each visible garment, colors, style, condition\n' +
-    '- Distinguishing features: scars, tattoos, jewelry, accessories, weapons\n' +
-    'Also describe the setting (location, time of day, lighting, weather), the ' +
-    'mood or atmosphere, and any notable objects (books, maps, artifacts, tools).\n\n' +
-    'Stick to what is visible — do not speculate about story, dialogue, or ' +
-    'off-screen elements.';
+    'Describe what you see in this image for a novelist. Your description will ' +
+    "be the writer's only source of visual information, so every detail should " +
+    'be something you can actually observe in the image.\n\n' +
+    'For EACH visible character (numbered list if multiple), report what you can ' +
+    'clearly identify:\n' +
+    '- Hair: color, style, length\n' +
+    '- Face: apparent age, ethnicity, features\n' +
+    '- Build: body type, height relative to others\n' +
+    '- Clothing: each garment, its color and style\n' +
+    '- Distinguishing features: jewelry, scars, tattoos, accessories, weapons\n' +
+    'Then briefly note the setting (location, lighting, time of day) and any ' +
+    'notable objects.\n\n' +
+    'Every detail you write should be grounded in something visible in the image. ' +
+    'If a detail is too small, distant, or unclear to identify with confidence, ' +
+    'leave it out. Stop as soon as you have covered everything you can see.';
 
 /** How an image should enter a conversation on a given provider. */
 export type ImageInjection =
@@ -247,10 +250,11 @@ async function captionWithModel(
         {
             role: 'system',
             content:
-                'You are a visual description assistant for a novelist. Describe images ' +
-                'thoroughly, covering every visible character and detail. Use numbered lists ' +
-                'for multiple characters. Be concrete and accurate — never speculate; describe ' +
-                'only what is visible.'
+                'You are a precise visual description assistant for a novelist. Report exactly ' +
+                'what is visible in each image. Be specific and concrete — name colors, garment ' +
+                'types, facial features. Include only details you can clearly identify. A short, ' +
+                'accurate description is more valuable than a long one with guesses. Stop when ' +
+                'you have covered everything visible.'
         },
         { role: 'user', content: prompt, images }
     ];
