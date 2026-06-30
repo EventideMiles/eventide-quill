@@ -1,4 +1,4 @@
-import { App, MarkdownRenderer, Notice } from 'obsidian';
+import { App, MarkdownRenderer, Menu, Notice } from 'obsidian';
 import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { ConfirmModal } from './confirm-modal';
@@ -7,6 +7,8 @@ import { VaultFileSuggestModal } from './vault-file-suggest-modal';
 import { buildEmbedFolderPath, embedFolderLabel, parseEmbedFolderPath, resolveAtMentions } from '../utils/vault-files';
 import { renderChangeBulkBar, renderChangeCard } from './change-card';
 import { renderLoreDraftCard } from './lore-entry-review';
+import { downscaleToJpegBase64, isImageContentType } from '../ai/image-utils';
+import { isVisionConfigured } from '../ai/vision';
 import type EventideQuillPlugin from '../main';
 import type {
     DraftState,
@@ -34,6 +36,30 @@ const COWRITER_MODES: { mode: InputMode; icon: string; label: string; desc: stri
         desc: 'Develop characters and lore entries with AI tools'
     }
 ];
+
+/**
+ * Maximum number of images that can be queued for a single outgoing message.
+ * Balances multi-image reference (character + outfit + map) against token cost
+ * under Regime A and downscale latency under Regime B.
+ */
+const MAX_PENDING_IMAGES = 4;
+
+/**
+ * Hard cap on raw image bytes before decode. Guards against OOM in
+ * `createImageBitmap` / `Image` element decoding when a writer pastes or drops
+ * an enormous file (RAW, TIFF, high-res panorama). The downscale cap
+ * (`lorebookImageMaxDimension`) only applies AFTER decode succeeds; this guard
+ * prevents the decode itself from running on absurdly large inputs.
+ */
+const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Below this bottom-area width (px), the button row collapses into compact
+ * mode: Add-context / Refresh / Compact / New-chat hide behind a hamburger
+ * overflow button. Mode + Attach + Send stay visible (primary actions).
+ * Mirrors the sidebar's ResizeObserver pattern at quill-sidebar.ts:100.
+ */
+const COMPACT_WIDTH_THRESHOLD = 420;
 
 /** Extract a display name from a vault path. */
 function fileNameFromPath(path: string): string {
@@ -68,9 +94,24 @@ export class CoWriterPanel extends AbstractChatPanel {
     private chatHistory: CoWriterChatMessage[] = [];
     private currentOptions: CoWriterOption[] = [];
     private optionsLoading = false;
+    /** Whether the Regime B image-description proxy call is in flight (drives the "Describing…" button label). */
+    private describingImages = false;
     private inputMode: InputMode = 'coach';
     /** Preserved textarea value across re-renders so user-typed content survives generation. */
     private inputValue = '';
+    /**
+     * Pending image attachments (base64 JPEG, no `data:` prefix) captured via
+     * paste/drop/attach but not yet sent. Cleared on send, on mode switch, and
+     * on new chat. Capped at {@link MAX_PENDING_IMAGES}.
+     */
+    private pendingImages: string[] = [];
+    /**
+     * Monotonic counter bumped every time {@link pendingImages} is cleared.
+     * {@link addImageFiles} captures this before its async downscale work and
+     * re-checks before each push so stale results (cleared mid-flight by a
+     * send, mode switch, or new chat) are discarded.
+     */
+    private imageGeneration = 0;
     /** Whether the last message is streaming (in-progress assistant response). */
     private discussStreaming = false;
     /** Current coach phase, if coach mode is active. */
@@ -97,13 +138,13 @@ export class CoWriterPanel extends AbstractChatPanel {
     private loreCoachActive = false;
 
     private onSendMessage: ((direction: string) => void) | null = null;
-    private onDiscussMessage: ((message: string) => void) | null = null;
+    private onDiscussMessage: ((message: string, images?: string[]) => void) | null = null;
     private onGenerateOptions: ((direction: string) => void) | null = null;
     private onApplyOption: ((index: number) => void) | null = null;
     private onAddContextFile: ((filePath: string) => void) | null = null;
     private onRemoveContextFile: ((filePath: string) => void) | null = null;
     private onRefreshSuggestions: (() => void) | null = null;
-    private onCoachMessage: ((message: string) => void) | null = null;
+    private onCoachMessage: ((message: string, images?: string[]) => void) | null = null;
     private onCoachToOptions: (() => void) | null = null;
     private onEndCoach: (() => void) | null = null;
     private onAcceptPlan: (() => void) | null = null;
@@ -117,11 +158,18 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onRejectAllFulfill: (() => void) | null = null;
     private onApproveDirect: ((id: number) => void) | null = null;
     private onRejectDirect: ((id: number) => void) | null = null;
-    private onLoreCoachMessage: ((message: string) => void) | null = null;
+    private onLoreCoachMessage: ((message: string, images?: string[]) => void) | null = null;
     private onEndLoreCoach: (() => void) | null = null;
     private onDiscardLoreDraft: ((draft: LoreDraftEntry) => void) | null = null;
     private onApproveLoreEdit: ((filePath: string, id: number) => void) | null = null;
     private onRejectLoreEdit: ((filePath: string, id: number) => void) | null = null;
+    /**
+     * Fired on every mode switch (regardless of direction). Used to clear
+     * session-scoped state that shouldn't follow the writer across modes —
+     * currently subagents. {@link pendingImages} is cleared locally since it
+     * lives on the panel.
+     */
+    private onModeSwitch: (() => void) | null = null;
 
     /**
      * Conversation token estimate pushed from the plugin layer.
@@ -148,6 +196,17 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Monotonic render counter; used to discard stale async finalizations. */
     private renderId = 0;
 
+    /**
+     * Whether the bottom area is currently in compact (narrow-sidebar)
+     * mode. Toggled by {@link resizeObserver} and read in renderBottomArea
+     * to add the `quill-cowriter-panel__bottom--compact` modifier, which
+     * hides the secondary buttons behind a hamburger overflow menu.
+     */
+    private compactWidth = false;
+
+    /** Observes the panel container width to toggle {@link compactWidth}. */
+    private resizeObserver: ResizeObserver | null = null;
+
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app);
         this.plugin = plugin;
@@ -157,12 +216,43 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (this.containerEl && this.keydownHandler) {
             this.containerEl.removeEventListener('keydown', this.keydownHandler);
         }
+        // Disconnect any prior observer before re-observing the new container.
+        this.resizeObserver?.disconnect();
         this.containerEl = containerEl;
         this.render();
         this.keydownHandler = (e: KeyboardEvent) => {
             this.handleKeydown(e);
         };
         containerEl.addEventListener('keydown', this.keydownHandler);
+        // Toggle compact mode when the sidebar narrows. Mirrors the sidebar's
+        // own ResizeObserver at quill-sidebar.ts:100 (the only other responsive
+        // pattern in the repo).
+        this.resizeObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const compact = entry.contentRect.width < COMPACT_WIDTH_THRESHOLD;
+                if (compact !== this.compactWidth) {
+                    this.compactWidth = compact;
+                    this.scheduleRender();
+                }
+            }
+        });
+        this.resizeObserver.observe(containerEl);
+    }
+
+    /**
+     * Disconnect the resize observer and remove the keydown listener so the
+     * panel cannot fire on — or repopulate — another tab's UI after the
+     * sidebar clears or reuses the shared content container. Called by the
+     * sidebar before every re-render; {@link setContainer} re-establishes
+     * both when the co-writer tab is re-activated.
+     */
+    detach(): void {
+        this.resizeObserver?.disconnect();
+        this.resizeObserver = null;
+        if (this.containerEl && this.keydownHandler) {
+            this.containerEl.removeEventListener('keydown', this.keydownHandler);
+            this.keydownHandler = null;
+        }
     }
 
     /** Set the handler invoked when the user sends a direction in Direct mode. */
@@ -171,7 +261,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     }
 
     /** Set the handler invoked when the user sends a discussion (brainstorming) message. */
-    setDiscussMessageHandler(handler: (message: string) => void): void {
+    setDiscussMessageHandler(handler: (message: string, images?: string[]) => void): void {
         this.onDiscussMessage = handler;
     }
 
@@ -201,7 +291,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     }
 
     /** Set the handler invoked when the user submits a coach message. */
-    setCoachMessageHandler(handler: (message: string) => void): void {
+    setCoachMessageHandler(handler: (message: string, images?: string[]) => void): void {
         this.onCoachMessage = handler;
     }
 
@@ -344,6 +434,14 @@ export class CoWriterPanel extends AbstractChatPanel {
         const oldMode = this.inputMode;
         this.inputMode = mode;
         this.modePickerOpen = false;
+        // Drop any queued images when the mode actually changes — an image
+        // attached for one mode shouldn't follow the writer into another (a
+        // lorebook reference image shouldn't land in a discuss turn, etc.).
+        // A no-op reselect (clicking the already-active mode) preserves them.
+        if (oldMode !== mode) {
+            this.imageGeneration++;
+            this.pendingImages = [];
+        }
         // Entering or leaving a stateful mode resets the chat so the new mode
         // starts fresh: fulfill holds its own ChangeSet, lorebook holds its
         // own session state, and neither should inherit the other's history.
@@ -352,6 +450,13 @@ export class CoWriterPanel extends AbstractChatPanel {
             (oldMode === 'fulfill' || mode === 'fulfill' || oldMode === 'lorebook' || mode === 'lorebook')
         ) {
             this.onNewChat?.(false);
+        }
+        // Fire on every switch (including discuss ↔ coach ↔ direct) so
+        // session-scoped state like subagents doesn't linger across modes.
+        // chatHistory reset for stateful-mode crossings is handled above via
+        // onNewChat; this only clears the subagent views.
+        if (oldMode !== mode) {
+            this.onModeSwitch?.();
         }
         this.scheduleRender();
     }
@@ -369,7 +474,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     }
 
     /** Set the handler invoked when the user sends a message in lorebook coach mode. */
-    setLoreCoachMessageHandler(handler: (message: string) => void): void {
+    setLoreCoachMessageHandler(handler: (message: string, images?: string[]) => void): void {
         this.onLoreCoachMessage = handler;
     }
 
@@ -381,6 +486,11 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Set the handler invoked when the user discards a proposed lore draft. */
     setDiscardLoreDraftHandler(handler: (draft: LoreDraftEntry) => void): void {
         this.onDiscardLoreDraft = handler;
+    }
+
+    /** Wire a callback fired on every co-writer mode switch (used to clear session-scoped state like subagents). */
+    setModeSwitchHandler(handler: () => void): void {
+        this.onModeSwitch = handler;
     }
 
     /** Replace the lorebook coach phase (drives the bottom-bar indicator). */
@@ -459,6 +569,12 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Set whether continuation options are currently being generated. */
     setOptionsLoading(loading: boolean): void {
         this.optionsLoading = loading;
+        this.scheduleRender();
+    }
+
+    /** Set whether the Regime B image-description proxy call is in flight. */
+    setDescribingImages(active: boolean): void {
+        this.describingImages = active;
         this.scheduleRender();
     }
 
@@ -673,7 +789,19 @@ export class CoWriterPanel extends AbstractChatPanel {
                     const bubble = scroll.createEl('div', {
                         cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--user'
                     });
-                    bubble.setText(msg.content);
+                    // Use a child text node rather than bubble.setText so a
+                    // thumbnail strip can sit alongside it when images are
+                    // attached to this message.
+                    bubble.createEl('div', { cls: 'quill-cowriter-panel__bubble-text' }).setText(msg.content);
+                    if (msg.images && msg.images.length > 0) {
+                        const thumbs = bubble.createEl('div', { cls: 'quill-cowriter-panel__bubble-images' });
+                        for (const b64 of msg.images) {
+                            thumbs.createEl('img', {
+                                cls: 'quill-cowriter-panel__bubble-image',
+                                attr: { src: `data:image/jpeg;base64,${b64}`, alt: 'Attached image' }
+                            });
+                        }
+                    }
                 } else if (msg.role === 'assistant') {
                     const bubble = scroll.createEl('div', {
                         cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--assistant'
@@ -806,7 +934,20 @@ export class CoWriterPanel extends AbstractChatPanel {
                 }
             }
 
-            if (this.optionsLoading) {
+            // Regime B processing indicator OR generic streaming placeholder.
+            // When the proxy caption call is in flight, show a tool-use-style
+            // "Describing image…" line in place of "Thinking..." so the writer
+            // knows their image is being processed, not silently stalled.
+            if (this.describingImages) {
+                const indicator = scroll.createEl('div', {
+                    cls: 'quill-cowriter-panel__image-describing'
+                });
+                indicator.createEl('span', {
+                    cls: 'quill-cowriter-panel__image-describing-icon',
+                    text: '\u29c9'
+                });
+                indicator.createEl('span', { text: 'Describing image\u2026' });
+            } else if (this.optionsLoading) {
                 const bubble = scroll.createEl('div', {
                     cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--assistant quill-cowriter-panel__chat-bubble--streaming'
                 });
@@ -1182,7 +1323,9 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the pinned bottom area (draft status, context pills, input row). */
     private renderBottomArea(): void {
-        const bottom = this.containerEl!.createEl('div', { cls: 'quill-cowriter-panel__bottom' });
+        const bottom = this.containerEl!.createEl('div', {
+            cls: `quill-cowriter-panel__bottom${this.compactWidth ? ' quill-cowriter-panel__bottom--compact' : ''}`
+        });
 
         // Coach mode UI
         if (this.inputMode === 'coach') {
@@ -1438,6 +1581,38 @@ export class CoWriterPanel extends AbstractChatPanel {
             ).open();
         });
 
+        // Attach-image button — chat modes only (direct/fulfill are prose-continuation).
+        // Always visible, including under compact-width hamburger collapse.
+        const canCapture = this.inputMode !== 'direct' && this.inputMode !== 'fulfill';
+        if (canCapture) {
+            const attachBtn = btnRow.createEl('button', {
+                cls: 'quill-cowriter-panel__attach-btn',
+                text: '\u{1f4ce}',
+                title: 'Attach image',
+                attr: { type: 'button' }
+            });
+            if (generating) attachBtn.disabled = true;
+            this.renderEvents.registerDomEvent(attachBtn, 'click', () => {
+                if (generating) return;
+                // Transient off-DOM file input. Not registered on renderEvents:
+                // the input must survive re-renders until the picker closes,
+                // then is removed explicitly in the change handler.
+                const fileInput = activeDocument.createElement('input');
+                fileInput.type = 'file';
+                fileInput.accept = 'image/*';
+                fileInput.multiple = true;
+                fileInput.hidden = true;
+                fileInput.addEventListener('change', () => {
+                    if (fileInput.files && fileInput.files.length > 0) {
+                        void this.addImageFiles(Array.from(fileInput.files));
+                    }
+                    fileInput.remove();
+                });
+                activeDocument.body.appendChild(fileInput);
+                fileInput.click();
+            });
+        }
+
         const refreshBtn = btnRow.createEl('button', {
             cls: 'quill-cowriter-panel__refresh-btn',
             text: '\u21bb',
@@ -1476,16 +1651,70 @@ export class CoWriterPanel extends AbstractChatPanel {
                 'New chat',
                 'Start a new chat? The conversation will be cleared. Manuscript and vault context files will be kept.',
                 () => {
+                    this.imageGeneration++;
+                    this.pendingImages = [];
                     this.onNewChat?.(false);
                 },
                 'Keep context',
                 {
                     text: 'Clear context too',
                     handler: () => {
+                        this.imageGeneration++;
+                        this.pendingImages = [];
                         this.onNewChat?.(true);
                     }
                 }
             ).open();
+        });
+
+        // Overflow hamburger — only visible under compact-width (see SCSS).
+        // Surfaces the secondary buttons (Add context / Refresh / Compact /
+        // New chat) as a native Obsidian Menu so the row doesn't overflow on
+        // a narrow sidebar or mobile screen.
+        const overflowBtn = btnRow.createEl('button', {
+            cls: 'quill-cowriter-panel__overflow-btn',
+            text: '\u22ef',
+            title: 'More actions',
+            attr: { type: 'button', 'aria-label': 'More actions' }
+        });
+        if (generating) overflowBtn.disabled = true;
+        this.renderEvents.registerDomEvent(overflowBtn, 'click', (e) => {
+            if (generating) return;
+            const menu = new Menu();
+            menu.addItem((item) =>
+                item
+                    .setTitle('Add file to context')
+                    .setIcon('plus')
+                    .onClick(() => {
+                        if (!addCtxBtn.disabled) addCtxBtn.click();
+                    })
+            );
+            menu.addItem((item) =>
+                item
+                    .setTitle('Refresh suggestions')
+                    .setIcon('refresh-cw')
+                    .onClick(() => {
+                        if (!refreshBtn.disabled) refreshBtn.click();
+                    })
+            );
+            menu.addItem((item) =>
+                item
+                    .setTitle('Compact conversation')
+                    .setIcon('fold-vertical')
+                    .onClick(() => {
+                        if (!compactBtn.disabled) compactBtn.click();
+                    })
+            );
+            menu.addSeparator();
+            menu.addItem((item) =>
+                item
+                    .setTitle('New chat')
+                    .setIcon('square-pen')
+                    .onClick(() => {
+                        if (!newChatBtn.disabled) newChatBtn.click();
+                    })
+            );
+            menu.showAtMouseEvent(e);
         });
 
         // Spacer to push send/stop to the right
@@ -1498,7 +1727,9 @@ export class CoWriterPanel extends AbstractChatPanel {
                 : generating
                   ? this.inputMode === 'fulfill'
                       ? 'Running\u2026'
-                      : 'Stop'
+                      : this.describingImages
+                        ? 'Describing\u2026'
+                        : 'Stop'
                   : this.inputMode === 'fulfill'
                     ? 'Run'
                     : 'Send'
@@ -1507,6 +1738,30 @@ export class CoWriterPanel extends AbstractChatPanel {
 
         // Textarea row — below the buttons, ~10 lines tall
         const taRow = container.createEl('div', { cls: 'quill-cowriter-panel__ta-row' });
+
+        // Pending-image thumbnail strip (only when images are queued). Rendered
+        // above the textarea so it doesn't shift the input height when populated.
+        if (this.pendingImages.length > 0) {
+            const previewRow = taRow.createEl('div', { cls: 'quill-cowriter-panel__attach-row' });
+            this.pendingImages.forEach((b64, idx) => {
+                const chip = previewRow.createEl('div', { cls: 'quill-cowriter-panel__image-preview' });
+                chip.createEl('img', {
+                    cls: 'quill-cowriter-panel__image-preview-img',
+                    attr: { src: `data:image/jpeg;base64,${b64}`, alt: 'Pending attachment' }
+                });
+                const removeBtn = chip.createEl('button', {
+                    cls: 'quill-cowriter-panel__image-remove',
+                    text: '\u00d7',
+                    title: 'Remove image',
+                    attr: { type: 'button' }
+                });
+                this.renderEvents.registerDomEvent(removeBtn, 'click', () => {
+                    this.pendingImages.splice(idx, 1);
+                    this.scheduleRender();
+                });
+            });
+        }
+
         const input = taRow.createEl('textarea', {
             cls: 'quill-cowriter-panel__input',
             placeholder: noActiveFile
@@ -1532,6 +1787,48 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.inputValue = input.value;
         });
 
+        // Capture pasted images into pendingImages. Plain-text paste passes
+        // through untouched (only image/* items are intercepted).
+        this.renderEvents.registerDomEvent(input, 'paste', (e: ClipboardEvent) => {
+            if (this.inputMode === 'direct' || this.inputMode === 'fulfill') return;
+            const items = e.clipboardData?.items;
+            if (!items) return;
+            const files: File[] = [];
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                if (item && item.kind === 'file' && isImageContentType(item.type)) {
+                    const f = item.getAsFile();
+                    if (f) files.push(f);
+                }
+            }
+            if (files.length > 0) {
+                e.preventDefault();
+                void this.addImageFiles(files);
+            }
+        });
+
+        // Drag-and-drop image capture onto the textarea area. preventDefault on
+        // dragover is required for the drop event to fire — but only advertise
+        // acceptance for image files so non-image drops (e.g. a .md note) fall
+        // through to the host instead of being silently swallowed.
+        this.renderEvents.registerDomEvent(taRow, 'dragover', (e: DragEvent) => {
+            if (this.inputMode === 'direct' || this.inputMode === 'fulfill') return;
+            const hasImage = Array.from(e.dataTransfer?.items ?? []).some(
+                (item) => item.kind === 'file' && isImageContentType(item.type)
+            );
+            if (hasImage) e.preventDefault();
+        });
+        this.renderEvents.registerDomEvent(taRow, 'drop', (e: DragEvent) => {
+            if (this.inputMode === 'direct' || this.inputMode === 'fulfill') return;
+            const dropped = e.dataTransfer?.files
+                ? Array.from(e.dataTransfer.files).filter((f) => isImageContentType(f.type))
+                : [];
+            if (dropped.length > 0) {
+                e.preventDefault();
+                void this.addImageFiles(dropped);
+            }
+        });
+
         // Inline file-mention autocomplete for @-references
         if (!noActiveFile && this.inputMode !== 'fulfill') {
             new FileMentionSuggest(this.app, input, this.renderEvents);
@@ -1553,6 +1850,13 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.userScrolledUp = false; // Resume auto-follow on new message
             this.inputValue = '';
             input.value = '';
+            // Snapshot pending images and clear the queue. Only the chat modes
+            // (discuss/coach/lorebook) consume images — direct/fulfill are
+            // prose-continuation and stay text-only, so their pendingImages is
+            // always empty by construction (capture is disabled there).
+            const sentImages = this.pendingImages.length > 0 ? [...this.pendingImages] : undefined;
+            this.imageGeneration++;
+            this.pendingImages = [];
             if (this.inputMode === 'direct') {
                 this.optionsLoading = true;
             } else if (this.inputMode === 'fulfill') {
@@ -1567,11 +1871,11 @@ export class CoWriterPanel extends AbstractChatPanel {
                 const timeoutId = window.setTimeout(() => this.onRunFulfill?.(''));
                 this.renderEvents.register(() => window.clearTimeout(timeoutId));
             } else if (this.inputMode === 'coach') {
-                this.onCoachMessage?.(text);
+                this.onCoachMessage?.(text, sentImages);
             } else if (this.inputMode === 'lorebook') {
-                this.onLoreCoachMessage?.(text);
+                this.onLoreCoachMessage?.(text, sentImages);
             } else {
-                this.onDiscussMessage?.(text);
+                this.onDiscussMessage?.(text, sentImages);
             }
         };
 
@@ -1671,6 +1975,70 @@ export class CoWriterPanel extends AbstractChatPanel {
             label = label === 'No files in context' ? 'plot map' : `${label} + plot map`;
         }
         return label;
+    }
+
+    /**
+     * Downscale the given image files to base64 JPEG and queue them on
+     * {@link pendingImages}. No-op in direct/fulfill (capture is disabled
+     * there — those modes are prose-continuation and stay text-only).
+     *
+     * Enforces the {@link MAX_PENDING_IMAGES} cap (warns once per call when
+     * the cap or the type filter rejects files). On success, warns once if no
+     * vision regime is configured (so the writer knows their image won't reach
+     * the model without going to settings), then re-renders so the thumbnail
+     * strip appears.
+     */
+    private async addImageFiles(files: File[] | FileList): Promise<void> {
+        if (this.inputMode === 'direct' || this.inputMode === 'fulfill') return;
+        const maxDim = this.plugin.settings.lorebookImageMaxDimension;
+        const gen = this.imageGeneration;
+        let added = 0;
+        let capWarned = false;
+        let typeWarned = false;
+        let sizeWarned = false;
+        for (const file of Array.from(files)) {
+            if (gen !== this.imageGeneration) return; // queue cleared mid-flight
+            if (!isImageContentType(file.type)) {
+                if (!typeWarned) {
+                    new Notice('Quill: Only image files can be attached.');
+                    typeWarned = true;
+                }
+                continue;
+            }
+            if (file.size > MAX_IMAGE_BYTES) {
+                if (!sizeWarned) {
+                    const mb = Math.round(file.size / 1024 / 1024);
+                    new Notice(
+                        `Quill: "${file.name}" is ${mb}MB — too large to process. Maximum is ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB.`
+                    );
+                    sizeWarned = true;
+                }
+                continue;
+            }
+            if (this.pendingImages.length >= MAX_PENDING_IMAGES) {
+                if (!capWarned) {
+                    new Notice(`Quill: Up to ${MAX_PENDING_IMAGES} images per message.`);
+                    capWarned = true;
+                }
+                break;
+            }
+            try {
+                const bytes = await file.arrayBuffer();
+                const b64 = await downscaleToJpegBase64(bytes, maxDim, file.type);
+                if (gen !== this.imageGeneration) return; // queue cleared during downscale
+                this.pendingImages.push(b64);
+                added++;
+            } catch (err) {
+                console.warn('Quill: image downscale failed', err);
+                new Notice('Quill: Could not process that image.');
+            }
+        }
+        if (added > 0) {
+            if (!isVisionConfigured(this.plugin)) {
+                new Notice('Quill: No image model configured — set one in settings for the AI to see this.');
+            }
+            this.scheduleRender();
+        }
     }
 }
 

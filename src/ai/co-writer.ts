@@ -28,7 +28,12 @@ import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files
 import { ChangeSet } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry } from '../core/dashboard/lorebook-types';
 import { createReadOnlyToolRegistry, createToolRegistry, executeToolCall, type ToolContext } from './tools';
-import { injectImagesIntoMessages } from './vision';
+import {
+    getImageRegime,
+    injectImagesIntoMessages,
+    prepareUserMessageWithImages,
+    type PreparedUserMessage
+} from './vision';
 import { SubagentSession, type SubagentView, type SubagentConfig } from './subagent-session';
 import { resolveNoteFile } from './tools/lore-edit-helpers';
 import {
@@ -642,6 +647,14 @@ export interface CoWriterChatMessage {
      * with the panel's streaming-placeholder logic.
      */
     toolUses?: { name: string; argsSummary: string; error?: string }[];
+    /**
+     * Base64 JPEG thumbnails (no `data:` prefix) the writer pasted/dropped/
+     * attached with this user message. Only set on user messages; rendered as
+     * a thumbnail strip beneath the bubble text so the writer sees what they
+     * sent. The regime-A/ regime-B routing decision happens in
+     * {@link prepareUserMessageWithImages} before the message reaches the API.
+     */
+    images?: string[];
 }
 
 /**
@@ -712,6 +725,12 @@ export class CoWriterSession {
     onThought: ((thought: string) => void) | null = null;
     onChatUpdate: (() => void) | null = null;
     onOptionsLoading: ((loading: boolean) => void) | null = null;
+    /**
+     * Fired when the Regime B proxy caption call starts/ends so the panel can
+     * show a "Describing image…" state during the round-trip. Only fires under
+     * the proxy regime (text-only chat + separate image model configured).
+     */
+    onDescribingImages: ((active: boolean) => void) | null = null;
     /** Called after a draft is accepted, to trigger fresh options. */
     onDraftAccepted: (() => void) | null = null;
     /** Called when the discuss-mode token estimate changes (conversation tokens only;
@@ -1177,7 +1196,7 @@ export class CoWriterSession {
      *    conversation is summarized by the AI into a single context head.
      *  - The new user message is always preserved below the context head.
      */
-    async sendDiscussion(plugin: EventideQuillPlugin, message: string): Promise<void> {
+    async sendDiscussion(plugin: EventideQuillPlugin, message: string, images?: string[]): Promise<void> {
         const chat = plugin.getDefaultChatProvider();
         if (!chat.provider) {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
@@ -1201,6 +1220,10 @@ export class CoWriterSession {
         }
 
         this.cancelGeneration();
+        // Create the abort controller early so the image-prep step (Regime B
+        // proxy caption call) and compaction can both be cancelled via Stop,
+        // not just the streaming loop below.
+        this.abortController = new AbortController();
         this.app = plugin.app;
         this.currentOptions = [];
         this.optionsLoading = true;
@@ -1208,7 +1231,7 @@ export class CoWriterSession {
         if (editor) this.lockEditor();
 
         // Add user's message to display-only chat history
-        this.chatHistory.push({ role: 'user', content: message });
+        this.chatHistory.push({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
 
         const fullText = editor?.getValue() ?? '';
         const proseForContext = editor
@@ -1307,8 +1330,24 @@ export class CoWriterSession {
             }
         }
 
-        // Append the user message after compaction so it's always below any new context head
-        this.discussCurrentMessages.push({ role: 'user', content: prompt });
+        // Append the user message after compaction so it's always below any new context head.
+        // Apply the two vision regimes to the writer's pasted/attached images: under Regime A
+        // the images attach to this user message; under Regime B the proxy caption is folded
+        // into the text; under unsupported a placeholder note is appended.
+        const prepared = await this.prepareImageMessage(plugin, prompt, images, this.abortController?.signal);
+        // Guard against an abort race: cancelGeneration may have cleared
+        // this.abortController during the Regime B proxy-caption await.
+        if (!this.abortController || this.abortController.signal.aborted) {
+            this.unlockEditor();
+            this.optionsLoading = false;
+            this.onOptionsLoading?.(false);
+            return;
+        }
+        this.discussCurrentMessages.push({
+            role: 'user',
+            content: prepared.content,
+            ...(prepared.images ? { images: prepared.images } : {})
+        });
 
         if (__DEV__ && plugin.settings.enableDebugLogging) {
             console.warn('[Quill Co-writer] Discuss context', {
@@ -1353,7 +1392,6 @@ export class CoWriterSession {
         const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
 
         try {
-            this.abortController = new AbortController();
             ctx.signal = this.abortController.signal;
 
             for (let round = 0; round < maxRounds; round++) {
@@ -1512,7 +1550,7 @@ export class CoWriterSession {
      * 3. Plan — AI creates a structured plan based on clarified intent
      * 4. Direction — AI provides concrete, actionable direction
      */
-    async sendCoach(plugin: EventideQuillPlugin, message: string): Promise<void> {
+    async sendCoach(plugin: EventideQuillPlugin, message: string, images?: string[]): Promise<void> {
         const chat = plugin.getDefaultChatProvider();
         if (!chat.provider) {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
@@ -1534,6 +1572,10 @@ export class CoWriterSession {
         }
 
         this.cancelGeneration();
+        // Create the abort controller early so the image-prep step (Regime B
+        // proxy caption call) and compaction can both be cancelled via Stop,
+        // not just the streaming loop below.
+        this.abortController = new AbortController();
         this.app = plugin.app;
         this.currentOptions = [];
         this.optionsLoading = true;
@@ -1541,7 +1583,7 @@ export class CoWriterSession {
         if (editor) this.lockEditor();
 
         // Add user message to display history (same as sendDiscussion)
-        this.chatHistory.push({ role: 'user', content: message });
+        this.chatHistory.push({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
 
         const fullText = editor?.getValue() ?? '';
         const proseForContext = editor
@@ -1583,6 +1625,7 @@ export class CoWriterSession {
         // Initialize coach session on first call
         if (!this.coachSession || (this.coachSession.phase === 'discern' && message)) {
             const prompt = getCoWriterCoachPrompt(proseForContext || '(empty document)', message);
+            const prepared = await this.prepareImageMessage(plugin, prompt, images, this.abortController?.signal);
             this.coachSession = {
                 phase: 'discern',
                 response: '',
@@ -1599,7 +1642,14 @@ export class CoWriterSession {
                     'You are a thoughtful writing coach guiding a novelist through what to do next in their scene. Your job is to ASK QUESTIONS — at least 2-3 clarifying questions in every response until you have enough information to provide a plan. Lead every response with those questions rather than moving straight to analysis or discussion. Follow the phased structure: discern intent, ask questions, plan, direct. Keep your output to coaching, leaving prose writing to the writer.'
             };
 
-            this.discussCurrentMessages = [systemPrompt, { role: 'user', content: prompt }];
+            this.discussCurrentMessages = [
+                systemPrompt,
+                {
+                    role: 'user',
+                    content: prepared.content,
+                    ...(prepared.images ? { images: prepared.images } : {})
+                }
+            ];
         } else {
             // Subsequent turn
             const phase = this.coachSession.phase;
@@ -1611,7 +1661,17 @@ export class CoWriterSession {
                     this.coachSession.response || this.coachSession.summary,
                     phase === 'direction' ? this.coachSession.response : ''
                 );
-                this.discussCurrentMessages.push({ role: 'user', content: revisionPrompt });
+                const prepared = await this.prepareImageMessage(
+                    plugin,
+                    revisionPrompt,
+                    images,
+                    this.abortController?.signal
+                );
+                this.discussCurrentMessages.push({
+                    role: 'user',
+                    content: prepared.content,
+                    ...(prepared.images ? { images: prepared.images } : {})
+                });
             } else {
                 // Normal follow-up (discern or clarify phase)
                 const followUpPrompt = getCoWriterCoachFollowUp(
@@ -1620,8 +1680,27 @@ export class CoWriterSession {
                     phase === 'discern' ? 1 : 2,
                     this.coachSession.clarifyRound
                 );
-                this.discussCurrentMessages.push({ role: 'user', content: followUpPrompt });
+                const prepared = await this.prepareImageMessage(
+                    plugin,
+                    followUpPrompt,
+                    images,
+                    this.abortController?.signal
+                );
+                this.discussCurrentMessages.push({
+                    role: 'user',
+                    content: prepared.content,
+                    ...(prepared.images ? { images: prepared.images } : {})
+                });
             }
+        }
+
+        // Guard against an abort race: cancelGeneration may have cleared
+        // this.abortController during a Regime B proxy-caption await above.
+        if (!this.abortController || this.abortController.signal.aborted) {
+            this.unlockEditor();
+            this.optionsLoading = false;
+            this.onOptionsLoading?.(false);
+            return;
         }
 
         // Build the tool registry up front so its fixed per-request overhead
@@ -1697,7 +1776,6 @@ export class CoWriterSession {
         let response = '';
 
         try {
-            this.abortController = new AbortController();
             ctx.signal = this.abortController.signal;
 
             for (let round = 0; round < maxRounds; round++) {
@@ -2061,7 +2139,7 @@ export class CoWriterSession {
      * development is independent of any open chapter. Does require at least
      * one configured lorebook folder.
      */
-    async sendLoreCoach(plugin: EventideQuillPlugin, message: string): Promise<void> {
+    async sendLoreCoach(plugin: EventideQuillPlugin, message: string, images?: string[]): Promise<void> {
         const chat = plugin.getDefaultChatProvider();
         if (!chat.provider) {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
@@ -2073,16 +2151,22 @@ export class CoWriterSession {
         }
 
         this.cancelGeneration();
+        // Create the abort controller early so the image-prep step (Regime B
+        // proxy caption call) can be cancelled via Stop, not just the
+        // streaming loop below.
+        this.abortController = new AbortController();
         this.app = plugin.app;
         this.currentOptions = [];
         this.optionsLoading = true;
         this.onOptionsLoading?.(true);
 
         // Add user message to display history.
-        this.chatHistory.push({ role: 'user', content: message });
+        this.chatHistory.push({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
 
         // Initialize session on first turn.
         if (!this.loreCoachSession) {
+            const prompt = getLoreCoachUserPrompt(message);
+            const prepared = await this.prepareImageMessage(plugin, prompt, images, this.abortController?.signal);
             this.loreCoachSession = {
                 phase: 'discover',
                 scope: message,
@@ -2094,11 +2178,29 @@ export class CoWriterSession {
 
             this.loreCoachMessages = [
                 { role: 'system', content: getLoreCoachSystemPrompt() },
-                { role: 'user', content: getLoreCoachUserPrompt(message) }
+                {
+                    role: 'user',
+                    content: prepared.content,
+                    ...(prepared.images ? { images: prepared.images } : {})
+                }
             ];
         } else {
             this.loreCoachSession.rounds++;
-            this.loreCoachMessages.push({ role: 'user', content: getLoreCoachUserPrompt(message) });
+            const prompt = getLoreCoachUserPrompt(message);
+            const prepared = await this.prepareImageMessage(plugin, prompt, images, this.abortController?.signal);
+            this.loreCoachMessages.push({
+                role: 'user',
+                content: prepared.content,
+                ...(prepared.images ? { images: prepared.images } : {})
+            });
+        }
+
+        // Guard against an abort race: cancelGeneration may have cleared
+        // this.abortController during a Regime B proxy-caption await above.
+        if (!this.abortController || this.abortController.signal.aborted) {
+            this.optionsLoading = false;
+            this.onOptionsLoading?.(false);
+            return;
         }
 
         const registry = createToolRegistry(plugin, true, true);
@@ -3606,6 +3708,46 @@ export class CoWriterSession {
         this.voiceProfileFile = null;
     }
 
+    /**
+     * Wrap {@link prepareUserMessageWithImages} with a "describing image…"
+     * signal so the panel can show a dedicated state during the Regime B proxy
+     * caption call. The signal fires only under the proxy regime (text-only
+     * chat model + separate image model), not under native (where pixels just
+     * attach to the message with no extra round-trip). The "off" signal fires
+     * in a `finally` so the indicator clears even if the proxy call fails or is
+     * aborted (in which case prepareUserMessageWithImages returns a placeholder).
+     */
+    private async prepareImageMessage(
+        plugin: EventideQuillPlugin,
+        text: string,
+        images: string[] | undefined,
+        signal: AbortSignal | undefined
+    ): Promise<PreparedUserMessage> {
+        const imgs = images ?? [];
+        if (imgs.length === 0) return { content: text };
+        const proxy = getImageRegime(plugin) === 'proxy';
+        if (proxy) this.onDescribingImages?.(true);
+        try {
+            return await prepareUserMessageWithImages(plugin, text, imgs, signal);
+        } finally {
+            if (proxy) this.onDescribingImages?.(false);
+        }
+    }
+
+    /**
+     * Drop all subagent sessions and exit any drill-down view. Called from
+     * {@link resetChat} (new chat) and on every mode switch (via
+     * `clearCoWriterSubagents`), since a subagent queued for one mode shouldn't
+     * follow the writer into another. Any in-flight subagent is already
+     * aborted by `cancelGeneration` (which the caller has run, or will run);
+     * the sessions hold no further resources to release.
+     */
+    clearSubagents(): void {
+        this.subagents.clear();
+        this.activeSubagentId = null;
+        this.onChatUpdate?.();
+    }
+
     /** Reset the entire session including coach and context. */
     reset(): void {
         this.unlockEditor();
@@ -3615,6 +3757,7 @@ export class CoWriterSession {
         this.clearFulfill();
         this.clearDirect();
         this.clearLoreEdit();
+        this.clearSubagents();
         this.manuscriptPath = null;
         this.originalText = '';
         this.insertionStart = -1;
@@ -3646,6 +3789,7 @@ export class CoWriterSession {
         this.clearFulfill();
         this.clearDirect();
         this.clearLoreEdit();
+        this.clearSubagents();
         this.originalText = '';
         this.insertionStart = -1;
         this.insertionLength = 0;

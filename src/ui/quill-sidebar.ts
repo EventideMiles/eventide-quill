@@ -320,6 +320,10 @@ export class QuillSidebarView extends ItemView {
         this.addChild(this.renderEvents);
 
         this.tabBar.empty();
+        // Tear down the co-writer panel's resize observer + keydown listener
+        // so they can't fire on — or repopulate — another tab's UI while the
+        // co-writer tab is inactive. setContainer re-establishes both on return.
+        this.coWriterPanel?.detach();
         this.content.empty();
 
         this.renderTopTabBar();
@@ -645,8 +649,8 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setSendMessageHandler((direction: string) => {
                 void this.plugin.sendCoWriterMessage(direction);
             });
-            this.coWriterPanel.setDiscussMessageHandler((message: string) => {
-                void this.plugin.sendCoWriterDiscussion(message);
+            this.coWriterPanel.setDiscussMessageHandler((message: string, images?: string[]) => {
+                void this.plugin.sendCoWriterDiscussion(message, images);
             });
             this.coWriterPanel.setApplyOptionHandler((index: number) => {
                 const manuscriptPath = this.plugin.coWriterSession.manuscriptPath;
@@ -678,8 +682,11 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setNewChatHandler((clearContext: boolean) => {
                 this.plugin.resetCoWriterChat(clearContext);
             });
-            this.coWriterPanel.setCoachMessageHandler((message: string) => {
-                void this.plugin.sendCoWriterCoach(message);
+            this.coWriterPanel.setModeSwitchHandler(() => {
+                this.plugin.clearCoWriterSubagents();
+            });
+            this.coWriterPanel.setCoachMessageHandler((message: string, images?: string[]) => {
+                void this.plugin.sendCoWriterCoach(message, images);
             });
             this.coWriterPanel.setCoachToOptionsHandler(() => {
                 void this.plugin.coWriterCoachToOptions();
@@ -720,8 +727,8 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setRejectDirectHandler((id: number) => {
                 this.plugin.rejectDirectChange(id);
             });
-            this.coWriterPanel.setLoreCoachMessageHandler((message: string) => {
-                void this.plugin.sendCoWriterLoreCoach(message);
+            this.coWriterPanel.setLoreCoachMessageHandler((message: string, images?: string[]) => {
+                void this.plugin.sendCoWriterLoreCoach(message, images);
             });
             this.coWriterPanel.setEndLoreCoachHandler(() => {
                 this.plugin.endCoWriterLoreCoach();
@@ -895,6 +902,11 @@ export class QuillSidebarView extends ItemView {
     /** Push options loading state to the Co-writer panel. */
     coWriterSetOptionsLoading(loading: boolean): void {
         this.coWriterPanel?.setOptionsLoading(loading);
+    }
+
+    /** Push the Regime B "describing image…" indicator state to the Co-writer panel. */
+    coWriterSetDescribingImages(active: boolean): void {
+        this.coWriterPanel?.setDescribingImages(active);
     }
 
     /** Trigger a full refresh of the Co-writer panel (e.g., after context file changes). */

@@ -1038,6 +1038,40 @@ export default class EventideQuillPlugin extends Plugin {
             saved.embeddingsTopKChunks = saved.manuscriptAnalysisTopKChunks;
             delete saved.manuscriptAnalysisTopKChunks;
         }
+        // Migration: lorebookImageProxyPrompt rewritten across 0.12 — first to
+        // a structured per-character format, then again to add anti-hallucination
+        // grounding ("every detail should be grounded in something visible",
+        // "leave it out if unclear", "stop when done"). Upgrade users who still
+        // have either old default so they benefit without manually resetting.
+        // Uses exact string comparison so a custom prompt that merely starts
+        // with the old text is never clobbered.
+        const LEGACY_IMAGE_PROXY_PROMPT_V1 =
+            'Describe this image for a novelist. Focus on visible details that matter ' +
+            'for fiction: character appearance (face, build, age, ethnicity, clothing, ' +
+            'distinguishing features), setting, mood, and notable objects. Be concise ' +
+            'and concrete; avoid speculation about story or dialogue.';
+        const LEGACY_IMAGE_PROXY_PROMPT_V2 =
+            'Describe this image in detail for a novelist. This description is the only ' +
+            'information the writing assistant will have about the image, so be thorough, ' +
+            'not brief.\n\n' +
+            'If MULTIPLE characters are visible, describe EACH one separately using a ' +
+            'numbered list (1, 2, 3, ...). For every character, cover:\n' +
+            '- Face: apparent age, ethnicity, hair (color, style, length), eye color, facial features\n' +
+            '- Build: height relative to others in the scene, body type, posture\n' +
+            '- Clothing: each visible garment, colors, style, condition\n' +
+            '- Distinguishing features: scars, tattoos, jewelry, accessories, weapons\n' +
+            'Also describe the setting (location, time of day, lighting, weather), the ' +
+            'mood or atmosphere, and any notable objects (books, maps, artifacts, tools).\n\n' +
+            'Stick to what is visible — do not speculate about story, dialogue, or ' +
+            'off-screen elements.';
+        if (
+            saved &&
+            typeof saved.lorebookImageProxyPrompt === 'string' &&
+            (saved.lorebookImageProxyPrompt === LEGACY_IMAGE_PROXY_PROMPT_V1 ||
+                saved.lorebookImageProxyPrompt === LEGACY_IMAGE_PROXY_PROMPT_V2)
+        ) {
+            saved.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
+        }
         this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
     }
 
@@ -1737,6 +1771,9 @@ export default class EventideQuillPlugin extends Plugin {
         session.onOptionsLoading = (loading: boolean) => {
             this.lintPanel?.coWriterSetOptionsLoading(loading);
         };
+        session.onDescribingImages = (active: boolean) => {
+            this.lintPanel?.coWriterSetDescribingImages(active);
+        };
         session.onTokenEstimate = (conversationTokens: number, maxTokens: number) => {
             this.lintPanel?.coWriterSetContextTokenEstimate(conversationTokens);
             this.lintPanel?.coWriterSetMaxAllowedTokens(maxTokens);
@@ -1827,26 +1864,26 @@ export default class EventideQuillPlugin extends Plugin {
     /**
      * Send a discussion message to the co-writer (brainstorming mode, no options).
      */
-    async sendCoWriterDiscussion(message: string): Promise<void> {
+    async sendCoWriterDiscussion(message: string, images?: string[]): Promise<void> {
         const path = this.app.workspace.getActiveFile()?.path;
         if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
         await this.ensureContextInitialized();
         this.wireCoWriterPanel();
-        await this.coWriterSession.sendDiscussion(this, message);
+        await this.coWriterSession.sendDiscussion(this, message, images);
     }
 
     /**
      * Send a coach message to the co-writer.
      * The AI analyzes the passage and guides the writer through a structured process.
      */
-    async sendCoWriterCoach(message: string): Promise<void> {
+    async sendCoWriterCoach(message: string, images?: string[]): Promise<void> {
         const path = this.app.workspace.getActiveFile()?.path;
         if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
         await this.ensureContextInitialized();
         this.wireCoWriterPanel();
-        await this.coWriterSession.sendCoach(this, message);
+        await this.coWriterSession.sendCoach(this, message, images);
     }
 
     /**
@@ -1923,10 +1960,10 @@ export default class EventideQuillPlugin extends Plugin {
      * lore siblings, and vault notes mid-generation, then proposes a draft
      * entry for the writer to review and save as a note.
      */
-    async sendCoWriterLoreCoach(message: string): Promise<void> {
+    async sendCoWriterLoreCoach(message: string, images?: string[]): Promise<void> {
         await this.openCoWriterPanel();
         this.wireCoWriterPanel();
-        await this.coWriterSession.sendLoreCoach(this, message);
+        await this.coWriterSession.sendLoreCoach(this, message, images);
     }
 
     /** End the current Lorebook Coach session. */
@@ -2371,6 +2408,17 @@ export default class EventideQuillPlugin extends Plugin {
             this.lintPanel?.coWriterSetAdditionalContextTokens(0);
         }
         this.lintPanel?.coWriterRefresh();
+    }
+
+    /**
+     * Clear subagent sessions without resetting the rest of the chat. Used on
+     * every co-writer mode switch so a subagent queued for one mode doesn't
+     * follow the writer into another. Chat history is preserved (only the
+     * subagents map and drill-down state are cleared); the new-chat path goes
+     * through {@link resetCoWriterChat} instead.
+     */
+    clearCoWriterSubagents(): void {
+        this.coWriterSession.clearSubagents();
     }
 
     /**

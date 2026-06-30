@@ -152,7 +152,7 @@ src/
     modes.ts, prompts.ts, transform.ts,
     vision.ts (resolveImageInjection — two-regime image routing),
     image-utils.ts (decode → downscale → JPEG base64),
-    co-writer.ts (~3.3k lines, largest file in repo — discuss/coach/fulfill/lorebook-coach
+    co-writer.ts (~3.8k lines, largest file in repo — discuss/coach/fulfill/lorebook-coach
                   modes, each with its own tool loop; NOT streamWithTools),
     subagent-session.ts (SubagentSession — isolated-context lorebook batch runner
                          spawned by the run_lorebook_batch tool; see "Subagents"),
@@ -168,7 +168,7 @@ src/
       fandom-lookup.ts, wikipedia-lookup.ts, mediawiki.ts (shared MediaWiki client)
   ui/                  # Views, modals, panels
     quill-sidebar.ts (~1.3k lines — tabs: linter/context/review/cowriter/dashboard/lorebook),
-    co-writer-panel.ts (~1.5k lines), context-panel.ts, review-panel.ts,
+    co-writer-panel.ts (~2.0k lines), context-panel.ts, review-panel.ts,
     dashboard-panel.ts, lorebook-panel.ts, lore-entry-review.ts,
     chat-panel.ts, chat-context-files.ts, document-header.ts,
     change-card.ts, change-diff-extension.ts, token-indicator.ts,
@@ -184,7 +184,7 @@ src/
 The co-writer can call tools mid-conversation via the provider's native tool-calling API (OpenAI/Ollama `tools` + `tool_calls`). Two execution paths exist — both are vision-aware:
 
 - **`streamWithTools`** (`src/ai/tools/tool-loop.ts`) — a generic tool-loop runner: streams text/thought chunks to the consumer while executing tool calls internally. First real caller: **critical analysis** (`analysis.ts` → `getAnalysis` routes through it when a tool registry is supplied, so the Review tab's critical engine can verify findings against the vault). The co-writer modes still inline their own loops (mode-specific behavior); migrating them onto `streamWithTools` is a future DRY consolidation.
-- **The co-writer's own loop** (`src/ai/co-writer.ts`) — discuss, coach, fulfill, and lorebook-coach modes each inline their own tool execution (`executeToolCallSafely`) so they can render tool rounds in the chat UI and track token growth round-by-round. **This is the active path.**
+- **The co-writer's own loop** (`src/ai/co-writer.ts`) — discuss, coach, fulfill, and lorebook-coach modes each inline their own tool execution (`executeToolCall`) so they can render tool rounds in the chat UI and track token growth round-by-round. **This is the active path.**
 
 Key contracts:
 
@@ -219,16 +219,18 @@ A **subagent** is a self-contained batch worker that runs in its OWN fresh conte
 - **Edits are NOT isolated; the conversation IS.** A lore subagent's edits flow through `plugin.coWriterSession.loreEdits` (the shared review queue) via the tools' side effects — a subagent-produced diff reviews exactly like an inline one and **persists after the subagent closes** (removed only by the writer's approve/reject/new-chat). Research produces no edits (read-only). Every subagent's `messages`/`chatHistory` are per-subagent and ephemeral.
 - **The parent is blocked while a subagent runs** — intentional and required for local models (one inference at a time). The subagent is the same model on the same provider, serialized as a synchronous tool call; it is NOT a concurrent process. Cancellation propagates via the parent's abort signal.
 
-Landed: the runner + registry + both spawners, plus the drill-down UX — status cards in the parent view (labeled by kind: Batch edit / Research; running/succeeded/failed) and a "View" action that drills into the subagent's internal conversation (with a `← Back` that returns to the parent chat, preserved intact). Navigation state lives on the session (`activeSubagentId`); the panel switches views via `setSubagents`/`setActiveSubagent` pushed on `onChatUpdate`. Deferred: stored/resumable conversation history (`.planning/pr-conversation-persistence.md`).
+Landed: the runner + registry + both spawners, plus the drill-down UX — status cards in the parent view (labeled by kind: Batch edit / Research; running/succeeded/failed) and a "View" action that drills into the subagent's internal conversation (with a `← Back` that returns to the parent chat, preserved intact). Navigation state lives on the session (`activeSubagentId`); the panel switches views via `setSubagents`/`setActiveSubagent` pushed on `onChatUpdate`. **Subagents are cleared on new-chat (`resetChat` → `clearSubagents`) and on every co-writer mode switch** (`setMode` → `onModeSwitch` → `plugin.clearCoWriterSubagents()`), since a subagent queued for one mode shouldn't follow the writer into another. An in-flight subagent is aborted by the parent's `cancelGeneration` (already called by both reset paths) before the map is cleared. Deferred: stored/resumable conversation history (`.planning/pr-conversation-persistence.md`).
 
 ## Vision & image support
 
-Images (character art, maps, reference photos) reach a model through three entry points (tool result, co-writer paste — planned, lorebook entry — planned), all funneled through `resolveImageInjection(plugin, images, opts)` in `src/ai/vision.ts`. Two regimes, picked at runtime from the configured models:
+Images (character art, maps, reference photos) reach a model through three entry points (tool result, co-writer paste, lorebook entry — planned), all funneled through `resolveImageInjection(plugin, images, opts)` in `src/ai/vision.ts`. Two regimes, picked at runtime from the configured models:
 
 - **Regime A (vision-native):** the default chat model has role `chat-image`. Images attach to the message as image content; the model sees pixels directly.
 - **Regime B (vision-proxy):** the chat model is text-only and a default image model is configured. The image model makes one isolated call (image + proxy prompt → caption text) and the caption is spliced into the conversation. The chat model never switches and never receives pixels — so a small local text model can pair with a cloud vision model.
 
 Regime B's proxy call is fully self-contained, so the image model may live on a **different provider** than chat (chosen via the Default image model picker, `aiDefaultImageProvider`). Regime A must stay on the chat provider — images ride on chat messages serialized by that provider.
+
+**Co-writer paste** (landed): the writer can paste, drag-and-drop, or paperclip-attach images into the discuss / coach / lorebook chat input (direct / fulfill stay text-only). All three paths funnel through a shared `addImageFiles()` helper on `CoWriterPanel` that downscales via `downscaleToJpegBase64`, enforces a 4-image cap (`MAX_PENDING_IMAGES`), and rejects files above a 50MB raw-byte ceiling (`MAX_IMAGE_BYTES`) to guard against OOM before decode. A thumbnail preview row sits above the textarea; thumbnails also render under the user bubble for sent messages. The send path threads `images?` through `panel → sidebar → main → session.sendDiscussion/sendCoach/sendLoreCoach`, each of which routes through a `prepareImageMessage` wrapper that calls `prepareUserMessageWithImages(plugin, text, images, signal)` (in `src/ai/vision.ts`) to apply the regime: native → attach pixels to the user message; described → fold the proxy caption into the text; unsupported → append a placeholder note. Under Regime B (text-only chat + image model), the wrapper fires `onDescribingImages(true/false)` so the panel can show a "Describing…" button label during the proxy round-trip. The analogue of `injectImagesIntoMessages` (tool-output path) for the user's own message. Synchronous `isVisionConfigured(plugin)` and `getImageRegime(plugin)` helpers (in `src/ai/vision.ts`) let the panel warn via Notice at capture time when neither regime is available. The co-writer button row also collapses responsively below 420px width (ResizeObserver on the panel container, mirroring the sidebar's pattern): Add-context / Refresh / Compact / New-chat fold into a hamburger overflow (native Obsidian `Menu`); Mode + Attach + Send stay visible.
 
 Provider serialization:
 
@@ -299,7 +301,7 @@ The project does not use `eslint-config-prettier`. The obsidianmd ESLint rules a
 
 - No `innerHTML`. Use `createEl()` + `textContent`. (Currently zero uses in `src/`.)
 - No raw DOM listeners. Prefer Obsidian's `registerDomEvent()` on a `Component` — often a child `Component` stored on a local field (e.g. `this.renderEvents.registerDomEvent(...)` in `quill-sidebar.ts`, `co-writer-panel.ts`; `component.registerDomEvent(...)` in `context-panel.ts`). Raw `addEventListener` is currently used in 12 files (`settings.ts`, `core/linter/decorations.ts`, and `ui/` {`change-diff-extension`, `chat-context-files`, `chat-panel`, `confirm-modal`, `co-writer-panel`, `dashboard-panel`, `file-mention-suggest`, `filename-modal`, `fix-with-ai-modal`, `transform-modal`}.ts); the heaviest is `settings.ts` via the `.inputEl.addEventListener('blur', ...)` idiom for reading values out of `TextComponent`. Prefer `registerDomEvent()` for new code; if `addEventListener` is unavoidable, leave an inline comment.
-- No raw timers. Prefer teardown via the `Component` lifecycle (`register()` / child components). Raw `window.setTimeout` is currently used in 6 files — `core/linter/decorations.ts` and `ui/co-writer-panel.ts` (defer-to-next-frame paints), `ai/tools/mediawiki.ts` and `ai/tools/lore-edit-helpers.ts` (rate-limit sleeps), `main.ts`, and `ui/file-mention-suggest.ts`. `Plugin#registerInterval` is not currently used anywhere in the codebase; when a raw timer is unavoidable, add an inline comment explaining why.
+- No raw timers. Prefer teardown via the `Component` lifecycle (`register()` / child components). Raw `window.setTimeout` is currently used in 7 files — `core/linter/decorations.ts` and `ui/co-writer-panel.ts` (defer-to-next-frame paints), `ai/tools/mediawiki.ts` and `ai/tools/lore-edit-helpers.ts` (rate-limit sleeps), `ai/tools/refresh-dashboard.ts` (bounded leaf-ready poll), `main.ts`, and `ui/file-mention-suggest.ts`. `Plugin#registerInterval` is not currently used anywhere in the codebase; when a raw timer is unavoidable, add an inline comment explaining why.
 - No `fetch`. Use `requestUrl()` for HTTP (mobile-compatible). Sole exception: `fetch` in `src/ai/transport.ts` for SSE streaming, guarded by `isStreamingSupported()` with an inline `eslint-disable-next-line` comment.
 - Use `Component` lifecycle + `register()` for proper teardown.
 - All UI text is sentence-case.

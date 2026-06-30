@@ -110,6 +110,12 @@ export interface EventideQuillSettings {
     /** Max image dimension (longest side, px) before downscale. Keeps vision payloads small. */
     lorebookImageMaxDimension: number;
     /**
+     * Max output tokens for the Regime B image-description proxy call. Higher
+     * values let the model describe multi-character images in detail; lower
+     * values are faster on local hardware. The model stops early when done.
+     */
+    lorebookImageMaxDescriptionTokens: number;
+    /**
      * Proxy prompt for Regime B (text-only chat model + dedicated image model):
      * how the image model should caption images it translates to text for the
      * chat model. Customizable per-writer focus.
@@ -214,6 +220,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     lorebookToolMaxTokens: 2000,
     lorebookImageTools: true,
     lorebookImageMaxDimension: 512,
+    lorebookImageMaxDescriptionTokens: 2048,
     lorebookImageProxyPrompt: DEFAULT_IMAGE_PROXY_PROMPT
 };
 
@@ -690,6 +697,25 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 'configure receive the manuscript text you send them — pick local providers (Ollama, LM Studio) ' +
                 'to keep everything on your machine. Full per-tool controls live on the General tab.'
         });
+
+        content.createEl('div', {
+            cls: 'quill-settings__welcome-privacy',
+            text:
+                'Images you paste, drop, or attach in the co-writer chat are downscaled locally on your ' +
+                'device before leaving it. They are then sent to your configured chat model (if vision-capable) ' +
+                'or, when the chat model is text-only, to your separately-configured image model for a one-off ' +
+                'description — the text model never receives the pixels. Local providers keep images on your ' +
+                'machine just like manuscript text.'
+        });
+
+        content.createEl('div', {
+            cls: 'quill-settings__welcome-tip',
+            text:
+                'Tip: images with one or two characters produce the richest descriptions. The model can ' +
+                "focus on fine details (scars, jewelry, fabric texture) when it isn't spreading its " +
+                'token budget across a crowd. For group shots, it will still cover every visible ' +
+                'character — but each gets a shorter share. Crop tightly for best results.'
+        });
     }
 
     /** Render the general settings tab. */
@@ -1116,6 +1142,28 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(content)
+            .setName('Image description token budget')
+            .setDesc(
+                'Max output tokens for the Regime B image-description call. Higher values let the model ' +
+                    'describe every character in a group image; lower values are faster on local hardware. ' +
+                    'The model stops early when it finishes — this is a ceiling, not a target. Default: 2048.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.lorebookImageMaxDescriptionTokens))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 256 && n <= 8192) {
+                            this.plugin.settings.lorebookImageMaxDescriptionTokens = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.lorebookImageMaxDescriptionTokens));
+                            new Notice('Value must be a number between 256 and 8192');
+                        }
+                    })
+            );
+
+        new Setting(content)
             .setName('Image proxy prompt')
             .setDesc(
                 'When your chat model is text-only and a separate image model is configured, ' +
@@ -1285,6 +1333,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
                     this.plugin.settings.lorebookImageTools = DEFAULT_SETTINGS.lorebookImageTools;
                     this.plugin.settings.lorebookImageMaxDimension = DEFAULT_SETTINGS.lorebookImageMaxDimension;
+                    this.plugin.settings.lorebookImageMaxDescriptionTokens =
+                        DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
                     this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
                     await this.plugin.saveSettings();
                     this.display();
@@ -2558,6 +2608,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
                     this.plugin.settings.lorebookImageTools = DEFAULT_SETTINGS.lorebookImageTools;
                     this.plugin.settings.lorebookImageMaxDimension = DEFAULT_SETTINGS.lorebookImageMaxDimension;
+                    this.plugin.settings.lorebookImageMaxDescriptionTokens =
+                        DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
                     this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
                     this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                     this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
