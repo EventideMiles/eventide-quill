@@ -141,3 +141,138 @@ export function resolveNoteFile(plugin: EventideQuillPlugin, query: string): TFi
     const dest = plugin.app.metadataCache.getFirstLinkpathDest(query, '');
     return dest instanceof TFile ? dest : null;
 }
+
+/**
+ * Result of a text search within note content. `exact` is true when the
+ * match was character-for-character (the fast path). When `exact` is false,
+ * the match was found via whitespace-insensitive normalization — the model's
+ * `old_text` had different line breaks, tabs vs spaces, or trailing whitespace,
+ * but the actual words matched.
+ */
+export interface TextMatchResult {
+    from: number;
+    to: number;
+    exact: boolean;
+}
+
+/**
+ * Find `oldText` within `content`, trying exact match first, then a
+ * whitespace-insensitive fallback. Returns `null` when no match is found
+ * by either method.
+ *
+ * The whitespace-insensitive fallback collapses all runs of whitespace
+ * (spaces, tabs, newlines) in both the content and `oldText` to single
+ * spaces, then searches. The matched normalized range is mapped back to
+ * the ORIGINAL content's character positions so the edit lands at the
+ * right place. This handles the common failure mode where the model
+ * reproduces text with slightly different indentation or line wrapping
+ * than the file — the match still succeeds.
+ *
+ * If the fallback also finds nothing, the caller should present a useful
+ * error to the model (see {@link buildNotFoundHint}).
+ */
+export function findTextInContent(content: string, oldText: string): TextMatchResult | null {
+    // Fast path: exact character-for-character match.
+    const exactIdx = content.indexOf(oldText);
+    if (exactIdx !== -1) {
+        // Check uniqueness — if the exact text appears multiple times, the
+        // caller (edit_note) handles the ambiguity. Return the first match;
+        // the caller checks for multiples separately.
+        return { from: exactIdx, to: exactIdx + oldText.length, exact: true };
+    }
+
+    // Fallback: whitespace-insensitive match. Collapse all whitespace runs
+    // in both strings to single spaces, then search. Build a mapping from
+    // normalized positions back to original positions so the match range
+    // can be projected onto the real content.
+    const { normalized: normContent, origPositions } = normalizeWhitespace(content);
+    const { normalized: normOld } = normalizeWhitespace(oldText);
+
+    const normIdx = normContent.indexOf(normOld);
+    if (normIdx === -1) return null;
+
+    // Map normalized positions back to original positions. origPositions[i]
+    // gives the original-content offset of the character at normContent[i].
+    const from = origPositions[normIdx] ?? 0;
+    const lastNormIdx = normIdx + normOld.length - 1;
+    // The original range extends one past the last mapped position to include
+    // any trailing whitespace that was collapsed.
+    const to = origPositions[lastNormIdx + 1] ?? content.length;
+    return { from, to, exact: false };
+}
+
+/**
+ * Normalize whitespace in a string for fuzzy matching: collapse all runs of
+ * whitespace (spaces, tabs, newlines, carriage returns) to a single space.
+ * Also returns a position-mapping array so matches in the normalized string
+ * can be projected back onto the original. `origPositions[i]` is the offset
+ * in the original string of the character at normalized position `i`.
+ */
+function normalizeWhitespace(s: string): { normalized: string; origPositions: number[] } {
+    const normalized: string[] = [];
+    const origPositions: number[] = [];
+    let inWs = false;
+    for (let i = 0; i < s.length; i++) {
+        const ch = s[i]!;
+        if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+            if (!inWs) {
+                normalized.push(' ');
+                origPositions.push(i);
+            }
+            inWs = true;
+        } else {
+            normalized.push(ch);
+            origPositions.push(i);
+            inWs = false;
+        }
+    }
+    // Trim trailing whitespace in the normalized string.
+    while (normalized.length > 0 && normalized[normalized.length - 1] === ' ') {
+        normalized.pop();
+        origPositions.pop();
+    }
+    return { normalized: normalized.join(''), origPositions };
+}
+
+/**
+ * Build a helpful error hint when old_text is not found. Instead of just
+ * showing the first 300 chars (useless for long notes), this finds the
+ * section of the content that shares the most words with old_text and shows
+ * that section as context — giving the model a fighting chance to re-quote
+ * the correct text on its next attempt.
+ */
+export function buildNotFoundHint(content: string, oldText: string): string {
+    // Extract distinctive words from oldText (longer than 3 chars, de-duped)
+    // to locate the most relevant section of the file.
+    const oldWords = [...new Set(oldText.split(/\s+/).filter((w) => w.length > 3))];
+
+    if (oldWords.length === 0) {
+        // oldText was all short words — show the beginning.
+        const preview = content.slice(0, 500).trim();
+        return `The note starts with:\n${preview}${content.length > 500 ? '\n...' : ''}`;
+    }
+
+    // Score each 500-char window by how many of oldWords it contains.
+    const windowSize = 500;
+    let bestStart = 0;
+    let bestScore = 0;
+    for (let i = 0; i < content.length; i += 100) {
+        const window = content.slice(i, i + windowSize).toLowerCase();
+        let score = 0;
+        for (const word of oldWords) {
+            if (window.includes(word.toLowerCase())) score++;
+        }
+        if (score > bestScore) {
+            bestScore = score;
+            bestStart = i;
+        }
+    }
+
+    const snippet = content.slice(bestStart, bestStart + windowSize).trim();
+    const matchedPct = oldWords.length > 0 ? Math.round((bestScore / oldWords.length) * 100) : 0;
+    return (
+        `The closest section (shares ${matchedPct}% of distinctive words) is:\n"${snippet}"\n\n` +
+        `Re-read this section, then retry edit_note with old_text copied verbatim from the CURRENT ` +
+        `file content above (not from memory — the note may have been edited since you last saw it).`
+    );
+}

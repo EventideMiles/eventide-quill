@@ -105,11 +105,13 @@
 }
 
 // =========================================================================
-// Inline diff decorations (CodeMirror ViewPlugin + StateField)
+// Inline diff decorations (CodeMirror StateField)
 // =========================================================================
-// The ViewPlugin cannot replace ranges that span line breaks, so multi-line
-// removals use a `__removed-mark` (mark decoration) plus a separate green
-// widget below. Single-line removals get the stacked red+green `__group` widget.
+// All edits — single-line AND multi-line — get the same stacked red+green
+// `__group` widget via `Decoration.replace` from a StateField. StateField
+// decorations CAN cross line breaks (unlike ViewPlugin decorations), so
+// multi-line lore edits that span image-embed block widgets render both
+// the red removal box and the green replacement box correctly.
 
 .quill-change-diff {
     &__removed-mark {

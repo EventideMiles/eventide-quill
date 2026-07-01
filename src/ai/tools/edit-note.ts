@@ -1,5 +1,13 @@
 import type { Tool, ToolContext } from './tool';
-import { openNoteForEdit, overlapError, pushLoreEditDiff, readNoteContent, resolveNoteFile } from './lore-edit-helpers';
+import {
+    buildNotFoundHint,
+    findTextInContent,
+    openNoteForEdit,
+    overlapError,
+    pushLoreEditDiff,
+    readNoteContent,
+    resolveNoteFile
+} from './lore-edit-helpers';
 
 /**
  * Propose a replacement to an existing note. The model provides the exact
@@ -75,16 +83,21 @@ export const editNoteTool: Tool = {
         if (content === null) return `Error: could not read "${file.path}".`;
 
         // Find the excerpt to replace — a replace range [from, to).
-        const idx = content.indexOf(oldText);
-        if (idx === -1) {
-            const preview = content.slice(0, 300).trim();
-            return `Error: old_text not found in "${file.path}". The note starts with:\n${preview}${content.length > 300 ? '\n...' : ''}`;
+        // Try exact match first, then fall back to whitespace-insensitive
+        // matching so the model's old_text succeeds even when its indentation
+        // or line wrapping differs slightly from the file.
+        const match = findTextInContent(content, oldText);
+        if (!match) {
+            const hint = buildNotFoundHint(content, oldText);
+            return `Error: old_text not found in "${file.path}". ${hint}`;
         }
-        if (content.indexOf(oldText, idx + 1) !== -1) {
+        const { from, to } = match;
+
+        // Uniqueness check: if the matched text (or a close variant) appears
+        // elsewhere, the model needs to provide a larger excerpt.
+        if (content.indexOf(content.slice(from, to), from + 1) !== -1) {
             return `Error: old_text matches multiple places in "${file.path}". Pass a larger excerpt that uniquely identifies the section to change.`;
         }
-        const from = idx;
-        const to = idx + oldText.length;
 
         // Reject overlaps BEFORE opening a tab, so a conflicting proposal
         // doesn't spawn a review tab. Keeps pending edits on a file pairwise
