@@ -1908,26 +1908,26 @@ export default class EventideQuillPlugin extends Plugin {
     /**
      * Send a discussion message to the co-writer (brainstorming mode, no options).
      */
-    async sendCoWriterDiscussion(message: string, images?: string[]): Promise<void> {
+    async sendCoWriterDiscussion(message: string, images?: string[], mentionPaths?: string[]): Promise<void> {
         const path = this.app.workspace.getActiveFile()?.path;
         if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
         await this.ensureContextInitialized();
         this.wireCoWriterPanel();
-        await this.coWriterSession.sendDiscussion(this, message, images);
+        await this.coWriterSession.sendDiscussion(this, message, images, mentionPaths);
     }
 
     /**
      * Send a coach message to the co-writer.
      * The AI analyzes the passage and guides the writer through a structured process.
      */
-    async sendCoWriterCoach(message: string, images?: string[]): Promise<void> {
+    async sendCoWriterCoach(message: string, images?: string[], mentionPaths?: string[]): Promise<void> {
         const path = this.app.workspace.getActiveFile()?.path;
         if (path) this.coWriterSession.manuscriptPath = path;
         await this.openCoWriterPanel();
         await this.ensureContextInitialized();
         this.wireCoWriterPanel();
-        await this.coWriterSession.sendCoach(this, message, images);
+        await this.coWriterSession.sendCoach(this, message, images, mentionPaths);
     }
 
     /**

@@ -11,7 +11,7 @@ import { downscaleToJpegBase64, isImageContentType } from '../image-utils';
  */
 
 /** Custom User-Agent to comply with Wikimedia's API policy (200 req/min tier). */
-export const MEDIAWIKI_UA = 'EventideQuill/0.16.0 (https://github.com/EventideMiles/eventide-quill)';
+export const MEDIAWIKI_UA = 'EventideQuill/0.16.1 (https://github.com/EventideMiles/eventide-quill)';
 
 /** Minimum interval (ms) between requests to the same host. */
 const MIN_INTERVAL_MS = 500;

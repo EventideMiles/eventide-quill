@@ -186,13 +186,13 @@ export class CoWriterPanel extends AbstractChatPanel {
     private loreCoachActive = false;
 
     private onSendMessage: ((direction: string) => void) | null = null;
-    private onDiscussMessage: ((message: string, images?: string[]) => void) | null = null;
+    private onDiscussMessage: ((message: string, images?: string[], mentionPaths?: string[]) => void) | null = null;
     private onGenerateOptions: ((direction: string) => void) | null = null;
     private onApplyOption: ((index: number) => void) | null = null;
     private onAddContextFile: ((filePath: string) => void) | null = null;
     private onRemoveContextFile: ((filePath: string) => void) | null = null;
     private onRefreshSuggestions: (() => void) | null = null;
-    private onCoachMessage: ((message: string, images?: string[]) => void) | null = null;
+    private onCoachMessage: ((message: string, images?: string[], mentionPaths?: string[]) => void) | null = null;
     private onCoachToOptions: (() => void) | null = null;
     private onEndCoach: (() => void) | null = null;
     private onAcceptPlan: (() => void) | null = null;
@@ -324,7 +324,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     }
 
     /** Set the handler invoked when the user sends a discussion (brainstorming) message. */
-    setDiscussMessageHandler(handler: (message: string, images?: string[]) => void): void {
+    setDiscussMessageHandler(handler: (message: string, images?: string[], mentionPaths?: string[]) => void): void {
         this.onDiscussMessage = handler;
     }
 
@@ -354,7 +354,7 @@ export class CoWriterPanel extends AbstractChatPanel {
     }
 
     /** Set the handler invoked when the user submits a coach message. */
-    setCoachMessageHandler(handler: (message: string, images?: string[]) => void): void {
+    setCoachMessageHandler(handler: (message: string, images?: string[], mentionPaths?: string[]) => void): void {
         this.onCoachMessage = handler;
     }
 
@@ -826,6 +826,9 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.renderThoughtSection();
         }
 
+        // Pinned chat header (session actions: new chat, compact, save, history)
+        this.renderChatHeader();
+
         // Scrollable chat area (populates this.renderPromises)
         this.renderChatArea();
 
@@ -901,6 +904,76 @@ export class CoWriterPanel extends AbstractChatPanel {
         } else {
             toggle.createEl('span', { text: ' (Thinking...)' });
         }
+    }
+
+    /**
+     * Chat header toolbar: session-level actions (new chat, compact, save
+     * snapshot, history). Kept here rather than in the bottom input row so the
+     * input row stays focused on per-message actions (mode, add-context, attach,
+     * refresh, send) and the session actions are always visible at the top of
+     * the conversation — including on narrow widths (the bottom row's overflow
+     * collapse no longer needs to fold these).
+     */
+    private renderChatHeader(): void {
+        const header = this.containerEl!.createEl('div', { cls: 'quill-cowriter-panel__chat-header' });
+        const generating = this.optionsLoading || this.draftState === 'generating' || this.fulfillActive;
+
+        const newChatBtn = header.createEl('button', {
+            cls: 'quill-cowriter-panel__chat-header-btn',
+            title: 'New chat'
+        });
+        setIcon(newChatBtn, 'square-pen');
+        if (generating) newChatBtn.disabled = true;
+        this.renderEvents.registerDomEvent(newChatBtn, 'click', () => {
+            new ConfirmModal(
+                this.app,
+                'New chat',
+                'Start a new chat? The conversation will be cleared. Manuscript and vault context files will be kept.',
+                () => {
+                    this.imageGeneration++;
+                    this.pendingImages = [];
+                    this.onNewChat?.(false);
+                },
+                'Keep context',
+                {
+                    text: 'Clear context too',
+                    handler: () => {
+                        this.imageGeneration++;
+                        this.pendingImages = [];
+                        this.onNewChat?.(true);
+                    }
+                }
+            ).open();
+        });
+
+        const compactBtn = header.createEl('button', {
+            cls: 'quill-cowriter-panel__chat-header-btn',
+            title: 'Compact conversation'
+        });
+        setIcon(compactBtn, 'fold-vertical');
+        if (generating) compactBtn.disabled = true;
+        this.renderEvents.registerDomEvent(compactBtn, 'click', () => {
+            this.onCompact?.();
+        });
+
+        const saveBtn = header.createEl('button', {
+            cls: 'quill-cowriter-panel__chat-header-btn',
+            title: 'Save snapshot'
+        });
+        setIcon(saveBtn, 'save');
+        if (generating) saveBtn.disabled = true;
+        this.renderEvents.registerDomEvent(saveBtn, 'click', () => {
+            this.onSaveSnapshot?.();
+        });
+
+        const historyBtn = header.createEl('button', {
+            cls: 'quill-cowriter-panel__chat-header-btn',
+            title: 'History'
+        });
+        setIcon(historyBtn, 'history');
+        this.renderEvents.registerDomEvent(historyBtn, 'click', () => {
+            this.onHistory?.();
+        });
     }
 
     /** Render the scrollable chat area with messages or initialize prompt. */
@@ -1898,72 +1971,11 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.onGenerateOptions?.('');
         });
 
-        // Compact button
-        const compactBtn = btnRow.createEl('button', {
-            cls: 'quill-cowriter-panel__compact-btn',
-            text: '\u00bb\u00bb',
-            title: 'Compact conversation'
-        });
-        if (generating) compactBtn.disabled = true;
-        this.renderEvents.registerDomEvent(compactBtn, 'click', () => {
-            this.onCompact?.();
-        });
-
-        // New chat button
-        const newChatBtn = btnRow.createEl('button', {
-            cls: 'quill-cowriter-panel__new-chat-btn',
-            text: '\u2713',
-            title: 'New chat'
-        });
-        if (generating) newChatBtn.disabled = true;
-        this.renderEvents.registerDomEvent(newChatBtn, 'click', () => {
-            new ConfirmModal(
-                this.app,
-                'New chat',
-                'Start a new chat? The conversation will be cleared. Manuscript and vault context files will be kept.',
-                () => {
-                    this.imageGeneration++;
-                    this.pendingImages = [];
-                    this.onNewChat?.(false);
-                },
-                'Keep context',
-                {
-                    text: 'Clear context too',
-                    handler: () => {
-                        this.imageGeneration++;
-                        this.pendingImages = [];
-                        this.onNewChat?.(true);
-                    }
-                }
-            ).open();
-        });
-
-        // Save snapshot button — writes the current conversation to disk
-        // without clearing it (the New chat path also auto-saves).
-        const saveBtn = btnRow.createEl('button', {
-            cls: 'quill-cowriter-panel__save-btn',
-            title: 'Save snapshot'
-        });
-        setIcon(saveBtn, 'save');
-        if (generating) saveBtn.disabled = true;
-        this.renderEvents.registerDomEvent(saveBtn, 'click', () => {
-            this.onSaveSnapshot?.();
-        });
-
-        // History button — open the list of saved conversations.
-        const historyBtn = btnRow.createEl('button', {
-            cls: 'quill-cowriter-panel__history-btn',
-            title: 'History'
-        });
-        setIcon(historyBtn, 'history');
-        this.renderEvents.registerDomEvent(historyBtn, 'click', () => {
-            this.onHistory?.();
-        });
-
         // Overflow hamburger — only visible under compact-width (see SCSS).
-        // Surfaces the secondary buttons (Add context / Refresh / Compact /
-        // New chat / Save / History) as a native Obsidian Menu so the row
-        // doesn't overflow on a narrow sidebar or mobile screen.
+        // Surfaces the remaining secondary buttons (Add context / Refresh) as a
+        // native Obsidian Menu so the row doesn't overflow on a narrow sidebar
+        // or mobile screen. Session actions (new chat / compact / save / history)
+        // live in the chat header, always visible.
         const overflowBtn = btnRow.createEl('button', {
             cls: 'quill-cowriter-panel__overflow-btn',
             text: '\u22ef',
@@ -1988,39 +2000,6 @@ export class CoWriterPanel extends AbstractChatPanel {
                     .setIcon('refresh-cw')
                     .onClick(() => {
                         if (!refreshBtn.disabled) refreshBtn.click();
-                    })
-            );
-            menu.addItem((item) =>
-                item
-                    .setTitle('Compact conversation')
-                    .setIcon('fold-vertical')
-                    .onClick(() => {
-                        if (!compactBtn.disabled) compactBtn.click();
-                    })
-            );
-            menu.addSeparator();
-            menu.addItem((item) =>
-                item
-                    .setTitle('New chat')
-                    .setIcon('square-pen')
-                    .onClick(() => {
-                        if (!newChatBtn.disabled) newChatBtn.click();
-                    })
-            );
-            menu.addItem((item) =>
-                item
-                    .setTitle('Save snapshot')
-                    .setIcon('save')
-                    .onClick(() => {
-                        if (!saveBtn.disabled) saveBtn.click();
-                    })
-            );
-            menu.addItem((item) =>
-                item
-                    .setTitle('History')
-                    .setIcon('history')
-                    .onClick(() => {
-                        historyBtn.click();
                     })
             );
             menu.showAtMouseEvent(e);
@@ -2150,12 +2129,17 @@ export class CoWriterPanel extends AbstractChatPanel {
             // Fulfill runs the sweep; an empty instruction is allowed.
             if (text.length === 0 && this.inputMode !== 'fulfill') return;
 
-            // Resolve @-mentioned files and add them to context.
+            // Resolve @-mentioned files. They're passed EXPLICITLY to the send
+            // (per-message context) so all referenced files land deterministically
+            // — and also promoted to the persistent ±-context list (pills) for
+            // reuse on later turns. The explicit path is what guarantees every
+            // mention is sent; the promotion is a UX convenience.
             const { resolvedPaths, cleanedText } = resolveAtMentions(text, this.app.vault);
             for (const path of resolvedPaths) {
                 this.onAddContextFile?.(path);
             }
             text = cleanedText;
+            const sentMentions = resolvedPaths.length > 0 ? resolvedPaths : undefined;
 
             this.userScrolledUp = false; // Resume auto-follow on new message
             this.inputValue = '';
@@ -2181,11 +2165,11 @@ export class CoWriterPanel extends AbstractChatPanel {
                 const timeoutId = window.setTimeout(() => this.onRunFulfill?.(''));
                 this.renderEvents.register(() => window.clearTimeout(timeoutId));
             } else if (this.inputMode === 'coach') {
-                this.onCoachMessage?.(text, sentImages);
+                this.onCoachMessage?.(text, sentImages, sentMentions);
             } else if (this.inputMode === 'lorebook') {
                 this.onLoreCoachMessage?.(text, sentImages);
             } else {
-                this.onDiscussMessage?.(text, sentImages);
+                this.onDiscussMessage?.(text, sentImages, sentMentions);
             }
         };
 

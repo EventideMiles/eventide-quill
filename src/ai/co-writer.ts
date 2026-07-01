@@ -372,6 +372,28 @@ async function resolveEmbedPathsToMessages(
     return { regularPaths, messages };
 }
 
+/**
+ * Merge persistent context-file paths (the ±-button list) with per-message
+ * @-mention paths, preserving order and de-duplicating. @-mentions are passed
+ * explicitly into each send (see {@link CoWriterSession.sendDiscussion}) so the
+ * referenced files are deterministically included for THAT message — without
+ * relying on the fire-and-forget promotion to the persistent list landing
+ * before the send reads it (which could drop files when several were referenced
+ * at once).
+ */
+function mergeContextPaths(persistent: string[], mentionPaths?: string[]): string[] {
+    if (!mentionPaths || mentionPaths.length === 0) return persistent;
+    const seen = new Set(persistent);
+    const out = [...persistent];
+    for (const p of mentionPaths) {
+        if (!seen.has(p)) {
+            seen.add(p);
+            out.push(p);
+        }
+    }
+    return out;
+}
+
 export async function loadAdditionalContext(
     plugin: EventideQuillPlugin,
     contextFilePaths: string[],
@@ -1421,7 +1443,12 @@ export class CoWriterSession {
      *    conversation is summarized by the AI into a single context head.
      *  - The new user message is always preserved below the context head.
      */
-    async sendDiscussion(plugin: EventideQuillPlugin, message: string, images?: string[]): Promise<void> {
+    async sendDiscussion(
+        plugin: EventideQuillPlugin,
+        message: string,
+        images?: string[],
+        mentionPaths?: string[]
+    ): Promise<void> {
         const chat = plugin.getDefaultChatProvider();
         if (!chat.provider) {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
@@ -1473,7 +1500,11 @@ export class CoWriterSession {
         if (vaultContext) {
             injectedContext.push({ role: 'system', content: `Vault context for reference:\n${vaultContext}` });
         }
-        const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths, fullText);
+        const additionalContextMessages = await loadAdditionalContext(
+            plugin,
+            mergeContextPaths(this.contextFilePaths, mentionPaths),
+            fullText
+        );
         injectedContext.push(...additionalContextMessages);
         const discussPlotMap = await buildPlotMapMessage(plugin);
         if (discussPlotMap) {
@@ -1784,7 +1815,12 @@ export class CoWriterSession {
      * 3. Plan — AI creates a structured plan based on clarified intent
      * 4. Direction — AI provides concrete, actionable direction
      */
-    async sendCoach(plugin: EventideQuillPlugin, message: string, images?: string[]): Promise<void> {
+    async sendCoach(
+        plugin: EventideQuillPlugin,
+        message: string,
+        images?: string[],
+        mentionPaths?: string[]
+    ): Promise<void> {
         const chat = plugin.getDefaultChatProvider();
         if (!chat.provider) {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
@@ -1833,7 +1869,11 @@ export class CoWriterSession {
         if (vaultContext) {
             injectedContext.push({ role: 'system', content: `Vault context for reference:\n${vaultContext}` });
         }
-        const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths, fullText);
+        const additionalContextMessages = await loadAdditionalContext(
+            plugin,
+            mergeContextPaths(this.contextFilePaths, mentionPaths),
+            fullText
+        );
         injectedContext.push(...additionalContextMessages);
         const coachPlotMap = await buildPlotMapMessage(plugin);
         if (coachPlotMap) {

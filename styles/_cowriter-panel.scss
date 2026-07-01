@@ -886,73 +886,43 @@
         }
     }
 
-    /* Compact button for co-writer panel */
-    &__compact-btn {
-        cursor: pointer;
-        border: 1px solid var(--background-modifier-border);
-        border-radius: $radius-sm;
-        padding: $space-sm 10px;
-        font-size: var(--font-ui-smaller);
-        font-family: var(--font-interface);
-        background: transparent;
-        color: var(--text-muted);
-        transition: background $transition-fast, color $transition-fast;
-        height: 36px;
-        line-height: 1.4;
-        box-sizing: border-box;
+    /* Chat header toolbar — session actions (new chat / compact / save /
+       history), pinned at the top of the conversation. Always visible (these
+       don't collapse under compact-width; they're icon-only and few). */
+    &__chat-header {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: $space-xs;
+        padding: $space-xs $space-sm;
+        border-bottom: 1px solid var(--background-modifier-border);
         flex-shrink: 0;
-
-        &:hover {
-            background: var(--background-modifier-hover);
-            color: var(--text-normal);
-        }
     }
 
-    /* Co-writer new chat button (feedback now uses .quill-chat-panel__action-btn
-       from _chat-shared.scss; cowriter keeps its own class for now). */
-    &__new-chat-btn {
+    &__chat-header-btn {
         cursor: pointer;
-        border: 1px solid var(--background-modifier-border);
+        border: 1px solid transparent;
         border-radius: $radius-sm;
-        padding: $space-sm 10px;
-        font-size: var(--font-ui-smaller);
-        font-family: var(--font-interface);
+        padding: $space-xs;
         background: transparent;
         color: var(--text-muted);
         transition: background $transition-fast, color $transition-fast;
-        height: 36px;
-        line-height: 1.4;
-        box-sizing: border-box;
-        flex-shrink: 0;
-
-        &:hover {
-            background: var(--background-modifier-hover);
-            color: var(--text-normal);
-        }
-    }
-
-    /* Save-snapshot + History buttons (icon-only, same chrome as new chat). */
-    &__save-btn,
-    &__history-btn {
-        cursor: pointer;
-        border: 1px solid var(--background-modifier-border);
-        border-radius: $radius-sm;
-        padding: $space-sm;
-        font-size: var(--font-ui-smaller);
-        background: transparent;
-        color: var(--text-muted);
-        transition: background $transition-fast, color $transition-fast;
-        height: 36px;
-        width: 36px;
+        height: 30px;
+        width: 30px;
         box-sizing: border-box;
         flex-shrink: 0;
         display: inline-flex;
         align-items: center;
         justify-content: center;
 
-        &:hover {
+        &:hover:not(:disabled) {
             background: var(--background-modifier-hover);
             color: var(--text-normal);
+        }
+
+        &:disabled {
+            opacity: 0.5;
+            cursor: default;
         }
     }
 
@@ -1156,17 +1126,14 @@
 
 // Compact-width responsive collapse. When the sidebar narrows below the
 // threshold (set in co-writer-panel.ts via ResizeObserver), the bottom area
-// gets the __bottom--compact modifier. The four secondary buttons hide and a
-// hamburger overflow button takes their place. Mode + Attach + Send stay
-// visible as primary actions. First responsive behavior in this block; mirrors
-// the sidebar's compact/watermark toggle in _sidebar.scss.
+// gets the __bottom--compact modifier. The two remaining secondary buttons
+// (Add context / Refresh) hide and a hamburger overflow button takes their
+// place. Mode + Attach + Send stay visible as primary actions. Session actions
+// (new chat / compact / save / history) live in the always-visible chat header,
+// so they don't need to collapse here.
 .quill-cowriter-panel__bottom--compact {
     .quill-cowriter-panel__ctx-add,
-    .quill-cowriter-panel__refresh-btn,
-    .quill-cowriter-panel__compact-btn,
-    .quill-cowriter-panel__new-chat-btn,
-    .quill-cowriter-panel__save-btn,
-    .quill-cowriter-panel__history-btn {
+    .quill-cowriter-panel__refresh-btn {
         display: none;
     }
 
