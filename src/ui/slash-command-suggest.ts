@@ -49,13 +49,13 @@ export class SlashCommandSuggest {
             cls: 'quill-slash-command-suggest-wrapper'
         });
 
-        // settings.ts panels have no Component lifecycle for the input; the
-        // raw addEventListener idiom mirrors FileMentionSuggest (this file is
-        // one of the addEventListener sites flagged in AGENTS.md).
-        inputEl.addEventListener('input', this.onInput);
-        inputEl.addEventListener('keydown', this.onKeydown);
-        inputEl.addEventListener('blur', this.onBlur);
-        window.activeDocument.addEventListener('mousedown', this.onDocumentMouseDown);
+        // Register DOM events through the Component lifecycle so they
+        // auto-clean-up on re-render. The only manual teardown left is
+        // wrapper removal (registered separately below).
+        lifecycle.registerDomEvent(inputEl, 'input', this.onInput);
+        lifecycle.registerDomEvent(inputEl, 'keydown', this.onKeydown);
+        lifecycle.registerDomEvent(inputEl, 'blur', this.onBlur);
+        lifecycle.registerDomEvent(window.activeDocument, 'mousedown', this.onDocumentMouseDown);
 
         lifecycle.register(() => this.destroy());
     }
@@ -290,10 +290,8 @@ export class SlashCommandSuggest {
 
     destroy(): void {
         this.close();
-        this.inputEl.removeEventListener('input', this.onInput);
-        this.inputEl.removeEventListener('keydown', this.onKeydown);
-        this.inputEl.removeEventListener('blur', this.onBlur);
-        window.activeDocument.removeEventListener('mousedown', this.onDocumentMouseDown);
+        // DOM event listeners are auto-removed by the Component lifecycle
+        // (registerDomEvent). Only the wrapper needs manual cleanup.
         this.wrapperEl.remove();
     }
 }
