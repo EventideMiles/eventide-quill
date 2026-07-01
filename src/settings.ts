@@ -15,6 +15,29 @@ export type SettingsTab = 'welcome' | 'general' | 'linter' | 'ai-providers' | 'm
 /** Which sidebar tab opens by default. Mirrors the dropdown options in the General settings. */
 export type DefaultTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard' | 'lorebook';
 
+/**
+ * A user-defined slash command for the co-writer chat input. Typing `/`
+ * at the start of a line opens a picker listing matching commands;
+ * choosing one inserts `body` into the textarea, fully editable before
+ * sending. The `name` is stored WITHOUT the leading slash and is the
+ * match key (kebab-case-only — see {@link SLASH_COMMAND_NAME_PATTERN}).
+ */
+export interface SlashCommand {
+    /** Match key shown in the picker, without the leading `/`. Lowercased, trimmed, unique, kebab-case. */
+    name: string;
+    /** One-line description shown under the name in the picker. Empty string = none. */
+    description: string;
+    /** Body text inserted into the textarea when chosen. The writer can edit it before sending. */
+    body: string;
+}
+
+/**
+ * Validation rule for {@link SlashCommand.name}: lowercase letters,
+ * digits, and hyphens only, must start with a letter, length 1-40.
+ * Mirrored in the slash-command suggest picker's trigger regex.
+ */
+export const SLASH_COMMAND_NAME_PATTERN = /^[a-z][a-z0-9-]{0,39}$/;
+
 export interface EventideQuillSettings {
     linterMode: LinterMode;
     enableLongSentences: boolean;
@@ -88,6 +111,16 @@ export interface EventideQuillSettings {
     dashboardAutoSnapshotOnSave: boolean;
     dashboardMaxSnapshots: number;
     readabilityFormula: ReadabilityFormula;
+    /**
+     * User-defined slash commands for the co-writer chat input. Typing
+     * `/` at the start of a line opens a picker of matching commands;
+     * choosing one inserts the body into the textarea, editable before
+     * sending. Empty (the default) disables the picker entirely —
+     * typing `/` at start-of-line does nothing. No enable toggle; the
+     * empty-list-is-off rule keeps the description single-sourced
+     * (no triple-copy sync per the tool-gating conventions).
+     */
+    slashCommands: SlashCommand[];
     lorebookFolders: string[];
     /** Per-folder entry-type default. Absent key = "mixed" (use per-file quill-type). */
     lorebookFolderTypes: Record<string, LoreEntryType>;
@@ -240,6 +273,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     dashboardAutoSnapshotOnSave: false,
     dashboardMaxSnapshots: 100,
     readabilityFormula: 'reweighted-flesch',
+    slashCommands: [],
     lorebookFolders: [],
     lorebookFolderTypes: {},
     coWriterLoreContext: true,
@@ -566,6 +600,111 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 this.renderLorebookFolders(container);
             });
         }
+    }
+
+    /**
+     * Render the per-card editor for user-defined slash commands. Each
+     * card carries Name (kebab-case-validated, lowercase + trim on blur,
+     * uniqueness-checked via Notice), Description (one-line, optional),
+     * and Body (multi-line textarea). Per-field edits mutate the object
+     * in place and save; structural changes (add/remove) do a full
+     * `this.display()` redraw, mirroring the `aiProviders` card pattern.
+     */
+    private renderSlashCommands(container: HTMLElement): void {
+        container.empty();
+        const commands = this.plugin.settings.slashCommands;
+
+        if (commands.length === 0) {
+            container.createEl('div', {
+                cls: 'quill-settings__empty-hint',
+                text: 'No slash commands configured. Add one to enable the / picker in the co-writer chat input.'
+            });
+            return;
+        }
+
+        for (const [index, cmd] of commands.entries()) {
+            this.renderSlashCommandCard(container, cmd, index);
+        }
+    }
+
+    /** Render one slash-command editor card. Mutates `cmd` in place on field edits. */
+    private renderSlashCommandCard(container: HTMLElement, cmd: SlashCommand, index: number): void {
+        const card = container.createEl('div', { cls: 'quill-slash-command-card' });
+
+        const headingRow = card.createEl('div', { cls: 'quill-slash-command-card__heading' });
+        new Setting(headingRow).setName(cmd.name ? `/${cmd.name}` : 'Untitled command').addButton((button) =>
+            button.setButtonText('Remove').onClick(async () => {
+                this.plugin.settings.slashCommands.splice(index, 1);
+                await this.plugin.saveSettings();
+                this.display();
+            })
+        );
+
+        new Setting(card)
+            .setName('Name')
+            .setDesc(
+                'The trigger key (without the leading /). Kebab-case only: lowercase letters, digits, ' +
+                    'and hyphens; must start with a letter. Unique across all commands.'
+            )
+            .addText((text) =>
+                text
+                    .setPlaceholder('E.g., summarize-passage')
+                    .setValue(cmd.name)
+                    .inputEl.addEventListener('blur', () => {
+                        const trimmed = text.inputEl.value.trim().toLowerCase();
+                        if (!SLASH_COMMAND_NAME_PATTERN.test(trimmed)) {
+                            new Notice(
+                                'Slash command names must be kebab-case (lowercase letters, digits, ' +
+                                    'and hyphens; must start with a letter).'
+                            );
+                            // Revert to the saved name; the field stays editable so the writer can retry.
+                            text.setValue(cmd.name);
+                            return;
+                        }
+                        // Uniqueness check — skip self (allow saving the same value back unchanged).
+                        const dup = this.plugin.settings.slashCommands.some(
+                            (c, i) => i !== index && c.name === trimmed
+                        );
+                        if (dup) {
+                            new Notice(`A slash command "/${trimmed}" already exists. Names must be unique.`);
+                            text.setValue(cmd.name);
+                            return;
+                        }
+                        cmd.name = trimmed;
+                        void this.plugin.saveSettings();
+                        // Refresh the heading so it shows the new "/name" instead of the placeholder.
+                        this.display();
+                    })
+            );
+
+        new Setting(card)
+            .setName('Description')
+            .setDesc('One-line description shown under the name in the picker. Optional.')
+            .addText((text) =>
+                text
+                    .setPlaceholder('E.g., ask the coach to summarize the current passage')
+                    .setValue(cmd.description)
+                    .inputEl.addEventListener('blur', () => {
+                        cmd.description = text.inputEl.value.trim();
+                        void this.plugin.saveSettings();
+                    })
+            );
+
+        const bodySetting = new Setting(card)
+            .setName('Body')
+            .setDesc('Text inserted into the chat input when the command is chosen. Editable before sending.');
+        bodySetting.addTextArea((area) => {
+            area
+                .setPlaceholder('Body text inserted into the co-writer chat input when this command is picked.')
+                .setValue(cmd.body).inputEl.rows = 4;
+            // settings.ts — no Component lifecycle available for the setting; raw
+            // addEventListener is required to read the value on blur, mirroring the
+            // surrounding lorebook image-prompts / folder-override idiom.
+            area.inputEl.addEventListener('blur', () => {
+                cmd.body = area.inputEl.value;
+                void this.plugin.saveSettings();
+            });
+        });
     }
 
     /** Render the welcome tab (onboarding + feature overview). */
@@ -1320,6 +1459,28 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     })
             );
 
+        // --- Slash commands (co-writer input shortcuts) ---
+        new Setting(content).setName('Slash commands').setHeading();
+        new Setting(content)
+            .setName('Slash commands')
+            .setDesc(
+                'Shortcut snippets for the co-writer chat input. Typing "/" at the start of a line ' +
+                    'opens a picker listing matching commands; choosing one inserts the body into ' +
+                    'the input, fully editable before sending. Empty list (the default) disables ' +
+                    'the picker. Names must be kebab-case (lowercase letters, digits, hyphens; ' +
+                    'must start with a letter).'
+            );
+
+        const slashCmdContainer = content.createDiv({ cls: 'quill-slash-command-list' });
+        this.renderSlashCommands(slashCmdContainer);
+
+        new Setting(content).addButton((button) =>
+            button.setButtonText('+ add command').onClick(() => {
+                this.plugin.settings.slashCommands.push({ name: '', description: '', body: '' });
+                void this.plugin.saveSettings().then(() => this.display());
+            })
+        );
+
         new Setting(content)
             .setName('Lorebook folders')
             .setDesc(
@@ -1478,6 +1639,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.loreEntryImageAttachments = DEFAULT_SETTINGS.loreEntryImageAttachments;
                     this.plugin.settings.loreEntryImageAttachmentFolder =
                         DEFAULT_SETTINGS.loreEntryImageAttachmentFolder;
+                    this.plugin.settings.slashCommands = [...DEFAULT_SETTINGS.slashCommands];
                     await this.plugin.saveSettings();
                     this.display();
                 })
@@ -2761,6 +2923,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.loreEntryImageAttachmentFolder =
                         DEFAULT_SETTINGS.loreEntryImageAttachmentFolder;
                     this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
+                    this.plugin.settings.slashCommands = [...DEFAULT_SETTINGS.slashCommands];
                     this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
                     this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;
                     this.plugin.settings.enableInlineDirectives = DEFAULT_SETTINGS.enableInlineDirectives;

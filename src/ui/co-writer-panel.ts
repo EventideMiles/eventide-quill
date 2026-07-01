@@ -8,6 +8,7 @@ import {
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { ConfirmModal } from './confirm-modal';
 import { FileMentionSuggest } from './file-mention-suggest';
+import { SlashCommandSuggest } from './slash-command-suggest';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
 import { buildEmbedFolderPath, embedFolderLabel, parseEmbedFolderPath, resolveAtMentions } from '../utils/vault-files';
 import { renderChangeBulkBar, renderChangeCard } from './change-card';
@@ -1881,6 +1882,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         // Inline file-mention autocomplete for @-references
         if (!noActiveFile && this.inputMode !== 'fulfill') {
             new FileMentionSuggest(this.app, input, this.renderEvents);
+            new SlashCommandSuggest(this.app, input, this.plugin, this.renderEvents);
         }
 
         const doSend = () => {
