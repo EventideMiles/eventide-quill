@@ -1765,6 +1765,9 @@ export class CoWriterPanel extends AbstractChatPanel {
 
         // Context file pills
         const contextFiles = this.getContextFiles();
+        if (__DEV__) {
+            console.warn('[Quill @mentions] rendering pills — context files:', contextFiles);
+        }
         if (contextFiles.length > 0) {
             const ctxRow = bottom.createEl('div', { cls: 'quill-cowriter-panel__ctx-row' });
             for (const filePath of contextFiles) {
@@ -2135,7 +2138,12 @@ export class CoWriterPanel extends AbstractChatPanel {
             // reuse on later turns. The explicit path is what guarantees every
             // mention is sent; the promotion is a UX convenience.
             const { resolvedPaths, cleanedText } = resolveAtMentions(text, this.app.vault);
+            if (__DEV__) {
+                console.warn('[Quill @mentions] resolvedPaths:', resolvedPaths, 'from text:', JSON.stringify(text));
+            }
+            // Direct sync push (guaranteed) + the async token/refresh path.
             for (const path of resolvedPaths) {
+                this.plugin.coWriterSession.addContextFile(path);
                 this.onAddContextFile?.(path);
             }
             text = cleanedText;
