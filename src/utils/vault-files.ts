@@ -148,45 +148,44 @@ export function resolveAtMentions(text: string, vault: Vault): { resolvedPaths: 
 
     // Two mention forms:
     //   @"path with spaces.md"  — quoted, space-safe (what FileMentionSuggest
-    //                            inserts for any path; required because the
-    //                            bare @\S+ form stops at the first space).
-    //   @non-space              — bare token (manual typing; no spaces).
-    // The quoted form resolves via exact path match; the bare form falls through
-    // to the same resolution priority + email guard as before.
-    const cleanedText = text.replace(
-        /@(?:"([^"]+)"|(\S+))/g,
-        (_match, quoted: string | undefined, bare: string | undefined) => {
-            const isQuoted = quoted !== undefined;
-            // Trim trailing sentence punctuation only on the bare form (a quoted
-            // path is exact, so ".md" etc. must be preserved verbatim).
-            let candidate: string;
-            if (isQuoted) {
-                candidate = quoted;
-            } else {
-                const trimmed = (bare ?? '').replace(/[.,;:!?)\]}"']+$/, '');
-                candidate = (trimmed || bare) ?? '';
-            }
+    //                            inserts; also the recommended form for slash
+    //                            commands and pasted prompts that reference
+    //                            spaced paths).
+    //   @bare-token             — bare. Resolved GREEDILY: @ captures text to
+    //                            end-of-line / next @, then we trim trailing
+    //                            words until a prefix resolves. This lets a bare
+    //                            "@folder/File With Spaces.md" resolve as a whole
+    //                            (the naive @\S+ form stops at the first space,
+    //                            which collapsed several spaced mentions onto one
+    //                            file — and skipped them in pasted/slash prompts).
+    let out = text.replace(/@"([^"]+)"/g, (_m, path: string) => {
+        const resolved = resolveMentionToPath(path, markdownFiles);
+        if (resolved) {
+            if (!resolvedPaths.includes(resolved)) resolvedPaths.push(resolved);
+            return path; // strip the @ and quotes; keep the path inline
+        }
+        return _m;
+    });
 
+    out = out.replace(/@(?!")([^\n@]+)/g, (m, rest: string) => {
+        let candidate = rest.replace(/\s+$/, '');
+        while (candidate.length > 0) {
             const resolved = resolveMentionToPath(candidate, markdownFiles);
             if (resolved) {
-                if (!resolvedPaths.includes(resolved)) {
-                    resolvedPaths.push(resolved);
-                }
-                // Strip the leading @ (and the quotes), leaving the bare path text
-                // inline in the message so the writer can see what was referenced.
-                return candidate;
+                if (!resolvedPaths.includes(resolved)) resolvedPaths.push(resolved);
+                // Drop the @, keep the resolved path plus whatever trailed it
+                // on the line (so "ref and more" stays readable).
+                return candidate + rest.slice(candidate.length);
             }
-
-            // Email guard (bare form only): skip tokens that look like an email
-            // domain (dot, no path separator), e.g. "@example.com".
-            if (!isQuoted && candidate.includes('.') && !candidate.includes('/')) {
-                return _match;
-            }
-            return _match;
+            const sp = candidate.lastIndexOf(' ');
+            if (sp <= 0) break;
+            candidate = candidate.slice(0, sp);
         }
-    );
+        // Unresolved (incl. emails) — leave the @ intact.
+        return m;
+    });
 
-    return { resolvedPaths, cleanedText };
+    return { resolvedPaths, cleanedText: out };
 }
 
 /** Try to resolve a bare @mention to a vault file path. */
