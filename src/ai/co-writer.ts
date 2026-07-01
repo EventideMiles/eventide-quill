@@ -666,6 +666,14 @@ export interface CoWriterOption {
 
 /** A chat message displayed in the co-writer panel. */
 export interface CoWriterChatMessage {
+    /**
+     * Stable per-session id (e.g. `msg_7`). Reviewable artifacts spawned during
+     * this turn — subagent cards, pending lore edits, proposed lore images —
+     * anchor to the message via this id so they render inline in the
+     * conversation flow at the turn that produced them, instead of stacking at
+     * the bottom. Minted by {@link CoWriterSession.pushChatMessage}.
+     */
+    id: string;
     role: 'user' | 'assistant';
     content: string;
     options?: CoWriterOption[];
@@ -684,6 +692,13 @@ export interface CoWriterChatMessage {
      */
     toolUses?: { name: string; argsSummary: string; error?: string }[];
     /**
+     * Ids of subagents spawned by this turn's tool round
+     * ({@link SubagentSession.id}). The panel looks each up in its subagent
+     * list to render the status card inline beneath this bubble. Empty/undefined
+     * for turns that didn't spawn a subagent.
+     */
+    subagentIds?: string[];
+    /**
      * Base64 JPEG thumbnails (no `data:` prefix) the writer pasted/dropped/
      * attached with this user message. Only set on user messages; rendered as
      * a thumbnail strip beneath the bubble text so the writer sees what they
@@ -691,6 +706,28 @@ export interface CoWriterChatMessage {
      * {@link prepareUserMessageWithImages} before the message reaches the API.
      */
     images?: string[];
+}
+
+/**
+ * Pending lore-edits entry for one file. `anchorMessageId` is the
+ * {@link CoWriterChatMessage.id} of the assistant turn that most recently
+ * added/modified an edit for this file; the panel renders the card inline
+ * beneath that bubble. Re-anchored on each touch (latest semantics).
+ */
+export interface LoreEditEntry {
+    changeSet: ChangeSet;
+    fileBasename: string;
+    anchorMessageId: string | null;
+}
+
+/**
+ * Pending lore-image-attachment entry for one file. `anchorMessageId` places
+ * the review card inline at the turn that attached the images.
+ */
+export interface ProposedLoreImageEntry {
+    fileBasename: string;
+    images: ProposedImage[];
+    anchorMessageId: string | null;
 }
 
 /**
@@ -726,6 +763,50 @@ export class CoWriterSession {
 
     /** Chat message history for the panel display. */
     chatHistory: CoWriterChatMessage[] = [];
+
+    /**
+     * Monotonic counter for {@link CoWriterChatMessage.id} within this session.
+     * Ids only need to be unique within a session (artifacts anchor to messages
+     * by id), so this counter is not persisted — it restarts at 0 on load and
+     * any restored messages keep their original ids (which remain unique by
+     * construction within the restored set).
+     */
+    private nextMessageId = 0;
+
+    /**
+     * Push a display chat message with a freshly minted stable id. Use this
+     * instead of `chatHistory.push(...)` so every message is guaranteed an id
+     * that reviewable artifacts (subagent cards, lore edits, lore images) can
+     * anchor to. Callers pass the message without an id; it is stamped here.
+     */
+    private pushChatMessage(msg: Omit<CoWriterChatMessage, 'id'>): void {
+        this.chatHistory.push({ ...msg, id: `msg_${++this.nextMessageId}` });
+    }
+
+    /**
+     * Id of the last message in {@link chatHistory}, or null if empty. Pending
+     * lore edits and proposed lore images produced during the current tool round
+     * stamp this as their anchor so they render beneath the assistant turn that
+     * produced them. Called from tool execution, where the last entry is the
+     * in-flight assistant message of this turn.
+     */
+    currentAnchorMessageId(): string | null {
+        const last = this.chatHistory[this.chatHistory.length - 1];
+        return last ? last.id : null;
+    }
+
+    /**
+     * Record that `subagentId` was spawned by the current (last) assistant turn,
+     * so its status card renders beneath that bubble. Called at subagent spawn,
+     * which always happens during the calling turn's tool round (the last
+     * chatHistory entry is that turn's assistant message).
+     */
+    private attachSubagentToLastMessage(subagentId: string): void {
+        const last = this.chatHistory[this.chatHistory.length - 1];
+        if (last && last.role === 'assistant') {
+            last.subagentIds = [...(last.subagentIds ?? []), subagentId];
+        }
+    }
 
     /**
      * Subagent batch editors spawned via `run_lorebook_batch`, keyed by id.
@@ -837,8 +918,13 @@ export class CoWriterSession {
     /** Called when a new lore draft is ready for the review card. */
     onLoreDraftReady: (() => void) | null = null;
 
-    /** Pending note edits keyed by vault path (from edit_note / insert_note / append_to_note tools). */
-    loreEdits: Map<string, { changeSet: ChangeSet; fileBasename: string }> = new Map();
+    /**
+     * Pending note edits keyed by vault path (from edit_note / insert_note /
+     * append_to_note tools). `anchorMessageId` ties the file's review card to
+     * the assistant turn that most recently touched it (latest-touch) so the
+     * card renders inline beneath that bubble instead of at the panel bottom.
+     */
+    loreEdits: Map<string, LoreEditEntry> = new Map();
     /**
      * Pending image attachments keyed by vault path (from the
      * `attach_lore_image` tool). Path B of the lore-entry-images feature:
@@ -846,9 +932,10 @@ export class CoWriterSession {
      * `propose_entry` images, which travel with a new-entry draft). Each
      * file's images are reviewed individually; on approval the bytes are
      * written to the attachments folder and the `![[file]]` embed is
-     * inserted into the entry's gallery section.
+     * inserted into the entry's gallery section. `anchorMessageId` places the
+     * card inline at the turn that produced it (latest-touch on each add).
      */
-    proposedLoreImages: Map<string, { fileBasename: string; images: ProposedImage[] }> = new Map();
+    proposedLoreImages: Map<string, ProposedLoreImageEntry> = new Map();
     /**
      * Files that the tool opened in a new tab (not previously open). These
      * tabs are closed when the edit is approved or rejected so multi-file
@@ -987,7 +1074,7 @@ export class CoWriterSession {
         }
 
         // Add user's message to chat history
-        this.chatHistory.push({
+        this.pushChatMessage({
             role: 'user',
             content: direction || 'Continue the passage naturally from the cursor position.'
         });
@@ -1074,7 +1161,7 @@ export class CoWriterSession {
                 ];
             }
 
-            this.chatHistory.push({
+            this.pushChatMessage({
                 role: 'assistant',
                 content: 'Here are three possible directions:',
                 options: this.currentOptions,
@@ -1307,7 +1394,7 @@ export class CoWriterSession {
         if (editor) this.lockEditor();
 
         // Add user's message to display-only chat history
-        this.chatHistory.push({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
+        this.pushChatMessage({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
 
         const fullText = editor?.getValue() ?? '';
         const proseForContext = editor
@@ -1485,7 +1572,7 @@ export class CoWriterSession {
                 // Push a fresh draft before discussStartStreaming so the
                 // panel's placeholder-check (last message already assistant?)
                 // is a no-op — we own the message we'll replace post-stream.
-                this.chatHistory.push({ role: 'assistant', content: '' });
+                this.pushChatMessage({ role: 'assistant', content: '' });
                 this.onDiscussStartStreaming?.();
                 this.onDiscussChunk?.('');
 
@@ -1511,7 +1598,10 @@ export class CoWriterSession {
                 // render and duplicate the response text).
                 const lastIdx = this.chatHistory.length - 1;
                 if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
+                    const prev = this.chatHistory[lastIdx];
                     this.chatHistory[lastIdx] = {
+                        id: prev.id,
+                        subagentIds: prev.subagentIds,
                         role: 'assistant',
                         content: result.response,
                         thought: result.thought || undefined,
@@ -1662,7 +1752,7 @@ export class CoWriterSession {
         if (editor) this.lockEditor();
 
         // Add user message to display history (same as sendDiscussion)
-        this.chatHistory.push({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
+        this.pushChatMessage({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
 
         const fullText = editor?.getValue() ?? '';
         const proseForContext = editor
@@ -1866,7 +1956,7 @@ export class CoWriterSession {
                     ...this.discussCurrentMessages.slice(1)
                 ];
 
-                this.chatHistory.push({ role: 'assistant', content: '' });
+                this.pushChatMessage({ role: 'assistant', content: '' });
                 this.onDiscussStartStreaming?.();
                 this.onDiscussChunk?.('');
 
@@ -1892,7 +1982,10 @@ export class CoWriterSession {
                 // Replace the draft with the finalized message.
                 const lastIdx = this.chatHistory.length - 1;
                 if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
+                    const prev = this.chatHistory[lastIdx];
                     this.chatHistory[lastIdx] = {
+                        id: prev.id,
+                        subagentIds: prev.subagentIds,
                         role: 'assistant',
                         content: result.response,
                         thought: result.thought || undefined,
@@ -2102,7 +2195,7 @@ export class CoWriterSession {
         const coachSummary = this.buildCoachSummary();
         const prompt = getCoWriterCoachToOptions(proseForOptions || '(empty document)', coachSummary, direction);
 
-        this.chatHistory.push({
+        this.pushChatMessage({
             role: 'user',
             content: direction || 'Generate continuation options based on the coaching provided.'
         });
@@ -2163,7 +2256,7 @@ export class CoWriterSession {
                 ];
             }
 
-            this.chatHistory.push({
+            this.pushChatMessage({
                 role: 'assistant',
                 content: 'Here is a continuation option based on the coaching:',
                 options: this.currentOptions,
@@ -2243,7 +2336,7 @@ export class CoWriterSession {
         this.onOptionsLoading?.(true);
 
         // Add user message to display history.
-        this.chatHistory.push({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
+        this.pushChatMessage({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
 
         // Initialize session on first turn.
         if (!this.loreCoachSession) {
@@ -2357,7 +2450,7 @@ export class CoWriterSession {
                 // its own push when so — by pre-pushing our own draft we
                 // prevent a duplicate placeholder and own the message we'll
                 // finalize in place after the stream.
-                this.chatHistory.push({ role: 'assistant', content: '' });
+                this.pushChatMessage({ role: 'assistant', content: '' });
                 this.thoughtBuffer = '';
                 this.onDiscussStartStreaming?.();
                 this.onDiscussChunk?.('');
@@ -2459,7 +2552,10 @@ export class CoWriterSession {
                 // output) rather than a pre-tool snapshot.
                 const lastIdx = this.chatHistory.length - 1;
                 if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
+                    const prev = this.chatHistory[lastIdx];
                     this.chatHistory[lastIdx] = {
+                        id: prev.id,
+                        subagentIds: prev.subagentIds,
                         role: 'assistant',
                         content: response,
                         thought: thought || undefined,
@@ -3024,12 +3120,15 @@ export class CoWriterSession {
      * model can compose multi-step changes to one note without clobbering
      * earlier proposals. Edits for different files are independent.
      */
-    getOrCreateLoreEdit(filePath: string, fileBasename: string): { changeSet: ChangeSet; fileBasename: string } {
+    getOrCreateLoreEdit(filePath: string, fileBasename: string): LoreEditEntry {
         let entry = this.loreEdits.get(filePath);
         if (!entry) {
-            entry = { changeSet: new ChangeSet(), fileBasename };
+            entry = { changeSet: new ChangeSet(), fileBasename, anchorMessageId: null };
             this.loreEdits.set(filePath, entry);
         }
+        // Re-anchor to the current turn on every touch (latest semantics) so
+        // the card follows the most recent edit rather than the first.
+        entry.anchorMessageId = this.currentAnchorMessageId();
         return entry;
     }
 
@@ -3039,15 +3138,14 @@ export class CoWriterSession {
      * character getting one image per form via separate `attach_lore_image`
      * calls); they share one review card per file.
      */
-    getOrCreateProposedLoreImages(
-        filePath: string,
-        fileBasename: string
-    ): { fileBasename: string; images: ProposedImage[] } {
+    getOrCreateProposedLoreImages(filePath: string, fileBasename: string): ProposedLoreImageEntry {
         let entry = this.proposedLoreImages.get(filePath);
         if (!entry) {
-            entry = { fileBasename, images: [] };
+            entry = { fileBasename, images: [], anchorMessageId: null };
             this.proposedLoreImages.set(filePath, entry);
         }
+        // Re-anchor to the current turn on every touch (latest semantics).
+        entry.anchorMessageId = this.currentAnchorMessageId();
         return entry;
     }
 
@@ -3176,6 +3274,10 @@ export class CoWriterSession {
             sub.onChatUpdate = () => this.onChatUpdate?.();
             sub.onStatusChange = () => this.onChatUpdate?.();
             this.subagents.set(sub.id, sub);
+            // Anchor this subagent's status card to the calling assistant turn
+            // so it renders inline in the chat flow instead of stacking at the
+            // bottom of the panel.
+            this.attachSubagentToLastMessage(sub.id);
             this.onChatUpdate?.();
             const summary = await sub.run(); // throws AbortError on cancel → propagates, skips remaining chunks
             batchSummaries.push(`Batch ${i + 1}/${runChunks.length} (${chunkPaths.length} file(s)): ${summary}`);
@@ -3237,6 +3339,9 @@ export class CoWriterSession {
         sub.onChatUpdate = () => this.onChatUpdate?.();
         sub.onStatusChange = () => this.onChatUpdate?.();
         this.subagents.set(sub.id, sub);
+        // Anchor this subagent's status card to the calling assistant turn so
+        // it renders inline in the chat flow instead of stacking at the bottom.
+        this.attachSubagentToLastMessage(sub.id);
         this.onChatUpdate?.();
         const summary = await sub.run();
         this.onChatUpdate?.();
@@ -3547,7 +3652,7 @@ export class CoWriterSession {
         const cursor = editor.getCursor();
         const cursorOffset = editor.posToOffset(cursor);
 
-        this.chatHistory.push({
+        this.pushChatMessage({
             role: 'user',
             content: direction || 'Continue the passage naturally from the cursor position.'
         });
@@ -3884,6 +3989,15 @@ export class CoWriterSession {
     clearSubagents(): void {
         this.subagents.clear();
         this.activeSubagentId = null;
+        // Strip the now-dangling subagent references from chat messages so the
+        // panel doesn't keep an inline card slot whose subagent is gone (the
+        // card would simply not render, but tidying avoids confusion and keeps
+        // a restored/saved history clean).
+        for (const msg of this.chatHistory) {
+            if (msg.subagentIds?.length) {
+                msg.subagentIds = undefined;
+            }
+        }
         this.onChatUpdate?.();
     }
 

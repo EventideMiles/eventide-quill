@@ -1837,7 +1837,12 @@ export default class EventideQuillPlugin extends Plugin {
             const edits = [...session.loreEdits.entries()].flatMap(([filePath, entry]) =>
                 entry.changeSet.edits
                     .filter((e) => e.state === 'pending')
-                    .map((edit) => ({ edit, filePath, fileBasename: entry.fileBasename }))
+                    .map((edit) => ({
+                        edit,
+                        filePath,
+                        fileBasename: entry.fileBasename,
+                        anchorMessageId: entry.anchorMessageId
+                    }))
             );
             this.lintPanel?.coWriterSetLoreEdits(edits);
         };
@@ -1845,7 +1850,8 @@ export default class EventideQuillPlugin extends Plugin {
             const proposals = [...session.proposedLoreImages.entries()].map(([filePath, entry]) => ({
                 filePath,
                 fileBasename: entry.fileBasename,
-                images: entry.images
+                images: entry.images,
+                anchorMessageId: entry.anchorMessageId
             }));
             this.lintPanel?.coWriterSetProposedLoreImages(proposals);
         };

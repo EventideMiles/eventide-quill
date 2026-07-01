@@ -92,6 +92,45 @@ function fileNameFromPath(path: string): string {
  *
  * Extends AbstractChatPanel for shared chat infrastructure.
  */
+
+/** Panel view of one pending lore edit, flattened from a file's ChangeSet. Carries the anchor so the card renders inline. */
+export interface LoreEditCardView {
+    edit: ProposedEdit;
+    filePath: string;
+    fileBasename: string;
+    anchorMessageId: string | null;
+}
+
+/** Panel view of one file's pending lore-image attachments. Carries the anchor so the card renders inline. */
+export interface LoreImageCardView {
+    filePath: string;
+    fileBasename: string;
+    images: ProposedImage[];
+    anchorMessageId: string | null;
+}
+
+/**
+ * Reviewable cards anchored to one chat message: the subagent status cards,
+ * pending lore-edit cards, and proposed lore-image cards produced during that
+ * assistant turn's tool round. Rendered inline beneath the bubble. The same
+ * shape (as {@link buildAnchoredCards}.orphans) holds artifacts whose anchor
+ * message is missing, rendered at the tail as a fallback.
+ */
+interface AnchoredCardGroup {
+    subagents: SubagentView[];
+    loreEdits: LoreEditCardView[];
+    loreImages: LoreImageCardView[];
+}
+
+/**
+ * Transient id for the panel-side streaming placeholder. The panel optimistically
+ * pushes a placeholder assistant bubble while the response streams in (before
+ * the session's real, id-stamped message arrives via setChatHistory). It carries
+ * no anchored cards and is overwritten on the next push, so a stable sentinel
+ * (distinct from real `msg_N` ids) is sufficient and never collides.
+ */
+const STREAMING_PLACEHOLDER_ID = 'msg-streaming-placeholder';
+
 export class CoWriterPanel extends AbstractChatPanel {
     private plugin: EventideQuillPlugin;
 
@@ -135,10 +174,10 @@ export class CoWriterPanel extends AbstractChatPanel {
     private fulfillActive = false;
     /** Direct-mode proposed continuation (mirrored from the session), rendered as a review card. */
     private directChange: ProposedEdit | null = null;
-    /** Pending lore edits (from edit_note / insert_note / append_to_note tools), one card per file. */
-    private loreEdits: { edit: ProposedEdit; filePath: string; fileBasename: string }[] = [];
+    /** Pending lore edits (from edit_note / insert_note / append_to_note tools), one card per pending edit. */
+    private loreEdits: LoreEditCardView[] = [];
     /** Pending lore image attachments (from the attach_lore_image tool), one card per file. */
-    private proposedLoreImagesList: { filePath: string; fileBasename: string; images: ProposedImage[] }[] = [];
+    private proposedLoreImagesList: LoreImageCardView[] = [];
     /** Whether the mode picker is open (replaces the mode-cycle-on-click behavior). */
     private modePickerOpen = false;
     /** Current lorebook coach phase, if lorebook coach mode is active. */
@@ -391,13 +430,13 @@ export class CoWriterPanel extends AbstractChatPanel {
     }
 
     /** Replace the pending lore edits list and re-render. */
-    setLoreEdits(edits: { edit: ProposedEdit; filePath: string; fileBasename: string }[]): void {
+    setLoreEdits(edits: LoreEditCardView[]): void {
         this.loreEdits = edits;
         this.scheduleRender();
     }
 
     /** Replace the pending lore image attachments list and re-render. */
-    setProposedLoreImages(proposals: { filePath: string; fileBasename: string; images: ProposedImage[] }[]): void {
+    setProposedLoreImages(proposals: LoreImageCardView[]): void {
         this.proposedLoreImagesList = proposals;
         this.scheduleRender();
     }
@@ -622,7 +661,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         // Add a placeholder assistant message
         const last = this.chatHistory[this.chatHistory.length - 1];
         if (!last || last.role !== 'assistant') {
-            this.chatHistory.push({ role: 'assistant', content: '' });
+            this.chatHistory.push({ id: STREAMING_PLACEHOLDER_ID, role: 'assistant', content: '' });
         }
         this.scheduleRender();
     }
@@ -633,7 +672,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (last && last.role === 'assistant') {
             last.content += text;
         } else {
-            this.chatHistory.push({ role: 'assistant', content: text });
+            this.chatHistory.push({ id: STREAMING_PLACEHOLDER_ID, role: 'assistant', content: text });
             last = this.chatHistory[this.chatHistory.length - 1];
         }
         if (!this.containerEl) return;
@@ -816,6 +855,12 @@ export class CoWriterPanel extends AbstractChatPanel {
     private renderChatArea(): void {
         const scroll = this.containerEl!.createEl('div', { cls: 'quill-sidebar__content-plain' });
 
+        // Bucket reviewable cards by their anchor message so they render inline
+        // in the flow (subagents / lore edits / lore images) instead of all
+        // stacking at the panel tail. Orphans (no surviving anchor message)
+        // render at the tail as a fallback.
+        const { byMessage, orphans } = this.buildAnchoredCards();
+
         if (this.fulfillSections.length > 0) {
             this.renderFulfillSections(scroll);
         } else if (this.chatHistory.length === 0 && !this.optionsLoading) {
@@ -969,6 +1014,15 @@ export class CoWriterPanel extends AbstractChatPanel {
                         });
                     }
                 }
+
+                // Reviewable cards anchored to this message (subagent status
+                // cards, pending lore edits, proposed lore images) render inline
+                // beneath the bubble at the point they were produced, instead of
+                // stacking at the panel bottom.
+                const group = byMessage.get(msg.id);
+                if (group) {
+                    this.renderCardGroup(scroll, group);
+                }
             }
 
             // Regime B processing indicator OR generic streaming placeholder.
@@ -1001,33 +1055,13 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.renderDirectChangeCard(scroll);
         }
 
-        // Lore edit cards — one per pending edit (from edit_note /
-        // insert_note / append_to_note tools). Multiple files can be pending simultaneously
-        // so the writer can review a "full lorebook edit" one file at a time.
-        for (const entry of this.loreEdits) {
-            const p = renderChangeCard(scroll, entry.edit, entry.fileBasename, this.app, this.renderEvents, {
-                onApprove: (id: number) => this.onApproveLoreEdit?.(entry.filePath, id),
-                onReject: (id: number) => this.onRejectLoreEdit?.(entry.filePath, id)
-            });
-            if (p) {
-                this.renderPromises.push(p);
-            }
-        }
-
-        // Lore image attachment cards — one per pending file (from the
-        // attach_lore_image tool). Each card shows the file's proposed
-        // images with Approve-all / Reject-all buttons. On approve, the
-        // bytes are written and the embeds inserted into the gallery section.
-        for (const proposal of this.proposedLoreImagesList) {
-            renderLoreImageAttachmentCard(scroll, proposal, this.plugin, this.renderEvents, {
-                onApprove: (filePath: string) => this.onApproveProposedLoreImage?.(filePath),
-                onReject: (filePath: string) => this.onRejectProposedLoreImage?.(filePath)
-            });
-        }
-
-        // Subagent status cards — one per spawned batch (running / succeeded /
-        // failed). Click to drill into its internal conversation.
-        this.renderSubagentCards(scroll);
+        // Orphaned reviewable cards — subagent / lore-edit / lore-image cards
+        // whose anchor message is no longer in chatHistory (dropped by
+        // compaction, or restored from a saved session without the anchor).
+        // Rendered at the tail as a fallback so a reviewable card is never
+        // silently lost. Cards with a surviving anchor already rendered inline
+        // in the loop above.
+        this.renderCardGroup(scroll, orphans);
     }
 
     /**
@@ -1036,43 +1070,133 @@ export class CoWriterPanel extends AbstractChatPanel {
      * status badge, and a "View" action that drills into the subagent's
      * live/finalized conversation ({@link renderSubagentView}).
      */
-    private renderSubagentCards(container: HTMLElement): void {
-        for (const sub of this.subagents) {
-            const card = container.createEl('div', {
-                cls: `quill-cowriter-panel__subagent-card quill-cowriter-panel__subagent-card--${sub.status}`
+    /**
+     * Render one subagent status card. Rendered inline in the chat flow beneath
+     * the assistant turn whose tool round spawned it (anchored via the
+     * message's {@link CoWriterChatMessage.subagentIds}); orphaned subagents
+     * whose anchor message is gone render at the tail as a fallback. Shows the
+     * goal, a status badge, and a "View/Watch" action that drills into the
+     * subagent's live/finalized conversation ({@link renderSubagentView}).
+     */
+    private renderSubagentCard(container: HTMLElement, sub: SubagentView): void {
+        const card = container.createEl('div', {
+            cls: `quill-cowriter-panel__subagent-card quill-cowriter-panel__subagent-card--${sub.status}`
+        });
+        const header = card.createEl('div', { cls: 'quill-cowriter-panel__subagent-card-header' });
+        header.createEl('span', {
+            cls: 'quill-cowriter-panel__subagent-kind',
+            text: sub.kind === 'research' ? 'Research' : 'Batch edit'
+        });
+        header.createEl('span', {
+            cls: 'quill-cowriter-panel__subagent-status',
+            text: sub.status === 'running' ? 'Running' : sub.status === 'succeeded' ? 'Done' : 'Failed'
+        });
+        header.createEl('span', {
+            cls: 'quill-cowriter-panel__subagent-goal',
+            text: truncateText(sub.goal, 70)
+        });
+        if (sub.status === 'running') {
+            card.createEl('div', {
+                cls: 'quill-cowriter-panel__subagent-progress',
+                text: `Editing ${sub.pathCount} file(s)…`
             });
-            const header = card.createEl('div', { cls: 'quill-cowriter-panel__subagent-card-header' });
-            header.createEl('span', {
-                cls: 'quill-cowriter-panel__subagent-kind',
-                text: sub.kind === 'research' ? 'Research' : 'Batch edit'
+        } else if (sub.error) {
+            card.createEl('div', { cls: 'quill-cowriter-panel__subagent-error', text: sub.error });
+        } else if (sub.summary) {
+            card.createEl('div', {
+                cls: 'quill-cowriter-panel__subagent-summary',
+                text: truncateText(sub.summary, 140)
             });
-            header.createEl('span', {
-                cls: 'quill-cowriter-panel__subagent-status',
-                text: sub.status === 'running' ? 'Running' : sub.status === 'succeeded' ? 'Done' : 'Failed'
-            });
-            header.createEl('span', {
-                cls: 'quill-cowriter-panel__subagent-goal',
-                text: truncateText(sub.goal, 70)
-            });
-            if (sub.status === 'running') {
-                card.createEl('div', {
-                    cls: 'quill-cowriter-panel__subagent-progress',
-                    text: `Editing ${sub.pathCount} file(s)…`
-                });
-            } else if (sub.error) {
-                card.createEl('div', { cls: 'quill-cowriter-panel__subagent-error', text: sub.error });
-            } else if (sub.summary) {
-                card.createEl('div', {
-                    cls: 'quill-cowriter-panel__subagent-summary',
-                    text: truncateText(sub.summary, 140)
-                });
+        }
+        const viewBtn = card.createEl('button', {
+            cls: 'quill-cowriter-panel__subagent-view',
+            text: sub.status === 'running' ? 'Watch' : 'View'
+        });
+        this.renderEvents.registerDomEvent(viewBtn, 'click', () => {
+            this.onNavigateToSubagent?.(sub.id);
+        });
+    }
+
+    /**
+     * Bucket reviewable cards (subagents, pending lore edits, proposed lore
+     * images) by the chat message they anchor to, so each renders inline
+     * beneath its producing turn. Subagents anchor via the message's
+     * {@link CoWriterChatMessage.subagentIds}; lore edits/images anchor via
+     * their own {@link LoreEditCardView.anchorMessageId}. Artifacts whose
+     * anchor message is absent (dropped by compaction, or restored without an
+     * anchor) land in {@link orphans} and render at the panel tail as a
+     * fallback — a reviewable card is never silently lost.
+     */
+    private buildAnchoredCards(): { byMessage: Map<string, AnchoredCardGroup>; orphans: AnchoredCardGroup } {
+        const chatIds = new Set(this.chatHistory.map((m) => m.id));
+        const byMessage = new Map<string, AnchoredCardGroup>();
+        const orphans: AnchoredCardGroup = { subagents: [], loreEdits: [], loreImages: [] };
+        const groupFor = (id: string): AnchoredCardGroup => {
+            let g = byMessage.get(id);
+            if (!g) {
+                g = { subagents: [], loreEdits: [], loreImages: [] };
+                byMessage.set(id, g);
             }
-            const viewBtn = card.createEl('button', {
-                cls: 'quill-cowriter-panel__subagent-view',
-                text: sub.status === 'running' ? 'Watch' : 'View'
+            return g;
+        };
+
+        // Subagents anchor via the message's subagentIds (looked up by id).
+        for (const msg of this.chatHistory) {
+            if (!msg.subagentIds?.length) continue;
+            const g = groupFor(msg.id);
+            for (const sid of msg.subagentIds) {
+                const sub = this.subagents.find((s) => s.id === sid);
+                if (sub) g.subagents.push(sub);
+            }
+        }
+        for (const sub of this.subagents) {
+            const referenced = this.chatHistory.some((m) => m.subagentIds?.includes(sub.id));
+            if (!referenced) orphans.subagents.push(sub);
+        }
+
+        // Lore edits + images anchor via their own anchorMessageId.
+        for (const entry of this.loreEdits) {
+            const a = entry.anchorMessageId;
+            if (a && chatIds.has(a)) groupFor(a).loreEdits.push(entry);
+            else orphans.loreEdits.push(entry);
+        }
+        for (const proposal of this.proposedLoreImagesList) {
+            const a = proposal.anchorMessageId;
+            if (a && chatIds.has(a)) groupFor(a).loreImages.push(proposal);
+            else orphans.loreImages.push(proposal);
+        }
+
+        return { byMessage, orphans };
+    }
+
+    /**
+     * Render a group of anchored cards (subagents + lore edits + lore images)
+     * into `container`, in that order, wrapped in a single inset container so
+     * all three card types share a uniform "attached to the preceding turn"
+     * treatment. Used both for a message's inline group and for the orphan
+     * fallback at the tail. Creates nothing if the group is empty.
+     */
+    private renderCardGroup(container: HTMLElement, group: AnchoredCardGroup): void {
+        if (group.subagents.length === 0 && group.loreEdits.length === 0 && group.loreImages.length === 0) {
+            return;
+        }
+        const host = container.createEl('div', { cls: 'quill-cowriter-panel__anchored-cards' });
+        for (const sub of group.subagents) {
+            this.renderSubagentCard(host, sub);
+        }
+        for (const entry of group.loreEdits) {
+            const p = renderChangeCard(host, entry.edit, entry.fileBasename, this.app, this.renderEvents, {
+                onApprove: (id: number) => this.onApproveLoreEdit?.(entry.filePath, id),
+                onReject: (id: number) => this.onRejectLoreEdit?.(entry.filePath, id)
             });
-            this.renderEvents.registerDomEvent(viewBtn, 'click', () => {
-                this.onNavigateToSubagent?.(sub.id);
+            if (p) {
+                this.renderPromises.push(p);
+            }
+        }
+        for (const proposal of group.loreImages) {
+            renderLoreImageAttachmentCard(host, proposal, this.plugin, this.renderEvents, {
+                onApprove: (filePath: string) => this.onApproveProposedLoreImage?.(filePath),
+                onReject: (filePath: string) => this.onRejectProposedLoreImage?.(filePath)
             });
         }
     }

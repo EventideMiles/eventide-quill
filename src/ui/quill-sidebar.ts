@@ -11,15 +11,8 @@ import { ReviewPanel } from './review-panel';
 import { CoWriterPanel } from './co-writer-panel';
 import { renderDashboardTab, renderDashboardSettingsTab } from './dashboard-panel';
 import { renderLorebookTab } from './lorebook-panel';
-import type { InputMode } from './co-writer-panel';
-import type {
-    CoWriterChatMessage,
-    CoWriterOption,
-    DraftState,
-    CoachPhase,
-    LoreCoachPhase,
-    ProposedImage
-} from '../ai/co-writer';
+import type { InputMode, LoreEditCardView, LoreImageCardView } from './co-writer-panel';
+import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase, LoreCoachPhase } from '../ai/co-writer';
 import type { SubagentView } from '../ai/subagent-session';
 import type { ProposedEdit } from '../core/change-set';
 import type EventideQuillPlugin from '../main';
@@ -781,13 +774,19 @@ export class QuillSidebarView extends ItemView {
             const loreEditsList = [...session.loreEdits.entries()].flatMap(([filePath, entry]) =>
                 entry.changeSet.edits
                     .filter((e) => e.state === 'pending')
-                    .map((edit) => ({ edit, filePath, fileBasename: entry.fileBasename }))
+                    .map((edit) => ({
+                        edit,
+                        filePath,
+                        fileBasename: entry.fileBasename,
+                        anchorMessageId: entry.anchorMessageId
+                    }))
             );
             this.coWriterPanel.setLoreEdits(loreEditsList);
             const proposedLoreImagesList = [...session.proposedLoreImages.entries()].map(([filePath, entry]) => ({
                 filePath,
                 fileBasename: entry.fileBasename,
-                images: entry.images
+                images: entry.images,
+                anchorMessageId: entry.anchorMessageId
             }));
             this.coWriterPanel.setProposedLoreImages(proposedLoreImagesList);
             this.coWriterPanel.setSubagents(session.getSubagentViews());
@@ -1028,14 +1027,12 @@ export class QuillSidebarView extends ItemView {
     }
 
     /** Push the pending lore edits to the co-writer panel. */
-    coWriterSetLoreEdits(edits: { edit: ProposedEdit; filePath: string; fileBasename: string }[]): void {
+    coWriterSetLoreEdits(edits: LoreEditCardView[]): void {
         this.coWriterPanel?.setLoreEdits(edits);
     }
 
     /** Push the pending lore image attachments to the co-writer panel. */
-    coWriterSetProposedLoreImages(
-        proposals: { filePath: string; fileBasename: string; images: ProposedImage[] }[]
-    ): void {
+    coWriterSetProposedLoreImages(proposals: LoreImageCardView[]): void {
         this.coWriterPanel?.setProposedLoreImages(proposals);
     }
 

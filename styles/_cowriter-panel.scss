@@ -979,13 +979,26 @@
         }
     }
 
+    /* Inline container wrapping reviewable cards (subagent status, pending
+       lore edits, proposed lore images) anchored to the assistant turn above.
+       Left accent + indent signal the cards belong to that turn rather than
+       being standalone panel sections. */
+    &__anchored-cards {
+        display: flex;
+        flex-direction: column;
+        gap: $space-xs;
+        margin: 0 0 $space-md 0;
+        padding-left: $space-sm;
+        border-left: 2px solid var(--background-modifier-border);
+    }
+
     /* Subagent status cards + drill-down view (run_lorebook_batch). */
     &__subagent-card {
         border: 1px solid var(--background-modifier-border);
         border-left-width: 3px;
         border-radius: $radius-sm;
         padding: $space-sm;
-        margin-top: $space-sm;
+        margin-top: 0;
         display: flex;
         flex-direction: column;
         gap: $space-xs;
