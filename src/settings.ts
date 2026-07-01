@@ -425,9 +425,29 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         this.plugin = plugin;
     }
 
-    /** Build and display the full settings UI. */
+    /**
+     * Build and display the full settings UI.
+     *
+     * Called on initial open AND on every save that needs a structural
+     * redraw (provider add/remove, toggle reveal/hide, slash-command
+     * add/remove, etc.). To preserve scroll position across in-tab
+     * redraws, the scroll area's scrollTop is captured before the DOM is
+     * torn down and restored after rebuild. Tab switches reset to the top
+     * (the tab-bar click handler passes no `scrollTop` arg, defaulting
+     * to 0; the initial open path finds no previous scroll area and
+     * falls back to 0 too).
+     */
     display(): void {
         const { containerEl } = this;
+
+        // Capture scroll position before teardown so we can restore it after
+        // a redraw triggered by an in-tab action (toggle, add/remove row,
+        // card field edit). Without this, `showActiveTab()` resets to 0 on
+        // every redraw and the writer is bounced back to the top after
+        // clicking anything inside the tab. Only tab switches should reset.
+        const prevScrollArea = containerEl.querySelector('.quill-settings__scroll-area');
+        const savedScrollTop = prevScrollArea instanceof HTMLElement ? prevScrollArea.scrollTop : 0;
+
         containerEl.empty();
         containerEl.addClass('quill-settings-root');
 
@@ -444,7 +464,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
         this.renderFooter(containerEl);
 
-        this.showActiveTab();
+        this.showActiveTab(savedScrollTop);
     }
 
     /** Render the tab bar at the top of the settings panel. */
@@ -472,8 +492,18 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         }
     }
 
-    /** Toggle visibility of tab content sections. */
-    private showActiveTab(): void {
+    /**
+     * Toggle visibility of tab content sections and scroll the panel.
+     *
+     * @param scrollTop  Scroll position to restore after redraw. The
+     *                   tab-bar click handler passes nothing (default 0) so
+     *                   switching tabs starts at the top; {@link display}
+     *                   passes the previously captured scrollTop so an
+     *                   in-tab redraw (add/remove/field edit) preserves the
+     *                   writer's place. The initial-open path finds no
+     *                   previous scroll area and also falls back to 0.
+     */
+    private showActiveTab(scrollTop = 0): void {
         const tabIds: SettingsTab[] = ['welcome', 'general', 'linter', 'ai-providers', 'model-behaviors'];
         const tabs = this.containerEl.querySelectorAll('.quill-settings__tab');
 
@@ -493,10 +523,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             }
         });
 
-        // Reset scroll so the user starts at the top of the new tab.
         const scrollArea = this.containerEl.querySelector('.quill-settings__scroll-area');
         if (scrollArea instanceof HTMLElement) {
-            scrollArea.scrollTop = 0;
+            // 0 (tab switch or first open) starts at the top; a preserved
+            // scrollTop (in-tab redraw) restores the writer's place.
+            scrollArea.scrollTop = scrollTop;
         }
     }
 
