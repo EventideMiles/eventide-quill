@@ -1571,7 +1571,8 @@ export class CoWriterSession {
         this.discussCurrentMessages.push({
             role: 'user',
             content: prepared.content,
-            ...(prepared.images ? { images: prepared.images } : {})
+            ...(prepared.images ? { images: prepared.images } : {}),
+            quillAnchorId: this.currentAnchorMessageId() ?? undefined
         });
 
         if (__DEV__ && plugin.settings.enableDebugLogging) {
@@ -1682,7 +1683,8 @@ export class CoWriterSession {
                 this.discussCurrentMessages.push({
                     role: 'assistant',
                     content: result.response,
-                    toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined
+                    toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
+                    quillAnchorId: this.currentAnchorMessageId() ?? undefined
                 });
 
                 // Update token estimate so the indicator reflects tool-result
@@ -1703,7 +1705,8 @@ export class CoWriterSession {
                         role: 'tool',
                         content: toolResult.text,
                         toolCallId: call.id,
-                        name: call.name
+                        name: call.name,
+                        quillAnchorId: this.currentAnchorMessageId() ?? undefined
                     });
                     if (toolResult.images && toolResult.images.length > 0) {
                         collectedImages.push(...toolResult.images);
@@ -1901,7 +1904,8 @@ export class CoWriterSession {
                 this.discussCurrentMessages.push({
                     role: 'user',
                     content: prepared.content,
-                    ...(prepared.images ? { images: prepared.images } : {})
+                    ...(prepared.images ? { images: prepared.images } : {}),
+                    quillAnchorId: this.currentAnchorMessageId() ?? undefined
                 });
             } else {
                 // Normal follow-up (discern or clarify phase)
@@ -1920,7 +1924,8 @@ export class CoWriterSession {
                 this.discussCurrentMessages.push({
                     role: 'user',
                     content: prepared.content,
-                    ...(prepared.images ? { images: prepared.images } : {})
+                    ...(prepared.images ? { images: prepared.images } : {}),
+                    quillAnchorId: this.currentAnchorMessageId() ?? undefined
                 });
             }
         }
@@ -2064,7 +2069,8 @@ export class CoWriterSession {
                 this.discussCurrentMessages.push({
                     role: 'assistant',
                     content: result.response,
-                    toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined
+                    toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
+                    quillAnchorId: this.currentAnchorMessageId() ?? undefined
                 });
 
                 this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
@@ -2080,7 +2086,8 @@ export class CoWriterSession {
                         role: 'tool',
                         content: toolResult.text,
                         toolCallId: call.id,
-                        name: call.name
+                        name: call.name,
+                        quillAnchorId: this.currentAnchorMessageId() ?? undefined
                     });
                     if (toolResult.images && toolResult.images.length > 0) {
                         coachCollectedImages.push(...toolResult.images);
@@ -2428,7 +2435,8 @@ export class CoWriterSession {
             this.loreCoachMessages.push({
                 role: 'user',
                 content: prepared.content,
-                ...(prepared.images ? { images: prepared.images } : {})
+                ...(prepared.images ? { images: prepared.images } : {}),
+                quillAnchorId: this.currentAnchorMessageId() ?? undefined
             });
         }
 
@@ -2634,7 +2642,8 @@ export class CoWriterSession {
                 this.loreCoachMessages.push({
                     role: 'assistant',
                     content: response,
-                    toolCalls: toolCalls.length > 0 ? toolCalls : undefined
+                    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+                    quillAnchorId: this.currentAnchorMessageId() ?? undefined
                 });
 
                 // No tools called (or tools disabled) → this round is final.
@@ -2653,7 +2662,8 @@ export class CoWriterSession {
                         role: 'tool',
                         content: toolResult.text,
                         toolCallId: call.id,
-                        name: call.name
+                        name: call.name,
+                        quillAnchorId: this.currentAnchorMessageId() ?? undefined
                     });
                     if (toolResult.images && toolResult.images.length > 0) {
                         loreCollectedImages.push(...toolResult.images);
@@ -4254,5 +4264,176 @@ export class CoWriterSession {
 
         this.onChatUpdate?.();
         return state.mode;
+    }
+
+    /**
+     * Whether a display message can be rewound to. A message is rewindable iff
+     * its id still appears as a `quillAnchorId` in the active mode's API array
+     * — i.e. the model still holds that turn verbatim. Turns that were folded
+     * into a compaction summary lose their anchor id and are NOT rewindable
+     * (rewinding them can't unwind the model's summarized memory). The options
+     * flow's display messages (never pushed to the API array) are also
+     * non-rewindable. Only meaningful for user messages (the only bubbles that
+     * offer the action).
+     */
+    isRewindableMessage(id: string, mode: string): boolean {
+        const arr = mode === 'lorebook' ? this.loreCoachMessages : this.discussCurrentMessages;
+        return arr.some((m) => m.quillAnchorId === id);
+    }
+
+    /**
+     * Rewind the conversation to BEFORE the user message with `id` ("undo this
+     * send"): discard that message and everything after it from the display
+     * (`chatHistory`) and from the model's API array, and drop any reviewable
+     * artifacts (subagents, pending lore edits, proposed images, lore draft)
+     * anchored to discarded messages. The API array is truncated in lockstep via
+     * `quillAnchorId` so the model genuinely forgets the discarded turns (its
+     * array ends on the assistant turn before the rewound message — well-formed).
+     * Then the mode phase is re-evaluated from the surviving history. The
+     * caller pre-fills the input with the discarded message's text so the
+     * writer can edit and resend.
+     */
+    rewindToMessage(id: string, mode: string): void {
+        const k = this.chatHistory.findIndex((m) => m.id === id);
+        if (k < 0) return;
+        const discardedText = this.chatHistory[k]?.content ?? '';
+        const kept = this.chatHistory.slice(0, k); // exclusive: drop the target + everything after
+        const keptIds = new Set(kept.map((m) => m.id));
+
+        this.chatHistory = kept;
+        // Restart the message-id counter above the highest kept id so continued
+        // conversation doesn't collide with surviving anchors.
+        this.nextMessageId = kept.reduce((max, m) => {
+            const n = Number.parseInt(m.id.replace(/^msg_/, ''), 10);
+            return Number.isFinite(n) ? Math.max(max, n) : max;
+        }, 0);
+
+        // Truncate the model's API array: keep system/context-head messages
+        // (no quillAnchorId) + any message anchored to a surviving display turn.
+        const truncateApi = (arr: ChatMessage[]): ChatMessage[] =>
+            arr.filter((m) => !m.quillAnchorId || keptIds.has(m.quillAnchorId));
+        this.discussCurrentMessages = truncateApi(this.discussCurrentMessages);
+        this.loreCoachMessages = truncateApi(this.loreCoachMessages);
+
+        // Drop reviewable artifacts anchored to discarded messages.
+        // Subagents: keep only those still referenced by a surviving message.
+        const referencedSubIds = new Set<string>();
+        for (const m of this.chatHistory) {
+            for (const sid of m.subagentIds ?? []) referencedSubIds.add(sid);
+        }
+        for (const sid of [...this.subagents.keys()]) {
+            if (!referencedSubIds.has(sid)) this.subagents.delete(sid);
+        }
+        this.restoredSubagentViews = this.restoredSubagentViews.filter((s) => referencedSubIds.has(s.id));
+        if (this.activeSubagentId && !referencedSubIds.has(this.activeSubagentId)) {
+            this.activeSubagentId = null;
+        }
+        // Pending lore edits / proposed images: drop entries anchored to gone messages.
+        for (const filePath of [...this.loreEdits.keys()]) {
+            const entry = this.loreEdits.get(filePath);
+            if (entry?.anchorMessageId && !keptIds.has(entry.anchorMessageId)) {
+                this.loreEdits.delete(filePath);
+            }
+        }
+        for (const filePath of [...this.proposedLoreImages.keys()]) {
+            const entry = this.proposedLoreImages.get(filePath);
+            if (entry?.anchorMessageId && !keptIds.has(entry.anchorMessageId)) {
+                this.proposedLoreImages.delete(filePath);
+            }
+        }
+        // Lore draft: re-derive from the last surviving message that carries one.
+        this.currentLoreDraft = null;
+        for (let i = this.chatHistory.length - 1; i >= 0; i--) {
+            if (this.chatHistory[i]?.loreDraft) {
+                this.currentLoreDraft = this.chatHistory[i]!.loreDraft ?? null;
+                break;
+            }
+        }
+
+        this.reevaluateModePhase(mode);
+
+        this.optionsLoading = false;
+        this.thoughtBuffer = '';
+        this.onChatUpdate?.();
+        this.onLoreEditUpdate?.();
+        this.onProposedLoreImagesUpdate?.();
+        void discardedText; // returned to caller via main.ts input pre-fill
+    }
+
+    /**
+     * Re-derive the coach / lorebook mode-session phase from the surviving
+     * `chatHistory` after a rewind (the stored phase was advanced past the cut
+     * point and is now stale). Mirrors the same heuristics the live flow uses to
+     * ADVANCE phase, replayed over the kept assistant turns. Discuss mode has no
+     * phase state, so it is a no-op. Run at rewind time so the phase indicator
+     * is correct immediately (idempotent if re-run on the next send).
+     */
+    private reevaluateModePhase(mode: string): void {
+        if (mode === 'coach') {
+            this.reevaluateCoachPhase();
+        } else if (mode === 'lorebook') {
+            this.reevaluateLoreCoachPhase();
+        }
+    }
+
+    /** Replay the coach phase machine over kept assistant turns. */
+    private reevaluateCoachPhase(): void {
+        const firstUser = this.chatHistory.find((m) => m.role === 'user');
+        const assistantTurns = this.chatHistory.filter((m) => m.role === 'assistant');
+        if (assistantTurns.length === 0) {
+            // No AI response yet → back to the discern/intent phase.
+            this.coachSession = firstUser
+                ? {
+                      phase: 'discern',
+                      response: '',
+                      summary: '',
+                      isFirstTurn: true,
+                      clarifyRound: 0
+                  }
+                : null;
+            this.coachActive = !!this.coachSession;
+            return;
+        }
+        // Replay the advance heuristic (mirrors the live flow): start at discern,
+        // then for each assistant turn advance per the askedQuestions rule.
+        let phase: CoachPhase = 'discern';
+        let clarifyRound = 0;
+        let lastResponse = '';
+        for (const turn of assistantTurns) {
+            lastResponse = turn.content;
+            const askedQuestions = turn.content.includes('?');
+            if (phase === 'discern') {
+                phase = 'clarify';
+                clarifyRound = 1;
+            } else if (phase === 'clarify') {
+                if (askedQuestions && clarifyRound < 2) {
+                    clarifyRound++;
+                } else {
+                    phase = 'plan';
+                }
+            } else if (phase === 'plan') {
+                phase = 'direction';
+            }
+        }
+        this.coachSession = {
+            phase,
+            response: lastResponse,
+            summary: phase === 'direction' ? lastResponse : (this.coachSession?.summary ?? ''),
+            isFirstTurn: false,
+            clarifyRound
+        };
+        this.coachActive = true;
+    }
+
+    /** Re-derive the lorebook coach phase/scope/rounds from kept history. */
+    private reevaluateLoreCoachPhase(): void {
+        const userTurns = this.chatHistory.filter((m) => m.role === 'user');
+        const scope = this.loreCoachSession?.scope ?? userTurns[0]?.content ?? '';
+        const rounds = userTurns.length;
+        const hasDraft = this.chatHistory.some((m) => m.loreDraft);
+        const entryType = hasDraft ? (this.currentLoreDraft?.entryType ?? null) : null;
+        const phase: LoreCoachPhase = hasDraft ? 'refine' : rounds > 1 ? 'develop' : 'discover';
+        this.loreCoachSession = { phase, scope, entryType, rounds };
+        this.loreCoachActive = true;
     }
 }

@@ -2549,6 +2549,24 @@ export default class EventideQuillPlugin extends Plugin {
         return true;
     }
 
+    /**
+     * Rewind the co-writer chat to before a user message ("undo this send"):
+     * discard that message and everything after, then pre-fill the input with
+     * its text so the writer can edit and resend. The session's rewind handles
+     * the API-array truncation (the model genuinely forgets), anchored-artifact
+     * cleanup, and phase re-evaluation; this method orchestrates the panel
+     * repaint + input pre-fill.
+     */
+    rewindCoWriterChat(messageId: string): void {
+        const mode = this.lintPanel?.coWriterGetMode() ?? 'discuss';
+        const discardedText = this.coWriterSession.chatHistory.find((m) => m.id === messageId)?.content ?? '';
+        this.coWriterSession.rewindToMessage(messageId, mode);
+        this.syncCoWriterPanel();
+        if (discardedText) {
+            this.lintPanel?.coWriterSetInputText(discardedText);
+        }
+    }
+
     /** Open the saved-conversation switcher (History). */
     async openCoWriterHistory(): Promise<void> {
         const dir = resolveSessionsDir(this.pluginDataDir);

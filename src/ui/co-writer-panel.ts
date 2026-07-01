@@ -224,6 +224,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onHistory: (() => void) | null = null;
     /** Snapshot the current conversation to disk without clearing it. */
     private onSaveSnapshot: (() => void) | null = null;
+    /** Rewind the chat to before a user message (discard it + everything after). */
+    private onRewind: ((messageId: string) => void) | null = null;
 
     /**
      * Conversation token estimate pushed from the plugin layer.
@@ -563,6 +565,25 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Set the handler invoked when the writer saves a snapshot of the current chat. */
     setSaveSnapshotHandler(handler: () => void): void {
         this.onSaveSnapshot = handler;
+    }
+
+    /** Set the handler invoked when the writer rewinds to a user message. */
+    setRewindHandler(handler: (messageId: string) => void): void {
+        this.onRewind = handler;
+    }
+
+    /**
+     * Pre-fill the chat input with `text` (and focus it) — used after a rewind
+     * to restore the discarded message's text so the writer can edit and resend.
+     */
+    setInputText(text: string): void {
+        const input = this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-panel__input');
+        if (input) {
+            input.value = text;
+            input.focus();
+            // Move the cursor to the end so typing appends.
+            input.setSelectionRange(input.value.length, input.value.length);
+        }
     }
 
     /** Set the current coach phase. */
@@ -915,6 +936,37 @@ export class CoWriterPanel extends AbstractChatPanel {
                             });
                         }
                     }
+                    // Right-click → "Rewind to here": discard this message and
+                    // everything after, pre-fill the input with its text. Disabled
+                    // while generating or if the turn was folded into a compaction
+                    // summary (no surviving quillAnchorId in the API array).
+                    this.renderEvents.registerDomEvent(bubble, 'contextmenu', (e: MouseEvent) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const menu = new Menu();
+                        const rewindable =
+                            !this.chatLoading &&
+                            this.plugin.coWriterSession.isRewindableMessage(msg.id, this.inputMode);
+                        menu.addItem((item) =>
+                            item
+                                .setTitle('Rewind to here')
+                                .setIcon('rotate-ccw')
+                                .setDisabled(!rewindable)
+                                .onClick(() => this.onRewind?.(msg.id))
+                        );
+                        if (!rewindable) {
+                            menu.addItem((item) =>
+                                item
+                                    .setTitle(
+                                        this.chatLoading
+                                            ? 'Stop generation before rewinding'
+                                            : 'Part of the summarized context (compacted) — can\u2019t rewind'
+                                    )
+                                    .setDisabled(true)
+                            );
+                        }
+                        menu.showAtMouseEvent(e);
+                    });
                 } else if (msg.role === 'assistant') {
                     const bubble = scroll.createEl('div', {
                         cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--assistant'

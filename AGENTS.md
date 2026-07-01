@@ -236,6 +236,15 @@ Saved / resumable co-writer conversations live as per-session JSON sidecars unde
 
 `ChangeSet`/`ChangeSetJSON` round-trip via `ChangeSet.toJSON`/`ChangeSet.fromJSON` (the class is pure logic but has private fields + a `nextId` counter).
 
+## Chat rewind
+
+Right-click a user message in the co-writer chat → "Rewind to here" discards that message and everything after it (display + the model's API array), then pre-fills the input with the discarded text so the writer can edit and resend. Works in discuss / coach / lorebook modes.
+
+- **Reliable API truncation via `quillAnchorId`:** every message pushed to `discussCurrentMessages` / `loreCoachMessages` is stamped with `quillAnchorId` = the originating `CoWriterChatMessage.id` (the user message's id; during a tool round, the assistant placeholder's id, so the whole round — assistant + tool results — shares one id). Both providers build their payload by picking known fields, so `quillAnchorId` is dropped on the wire (never sent to the model) but round-trips through the persistence sidecar. Rewind keeps API messages with no `quillAnchorId` (system prompt / context heads) + any whose anchor is a surviving display message; the rest drop. The model genuinely forgets.
+- **Compaction guard:** `isRewindableMessage(id, mode)` returns true iff the id still appears as a `quillAnchorId` in the active mode's API array. Turns folded into a compaction summary lose their anchor id, so the menu item is disabled on them ("Part of the summarized context — can't rewind"). The options flow (`generateOptions`, display-only) never touches the API array, so its messages are non-rewindable too (correct: never in the model's memory).
+- **Anchored-artifact cleanup:** a rewind drops subagents / pending lore edits / proposed lore images anchored to discarded messages (reuses the inline-card anchors), and re-derives `currentLoreDraft` from the last surviving message that carries one.
+- **Phase re-evaluation:** coach / lorebook mode-session phase isn't stored per-turn, so `reevaluateModePhase` re-derives it from the surviving `chatHistory` after a rewind — coach replays its phase-advance heuristic over the kept assistant turns; lorebook infers phase from draft presence + turn count. Run at rewind time so the phase indicator is correct immediately.
+
 ## Vision & image support
 
 Images (character art, maps, reference photos) reach a model through three entry points (tool result, co-writer paste, lorebook entry), all funneled through `resolveImageInjection(plugin, images, opts)` in `src/ai/vision.ts`. Two regimes, picked at runtime from the configured models:

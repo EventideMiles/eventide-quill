@@ -689,6 +689,9 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setHistoryHandler(() => {
                 void this.plugin.openCoWriterHistory();
             });
+            this.coWriterPanel.setRewindHandler((messageId) => {
+                this.plugin.rewindCoWriterChat(messageId);
+            });
             this.coWriterPanel.setModeSwitchHandler(() => {
                 this.plugin.clearCoWriterSubagents();
             });
@@ -1000,6 +1003,11 @@ export class QuillSidebarView extends ItemView {
     /** Read the co-writer panel's active mode (used for snapshot metadata). */
     coWriterGetMode(): InputMode | null {
         return this.coWriterPanel?.getMode() ?? null;
+    }
+
+    /** Pre-fill the co-writer chat input (used after a rewind). */
+    coWriterSetInputText(text: string): void {
+        this.coWriterPanel?.setInputText(text);
     }
 
     /** Restore the co-writer panel's mode WITHOUT side effects (restore path only). */

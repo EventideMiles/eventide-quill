@@ -110,6 +110,18 @@ export interface ChatMessage {
      * this result. Optional but useful for debugging and required by some APIs.
      */
     name?: string;
+    /**
+     * Quill-internal anchor: the {@link CoWriterChatMessage.id} of the display
+     * turn this API message belongs to. NOT serialized to the provider (both
+     * providers build their payload by picking known fields, so this is dropped
+     * on the wire). Used by co-writer rewind to truncate the model's
+     * conversation (`discussCurrentMessages` / `loreCoachMessages`) in lockstep
+     * with the display history: every API message in a turn — the user message,
+     * the assistant response(s), and any `tool` results — carries the same id,
+     * so a rewind drops the whole turn atomically. System/context-head messages
+     * have none and are always retained.
+     */
+    quillAnchorId?: string;
 }
 
 /**
