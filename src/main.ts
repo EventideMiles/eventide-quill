@@ -50,6 +50,9 @@ import type { ChatMessage } from './ai/provider';
 
 import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
 import type { LoreDraftEntry } from './ai/co-writer';
+import { resolveSessionsDir, listSessions, saveSession, loadSession, deleteSession } from './ai/conversation-store';
+import { SessionListModal } from './ui/session-list-modal';
+import type { InputMode } from './ui/co-writer-panel';
 import {
     getManuscriptAnalysis,
     getManuscriptAnalysisModeById,
@@ -291,6 +294,12 @@ export default class EventideQuillPlugin extends Plugin {
     private manualContextItems: ContextItem[] = [];
     /** Co-writer session for the collaborative drafting feature. */
     coWriterSession: CoWriterSession = new CoWriterSession();
+    /**
+     * Id of the saved conversation the current chat corresponds to (set on
+     * restore; cleared on new-chat). When set, a snapshot overwrites the
+     * existing session file; when null, a snapshot creates a new one.
+     */
+    private currentCoWriterSessionId: string | null = null;
     /** Proposed transform edit awaiting inline review (one at a time). */
     transformChangeSet: ChangeSet = new ChangeSet();
     /** Proposed batch lint-fix edits awaiting inline review. */
@@ -898,6 +907,11 @@ export default class EventideQuillPlugin extends Plugin {
     /** Clean up resources when the plugin is unloaded. */
     onunload() {
         this.clearEmbeddingWarmingTimers();
+        // Best-effort snapshot of the active conversation so it survives a
+        // quit/crash. onunload is synchronous, so the async write is
+        // fire-and-forget (the vault adapter remains briefly available). The
+        // authoritative trigger is snapshot-on-new-chat; this is a safety net.
+        void this.snapshotCoWriterSession();
     }
 
     /** Retrieve the CodeMirror EditorView from an Obsidian Editor instance. */
@@ -2447,6 +2461,14 @@ export default class EventideQuillPlugin extends Plugin {
      * @param clearContext When true, also clears additional chat context files.
      */
     resetCoWriterChat(clearContext: boolean): void {
+        // Snapshot the outgoing conversation before clearing so it survives in
+        // History. Skipped for an empty chat. rememberId=false: the snapshot is
+        // of the outgoing chat, and the new (empty) chat that follows is fresh
+        // (null id). Fire-and-forget: the reset proceeds regardless (saving must
+        // not block the clear); snapshotState deep-clones so the synchronous
+        // reset can't corrupt the in-flight serialization.
+        void this.snapshotCoWriterSession(false);
+        this.currentCoWriterSessionId = null;
         this.coWriterSession.resetChat(clearContext);
         this.lintPanel?.coWriterSetCoachActive(false);
         this.lintPanel?.coWriterSetCoachPhase('discern');
@@ -2466,6 +2488,121 @@ export default class EventideQuillPlugin extends Plugin {
      */
     clearCoWriterSubagents(): void {
         this.coWriterSession.clearSubagents();
+    }
+
+    /**
+     * Snapshot the current co-writer conversation to disk. No-op for an empty
+     * chat. When {@link currentCoWriterSessionId} is set (a restored session),
+     * overwrites it in place; otherwise creates a new one and remembers its id.
+     * Respects {@link EventideQuillSettings.coWriterSessionHistoryLimit} for LRU pruning.
+     */
+    /**
+     * Snapshot the current co-writer conversation to disk. No-op for an empty
+     * chat. When {@link currentCoWriterSessionId} is set (a restored session),
+     * overwrites it in place; otherwise creates a new one. Respects
+     * {@link EventideQuillSettings.coWriterSessionHistoryLimit} for LRU pruning.
+     *
+     * `rememberId` (default true) records the saved id as the current chat's id
+     * so a subsequent snapshot overwrites the same file. The new-chat path
+     * passes false: it snapshots the OUTGOING chat, then starts a fresh one
+     * (whose id is null), so the saved id must not carry over.
+     */
+    async snapshotCoWriterSession(rememberId = true): Promise<void> {
+        if (this.coWriterSession.chatHistory.length === 0) return;
+        const mode = this.lintPanel?.coWriterGetMode?.() ?? 'discuss';
+        const state = this.coWriterSession.snapshotState(mode);
+        const dir = resolveSessionsDir(this.pluginDataDir);
+        const limit = this.settings.coWriterSessionHistoryLimit;
+        try {
+            const entry = await saveSession(this.app.vault, dir, state, {
+                id: this.currentCoWriterSessionId ?? undefined,
+                limit
+            });
+            if (rememberId) {
+                this.currentCoWriterSessionId = entry.id;
+            }
+        } catch (err) {
+            console.warn('Quill: co-writer session snapshot failed', err);
+        }
+    }
+
+    /**
+     * Restore a saved conversation by id. Rehydrates the session, re-applies the
+     * stored mode to the panel, and refreshes the sidebar's full-state sync so
+     * review queues + subagent cards render. Returns true on success.
+     */
+    async restoreCoWriterSession(id: string): Promise<boolean> {
+        const dir = resolveSessionsDir(this.pluginDataDir);
+        const state = await loadSession(this.app.vault, dir, id);
+        if (!state) {
+            new Notice('Could not load that conversation.');
+            return false;
+        }
+        const mode = this.coWriterSession.restoreState(state) as InputMode;
+        this.currentCoWriterSessionId = id;
+        // Re-apply the stored mode SILENTLY (no mode-crossing reset / subagent
+        // clear) so the input row matches the conversation without tearing down
+        // the just-restored session state.
+        this.lintPanel?.coWriterRestoreMode(mode);
+        this.syncCoWriterPanel();
+        new Notice('Conversation restored.');
+        return true;
+    }
+
+    /** Open the saved-conversation switcher (History). */
+    async openCoWriterHistory(): Promise<void> {
+        const dir = resolveSessionsDir(this.pluginDataDir);
+        const entries = await listSessions(this.app.vault, dir);
+        new SessionListModal(
+            this.app,
+            entries,
+            (id) => {
+                void this.restoreCoWriterSession(id);
+            },
+            (id) => deleteSession(this.app.vault, dir, id)
+        ).open();
+    }
+
+    /**
+     * Push the full current co-writer session state to the panel (used after a
+     * restore to repaint chat history, review queues, subagent cards, coach
+     * phase, etc.). Mirrors the sidebar's mount-time sync, via the sidebar's
+     * `coWriterSet*` passthroughs.
+     */
+    private syncCoWriterPanel(): void {
+        const lp = this.lintPanel;
+        if (!lp) return;
+        const s = this.coWriterSession;
+        lp.coWriterSetChatHistory(s.chatHistory);
+        lp.coWriterSetCurrentOptions(s.currentOptions);
+        lp.coWriterSetOptionsLoading(s.optionsLoading);
+        lp.coWriterSetCoachPhase(s.coachSession?.phase ?? 'discern');
+        lp.coWriterSetCoachActive(s.coachActive);
+        lp.coWriterSetLoreCoachPhase(s.loreCoachSession?.phase ?? 'discover');
+        lp.coWriterSetLoreCoachActive(s.loreCoachActive);
+        lp.coWriterSetFulfillState(s.fulfillChanges.edits, s.fulfillActive);
+        lp.coWriterSetDirectChange(s.directChanges.edits[0] ?? null);
+        const loreEditsList = [...s.loreEdits.entries()].flatMap(([filePath, entry]) =>
+            entry.changeSet.edits
+                .filter((e) => e.state === 'pending')
+                .map((edit) => ({
+                    edit,
+                    filePath,
+                    fileBasename: entry.fileBasename,
+                    anchorMessageId: entry.anchorMessageId
+                }))
+        );
+        lp.coWriterSetLoreEdits(loreEditsList);
+        const proposedLoreImagesList = [...s.proposedLoreImages.entries()].map(([filePath, entry]) => ({
+            filePath,
+            fileBasename: entry.fileBasename,
+            images: entry.images,
+            anchorMessageId: entry.anchorMessageId
+        }));
+        lp.coWriterSetProposedLoreImages(proposedLoreImagesList);
+        lp.coWriterSetSubagents(s.getSubagentViews());
+        lp.coWriterSetActiveSubagent(s.activeSubagentId);
+        lp.coWriterRefresh();
     }
 
     /**

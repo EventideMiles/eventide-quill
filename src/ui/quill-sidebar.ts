@@ -683,6 +683,12 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setNewChatHandler((clearContext: boolean) => {
                 this.plugin.resetCoWriterChat(clearContext);
             });
+            this.coWriterPanel.setSaveSnapshotHandler(() => {
+                void this.plugin.snapshotCoWriterSession().then(() => new Notice('Conversation saved.'));
+            });
+            this.coWriterPanel.setHistoryHandler(() => {
+                void this.plugin.openCoWriterHistory();
+            });
             this.coWriterPanel.setModeSwitchHandler(() => {
                 this.plugin.clearCoWriterSubagents();
             });
@@ -989,6 +995,16 @@ export class QuillSidebarView extends ItemView {
     /** Set the co-writer panel's active mode (e.g. from the right-click submenu). */
     coWriterSetMode(mode: InputMode): void {
         this.coWriterPanel?.setMode(mode);
+    }
+
+    /** Read the co-writer panel's active mode (used for snapshot metadata). */
+    coWriterGetMode(): InputMode | null {
+        return this.coWriterPanel?.getMode() ?? null;
+    }
+
+    /** Restore the co-writer panel's mode WITHOUT side effects (restore path only). */
+    coWriterRestoreMode(mode: InputMode): void {
+        this.coWriterPanel?.restoreMode(mode);
     }
 
     /** Set whether coach mode is active. */

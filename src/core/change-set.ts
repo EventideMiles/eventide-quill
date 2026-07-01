@@ -146,4 +146,23 @@ export class ChangeSet {
         this.edits = [];
         this.nextId = 0;
     }
+
+    /** Serialized form of a ChangeSet for persistence (see conversation-store). */
+    toJSON(): ChangeSetJSON {
+        return { edits: this.edits, nextId: this.nextId };
+    }
+
+    /** Reconstruct a ChangeSet from its serialized form. */
+    static fromJSON(data: ChangeSetJSON): ChangeSet {
+        const cs = new ChangeSet();
+        cs.edits = data.edits;
+        cs.nextId = data.nextId;
+        return cs;
+    }
+}
+
+/** Serialized shape of a {@link ChangeSet}. Plain JSON; round-trips via {@link ChangeSet.toJSON}/{@link ChangeSet.fromJSON}. */
+export interface ChangeSetJSON {
+    edits: ProposedEdit[];
+    nextId: number;
 }

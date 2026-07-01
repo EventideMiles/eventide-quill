@@ -931,6 +931,31 @@
         }
     }
 
+    /* Save-snapshot + History buttons (icon-only, same chrome as new chat). */
+    &__save-btn,
+    &__history-btn {
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        padding: $space-sm;
+        font-size: var(--font-ui-smaller);
+        background: transparent;
+        color: var(--text-muted);
+        transition: background $transition-fast, color $transition-fast;
+        height: 36px;
+        width: 36px;
+        box-sizing: border-box;
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+    }
+
     /* Paperclip attach-image button. Same dimensions as the other secondary
        buttons; always visible (does not collapse under compact mode). */
     &__attach-btn {
@@ -1033,6 +1058,7 @@
         &--running { color: var(--interactive-accent); }
         &--succeeded { color: var(--text-muted); }
         &--failed { color: var(--text-error); }
+        &--interrupted { color: var(--text-warning, var(--text-accent)); }
     }
 
     &__subagent-goal {
@@ -1138,7 +1164,9 @@
     .quill-cowriter-panel__ctx-add,
     .quill-cowriter-panel__refresh-btn,
     .quill-cowriter-panel__compact-btn,
-    .quill-cowriter-panel__new-chat-btn {
+    .quill-cowriter-panel__new-chat-btn,
+    .quill-cowriter-panel__save-btn,
+    .quill-cowriter-panel__history-btn {
         display: none;
     }
 

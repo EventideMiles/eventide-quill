@@ -1,4 +1,4 @@
-import { App, MarkdownRenderer, Menu, Notice } from 'obsidian';
+import { App, MarkdownRenderer, Menu, Notice, setIcon } from 'obsidian';
 import {
     buildFileLabel,
     formatTokenIndicatorText,
@@ -220,6 +220,10 @@ export class CoWriterPanel extends AbstractChatPanel {
      * lives on the panel.
      */
     private onModeSwitch: (() => void) | null = null;
+    /** Open the conversation-history switcher (saved sessions). */
+    private onHistory: (() => void) | null = null;
+    /** Snapshot the current conversation to disk without clearing it. */
+    private onSaveSnapshot: (() => void) | null = null;
 
     /**
      * Conversation token estimate pushed from the plugin layer.
@@ -532,6 +536,33 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.onModeSwitch?.();
         }
         this.scheduleRender();
+    }
+
+    /** Read the co-writer panel's active mode (used for snapshot metadata). */
+    getMode(): InputMode {
+        return this.inputMode;
+    }
+
+    /**
+     * Set the mode WITHOUT the usual side effects (image drop, mode-crossing
+     * reset, onModeSwitch → clearCoWriterSubagents). Used only by the
+     * conversation-restore path, which has already rebuilt the session state
+     * (including subagents) and must not have it torn down by the mode setter.
+     */
+    restoreMode(mode: InputMode): void {
+        this.inputMode = mode;
+        this.modePickerOpen = false;
+        this.scheduleRender();
+    }
+
+    /** Set the handler invoked when the writer opens conversation history. */
+    setHistoryHandler(handler: () => void): void {
+        this.onHistory = handler;
+    }
+
+    /** Set the handler invoked when the writer saves a snapshot of the current chat. */
+    setSaveSnapshotHandler(handler: () => void): void {
+        this.onSaveSnapshot = handler;
     }
 
     /** Set the current coach phase. */
@@ -1089,7 +1120,14 @@ export class CoWriterPanel extends AbstractChatPanel {
         });
         header.createEl('span', {
             cls: 'quill-cowriter-panel__subagent-status',
-            text: sub.status === 'running' ? 'Running' : sub.status === 'succeeded' ? 'Done' : 'Failed'
+            text:
+                sub.status === 'running'
+                    ? 'Running'
+                    : sub.status === 'succeeded'
+                      ? 'Done'
+                      : sub.status === 'interrupted'
+                        ? 'Interrupted'
+                        : 'Failed'
         });
         header.createEl('span', {
             cls: 'quill-cowriter-panel__subagent-goal',
@@ -1226,7 +1264,14 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.renderEvents.registerDomEvent(back, 'click', () => this.onNavigateToParent?.());
         bar.createEl('span', {
             cls: `quill-cowriter-panel__subagent-status quill-cowriter-panel__subagent-status--${sub.status}`,
-            text: sub.status === 'running' ? 'Running' : sub.status === 'succeeded' ? 'Done' : 'Failed'
+            text:
+                sub.status === 'running'
+                    ? 'Running'
+                    : sub.status === 'succeeded'
+                      ? 'Done'
+                      : sub.status === 'interrupted'
+                        ? 'Interrupted'
+                        : 'Failed'
         });
         bar.createEl('span', { cls: 'quill-cowriter-panel__subagent-goal', text: truncateText(sub.goal, 60) });
 
@@ -1841,10 +1886,32 @@ export class CoWriterPanel extends AbstractChatPanel {
             ).open();
         });
 
+        // Save snapshot button — writes the current conversation to disk
+        // without clearing it (the New chat path also auto-saves).
+        const saveBtn = btnRow.createEl('button', {
+            cls: 'quill-cowriter-panel__save-btn',
+            title: 'Save snapshot'
+        });
+        setIcon(saveBtn, 'save');
+        if (generating) saveBtn.disabled = true;
+        this.renderEvents.registerDomEvent(saveBtn, 'click', () => {
+            this.onSaveSnapshot?.();
+        });
+
+        // History button — open the list of saved conversations.
+        const historyBtn = btnRow.createEl('button', {
+            cls: 'quill-cowriter-panel__history-btn',
+            title: 'History'
+        });
+        setIcon(historyBtn, 'history');
+        this.renderEvents.registerDomEvent(historyBtn, 'click', () => {
+            this.onHistory?.();
+        });
+
         // Overflow hamburger — only visible under compact-width (see SCSS).
         // Surfaces the secondary buttons (Add context / Refresh / Compact /
-        // New chat) as a native Obsidian Menu so the row doesn't overflow on
-        // a narrow sidebar or mobile screen.
+        // New chat / Save / History) as a native Obsidian Menu so the row
+        // doesn't overflow on a narrow sidebar or mobile screen.
         const overflowBtn = btnRow.createEl('button', {
             cls: 'quill-cowriter-panel__overflow-btn',
             text: '\u22ef',
@@ -1886,6 +1953,22 @@ export class CoWriterPanel extends AbstractChatPanel {
                     .setIcon('square-pen')
                     .onClick(() => {
                         if (!newChatBtn.disabled) newChatBtn.click();
+                    })
+            );
+            menu.addItem((item) =>
+                item
+                    .setTitle('Save snapshot')
+                    .setIcon('save')
+                    .onClick(() => {
+                        if (!saveBtn.disabled) saveBtn.click();
+                    })
+            );
+            menu.addItem((item) =>
+                item
+                    .setTitle('History')
+                    .setIcon('history')
+                    .onClick(() => {
+                        historyBtn.click();
                     })
             );
             menu.showAtMouseEvent(e);

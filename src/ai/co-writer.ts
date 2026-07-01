@@ -27,7 +27,7 @@ import { parseDirectives, parseAllDirectives } from '../utils/directives';
 import { EmbeddingCache, rankBySimilarity } from './embedding-cache';
 import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
-import { ChangeSet } from '../core/change-set';
+import { ChangeSet, type ChangeSetJSON } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry, ProposedImage } from '../core/dashboard/lorebook-types';
 import { stripGallerySections } from '../core/dashboard/lorebook-scanner';
 
@@ -731,6 +731,60 @@ export interface ProposedLoreImageEntry {
 }
 
 /**
+ * Serialized form of a co-writer session for persistence
+ * (see `conversation-store.ts`). Every field is plain JSON-roundtrippable data:
+ * {@link ChangeSet} via {@link ChangeSet.toJSON}, subagents as flat
+ * {@link SubagentView}s (dormant on restore — their `running` status is forced
+ * to `interrupted`). Ephemeral runtime concerns (AbortController, callbacks,
+ * editor locks) are intentionally absent and rebind on restore.
+ */
+export interface SerializedCoWriterState {
+    /** Co-writer mode active at snapshot time (`InputMode` as a plain string). */
+    mode: string;
+    chatHistory: CoWriterChatMessage[];
+    discussCurrentMessages: ChatMessage[];
+    loreCoachMessages: ChatMessage[];
+    manuscriptPath: string | null;
+    voiceProfile: VoiceProfile | null;
+    contextFilePaths: string[];
+    recentImages: string[];
+    fulfillChanges: ChangeSetJSON;
+    directChanges: ChangeSetJSON;
+    loreEdits: [string, { changeSet: ChangeSetJSON; fileBasename: string; anchorMessageId: string | null }][];
+    proposedLoreImages: [string, { fileBasename: string; images: ProposedImage[]; anchorMessageId: string | null }][];
+    subagents: SubagentView[];
+    activeSubagentId: string | null;
+    coachSession: CoachSession | null;
+    coachActive: boolean;
+    loreCoachSession: LoreCoachSession | null;
+    loreCoachActive: boolean;
+    currentLoreDraft: LoreDraftEntry | null;
+    currentOptions: CoWriterOption[];
+}
+
+/**
+ * If the conversation was saved mid-tool-round — the last message is an
+ * assistant turn that emitted `tool_calls` with no following `tool` results —
+ * append a synthetic "result unavailable" tool message per call so the provider
+ * isn't fed a malformed history on resume (OpenAI/Ollama reject an assistant
+ * tool_calls turn that isn't immediately followed by matching tool results).
+ * Returns the array unchanged when the tail is well-formed.
+ */
+function stubDanglingToolCalls(messages: ChatMessage[]): ChatMessage[] {
+    const last = messages[messages.length - 1];
+    if (last && last.role === 'assistant' && last.toolCalls && last.toolCalls.length > 0) {
+        const stubs: ChatMessage[] = last.toolCalls.map((c) => ({
+            role: 'tool',
+            content: 'Session was saved mid-tool-round; tool result unavailable.',
+            toolCallId: c.id,
+            name: c.name
+        }));
+        return [...messages, ...stubs];
+    }
+    return messages;
+}
+
+/**
  * Manages a co-writer session with a chat-like interface.
  * The writer sends a direction → AI suggests 3 options → writer picks one
  * → full continuation streams into the editor with accept/revert.
@@ -817,6 +871,14 @@ export class CoWriterSession {
      * deferred conversation-persistence feature can layer on later.
      */
     subagents = new Map<string, SubagentSession>();
+    /**
+     * Dormant subagent views restored from a saved session (no live
+     * {@link SubagentSession} instance behind them). Merged into
+     * {@link getSubagentViews} so they render + drill down read-only; their
+     * `running` status was forced to `interrupted` at restore time. Cleared on
+     * new-chat / mode-switch like the live map.
+     */
+    restoredSubagentViews: SubagentView[] = [];
     /** Active subagent id for the drill-down view (stage 2); null = parent view. */
     activeSubagentId: string | null = null;
 
@@ -3350,7 +3412,11 @@ export class CoWriterSession {
 
     /** Serializable snapshots of all subagents (status cards + drill-down views). */
     getSubagentViews(): SubagentView[] {
-        return [...this.subagents.values()].map((s) => s.toView());
+        // Live subagents first (fresh values()), then any restored views merged
+        // in. Restored views are dormant (no live SubagentSession instance) —
+        // they render + drill down read-only, with `running` forced to
+        // `interrupted` at restore time.
+        return [...this.subagents.values()].map((s) => s.toView()).concat(this.restoredSubagentViews);
     }
 
     /** Drill down into a subagent's conversation (panel view switch). No-op if not found. */
@@ -3988,6 +4054,7 @@ export class CoWriterSession {
      */
     clearSubagents(): void {
         this.subagents.clear();
+        this.restoredSubagentViews = [];
         this.activeSubagentId = null;
         // Strip the now-dangling subagent references from chat messages so the
         // panel doesn't keep an inline card slot whose subagent is gone (the
@@ -4060,5 +4127,132 @@ export class CoWriterSession {
         this.optionsLoading = false;
         this.onChatUpdate?.();
         this.onOptionsLoading?.(false);
+    }
+
+    /**
+     * Snapshot the session's serializable state for persistence. `mode` is the
+     * co-writer mode active at snapshot time (the session doesn't own it; the
+     * caller passes it in from the panel). Ephemeral runtime concerns
+     * (AbortController, callbacks, editor locks, write queues) are omitted.
+     * {@link restoreState} is the inverse.
+     *
+     * Returns a DEEP CLONE: callers fire-and-forget the write (e.g. before
+     * `resetChat`), so the returned object must not share references with the
+     * live session — a synchronous reset following the snapshot call mutates
+     * the live message objects (e.g. `clearSubagents` strips `subagentIds`),
+     * which would otherwise corrupt the in-flight serialization.
+     */
+    snapshotState(mode: string): SerializedCoWriterState {
+        const snapshot: SerializedCoWriterState = {
+            mode,
+            chatHistory: this.chatHistory,
+            discussCurrentMessages: this.discussCurrentMessages,
+            loreCoachMessages: this.loreCoachMessages,
+            manuscriptPath: this.manuscriptPath,
+            voiceProfile: this.voiceProfile,
+            contextFilePaths: this.contextFilePaths,
+            recentImages: this.recentImages,
+            fulfillChanges: this.fulfillChanges.toJSON(),
+            directChanges: this.directChanges.toJSON(),
+            loreEdits: [...this.loreEdits.entries()].map(([filePath, entry]) => [
+                filePath,
+                {
+                    changeSet: entry.changeSet.toJSON(),
+                    fileBasename: entry.fileBasename,
+                    anchorMessageId: entry.anchorMessageId
+                }
+            ]),
+            proposedLoreImages: [...this.proposedLoreImages.entries()].map(([filePath, entry]) => [
+                filePath,
+                {
+                    fileBasename: entry.fileBasename,
+                    images: entry.images,
+                    anchorMessageId: entry.anchorMessageId
+                }
+            ]),
+            subagents: [...this.subagents.values()].map((s) => s.toView()),
+            activeSubagentId: this.activeSubagentId,
+            coachSession: this.coachSession,
+            coachActive: this.coachActive,
+            loreCoachSession: this.loreCoachSession,
+            loreCoachActive: this.loreCoachActive,
+            currentLoreDraft: this.currentLoreDraft,
+            currentOptions: this.currentOptions
+        };
+        // The state is JSON by construction; a JSON round-trip deep-clones it
+        // (arrays, plain objects, base64 strings) so later live mutations don't
+        // leak into the in-flight persistence write.
+        return JSON.parse(JSON.stringify(snapshot)) as SerializedCoWriterState;
+    }
+
+    /**
+     * Restore serializable state from a snapshot. Overwrites the data fields
+     * without invoking the reset/clear methods (which have CM-diff / tab-close
+     * / abort side effects). Ephemeral fields (callbacks, AbortController,
+     * `app`) are left null/zeroed and rebind via `wireCoWriterPanel()` on the
+     * next entry point. Returns the stored mode so the caller can re-apply it
+     * to the panel. Subagents are restored as dormant views (no live session);
+     * any that were still `running` are forced to `interrupted`.
+     */
+    restoreState(state: SerializedCoWriterState): string {
+        // Drop any in-flight generation before overwriting (no-op if idle).
+        this.cancelGeneration();
+
+        this.chatHistory = state.chatHistory;
+        // Restart the message-id counter above the highest restored id so a
+        // continued conversation doesn't collide with restored anchors.
+        this.nextMessageId = this.chatHistory.reduce((max, m) => {
+            const n = Number.parseInt(m.id.replace(/^msg_/, ''), 10);
+            return Number.isFinite(n) ? Math.max(max, n) : max;
+        }, 0);
+        this.discussCurrentMessages = stubDanglingToolCalls(state.discussCurrentMessages);
+        this.loreCoachMessages = stubDanglingToolCalls(state.loreCoachMessages);
+        this.manuscriptPath = state.manuscriptPath;
+        this.voiceProfile = state.voiceProfile;
+        this.contextFilePaths = state.contextFilePaths;
+        this.recentImages = state.recentImages;
+        this.fulfillChanges = ChangeSet.fromJSON(state.fulfillChanges);
+        this.directChanges = ChangeSet.fromJSON(state.directChanges);
+        this.loreEdits = new Map(
+            state.loreEdits.map(([filePath, entry]) => [
+                filePath,
+                {
+                    changeSet: ChangeSet.fromJSON(entry.changeSet),
+                    fileBasename: entry.fileBasename,
+                    anchorMessageId: entry.anchorMessageId
+                }
+            ])
+        );
+        this.proposedLoreImages = new Map(
+            state.proposedLoreImages.map(([filePath, entry]) => [
+                filePath,
+                {
+                    fileBasename: entry.fileBasename,
+                    images: entry.images,
+                    anchorMessageId: entry.anchorMessageId
+                }
+            ])
+        );
+        // Subagents restore as dormant views; `running` → `interrupted`.
+        this.subagents = new Map();
+        this.restoredSubagentViews = state.subagents.map((s) =>
+            s.status === 'running' ? { ...s, status: 'interrupted' } : s
+        );
+        this.activeSubagentId = this.restoredSubagentViews.some((s) => s.id === state.activeSubagentId)
+            ? state.activeSubagentId
+            : null;
+        this.coachSession = state.coachSession;
+        this.coachActive = state.coachActive;
+        this.loreCoachSession = state.loreCoachSession;
+        this.loreCoachActive = state.loreCoachActive;
+        this.currentLoreDraft = state.currentLoreDraft;
+        this.currentOptions = state.currentOptions;
+        // Transient — not restored.
+        this.optionsLoading = false;
+        this.draftState = 'idle';
+        this.thoughtBuffer = '';
+
+        this.onChatUpdate?.();
+        return state.mode;
     }
 }
