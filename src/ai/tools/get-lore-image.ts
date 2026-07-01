@@ -84,7 +84,11 @@ export const getLoreImageTool: Tool = {
         }
         const labelQuery = typeof args.label === 'string' ? args.label.trim().toLowerCase() : '';
         const rawIndex = args.index;
-        const indexQuery = typeof rawIndex === 'number' && Number.isFinite(rawIndex) ? Math.floor(rawIndex) : null;
+        // Reject non-integer index values rather than silently flooring them.
+        // A decimal (1.5) or non-finite (NaN/Infinity) is a model error; treating
+        // it as "return all" would be surprising. Only accept true integers.
+        const indexQuery =
+            typeof rawIndex === 'number' && Number.isFinite(rawIndex) && Number.isInteger(rawIndex) ? rawIndex : null;
 
         if (plugin.settings.lorebookFolders.length === 0) {
             return { text: 'No lorebook folders are configured.' };
@@ -212,12 +216,18 @@ function findEntryByQuery(
 
 /**
  * Restrict to images whose label (lowercased, trimmed) matches `labelQuery`.
- * Empty `labelQuery` returns the input unchanged. Always preserves document
- * order so `index` is stable across calls.
+ * Empty `labelQuery` returns the input unchanged. The public "(unlabeled)"
+ * value (shown in lore_siblings, error messages, and stripGallerySections
+ * markers) round-trips: if the model passes `"(unlabeled)"`, it matches
+ * images whose raw label is empty. Always preserves document order so
+ * `index` is stable across calls.
  */
 function filterByLabel(images: LoreEntryImage[], labelQuery: string): LoreEntryImage[] {
     if (!labelQuery) return images;
-    return images.filter((i) => i.label.trim().toLowerCase() === labelQuery);
+    // Normalize the public display value back to the raw empty-string form
+    // so the model can pass "(unlabeled)" and get the right images.
+    const normalized = labelQuery === '(unlabeled)' ? '' : labelQuery;
+    return images.filter((i) => i.label.trim().toLowerCase() === normalized);
 }
 
 /**

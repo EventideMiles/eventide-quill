@@ -2,6 +2,7 @@ import type { Tool, ToolContext } from './tool';
 import {
     buildNotFoundHint,
     findTextInContent,
+    hasAdditionalMatch,
     openNoteForEdit,
     overlapError,
     pushLoreEditDiff,
@@ -93,9 +94,9 @@ export const editNoteTool: Tool = {
         }
         const { from, to } = match;
 
-        // Uniqueness check: if the matched text (or a close variant) appears
-        // elsewhere, the model needs to provide a larger excerpt.
-        if (content.indexOf(content.slice(from, to), from + 1) !== -1) {
+        // Uniqueness check: if the matched text (or a whitespace variant of it)
+        // appears elsewhere, the model needs to provide a larger excerpt.
+        if (hasAdditionalMatch(content, oldText, from, to)) {
             return `Error: old_text matches multiple places in "${file.path}". Pass a larger excerpt that uniquely identifies the section to change.`;
         }
 

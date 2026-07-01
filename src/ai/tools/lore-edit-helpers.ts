@@ -172,6 +172,11 @@ export interface TextMatchResult {
  * error to the model (see {@link buildNotFoundHint}).
  */
 export function findTextInContent(content: string, oldText: string): TextMatchResult | null {
+    // Guard: if oldText is empty or all-whitespace, normalizing would produce
+    // an empty string whose indexOf() returns 0 — a bogus match at the start
+    // of the document. Reject before searching.
+    if (!oldText.trim()) return null;
+
     // Fast path: exact character-for-character match.
     const exactIdx = content.indexOf(oldText);
     if (exactIdx !== -1) {
@@ -199,6 +204,40 @@ export function findTextInContent(content: string, oldText: string): TextMatchRe
     // any trailing whitespace that was collapsed.
     const to = origPositions[lastNormIdx + 1] ?? content.length;
     return { from, to, exact: false };
+}
+
+/**
+ * Check whether `oldText` (or its whitespace-normalized form) has more than
+ * one occurrence in `content` beyond the already-matched range `[matchFrom,
+ * matchTo)`. Used by `edit_note`'s uniqueness guard so that whitespace-variant
+ * repeats are caught alongside exact duplicates — without this, a fuzzy match
+ * at one occurrence could be treated as unique when a whitespace-different
+ * copy of the same text exists elsewhere.
+ *
+ * Returns `true` when an additional match is found (the caller should reject
+ * with an ambiguity error), `false` when the match is unique.
+ */
+export function hasAdditionalMatch(content: string, oldText: string, matchFrom: number, matchTo: number): boolean {
+    // Exact duplicate check: does the matched text appear again after the
+    // matched range?
+    const matchedText = content.slice(matchFrom, matchTo);
+    if (content.indexOf(matchedText, matchTo) !== -1) return true;
+    if (matchFrom > 0 && content.lastIndexOf(matchedText, matchFrom - 1) !== -1) return true;
+
+    // Whitespace-variant check: normalize the old text and scan the content
+    // excluding the already-matched range. If a second normalized match
+    // exists, the excerpt is ambiguous.
+    const normOld = normalizeWhitespace(oldText).normalized;
+    if (!normOld) return false; // all-whitespace — already guarded by findTextInContent
+    const normContent = normalizeWhitespace(content).normalized;
+
+    // Find the first normalized match.
+    const firstNorm = normContent.indexOf(normOld);
+    if (firstNorm === -1) return false;
+
+    // Check for a second normalized match after the first.
+    const secondNorm = normContent.indexOf(normOld, firstNorm + normOld.length);
+    return secondNorm !== -1;
 }
 
 /**

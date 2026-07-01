@@ -1,6 +1,7 @@
 import { App, Component } from 'obsidian';
 import type EventideQuillPlugin from '../main';
 import type { SlashCommand } from '../settings';
+import { SLASH_COMMAND_NAME_PATTERN } from '../settings';
 
 interface RankedCommand extends SlashCommand {
     /** Index of the matched substring within `name` (lowercased). -1 when matched by fallback. */
@@ -147,10 +148,19 @@ export class SlashCommandSuggest {
             return;
         }
 
+        // Exclude blank/invalid drafts — commands the writer added in settings
+        // but hasn't named yet (or whose name doesn't pass validation). These
+        // should never appear in the live picker.
+        const valid = commands.filter((cmd) => SLASH_COMMAND_NAME_PATTERN.test(cmd.name));
+        if (valid.length === 0) {
+            this.close();
+            return;
+        }
+
         const lowerQuery = query.toLowerCase();
         const items: RankedCommand[] = [];
 
-        for (const cmd of commands) {
+        for (const cmd of valid) {
             const lowerName = cmd.name.toLowerCase();
             if (lowerQuery === '') {
                 // Empty query (just '/') — show all commands, sorted alphabetically.

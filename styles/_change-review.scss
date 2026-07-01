@@ -114,13 +114,6 @@
 // the red removal box and the green replacement box correctly.
 
 .quill-change-diff {
-    &__removed-mark {
-        background: rgba(var(--color-red-rgb), 0.08);
-        text-decoration: line-through;
-        text-decoration-color: rgba(var(--color-red-rgb), 0.45);
-        border-radius: 2px;
-    }
-
     // Widget holding the red (removed) and green (added) boxes stacked.
     &__group {
         display: block;

@@ -1491,7 +1491,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         // --- Slash commands (co-writer input shortcuts) ---
-        new Setting(content).setName('Slash commands').setHeading();
         new Setting(content)
             .setName('Slash commands')
             .setDesc(
@@ -1500,7 +1499,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     'the input, fully editable before sending. Empty list (the default) disables ' +
                     'the picker. Names must be kebab-case (lowercase letters, digits, hyphens; ' +
                     'must start with a letter).'
-            );
+            )
+            .setHeading();
 
         const slashCmdContainer = content.createDiv({ cls: 'quill-slash-command-list' });
         this.renderSlashCommands(slashCmdContainer);
