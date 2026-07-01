@@ -82,8 +82,10 @@ styles/
   _option-picker.scss    ← shared BEM picker block (personas, modes)
   _form.scss             ← shared BEM form block (sections, labels, textareas, submits)
   _chat-shared.scss      ← shared BEM chat-panel block (bubbles, bottom area, indicator)
+  _file-mention.scss     ← @-mention suggest dropdown (chat input)
+  _slash-command.scss    ← slash-command picker dropdown (co-writer chat input)
   _modals.scss           ← shared modal chrome (input/save/confirm modals)
-  _settings.scss         ← settings UI (tabs, provider cards, narrative rules)
+  _settings.scss         ← settings UI (tabs, provider cards, narrative rules, slash-command editor)
 ```
 
 `main.scss` `@use`s the partials in cascade order: shared chrome first (`base`, `option-picker`, `form`, `chat-shared`), then panel-specific blocks, then modals + settings last.
@@ -173,7 +175,8 @@ src/
     chat-panel.ts, chat-context-files.ts, document-header.ts,
     change-card.ts, change-diff-extension.ts, token-indicator.ts,
     confirm-modal.ts, transform-modal.ts, fix-with-ai-modal.ts,
-    filename-modal.ts, vault-file-suggest-modal.ts, file-mention-suggest.ts
+    filename-modal.ts, vault-file-suggest-modal.ts, file-mention-suggest.ts,
+    slash-command-suggest.ts
   utils/               # Helpers, constants
     directives.ts, find-editor.ts, frontmatter.ts, text-analysis.ts,
     tokens.ts, vault-files.ts
@@ -309,8 +312,8 @@ The project does not use `eslint-config-prettier`. The obsidianmd ESLint rules a
 ## Security & compliance
 
 - No `innerHTML`. Use `createEl()` + `textContent`. (Currently zero uses in `src/`.)
-- No raw DOM listeners. Prefer Obsidian's `registerDomEvent()` on a `Component` — often a child `Component` stored on a local field (e.g. `this.renderEvents.registerDomEvent(...)` in `quill-sidebar.ts`, `co-writer-panel.ts`; `component.registerDomEvent(...)` in `context-panel.ts`). Raw `addEventListener` is currently used in 12 files (`settings.ts`, `core/linter/decorations.ts`, and `ui/` {`change-diff-extension`, `chat-context-files`, `chat-panel`, `confirm-modal`, `co-writer-panel`, `dashboard-panel`, `file-mention-suggest`, `filename-modal`, `fix-with-ai-modal`, `transform-modal`}.ts); the heaviest is `settings.ts` via the `.inputEl.addEventListener('blur', ...)` idiom for reading values out of `TextComponent`. Prefer `registerDomEvent()` for new code; if `addEventListener` is unavoidable, leave an inline comment.
-- No raw timers. Prefer teardown via the `Component` lifecycle (`register()` / child components). Raw `window.setTimeout` is currently used in 7 files — `core/linter/decorations.ts` and `ui/co-writer-panel.ts` (defer-to-next-frame paints), `ai/tools/mediawiki.ts` and `ai/tools/lore-edit-helpers.ts` (rate-limit sleeps), `ai/tools/refresh-dashboard.ts` (bounded leaf-ready poll), `main.ts`, and `ui/file-mention-suggest.ts`. `Plugin#registerInterval` is not currently used anywhere in the codebase; when a raw timer is unavoidable, add an inline comment explaining why.
+- No raw DOM listeners. Prefer Obsidian's `registerDomEvent()` on a `Component` — often a child `Component` stored on a local field (e.g. `this.renderEvents.registerDomEvent(...)` in `quill-sidebar.ts`, `co-writer-panel.ts`; `component.registerDomEvent(...)` in `context-panel.ts`). Raw `addEventListener` is currently used in 13 files (`settings.ts`, `core/linter/decorations.ts`, and `ui/` {`change-diff-extension`, `chat-context-files`, `chat-panel`, `confirm-modal`, `co-writer-panel`, `dashboard-panel`, `file-mention-suggest`, `filename-modal`, `fix-with-ai-modal`, `slash-command-suggest`, `transform-modal`}.ts); the heaviest is `settings.ts` via the `.inputEl.addEventListener('blur', ...)` idiom for reading values out of `TextComponent`. Prefer `registerDomEvent()` for new code; if `addEventListener` is unavoidable, leave an inline comment.
+- No raw timers. Prefer teardown via the `Component` lifecycle (`register()` / child components). Raw `window.setTimeout` is currently used in 8 files — `core/linter/decorations.ts` and `ui/co-writer-panel.ts` (defer-to-next-frame paints), `ai/tools/mediawiki.ts` and `ai/tools/lore-edit-helpers.ts` (rate-limit sleeps), `ai/tools/refresh-dashboard.ts` (bounded leaf-ready poll), `main.ts`, `ui/file-mention-suggest.ts`, and `ui/slash-command-suggest.ts` (blur-deferred close). `Plugin#registerInterval` is not currently used anywhere in the codebase; when a raw timer is unavoidable, add an inline comment explaining why.
 - No `fetch`. Use `requestUrl()` for HTTP (mobile-compatible). Sole exception: `fetch` in `src/ai/transport.ts` for SSE streaming, guarded by `isStreamingSupported()` with an inline `eslint-disable-next-line` comment.
 - Use `Component` lifecycle + `register()` for proper teardown.
 - All UI text is sentence-case.
@@ -346,12 +349,13 @@ Each row = one JSDoc + two `setDesc(...)` copies to keep aligned. The authoritat
 5. **Async Feedback Queue** — submit chapters, get reports when ready.
 6. **Collaborative Drafting (Co-writer)** — writer leads, AI extends, turn by turn (discuss / coach / fulfill modes).
 7. **Co-writer Tool-calling** — the model can call internal vault tools and network research tools (Fandom, Wikipedia, fetch_url) mid-conversation. On by default; restrict in settings.
-8. **Lorebook + Lorebook Coach** — typed lore entries with coverage-gap detection, plus a coach mode that drafts entries from the manuscript.
-9. **Selection Transformations** — rewrite selected passages in place.
-10. **Critical Analysis / Continuity Engine** — plot logic, character consistency.
-11. **Vision / Image Support** — images (character art, maps, reference photos) reach a vision-capable chat model directly, or are translated to text by a separate image model when chat is text-only. See "Vision & image support".
-12. **Writer Guidance Layers** — inline directives (`<!-- quill: -->`) + plot map.
-13. **AI Generation Style Constraints** — 18 rules + 6 narrative perspective presets (`NARRATIVE_VOICE_PRESETS`).
+8. **User-defined Slash Commands** — saved snippets in settings; typing `/` at the start of a line in the co-writer chat input opens a picker of matching commands. Choosing one inserts the body into the input, fully editable before sending. Names are kebab-case-only. Empty list (the default) disables the picker — no separate enable toggle, so the description stays single-sourced.
+9. **Lorebook + Lorebook Coach** — typed lore entries with coverage-gap detection, plus a coach mode that drafts entries from the manuscript.
+10. **Selection Transformations** — rewrite selected passages in place.
+11. **Critical Analysis / Continuity Engine** — plot logic, character consistency.
+12. **Vision / Image Support** — images (character art, maps, reference photos) reach a vision-capable chat model directly, or are translated to text by a separate image model when chat is text-only. See "Vision & image support".
+13. **Writer Guidance Layers** — inline directives (`<!-- quill: -->`) + plot map.
+14. **AI Generation Style Constraints** — 18 rules + 6 narrative perspective presets (`NARRATIVE_VOICE_PRESETS`).
 
 ## Version management
 

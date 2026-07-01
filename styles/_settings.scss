@@ -360,3 +360,23 @@ div[class*='quill-settings-content-'].is-hidden {
     font-style: italic;
     padding: $space-sm 0;
 }
+
+// =========================================================================
+// Slash-command editor cards
+// =========================================================================
+
+.quill-slash-command-list {
+    margin-bottom: $space-lg;
+}
+
+.quill-slash-command-card {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: $radius-md;
+    padding: $space-md $space-lg;
+    margin-bottom: $space-md;
+
+    &__heading {
+        border-bottom: 1px solid var(--background-modifier-border);
+        margin-bottom: $space-md;
+    }
+}

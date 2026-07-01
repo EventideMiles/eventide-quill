@@ -1,15 +1,22 @@
-import { Extension, Range, StateEffect, StateField } from '@codemirror/state';
-import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate, WidgetType } from '@codemirror/view';
+import { EditorState, Extension, Range, StateEffect, StateField } from '@codemirror/state';
+import { Decoration, DecorationSet, EditorView, WidgetType } from '@codemirror/view';
 import type { ChangeSet, ProposedEdit } from '../core/change-set';
 
 /**
  * Inline diff rendering for proposed edits, shared across every AI-insertion
- * surface (Fulfill, Transform, and later Co-writer direct).
+ * surface (Fulfill, Transform, Direct, and lore-entry edits).
  *
- * Renders each pending edit as: a red strikethrough mark over its `[from, to)`
- * range (the text being removed) and a green widget at `to` showing the
- * replacement text with inline Approve/Reject buttons. Approved edits are
- * committed by the caller (no decoration); rejected edits get no decoration.
+ * Renders each pending edit as a stacked widget: a red strikethrough box
+ * showing the removed text and a green box showing the replacement text with
+ * inline Approve/Reject buttons. Approved edits are committed by the caller
+ * (no decoration); rejected edits get no decoration.
+ *
+ * Decorations are provided from a {@link StateField} (not a ViewPlugin) so
+ * that `Decoration.replace` can cross line breaks — critical for multi-line
+ * lore edits that span Obsidian's block-level image-embed widgets. The
+ * previous ViewPlugin approach fell back to a fragile `mark + point-widget`
+ * split for multi-line edits, which dropped the green replacement widget
+ * near image embeds.
  *
  * Position robustness: the {@link diffEditsField} remaps positions via
  * `mapPos` on any document change, so the display stays correct even if the
@@ -200,77 +207,72 @@ class ChangePreviewWidget extends WidgetType {
     }
 }
 
-/** ViewPlugin that builds the decoration set from {@link diffEditsField}. */
-class ChangeDiffPlugin {
-    decorations: DecorationSet;
-    constructor(
-        view: EditorView,
-        private readonly handlers: ChangeDiffHandlers
-    ) {
-        this.decorations = this.build(view);
-    }
-
-    /** Rebuild the decoration set when the diff-edits state field changes. */
-    update(update: ViewUpdate): void {
-        const prev = update.startState.field(diffEditsField);
-        const next = update.state.field(diffEditsField);
-        if (next !== prev) {
-            this.decorations = this.build(update.view);
+/**
+ * Build the decoration set from the current diff-edits snapshots.
+ *
+ * Uses `Decoration.replace` for ALL edits with removal — including
+ * multi-line ranges. This works because the decorations are provided
+ * from a {@link StateField} (see {@link getChangeDiffExtension}), not a
+ * ViewPlugin. StateField-sourced replace decorations CAN cross line
+ * breaks (they're computed during the state update, before viewport
+ * rendering), whereas ViewPlugin-sourced ones cannot. The previous
+ * ViewPlugin approach fell back to a fragile `mark + point-widget`
+ * split for multi-line edits, which dropped the green replacement
+ * widget when the range crossed Obsidian's block-level image-embed
+ * widgets.
+ */
+function buildDiffDecorations(state: EditorState, handlers: ChangeDiffHandlers): DecorationSet {
+    const edits = state.field(diffEditsField);
+    if (edits.length === 0) return Decoration.none;
+    const doc = state.doc;
+    const ranges: Range<Decoration>[] = [];
+    for (const edit of edits) {
+        // Render the box while streaming ('generating') and for review ('pending');
+        // 'approved'/'rejected' are committed/discarded and get no decoration.
+        if (edit.state !== 'pending' && edit.state !== 'generating') continue;
+        const hasRemoval = edit.from < edit.to;
+        if (hasRemoval) {
+            // All removals — single-line AND multi-line — get the same stacked
+            // red+green replace widget. StateField decorations can replace across
+            // line breaks, so there's no need for a mark+widget fallback.
+            const removedText = doc.sliceString(edit.from, edit.to);
+            const widget = new ChangePreviewWidget(removedText, edit, handlers);
+            ranges.push(Decoration.replace({ widget }).range(edit.from, edit.to));
+        } else {
+            // Pure insertion: no range to replace, drop the widget at the point.
+            const widget = new ChangePreviewWidget('', edit, handlers);
+            ranges.push(Decoration.widget({ widget, side: 1 }).range(edit.from));
         }
     }
-
-    /** Tear down the plugin (no external resources to release). */
-    destroy(): void {
-        // nothing to clean up
-    }
-
-    /** Build the decoration set from the current diff-edits snapshots: a red
-     *  range/widget for removed text and a green change-preview widget. */
-    private build(view: EditorView): DecorationSet {
-        const edits = view.state.field(diffEditsField);
-        if (edits.length === 0) return Decoration.none;
-        const doc = view.state.doc;
-        const ranges: Range<Decoration>[] = [];
-        for (const edit of edits) {
-            // Render the box while streaming ('generating') and for review ('pending');
-            // 'approved'/'rejected' are committed/discarded and get no decoration.
-            if (edit.state !== 'pending' && edit.state !== 'generating') continue;
-            const hasRemoval = edit.from < edit.to;
-            if (hasRemoval) {
-                const spansMultipleLines = doc.lineAt(edit.from).number !== doc.lineAt(edit.to).number;
-                if (spansMultipleLines) {
-                    // Multi-line: a ViewPlugin cannot create a replace that crosses
-                    // line breaks. Mark the removed text (red bg + strikethrough)
-                    // and drop the green widget below — both are ViewPlugin-safe.
-                    ranges.push(
-                        Decoration.mark({ class: 'quill-change-diff__removed-mark' }).range(edit.from, edit.to)
-                    );
-                    const widget = new ChangePreviewWidget('', edit, this.handlers);
-                    ranges.push(Decoration.widget({ widget, side: 1 }).range(edit.to));
-                } else {
-                    // Single-line: replace widget (red box + green box stacked).
-                    const removedText = doc.sliceString(edit.from, edit.to);
-                    const widget = new ChangePreviewWidget(removedText, edit, this.handlers);
-                    ranges.push(Decoration.replace({ widget }).range(edit.from, edit.to));
-                }
-            } else {
-                // Pure insertion: no range to replace, drop the widget at the point.
-                const widget = new ChangePreviewWidget('', edit, this.handlers);
-                ranges.push(Decoration.widget({ widget, side: 1 }).range(edit.from));
-            }
-        }
-        return ranges.length > 0 ? Decoration.set(ranges, true) : Decoration.none;
-    }
+    return ranges.length > 0 ? Decoration.set(ranges, true) : Decoration.none;
 }
 
-/** Return the CodeMirror extension bundle for inline change-diff rendering. */
+/**
+ * Return the CodeMirror extension bundle for inline change-diff rendering.
+ *
+ * Decorations are provided via a {@link StateField} (not a ViewPlugin) so
+ * that `Decoration.replace` can cross line breaks — critical for multi-line
+ * lore edits that span image-embed block widgets in Obsidian Live Preview.
+ * The StateField is defined inside this closure so it can capture `handlers`
+ * for the inline Approve/Reject buttons.
+ */
 export function getChangeDiffExtension(handlers: ChangeDiffHandlers): Extension[] {
-    return [
-        diffEditsField,
-        ViewPlugin.define((view) => new ChangeDiffPlugin(view, handlers), {
-            decorations: (plugin) => plugin.decorations
-        })
-    ];
+    const decorationsField = StateField.define<DecorationSet>({
+        create: (state) => buildDiffDecorations(state, handlers),
+        update: (value, tr) => {
+            const prev = tr.startState.field(diffEditsField);
+            const next = tr.state.field(diffEditsField);
+            // Rebuild only when the diff-edits snapshots actually changed
+            // (setDiffEdits effect or docChanged remapping). When identity is
+            // the same, the decorations are unchanged.
+            if (next !== prev) {
+                return buildDiffDecorations(tr.state, handlers);
+            }
+            return value;
+        },
+        provide: (field) => EditorView.decorations.from(field)
+    });
+    return [diffEditsField, decorationsField];
 }
 
 /** Push a snapshot set to a view (convenience).

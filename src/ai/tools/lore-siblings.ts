@@ -107,16 +107,30 @@ function formatEntry(entry: {
 }): string {
     const aliases = entry.aliases.length > 0 ? ` (aliases: ${entry.aliases.join(', ')})` : '';
     // Surface labeled image availability so the model knows it can call
-    // `get_lore_image` for this entry. Labels are listed (deduped, in order)
-    // so the model can request a specific form/state by name.
+    // `get_lore_image` for this entry. Labels are listed with per-label
+    // counts (mirroring `stripGallerySections`'s marker format) so the
+    // model knows when an entry has multiple images under one label and
+    // can pass `index` to fetch a specific one.
     let images = '';
     if (entry.images && entry.images.length > 0) {
-        const labels = entry.images
-            .map((img) => img.label || '(unlabeled)')
-            // De-duplicate adjacent identical labels (multiple images under
-            // one subheading would otherwise repeat it).
-            .filter((label, i, arr) => i === 0 || label !== arr[i - 1]);
-        images = ` (images: ${labels.join(', ')})`;
+        images = ` (images: ${describeImageLabels(entry.images)})`;
     }
     return `- ${entry.fileBasename} [${LORE_TYPE_LABELS[entry.type]}] — ${entry.folder}${aliases}${images}`;
+}
+
+/**
+ * Build the `(images: …)` summary for `lore_siblings`. Each label appears
+ * once with a `(N)` count suffix when it has more than one image, mirroring
+ * `stripGallerySections`'s marker format and the error text in
+ * `get_lore_image` so all three surfaces agree on how multi-image labels
+ * are advertised. Unlabeled images (embeds directly under the gallery
+ * heading, no subheading) group under `(unlabeled)`.
+ */
+function describeImageLabels(imgs: { label: string }[]): string {
+    const counts = new Map<string, number>();
+    for (const img of imgs) {
+        const k = img.label || '(unlabeled)';
+        counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    return [...counts.entries()].map(([name, n]) => (n === 1 ? name : `${name} (${n})`)).join(', ');
 }
