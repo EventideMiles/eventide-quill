@@ -146,30 +146,45 @@ export function resolveAtMentions(text: string, vault: Vault): { resolvedPaths: 
     const markdownFiles = vault.getMarkdownFiles();
     const resolvedPaths: string[] = [];
 
-    const cleanedText = text.replace(/@(\S+)/g, (_match, mention: string) => {
-        // Trim trailing sentence punctuation so mentions like "@foo.md," or
-        // "@bar." at the end of a clause still resolve. Try exact / exact-.md
-        // resolution BEFORE the email guard so root notes such as "@foo.md"
-        // (which contain a dot) are recognized as file mentions rather than
-        // being mistaken for an email domain.
-        const trimmed = mention.replace(/[.,;:!?)\]}"']+$/, '');
-        const candidate = trimmed || mention;
-
-        const resolved = resolveMentionToPath(candidate, markdownFiles);
-        if (resolved) {
-            if (!resolvedPaths.includes(resolved)) {
-                resolvedPaths.push(resolved);
+    // Two mention forms:
+    //   @"path with spaces.md"  — quoted, space-safe (what FileMentionSuggest
+    //                            inserts for any path; required because the
+    //                            bare @\S+ form stops at the first space).
+    //   @non-space              — bare token (manual typing; no spaces).
+    // The quoted form resolves via exact path match; the bare form falls through
+    // to the same resolution priority + email guard as before.
+    const cleanedText = text.replace(
+        /@(?:"([^"]+)"|(\S+))/g,
+        (_match, quoted: string | undefined, bare: string | undefined) => {
+            const isQuoted = quoted !== undefined;
+            // Trim trailing sentence punctuation only on the bare form (a quoted
+            // path is exact, so ".md" etc. must be preserved verbatim).
+            let candidate: string;
+            if (isQuoted) {
+                candidate = quoted;
+            } else {
+                const trimmed = (bare ?? '').replace(/[.,;:!?)\]}"']+$/, '');
+                candidate = (trimmed || bare) ?? '';
             }
-            return mention;
-        }
 
-        // Email guard: skip if the candidate contains a dot but no path
-        // separator (looks like an email domain, e.g. "@example.com").
-        if (candidate.includes('.') && !candidate.includes('/')) {
+            const resolved = resolveMentionToPath(candidate, markdownFiles);
+            if (resolved) {
+                if (!resolvedPaths.includes(resolved)) {
+                    resolvedPaths.push(resolved);
+                }
+                // Strip the leading @ (and the quotes), leaving the bare path text
+                // inline in the message so the writer can see what was referenced.
+                return candidate;
+            }
+
+            // Email guard (bare form only): skip tokens that look like an email
+            // domain (dot, no path separator), e.g. "@example.com".
+            if (!isQuoted && candidate.includes('.') && !candidate.includes('/')) {
+                return _match;
+            }
             return _match;
         }
-        return _match;
-    });
+    );
 
     return { resolvedPaths, cleanedText };
 }
