@@ -143,6 +143,23 @@ export function createFandomLookupTool(maxResultTokens: number, allowedWikis: st
             if (!query) return 'Error: "query" is required.';
 
             const host = `${wiki}.fandom.com`;
+
+            // Stage 2: cache-first. A repeat of the same query hits the alias
+            // written on the prior lookup's unambiguous extract — no network.
+            const cache = cacheFor(ctx);
+            if (cache) {
+                const cached = await cache.getPage(wiki, query);
+                if (cached) {
+                    const maxChars = maxResultTokens * 4;
+                    const text =
+                        cached.text.length > maxChars
+                            ? cached.text.slice(0, maxChars) + '\n...[truncated]'
+                            : cached.text;
+                    const date = new Date(cached.retrievedAt).toISOString().slice(0, 10);
+                    return `${query} (${host}) [cached ${date} — no network request]:\n${text}`;
+                }
+            }
+
             try {
                 const result = await mediawikiLookup(host, query, maxResultTokens);
                 // Cache the unambiguous extract (the common case for a character
