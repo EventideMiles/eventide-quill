@@ -23,6 +23,7 @@
  * the cache is a separate consent surface from the network toggle.
  */
 import { normalizePath, type Vault } from 'obsidian';
+import { mediawikiAllPages, mediawikiExtract } from './mediawiki';
 
 const SCHEMA_VERSION = 1;
 const CACHE_FOLDER = 'fandom-cache';
@@ -236,6 +237,48 @@ export class FandomCache {
         } catch {
             return undefined;
         }
+    }
+
+    /**
+     * Bulk-sync (index) an entire wiki: enumerate every Main-namespace page and
+     * cache its extract. For the on-the-go author who wants the whole wiki
+     * available offline/private. Fair practices: reuses the mediawiki.ts
+     * per-host rate limiter (500ms) + descriptive UA; checks `signal` between
+     * pages so the writer can cancel. Best-effort — a failed extract for one
+     * page is skipped, not fatal. Returns { cached, total }.
+     */
+    async bulkSyncWiki(
+        wiki: string,
+        opts: { onProgress?: (done: number, total: number) => void; signal?: AbortSignal } = {}
+    ): Promise<{ cached: number; total: number }> {
+        const host = `${wiki}.fandom.com`;
+        const titles = await mediawikiAllPages(host, opts.signal);
+        let cached = 0;
+        for (let i = 0; i < titles.length; i++) {
+            if (opts.signal?.aborted) break;
+            const title = titles[i]!;
+            try {
+                const extract = await mediawikiExtract(host, title);
+                if (extract && extract.extract) {
+                    await this.putPage(
+                        wiki,
+                        extract.title,
+                        {
+                            text: extract.extract,
+                            sourceUrl: fandomPageSourceUrl(wiki, extract.title),
+                            license: FANDOM_DEFAULT_LICENSE,
+                            retrievedAt: Date.now()
+                        },
+                        [title]
+                    );
+                    cached++;
+                }
+            } catch {
+                // Skip failed extracts — best-effort.
+            }
+            opts.onProgress?.(i + 1, titles.length);
+        }
+        return { cached, total: titles.length };
     }
 
     /** Load the per-wiki pages record (title → page), or undefined. */

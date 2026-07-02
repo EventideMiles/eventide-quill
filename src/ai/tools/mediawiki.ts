@@ -95,6 +95,60 @@ export async function mediawikiSearch(host: string, query: string, limit = 5): P
 }
 
 /**
+ * Total article count for a wiki's Main namespace, via `meta=siteinfo`. Used
+ * by the bulk-sync indexer to report size + let the writer judge before a long
+ * sync. Returns 0 if the field is missing.
+ */
+export async function mediawikiArticleCount(host: string): Promise<number> {
+    const url = `https://${host}/api.php?action=query&meta=siteinfo&siprop=statistics&format=json&origin=*`;
+    await rateLimit(host);
+    const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
+    if (response.status !== 200) {
+        throw new Error(`siteinfo failed: HTTP ${response.status}`);
+    }
+    const stats = (response.json as { query?: { statistics?: { articles?: number } } }).query?.statistics;
+    return stats?.articles ?? 0;
+}
+
+/**
+ * Enumerate every page title in a wiki's Main namespace (namespace 0) via
+ * `list=allpages` with `apcontinue` pagination (500 per batch). Used by the
+ * bulk-sync indexer. Reuses the per-host rate limiter and checks the abort
+ * signal between batches. Returns all titles in one array (fine even for large
+ * wikis — tens of thousands of short strings).
+ */
+export async function mediawikiAllPages(host: string, signal?: AbortSignal): Promise<string[]> {
+    const titles: string[] = [];
+    let apcontinue = '';
+    for (;;) {
+        if (signal?.aborted) break;
+        await rateLimit(host);
+        let url =
+            `https://${host}/api.php?action=query&list=allpages` + `&apnamespace=0&aplimit=500&format=json&origin=*`;
+        if (apcontinue) url += `&apcontinue=${encodeURIComponent(apcontinue)}`;
+        const response = await requestUrl({
+            url,
+            method: 'GET',
+            headers: { 'User-Agent': MEDIAWIKI_UA },
+            throw: false
+        });
+        if (response.status !== 200) {
+            throw new Error(`allpages enumeration failed: HTTP ${response.status}`);
+        }
+        const data = response.json as {
+            query?: { allpages?: Array<{ title: string }> };
+            continue?: { apcontinue?: string };
+        };
+        const pages = data.query?.allpages ?? [];
+        for (const p of pages) titles.push(p.title);
+        const next = data['continue' as keyof typeof data];
+        apcontinue = (next as { apcontinue?: string } | undefined)?.apcontinue ?? '';
+        if (!apcontinue) break;
+    }
+    return titles;
+}
+
+/**
  * Internal: fetch the intro extract for a specific page title.
  *
  * Tries `prop=extracts` first (plain text, no HTML parsing needed).
