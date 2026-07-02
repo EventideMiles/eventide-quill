@@ -11,6 +11,26 @@ import {
 } from './mediawiki';
 import { FANDOM_DEFAULT_LICENSE, fandomPageSourceUrl, type FandomCache } from './fandom-cache';
 
+/**
+ * Fandom subdomain shape: a single DNS label (letters, digits, hyphens) — no
+ * dots, slashes, or other segments that could escape the `${wiki}.fandom.com`
+ * host template or the `<cacheDir>/<wiki>` path. Shared by tool validation and
+ * the bulk-sync guard (`bulkSyncFandomWiki`) so a wiki value is checked at every
+ * entry point before any path is built.
+ */
+const FANDOM_SUBDOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+export function isValidFandomSubdomain(wiki: string): boolean {
+    return FANDOM_SUBDOMAIN_RE.test(wiki);
+}
+
+/**
+ * Substring embedded in cached tool results so the UI can badge cache hits.
+ * `annotateToolUseErrors` in `co-writer.ts` matches against this; the cached
+ * page/image return strings build their `[cached …]` text from it so the badge
+ * stays in sync if the marker ever changes.
+ */
+export const CACHE_HIT_MARKER = '[cached';
+
 /** Resolve the cache for this request, honoring the `lorebookFandomCacheEnabled` gate. */
 function cacheFor(ctx: ToolContext): FandomCache | null {
     return ctx.plugin.settings.lorebookFandomCacheEnabled ? ctx.plugin.fandomCache : null;
@@ -77,7 +97,7 @@ function validateWiki(wiki: string, allowedWikis: string[], allowAll: boolean): 
     // path separators, dots, query strings, and protocol fragments so the
     // value can never escape the `${wiki}.fandom.com` host template. `allowAll`
     // only bypasses the allowlist check below, not this sanitization.
-    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(wiki)) {
+    if (!isValidFandomSubdomain(wiki)) {
         return `Error: "wiki" must be a single Fandom subdomain (letters, digits, hyphens only). Got "${wiki}".`;
     }
     if (allowAll) return null; // danger mode: any Fandom wiki allowed
@@ -164,7 +184,7 @@ export function createFandomLookupTool(maxResultTokens: number, allowedWikis: st
                             ? cached.text.slice(0, maxChars) + '\n...[truncated]'
                             : cached.text;
                     const date = new Date(cached.retrievedAt).toISOString().slice(0, 10);
-                    return `${query} (${host}) [cached ${date} — no network request]:\n${text}`;
+                    return `${query} (${host}) ${CACHE_HIT_MARKER} ${date} — no network request]:\n${text}`;
                 }
             } else if (__DEV__ && ctx.plugin.settings.enableDebugLogging) {
                 console.warn(
@@ -247,7 +267,7 @@ export function createFandomPageTool(maxResultTokens: number, allowedWikis: stri
                             ? cached.text.slice(0, maxChars) + '\n...[truncated]'
                             : cached.text;
                     const date = new Date(cached.retrievedAt).toISOString().slice(0, 10);
-                    return `${title} (${host}) [cached ${date} — no network request]:\n${text}`;
+                    return `${title} (${host}) ${CACHE_HIT_MARKER} ${date} — no network request]:\n${text}`;
                 }
             }
 
@@ -346,8 +366,8 @@ export function createFandomImageTool(
                             const date = new Date(cached.meta.retrievedAt).toISOString().slice(0, 10);
                             return {
                                 text:
-                                    `Fetched "${image}" from ${host} (${cached.meta.contentType}, from cache ` +
-                                    `[${date}] — no network request).`,
+                                    `Fetched "${image}" from ${host} (${cached.meta.contentType}) ` +
+                                    `${CACHE_HIT_MARKER} ${date} — no network request].`,
                                 images: [cached.base64]
                             };
                         }

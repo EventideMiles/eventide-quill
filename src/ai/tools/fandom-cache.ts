@@ -150,7 +150,12 @@ export class FandomCache {
      * Write (or overwrite) a cached page for `wiki` keyed by `title` (normalized),
      * plus any `aliases` (also normalized) — so a page fetched via a partial or
      * differently-cased title is reachable on a repeat of either form. One
-     * read-modify-write of pages.json (no concurrent-put races). Best-effort.
+     * read-modify-write of pages.json per call. Best-effort.
+     *
+     * Cross-call atomicity is NOT guaranteed: concurrent `putPage` calls for the
+     * same wiki can interleave their read-modify-write and clobber each other's
+     * entry. This is an acceptable best-effort cache (a lost write just means a
+     * later lookup re-fetches live); callers needing serialization must queue.
      */
     async putPage(wiki: string, title: string, page: CachedFandomPage, aliases: string[] = []): Promise<void> {
         try {
@@ -179,6 +184,14 @@ export class FandomCache {
      * Write (or overwrite) a cached image for `wiki` keyed by `key` (page title
      * or filename). Stores the bytes as a binary sibling under `img/` and the
      * attribution in `images.json`. Best-effort; never throws.
+     *
+     * Atomicity: the metadata record is written BEFORE the binary, so a
+     * mid-write failure leaves a meta entry pointing at a not-yet-written image
+     * (which `getImage` treats as a cache miss) rather than an orphaned JPEG
+     * with no attribution that nothing reclaims. Cross-call atomicity is NOT
+     * guaranteed — concurrent `putImage` calls for the same wiki can interleave
+     * their read-modify-write of `images.json` (best-effort cache by design; a
+     * lost write just means a later lookup re-fetches live).
      */
     async putImage(
         wiki: string,
@@ -187,13 +200,9 @@ export class FandomCache {
         meta: Omit<CachedFandomImage, 'retrievedAt'>
     ): Promise<void> {
         try {
-            const safeKey = sanitizeImageKey(key);
             await ensureDir(this.vault, this.cacheDir);
             await ensureDir(this.vault, this.wikiDir(wiki));
-            await ensureDir(this.vault, this.imgDir(wiki));
-            const binaryPath = normalizePath(`${this.imgDir(wiki)}/${safeKey}.jpg`);
-            await this.vault.adapter.writeBinary(binaryPath, base64ToArrayBuffer(base64));
-            // Record attribution alongside the binary.
+            // Metadata first — see the atomicity note above.
             const idxPath = this.imagesPath(wiki);
             const existing = await this.readJson<FandomImagesFile>(idxPath);
             const images = existing?.images ?? {};
@@ -204,6 +213,11 @@ export class FandomCache {
                 images
             };
             await this.vault.adapter.write(idxPath, JSON.stringify(file));
+            // Only persist the binary once the metadata update succeeded.
+            await ensureDir(this.vault, this.imgDir(wiki));
+            const safeKey = sanitizeImageKey(key);
+            const binaryPath = normalizePath(`${this.imgDir(wiki)}/${safeKey}.jpg`);
+            await this.vault.adapter.writeBinary(binaryPath, base64ToArrayBuffer(base64));
         } catch {
             // Best-effort.
         }
@@ -246,6 +260,11 @@ export class FandomCache {
      * per-host rate limiter (500ms) + descriptive UA; checks `signal` between
      * pages so the writer can cancel. Best-effort — a failed extract for one
      * page is skipped, not fatal. Returns { cached, total }.
+     *
+     * Batching: accumulates all extracts in memory and flushes pages.json once
+     * at the end instead of calling `putPage` per title (which would re-read +
+     * re-write the whole file per page — quadratic I/O on large wikis). A
+     * partial run (cancelled mid-way) still flushes whatever was gathered.
      */
     async bulkSyncWiki(
         wiki: string,
@@ -253,6 +272,12 @@ export class FandomCache {
     ): Promise<{ cached: number; total: number }> {
         const host = `${wiki}.fandom.com`;
         const titles = await mediawikiAllPages(host, opts.signal);
+        // Load pages.json once and batch updates in memory; flush once at the end.
+        await ensureDir(this.vault, this.cacheDir);
+        await ensureDir(this.vault, this.wikiDir(wiki));
+        const path = this.pagesPath(wiki);
+        const existing = await this.readJson<FandomPagesFile>(path);
+        const pages: Record<string, CachedFandomPage> = existing?.pages ?? {};
         let cached = 0;
         for (let i = 0; i < titles.length; i++) {
             if (opts.signal?.aborted) break;
@@ -260,23 +285,29 @@ export class FandomCache {
             try {
                 const extract = await mediawikiExtract(host, title);
                 if (extract && extract.extract) {
-                    await this.putPage(
-                        wiki,
-                        extract.title,
-                        {
-                            text: extract.extract,
-                            sourceUrl: fandomPageSourceUrl(wiki, extract.title),
-                            license: FANDOM_DEFAULT_LICENSE,
-                            retrievedAt: Date.now()
-                        },
-                        [title]
-                    );
+                    const page: CachedFandomPage = {
+                        text: extract.extract,
+                        sourceUrl: fandomPageSourceUrl(wiki, extract.title),
+                        license: FANDOM_DEFAULT_LICENSE,
+                        retrievedAt: Date.now()
+                    };
+                    pages[normalizeKey(extract.title)] = page;
+                    const aliasKey = normalizeKey(title);
+                    if (aliasKey) pages[aliasKey] = page;
                     cached++;
                 }
             } catch {
                 // Skip failed extracts — best-effort.
             }
             opts.onProgress?.(i + 1, titles.length);
+        }
+        if (cached > 0) {
+            try {
+                const file: FandomPagesFile = { schemaVersion: SCHEMA_VERSION, wiki, pages };
+                await this.vault.adapter.write(path, JSON.stringify(file));
+            } catch {
+                // Best-effort — a failed flush just means a re-sync later.
+            }
         }
         return { cached, total: titles.length };
     }

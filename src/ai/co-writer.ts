@@ -54,6 +54,7 @@ import {
 } from './vision';
 import { SubagentSession, type SubagentView, type SubagentConfig } from './subagent-session';
 import { resolveNoteFile } from './tools/lore-edit-helpers';
+import { CACHE_HIT_MARKER } from './tools/fandom-lookup';
 import {
     clearDiffEdits,
     diffEditsField,
@@ -1423,8 +1424,8 @@ export class CoWriterSession {
             if (execResult.failed) {
                 return { ...use, error: execResult.result };
             }
-            // Cache-hit marker — fandom_* cache-first results embed "[cached …]".
-            if (execResult.result.includes('[cached')) {
+            // Cache-hit marker — fandom_* cache-first results embed it (see CACHE_HIT_MARKER).
+            if (execResult.result.includes(CACHE_HIT_MARKER)) {
                 return { ...use, cached: true };
             }
             return use;

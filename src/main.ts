@@ -47,6 +47,7 @@ import {
 } from './ai/analysis';
 import { createReadOnlyToolRegistry } from './ai/tools';
 import { FandomCache } from './ai/tools/fandom-cache';
+import { isValidFandomSubdomain } from './ai/tools/fandom-lookup';
 import { mediawikiArticleCount } from './ai/tools/mediawiki';
 import type { ChatMessage } from './ai/provider';
 
@@ -4161,7 +4162,6 @@ export default class EventideQuillPlugin extends Plugin {
         this.lintPanel?.refreshLorebookPanel();
     }
 
-    /**
     /** Show a picker of allowlisted Fandom wikis, then bulk-sync the chosen one. */
     pickFandomWikiForSync(): void {
         const wikis = this.settings.lorebookFandomWikis;
@@ -4187,6 +4187,14 @@ export default class EventideQuillPlugin extends Plugin {
      * via the "Cancel Fandom wiki sync" command. Progress surfaces as Notices.
      */
     async bulkSyncFandomWiki(wiki: string): Promise<void> {
+        // Validate the subdomain before any path is built — the allowlist is
+        // free-text on save, so a malformed entry (dots, slashes, "..") must not
+        // reach FandomCache.wikiDir and escape the cache root. Matches the gate
+        // `validateWiki` applies to the fandom_* tools.
+        if (!isValidFandomSubdomain(wiki)) {
+            new Notice(`Quill: "${wiki}" is not a valid Fandom wiki subdomain (letters, digits, hyphens only).`);
+            return;
+        }
         if (!this.settings.lorebookFandomCacheEnabled) {
             new Notice('Quill: enable the fandom page cache setting first.');
             return;
