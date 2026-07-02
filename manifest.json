@@ -6,5 +6,6 @@
 	"description": "A feedback-first, novelist-focused writing assistant for Obsidian.",
 	"author": "EventideMiles",
 	"authorUrl": "https://github.com/EventideMiles",
+	"fundingUrl": "https://github.com/sponsors/EventideMiles",
 	"isDesktopOnly": false
 }
