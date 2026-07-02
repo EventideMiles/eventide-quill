@@ -1,5 +1,7 @@
 # Eventide Quill
 
+[![Sponsor](https://img.shields.io/badge/sponsor-30363C?logo=github-sponsors&logoColor=white)](https://github.com/sponsors/EventideMiles)
+
 A feedback-first, novelist-focused writing assistant for Obsidian.
 
 MIT license. Built from scratch. Mobile-ready. Local-model first.
@@ -65,6 +67,14 @@ Styles are authored in SCSS and compiled to `styles.css` — edit the sources un
 - **Capability-based model roles.** Models declare a role (`chat`, `embed`, `image`, or `chat-image`); the right model is resolved per task — a non-vision model never receives pixels.
 - **Subagents for context isolation.** Heavy batch tasks run in a fresh context and return a summary, so the main conversation stays lean and responsive — local-model friendly (one inference at a time).
 - **Mobile as a first-class target.** Test on phone before shipping desktop.
+
+## Sponsors
+
+Eventide Quill is MIT-licensed and free for everyone. If it's part of your
+writing practice, consider [sponsoring on GitHub](https://github.com/sponsors/EventideMiles)
+— members get rewards (early access to in-progress features, a dedicated
+feedback channel, and a hand in the roadmap). Your support keeps the project
+independent and local-model-first.
 
 ## License
 
