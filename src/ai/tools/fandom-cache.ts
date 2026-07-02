@@ -100,6 +100,16 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
     return bytes.buffer;
 }
 
+/** Convert an ArrayBuffer back to a base64 string (inverse of {@link base64ToArrayBuffer}). */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]!);
+    }
+    return btoa(binary);
+}
+
 /**
  * Local Fandom cache. Construct once on plugin load; the fandom tools reach it
  * via {@link ToolContext.plugin}. All methods are best-effort — a cache write
@@ -189,6 +199,46 @@ export class FandomCache {
         } catch {
             // Best-effort.
         }
+    }
+
+    /**
+     * Read a cached page for `wiki` keyed by `title`. Returns undefined on miss,
+     * missing file, or parse failure — the caller (fandom_page cache-first)
+     * falls through to a live fetch. Stage 2.
+     */
+    async getPage(wiki: string, title: string): Promise<CachedFandomPage | undefined> {
+        const pages = await this.loadPages(wiki);
+        return pages?.[title];
+    }
+
+    /**
+     * Read a cached image for `wiki` keyed by `key` (page title or filename).
+     * Returns the base64 bytes + attribution, or undefined on miss, missing
+     * binary, or read failure — the caller falls through to live. Stage 2.
+     */
+    async getImage(wiki: string, key: string): Promise<{ base64: string; meta: CachedFandomImage } | undefined> {
+        const images = await this.loadImages(wiki);
+        const meta = images?.[key];
+        if (!meta) return undefined;
+        const binaryPath = normalizePath(`${this.imgDir(wiki)}/${sanitizeImageKey(key)}.jpg`);
+        try {
+            const exists = await this.vault.adapter.exists(binaryPath);
+            if (!exists) return undefined;
+            const buffer = await this.vault.adapter.readBinary(binaryPath);
+            return { base64: arrayBufferToBase64(buffer), meta };
+        } catch {
+            return undefined;
+        }
+    }
+
+    /** Load the per-wiki pages record (title → page), or undefined. */
+    private async loadPages(wiki: string): Promise<Record<string, CachedFandomPage> | undefined> {
+        return (await this.readJson<FandomPagesFile>(this.pagesPath(wiki)))?.pages;
+    }
+
+    /** Load the per-wiki images record (key → meta), or undefined. */
+    private async loadImages(wiki: string): Promise<Record<string, CachedFandomImage> | undefined> {
+        return (await this.readJson<FandomImagesFile>(this.imagesPath(wiki)))?.images;
     }
 
     /** Read + parse a JSON sidecar; returns undefined if missing or unparseable. */

@@ -9,7 +9,12 @@ import {
     mediawikiPageImage,
     mediawikiSearch
 } from './mediawiki';
-import { FANDOM_DEFAULT_LICENSE, fandomPageSourceUrl } from './fandom-cache';
+import { FANDOM_DEFAULT_LICENSE, fandomPageSourceUrl, type FandomCache } from './fandom-cache';
+
+/** Resolve the cache for this request, honoring the `lorebookFandomCacheEnabled` gate. */
+function cacheFor(ctx: ToolContext): FandomCache | null {
+    return ctx.plugin.settings.lorebookFandomCacheEnabled ? ctx.plugin.fandomCache : null;
+}
 
 /**
  * Write a page to the local Fandom cache after a successful live fetch
@@ -17,7 +22,7 @@ import { FANDOM_DEFAULT_LICENSE, fandomPageSourceUrl } from './fandom-cache';
  * must never fail the tool call. Gated by `lorebookFandomCacheEnabled`.
  */
 function tryCachePage(ctx: ToolContext, wiki: string, title: string, text: string): void {
-    const cache = ctx.plugin.settings.lorebookFandomCacheEnabled ? ctx.plugin.fandomCache : null;
+    const cache = cacheFor(ctx);
     if (!cache) return;
     void cache.putPage(wiki, title, {
         text,
@@ -41,7 +46,7 @@ function tryCacheImage(
     sourceUrl: string,
     originalFilename: string
 ): void {
-    const cache = ctx.plugin.settings.lorebookFandomCacheEnabled ? ctx.plugin.fandomCache : null;
+    const cache = cacheFor(ctx);
     if (!cache) return;
     void cache.putImage(wiki, key, base64, {
         sourceUrl,
@@ -188,6 +193,22 @@ export function createFandomPageTool(maxResultTokens: number, allowedWikis: stri
             if (!title) return 'Error: "title" is required.';
 
             const host = `${wiki}.fandom.com`;
+
+            // Stage 2: cache-first. A hit returns immediately with no network call.
+            const cache = cacheFor(ctx);
+            if (cache) {
+                const cached = await cache.getPage(wiki, title);
+                if (cached) {
+                    const maxChars = maxResultTokens * 4;
+                    const text =
+                        cached.text.length > maxChars
+                            ? cached.text.slice(0, maxChars) + '\n...[truncated]'
+                            : cached.text;
+                    const date = new Date(cached.retrievedAt).toISOString().slice(0, 10);
+                    return `${title} (${host}) [cached ${date} — no network request]:\n${text}`;
+                }
+            }
+
             try {
                 const extract = await mediawikiExtract(host, title);
                 if (!extract) {
@@ -272,6 +293,20 @@ export function createFandomImageTool(
             try {
                 // Path A: fetch a specific named image from the gallery.
                 if (image) {
+                    // Stage 2: cache-first for the specific-filename path.
+                    const cache = cacheFor(ctx);
+                    if (cache) {
+                        const cached = await cache.getImage(wiki, image);
+                        if (cached) {
+                            const date = new Date(cached.meta.retrievedAt).toISOString().slice(0, 10);
+                            return {
+                                text:
+                                    `Fetched "${image}" from ${host} (${cached.meta.contentType}, from cache ` +
+                                    `[${date}] — no network request).`,
+                                images: [cached.base64]
+                            };
+                        }
+                    }
                     const info = await mediawikiImageInfo(host, image, maxDimension);
                     if (!info) {
                         return {
