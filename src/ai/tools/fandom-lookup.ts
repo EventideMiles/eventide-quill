@@ -24,6 +24,9 @@ function cacheFor(ctx: ToolContext): FandomCache | null {
 function tryCachePage(ctx: ToolContext, wiki: string, title: string, text: string, aliases: string[] = []): void {
     const cache = cacheFor(ctx);
     if (!cache) return;
+    if (__DEV__ && ctx.plugin.settings.enableDebugLogging) {
+        console.warn(`[fandom-cache] WRITE page wiki=${wiki} title="${title}" aliases=[${aliases.join(', ')}]`);
+    }
     void cache.putPage(
         wiki,
         title,
@@ -149,6 +152,11 @@ export function createFandomLookupTool(maxResultTokens: number, allowedWikis: st
             const cache = cacheFor(ctx);
             if (cache) {
                 const cached = await cache.getPage(wiki, query);
+                if (__DEV__ && ctx.plugin.settings.enableDebugLogging) {
+                    console.warn(
+                        `[fandom-cache] fandom_lookup wiki=${wiki} query="${query}" → ${cached ? 'HIT (no network)' : 'MISS → live'}`
+                    );
+                }
                 if (cached) {
                     const maxChars = maxResultTokens * 4;
                     const text =
@@ -158,6 +166,10 @@ export function createFandomLookupTool(maxResultTokens: number, allowedWikis: st
                     const date = new Date(cached.retrievedAt).toISOString().slice(0, 10);
                     return `${query} (${host}) [cached ${date} — no network request]:\n${text}`;
                 }
+            } else if (__DEV__ && ctx.plugin.settings.enableDebugLogging) {
+                console.warn(
+                    '[fandom-cache] fandom_lookup cache inactive (lorebookFandomCacheEnabled off or fandomCache null)'
+                );
             }
 
             try {
