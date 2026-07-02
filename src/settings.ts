@@ -1320,6 +1320,18 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(content)
+            .setName('Fandom page cache')
+            .setDesc(
+                'Save lookups to a local cache so repeats skip the network — more private, and works offline once cached. Lives in the plugin data folder, not your vault.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.lorebookFandomCacheEnabled).onChange(async (value) => {
+                    this.plugin.settings.lorebookFandomCacheEnabled = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
             .setName('Wikipedia language')
             .setDesc('Wikipedia language subdomain (e.g., "en", "fr", "de"). Default: en.')
             .addText((text) =>
