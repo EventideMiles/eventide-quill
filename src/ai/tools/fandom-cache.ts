@@ -70,18 +70,17 @@ interface FandomImagesFile {
     images: Record<string, CachedFandomImage>;
 }
 
-/** Create each missing path segment (Obsidian's adapter.mkdir is one level at a time). */
+/** Ensure a single directory exists (parent must already exist). Mirrors conversation-store's ensureDir — does NOT walk path segments from the root, which would either pollute the vault root (if the path is absolute) or redundantly check every ancestor. Call incrementally for nested dirs. */
 async function ensureDir(vault: Vault, dir: string): Promise<void> {
     const clean = normalizePath(dir);
     if (clean.length === 0) return;
-    const segments = clean.split('/');
-    let current = '';
-    for (const seg of segments) {
-        if (!seg) continue;
-        current = current ? `${current}/${seg}` : seg;
-        const exists = await vault.adapter.exists(current);
-        if (!exists) await vault.adapter.mkdir(current);
-    }
+    const exists = await vault.adapter.exists(clean);
+    if (!exists) await vault.adapter.mkdir(clean);
+}
+
+/** Normalize a title/filename into a cache key so casing/spacing/underscore variants collapse to one entry ("Freddy Lupin", "freddy lupin", "Freddy_Lupin" → "freddy lupin"). */
+function normalizeKey(key: string): string {
+    return key.toLowerCase().replace(/_/g, ' ').trim().replace(/\s+/g, ' ');
 }
 
 /** Build the canonical source URL for a wiki page (used for attribution). */
@@ -147,17 +146,23 @@ export class FandomCache {
     }
 
     /**
-     * Write (or overwrite) a cached page for `wiki` keyed by `title`.
-     * Read-modify-writes the per-wiki pages.json so concurrent puts on the
-     * same wiki don't clobber each other. Best-effort; never throws.
+     * Write (or overwrite) a cached page for `wiki` keyed by `title` (normalized),
+     * plus any `aliases` (also normalized) — so a page fetched via a partial or
+     * differently-cased title is reachable on a repeat of either form. One
+     * read-modify-write of pages.json (no concurrent-put races). Best-effort.
      */
-    async putPage(wiki: string, title: string, page: CachedFandomPage): Promise<void> {
+    async putPage(wiki: string, title: string, page: CachedFandomPage, aliases: string[] = []): Promise<void> {
         try {
             const path = this.pagesPath(wiki);
+            await ensureDir(this.vault, this.cacheDir);
             await ensureDir(this.vault, this.wikiDir(wiki));
             const existing = await this.readJson<FandomPagesFile>(path);
             const pages = existing?.pages ?? {};
-            pages[title] = page;
+            pages[normalizeKey(title)] = page;
+            for (const alias of aliases) {
+                const k = normalizeKey(alias);
+                if (k) pages[k] = page;
+            }
             const file: FandomPagesFile = {
                 schemaVersion: SCHEMA_VERSION,
                 wiki,
@@ -182,6 +187,8 @@ export class FandomCache {
     ): Promise<void> {
         try {
             const safeKey = sanitizeImageKey(key);
+            await ensureDir(this.vault, this.cacheDir);
+            await ensureDir(this.vault, this.wikiDir(wiki));
             await ensureDir(this.vault, this.imgDir(wiki));
             const binaryPath = normalizePath(`${this.imgDir(wiki)}/${safeKey}.jpg`);
             await this.vault.adapter.writeBinary(binaryPath, base64ToArrayBuffer(base64));
@@ -189,7 +196,7 @@ export class FandomCache {
             const idxPath = this.imagesPath(wiki);
             const existing = await this.readJson<FandomImagesFile>(idxPath);
             const images = existing?.images ?? {};
-            images[key] = { ...meta, retrievedAt: Date.now() };
+            images[normalizeKey(key)] = { ...meta, retrievedAt: Date.now() };
             const file: FandomImagesFile = {
                 schemaVersion: SCHEMA_VERSION,
                 wiki,
@@ -208,7 +215,7 @@ export class FandomCache {
      */
     async getPage(wiki: string, title: string): Promise<CachedFandomPage | undefined> {
         const pages = await this.loadPages(wiki);
-        return pages?.[title];
+        return pages?.[normalizeKey(title)];
     }
 
     /**
@@ -218,7 +225,7 @@ export class FandomCache {
      */
     async getImage(wiki: string, key: string): Promise<{ base64: string; meta: CachedFandomImage } | undefined> {
         const images = await this.loadImages(wiki);
-        const meta = images?.[key];
+        const meta = images?.[normalizeKey(key)];
         if (!meta) return undefined;
         const binaryPath = normalizePath(`${this.imgDir(wiki)}/${sanitizeImageKey(key)}.jpg`);
         try {

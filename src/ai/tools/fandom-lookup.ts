@@ -21,15 +21,20 @@ function cacheFor(ctx: ToolContext): FandomCache | null {
  * (Stage 1 write-through). Best-effort + fire-and-forget: a cache failure
  * must never fail the tool call. Gated by `lorebookFandomCacheEnabled`.
  */
-function tryCachePage(ctx: ToolContext, wiki: string, title: string, text: string): void {
+function tryCachePage(ctx: ToolContext, wiki: string, title: string, text: string, aliases: string[] = []): void {
     const cache = cacheFor(ctx);
     if (!cache) return;
-    void cache.putPage(wiki, title, {
-        text,
-        sourceUrl: fandomPageSourceUrl(wiki, title),
-        license: FANDOM_DEFAULT_LICENSE,
-        retrievedAt: Date.now()
-    });
+    void cache.putPage(
+        wiki,
+        title,
+        {
+            text,
+            sourceUrl: fandomPageSourceUrl(wiki, title),
+            license: FANDOM_DEFAULT_LICENSE,
+            retrievedAt: Date.now()
+        },
+        aliases
+    );
 }
 
 /**
@@ -215,7 +220,10 @@ export function createFandomPageTool(maxResultTokens: number, allowedWikis: stri
                     return `No page found for "${title}" on ${host}. Use fandom_lookup to search for related topics.`;
                 }
                 // Stage 1: silent write-through to the local cache (best-effort).
-                tryCachePage(ctx, wiki, extract.title, extract.extract);
+                // Write under the canonical title (extract.title) AND the title the
+                // model asked for (alias) so a repeat of either form cache-hits —
+                // MediaWiki resolves partial/casual titles to a canonical form.
+                tryCachePage(ctx, wiki, extract.title, extract.extract, [title]);
                 const maxChars = maxResultTokens * 4;
                 const text =
                     extract.extract.length > maxChars
