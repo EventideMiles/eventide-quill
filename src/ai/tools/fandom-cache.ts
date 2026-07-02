@@ -1,0 +1,217 @@
+/**
+ * Local cache for Fandom wiki content — the persistence layer for the
+ * `fandom_*` tools' cache-first lookup (PR 2, `.planning/pr-local-fandom-cache.md`).
+ *
+ * Stage 1 (this file): write-through only. `fandom_page` / `fandom_image`
+ * call {@link FandomCache.putPage} / {@link FandomCache.putImage} after a
+ * successful live fetch, so the cache fills silently as the writer works.
+ * No reads happen here yet (Stage 2 adds cache-first `get`; Stage 3 adds
+ * the "answers when network tools off" gating).
+ *
+ * Storage mirrors the `conversation-store.ts` / `embedding-cache.ts` sidecar
+ * convention (NOT `loadData()`/`saveData()`): `vault.adapter` I/O,
+ * `normalizePath()` everywhere, mkdir-on-first-write, best-effort (a cache
+ * write failure is swallowed — the live result still returns to the model).
+ *
+ * Layout under `<pluginDataDir>/fandom-cache/`:
+ *   <wiki>/pages.json   — { schemaVersion, wiki, pages: { [title]: CachedFandomPage } }
+ *   <wiki>/images.json  — { schemaVersion, wiki, images: { [key]: CachedFandomImage } }
+ *   <wiki>/img/<key>.jpg — image binaries (siblings, not base64-in-JSON)
+ *
+ * Attribution (source URL + license + retrievedAt) travels with every cached
+ * item — CC-BY-SA requires it, and the Welcome privacy tab tells the writer
+ * the cache is a separate consent surface from the network toggle.
+ */
+import { normalizePath, type Vault } from 'obsidian';
+
+const SCHEMA_VERSION = 1;
+const CACHE_FOLDER = 'fandom-cache';
+const PAGES_FILENAME = 'pages.json';
+const IMAGES_FILENAME = 'images.json';
+const IMG_FOLDER = 'img';
+/** Fandom content is CC-BY-SA by default; surfaced per cached item for compliance. */
+export const FANDOM_DEFAULT_LICENSE = 'CC-BY-SA';
+
+/** A cached page's text + attribution. */
+export interface CachedFandomPage {
+    /** Page body text (the extract returned to the model). */
+    text: string;
+    /** Canonical source URL, e.g. `https://starwars.fandom.com/wiki/Luke_Skywalker`. */
+    sourceUrl: string;
+    /** License string (default CC-BY-SA for Fandom). */
+    license: string;
+    /** Epoch milliseconds when the page was fetched. */
+    retrievedAt: number;
+}
+
+/** Attribution metadata for a cached image (the bytes live in `img/<key>.jpg`). */
+export interface CachedFandomImage {
+    /** Canonical source URL of the fetched thumbnail. */
+    sourceUrl: string;
+    /** Original filename on the wiki (e.g. `File:Frodo.jpg`). */
+    originalFilename: string;
+    /** Image MIME after downscale (always JPEG). */
+    contentType: string;
+    /** License string (CC-BY-SA default; refined if extractable). */
+    license: string;
+    /** Epoch milliseconds when the image was fetched. */
+    retrievedAt: number;
+}
+
+interface FandomPagesFile {
+    schemaVersion: number;
+    wiki: string;
+    pages: Record<string, CachedFandomPage>;
+}
+
+interface FandomImagesFile {
+    schemaVersion: number;
+    wiki: string;
+    images: Record<string, CachedFandomImage>;
+}
+
+/** Create each missing path segment (Obsidian's adapter.mkdir is one level at a time). */
+async function ensureDir(vault: Vault, dir: string): Promise<void> {
+    const clean = normalizePath(dir);
+    if (clean.length === 0) return;
+    const segments = clean.split('/');
+    let current = '';
+    for (const seg of segments) {
+        if (!seg) continue;
+        current = current ? `${current}/${seg}` : seg;
+        const exists = await vault.adapter.exists(current);
+        if (!exists) await vault.adapter.mkdir(current);
+    }
+}
+
+/** Build the canonical source URL for a wiki page (used for attribution). */
+export function fandomPageSourceUrl(wiki: string, title: string): string {
+    // MediaWiki title URLs space-encode as underscores.
+    const titlePath = title.replace(/ /g, '_');
+    return `https://${wiki}.fandom.com/wiki/${encodeURIComponent(titlePath).replace(/%2F/gi, '/')}`;
+}
+
+/** Convert a base64 string to an ArrayBuffer for `vault.adapter.writeBinary`. */
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+    const binary = atob(base64);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes.buffer;
+}
+
+/**
+ * Local Fandom cache. Construct once on plugin load; the fandom tools reach it
+ * via {@link ToolContext.plugin}. All methods are best-effort — a cache write
+ * failure is swallowed so the live tool result still returns to the model.
+ */
+export class FandomCache {
+    private readonly vault: Vault;
+    private readonly cacheDir: string;
+
+    private constructor(vault: Vault, dataDir: string) {
+        this.vault = vault;
+        this.cacheDir = normalizePath(`${dataDir}/${CACHE_FOLDER}`);
+    }
+
+    /** Construct a cache rooted at `<dataDir>/fandom-cache/`. No I/O. */
+    static create(vault: Vault, dataDir: string): FandomCache {
+        return new FandomCache(vault, dataDir);
+    }
+
+    /** Per-wiki directory. `wiki` is already validated (alphanumeric + hyphens). */
+    private wikiDir(wiki: string): string {
+        return normalizePath(`${this.cacheDir}/${wiki}`);
+    }
+
+    private pagesPath(wiki: string): string {
+        return normalizePath(`${this.wikiDir(wiki)}/${PAGES_FILENAME}`);
+    }
+
+    private imagesPath(wiki: string): string {
+        return normalizePath(`${this.wikiDir(wiki)}/${IMAGES_FILENAME}`);
+    }
+
+    private imgDir(wiki: string): string {
+        return normalizePath(`${this.wikiDir(wiki)}/${IMG_FOLDER}`);
+    }
+
+    /**
+     * Write (or overwrite) a cached page for `wiki` keyed by `title`.
+     * Read-modify-writes the per-wiki pages.json so concurrent puts on the
+     * same wiki don't clobber each other. Best-effort; never throws.
+     */
+    async putPage(wiki: string, title: string, page: CachedFandomPage): Promise<void> {
+        try {
+            const path = this.pagesPath(wiki);
+            await ensureDir(this.vault, this.wikiDir(wiki));
+            const existing = await this.readJson<FandomPagesFile>(path);
+            const pages = existing?.pages ?? {};
+            pages[title] = page;
+            const file: FandomPagesFile = {
+                schemaVersion: SCHEMA_VERSION,
+                wiki,
+                pages
+            };
+            await this.vault.adapter.write(path, JSON.stringify(file));
+        } catch {
+            // Best-effort — cache write failure must not fail the tool call.
+        }
+    }
+
+    /**
+     * Write (or overwrite) a cached image for `wiki` keyed by `key` (page title
+     * or filename). Stores the bytes as a binary sibling under `img/` and the
+     * attribution in `images.json`. Best-effort; never throws.
+     */
+    async putImage(
+        wiki: string,
+        key: string,
+        base64: string,
+        meta: Omit<CachedFandomImage, 'retrievedAt'>
+    ): Promise<void> {
+        try {
+            const safeKey = sanitizeImageKey(key);
+            await ensureDir(this.vault, this.imgDir(wiki));
+            const binaryPath = normalizePath(`${this.imgDir(wiki)}/${safeKey}.jpg`);
+            await this.vault.adapter.writeBinary(binaryPath, base64ToArrayBuffer(base64));
+            // Record attribution alongside the binary.
+            const idxPath = this.imagesPath(wiki);
+            const existing = await this.readJson<FandomImagesFile>(idxPath);
+            const images = existing?.images ?? {};
+            images[key] = { ...meta, retrievedAt: Date.now() };
+            const file: FandomImagesFile = {
+                schemaVersion: SCHEMA_VERSION,
+                wiki,
+                images
+            };
+            await this.vault.adapter.write(idxPath, JSON.stringify(file));
+        } catch {
+            // Best-effort.
+        }
+    }
+
+    /** Read + parse a JSON sidecar; returns undefined if missing or unparseable. */
+    private async readJson<T>(path: string): Promise<T | undefined> {
+        try {
+            const exists = await this.vault.adapter.exists(path);
+            if (!exists) return undefined;
+            const raw = await this.vault.adapter.read(path);
+            return JSON.parse(raw) as T;
+        } catch {
+            return undefined;
+        }
+    }
+}
+
+/** Filesystem-safe key for an image (page title or filename → ASCII-ish slug). */
+function sanitizeImageKey(key: string): string {
+    // Strip a leading "File:" namespace, drop extension, collapse anything that
+    // isn't alphanumeric/dash/underscore. Keeps the cache directory flat + safe.
+    const stripped = key.replace(/^File:/i, '').replace(/\.[a-z0-9]+$/i, '');
+    const slug = stripped
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    return slug.length > 0 ? slug : 'image';
+}

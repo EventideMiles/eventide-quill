@@ -9,6 +9,47 @@ import {
     mediawikiPageImage,
     mediawikiSearch
 } from './mediawiki';
+import { FANDOM_DEFAULT_LICENSE, fandomPageSourceUrl } from './fandom-cache';
+
+/**
+ * Write a page to the local Fandom cache after a successful live fetch
+ * (Stage 1 write-through). Best-effort + fire-and-forget: a cache failure
+ * must never fail the tool call. Gated by `lorebookFandomCacheEnabled`.
+ */
+function tryCachePage(ctx: ToolContext, wiki: string, title: string, text: string): void {
+    const cache = ctx.plugin.settings.lorebookFandomCacheEnabled ? ctx.plugin.fandomCache : null;
+    if (!cache) return;
+    void cache.putPage(wiki, title, {
+        text,
+        sourceUrl: fandomPageSourceUrl(wiki, title),
+        license: FANDOM_DEFAULT_LICENSE,
+        retrievedAt: Date.now()
+    });
+}
+
+/**
+ * Write an image to the local Fandom cache after a successful live fetch
+ * (Stage 1 write-through). Best-effort + fire-and-forget. Gated by
+ * `lorebookFandomCacheEnabled`.
+ */
+function tryCacheImage(
+    ctx: ToolContext,
+    wiki: string,
+    key: string,
+    base64: string,
+    contentType: string,
+    sourceUrl: string,
+    originalFilename: string
+): void {
+    const cache = ctx.plugin.settings.lorebookFandomCacheEnabled ? ctx.plugin.fandomCache : null;
+    if (!cache) return;
+    void cache.putImage(wiki, key, base64, {
+        sourceUrl,
+        originalFilename,
+        contentType,
+        license: FANDOM_DEFAULT_LICENSE
+    });
+}
 
 /**
  * Validate the wiki subdomain against the allowed list. Returns an error
@@ -138,7 +179,7 @@ export function createFandomPageTool(maxResultTokens: number, allowedWikis: stri
         maxResultTokens,
         requiresNetwork: true,
 
-        async execute(args: Record<string, unknown>, _ctx: ToolContext): Promise<string> {
+        async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
             const wiki = typeof args.wiki === 'string' ? args.wiki.trim().toLowerCase() : '';
             const title = typeof args.title === 'string' ? args.title.trim() : '';
 
@@ -152,6 +193,8 @@ export function createFandomPageTool(maxResultTokens: number, allowedWikis: stri
                 if (!extract) {
                     return `No page found for "${title}" on ${host}. Use fandom_lookup to search for related topics.`;
                 }
+                // Stage 1: silent write-through to the local cache (best-effort).
+                tryCachePage(ctx, wiki, extract.title, extract.extract);
                 const maxChars = maxResultTokens * 4;
                 const text =
                     extract.extract.length > maxChars
@@ -214,7 +257,7 @@ export function createFandomImageTool(
         maxResultTokens,
         requiresNetwork: true,
 
-        async execute(args: Record<string, unknown>, _ctx: ToolContext): Promise<ToolResult> {
+        async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
             const wiki = typeof args.wiki === 'string' ? args.wiki.trim().toLowerCase() : '';
             const query = typeof args.query === 'string' ? args.query.trim() : '';
             const image = typeof args.image === 'string' ? args.image.trim() : '';
@@ -241,6 +284,7 @@ export function createFandomImageTool(
                         };
                     }
                     const { base64, contentType } = await downloadAndDownscaleImage(info.imageUrl, maxDimension);
+                    tryCacheImage(ctx, wiki, image, base64, contentType, info.imageUrl, image);
                     return {
                         text: `Fetched "${image}" from ${host} (${contentType}, downscaled to ≤${maxDimension}px).`,
                         images: [base64]
@@ -272,6 +316,7 @@ export function createFandomImageTool(
                             leadImage.imageUrl,
                             maxDimension
                         );
+                        tryCacheImage(ctx, wiki, title, base64, contentType, leadImage.imageUrl, title);
                         return {
                             text:
                                 `Fetched the lead image for "${title}" from ${host} (${contentType}, ` +

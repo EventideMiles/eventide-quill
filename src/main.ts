@@ -46,6 +46,7 @@ import {
     type AnalysisScope
 } from './ai/analysis';
 import { createReadOnlyToolRegistry } from './ai/tools';
+import { FandomCache } from './ai/tools/fandom-cache';
 import type { ChatMessage } from './ai/provider';
 
 import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
@@ -331,6 +332,9 @@ export default class EventideQuillPlugin extends Plugin {
     /** Absolute path to the plugin's data directory (for dashboard snapshot storage). */
     private pluginDataDir = '';
 
+    /** Local Fandom wiki cache — fandom_* write-through + (Stage 3) cache-first lookup. */
+    fandomCache: FandomCache | null = null;
+
     /** Plugin entry point: register commands, views, extensions, and event handlers. */
     async onload() {
         await this.loadSettings();
@@ -338,6 +342,10 @@ export default class EventideQuillPlugin extends Plugin {
 
         // Resolve the plugin's data directory for dashboard snapshot storage.
         this.pluginDataDir = `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+
+        // Local Fandom cache (sidecar under <pluginDataDir>/fandom-cache/). Stage 1:
+        // silent write-through on fandom_page/fandom_image live fetches.
+        this.fandomCache = FandomCache.create(this.app.vault, this.pluginDataDir);
 
         this.registerEditorExtension(
             getLintExtension(

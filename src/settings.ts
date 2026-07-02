@@ -139,6 +139,13 @@ export interface EventideQuillSettings {
     lorebookFandomWikis: string[];
     /** Danger setting: when on, the model may query ANY Fandom wiki, ignoring the allowlist. Default: off. */
     lorebookFandomAllowAllWikis: boolean;
+    /**
+     * Local Fandom cache gate. When on, fandom_page/fandom_image write through to a
+     * sidecar on every live fetch, and (from Stage 3) the cache answers even when
+     * `lorebookNetworkTools` is off — consent is at sync time, silent after.
+     * Default: on (strictly improves drafting privacy). See `.planning/pr-local-fandom-cache.md`.
+     */
+    lorebookFandomCacheEnabled: boolean;
     /** Wikipedia language subdomain (e.g., 'en', 'fr', 'de'). */
     lorebookWikipediaLang: string;
     /** Per-tool result truncation cap (approximate tokens). */
@@ -288,6 +295,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     lorebookNetworkTools: true,
     lorebookFandomWikis: [],
     lorebookFandomAllowAllWikis: false,
+    lorebookFandomCacheEnabled: true,
     lorebookWikipediaLang: 'en',
     lorebookToolMaxTokens: 2000,
     lorebookImageTools: true,

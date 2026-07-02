@@ -171,7 +171,8 @@ src/
       measure-folder.ts, calculate-file-sizes.ts, edit-note.ts, insert-note.ts, append-to-note.ts, revise-edit.ts,
       run-lorebook-batch.ts, research.ts (subagent spawners → SubagentSession),
       propose-entry.ts, fetch-url.ts, fetch-image-url.ts, get-lore-image.ts,
-      fandom-lookup.ts, wikipedia-lookup.ts, mediawiki.ts (shared MediaWiki client)
+      fandom-lookup.ts, wikipedia-lookup.ts, mediawiki.ts (shared MediaWiki client),
+      fandom-cache.ts (local Fandom cache sidecar — PR 2, in progress: Stage 1 write-through)
   ui/                  # Views, modals, panels
     quill-sidebar.ts (~1.3k lines — tabs: linter/context/review/cowriter/dashboard/lorebook),
     co-writer-panel.ts (~2.0k lines), context-panel.ts, review-panel.ts,
