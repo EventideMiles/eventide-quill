@@ -686,7 +686,9 @@ export class QuillSidebarView extends ItemView {
                 this.plugin.resetCoWriterChat(clearContext);
             });
             this.coWriterPanel.setSaveSnapshotHandler(() => {
-                void this.plugin.snapshotCoWriterSession().then(() => new Notice('Conversation saved.'));
+                void this.plugin.snapshotCoWriterSession().then((ok) => {
+                    if (ok) new Notice('Conversation saved.');
+                });
             });
             this.coWriterPanel.setHistoryHandler(() => {
                 void this.plugin.openCoWriterHistory();
@@ -782,24 +784,8 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setLoreCoachActive(session.loreCoachActive);
             this.coWriterPanel.setFulfillState(session.fulfillChanges.edits, session.fulfillActive);
             this.coWriterPanel.setDirectChange(session.directChanges.edits[0] ?? null);
-            const loreEditsList = [...session.loreEdits.entries()].flatMap(([filePath, entry]) =>
-                entry.changeSet.edits
-                    .filter((e) => e.state === 'pending')
-                    .map((edit) => ({
-                        edit,
-                        filePath,
-                        fileBasename: entry.fileBasename,
-                        anchorMessageId: entry.anchorMessageId
-                    }))
-            );
-            this.coWriterPanel.setLoreEdits(loreEditsList);
-            const proposedLoreImagesList = [...session.proposedLoreImages.entries()].map(([filePath, entry]) => ({
-                filePath,
-                fileBasename: entry.fileBasename,
-                images: entry.images,
-                anchorMessageId: entry.anchorMessageId
-            }));
-            this.coWriterPanel.setProposedLoreImages(proposedLoreImagesList);
+            this.coWriterPanel.setLoreEdits(session.getLoreEditCardViews());
+            this.coWriterPanel.setProposedLoreImages(session.getLoreImageCardViews());
             this.coWriterPanel.setSubagents(session.getSubagentViews());
             this.coWriterPanel.setActiveSubagent(session.activeSubagentId);
         }

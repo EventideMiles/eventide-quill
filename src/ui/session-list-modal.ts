@@ -1,4 +1,4 @@
-import { App, Modal } from 'obsidian';
+import { App, Modal, Notice } from 'obsidian';
 import type { SessionIndexEntry } from '../ai/conversation-store';
 
 /**
@@ -61,12 +61,19 @@ export class SessionListModal extends Modal {
                 e.preventDefault();
                 delBtn.disabled = true;
                 void (async () => {
-                    await this.onDelete(entry.id);
-                    row.remove();
-                    this.entries = this.entries.filter((en) => en.id !== entry.id);
-                    if (this.entries.length === 0) {
-                        this.contentEl.empty();
-                        this.onOpen();
+                    try {
+                        await this.onDelete(entry.id);
+                        row.remove();
+                        this.entries = this.entries.filter((en) => en.id !== entry.id);
+                        if (this.entries.length === 0) {
+                            this.contentEl.empty();
+                            this.onOpen();
+                        }
+                    } catch (err) {
+                        console.warn('Quill: failed to delete session', err);
+                        new Notice('Could not delete the conversation.');
+                    } finally {
+                        delBtn.disabled = false;
                     }
                 })();
             });

@@ -27,7 +27,7 @@ import { parseDirectives, parseAllDirectives } from '../utils/directives';
 import { EmbeddingCache, rankBySimilarity } from './embedding-cache';
 import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
-import { ChangeSet, type ChangeSetJSON } from '../core/change-set';
+import { ChangeSet, type ChangeSetJSON, type ProposedEdit } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry, ProposedImage } from '../core/dashboard/lorebook-types';
 import { stripGallerySections } from '../core/dashboard/lorebook-scanner';
 
@@ -799,7 +799,8 @@ function stubDanglingToolCalls(messages: ChatMessage[]): ChatMessage[] {
             role: 'tool',
             content: 'Session was saved mid-tool-round; tool result unavailable.',
             toolCallId: c.id,
-            name: c.name
+            name: c.name,
+            quillAnchorId: last.quillAnchorId
         }));
         return [...messages, ...stubs];
     }
@@ -3469,6 +3470,40 @@ export class CoWriterSession {
         return [...this.subagents.values()].map((s) => s.toView()).concat(this.restoredSubagentViews);
     }
 
+    /** Build the list of pending lore-edit card views (matching LoreEditCardView shape). */
+    getLoreEditCardViews(): {
+        edit: ProposedEdit;
+        filePath: string;
+        fileBasename: string;
+        anchorMessageId: string | null;
+    }[] {
+        return [...this.loreEdits.entries()].flatMap(([filePath, entry]) =>
+            entry.changeSet.edits
+                .filter((e) => e.state === 'pending')
+                .map((edit) => ({
+                    edit,
+                    filePath,
+                    fileBasename: entry.fileBasename,
+                    anchorMessageId: entry.anchorMessageId
+                }))
+        );
+    }
+
+    /** Build the list of pending lore-image-attachment card views (matching LoreImageCardView shape). */
+    getLoreImageCardViews(): {
+        filePath: string;
+        fileBasename: string;
+        images: ProposedImage[];
+        anchorMessageId: string | null;
+    }[] {
+        return [...this.proposedLoreImages.entries()].map(([filePath, entry]) => ({
+            filePath,
+            fileBasename: entry.fileBasename,
+            images: entry.images,
+            anchorMessageId: entry.anchorMessageId
+        }));
+    }
+
     /** Drill down into a subagent's conversation (panel view switch). No-op if not found. */
     navigateToSubagent(id: string): void {
         if (!this.subagents.has(id)) return;
@@ -4220,7 +4255,7 @@ export class CoWriterSession {
                     anchorMessageId: entry.anchorMessageId
                 }
             ]),
-            subagents: [...this.subagents.values()].map((s) => s.toView()),
+            subagents: this.getSubagentViews(),
             activeSubagentId: this.activeSubagentId,
             coachSession: this.coachSession,
             coachActive: this.coachActive,

@@ -577,6 +577,7 @@ export class CoWriterPanel extends AbstractChatPanel {
      * to restore the discarded message's text so the writer can edit and resend.
      */
     setInputText(text: string): void {
+        this.inputValue = text;
         const input = this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-panel__input');
         if (input) {
             input.value = text;
@@ -971,7 +972,9 @@ export class CoWriterPanel extends AbstractChatPanel {
             title: 'History'
         });
         setIcon(historyBtn, 'history');
+        if (generating) historyBtn.disabled = true;
         this.renderEvents.registerDomEvent(historyBtn, 'click', () => {
+            if (generating) return;
             this.onHistory?.();
         });
     }
@@ -1017,9 +1020,13 @@ export class CoWriterPanel extends AbstractChatPanel {
                         e.preventDefault();
                         e.stopPropagation();
                         const menu = new Menu();
+                        const generating =
+                            this.optionsLoading ||
+                            this.draftState === 'generating' ||
+                            this.fulfillActive ||
+                            this.discussStreaming;
                         const rewindable =
-                            !this.chatLoading &&
-                            this.plugin.coWriterSession.isRewindableMessage(msg.id, this.inputMode);
+                            !generating && this.plugin.coWriterSession.isRewindableMessage(msg.id, this.inputMode);
                         menu.addItem((item) =>
                             item
                                 .setTitle('Rewind to here')
@@ -1031,7 +1038,7 @@ export class CoWriterPanel extends AbstractChatPanel {
                             menu.addItem((item) =>
                                 item
                                     .setTitle(
-                                        this.chatLoading
+                                        generating
                                             ? 'Stop generation before rewinding'
                                             : 'Part of the summarized context (compacted) — can\u2019t rewind'
                                     )
@@ -1227,6 +1234,21 @@ export class CoWriterPanel extends AbstractChatPanel {
      * live/finalized conversation ({@link renderSubagentView}).
      */
     /**
+     * Human-readable label for a subagent status. Used by both the inline
+     * status card and the drill-down view header so the mapping stays in one
+     * place.
+     */
+    private subagentStatusLabel(status: string): string {
+        return status === 'running'
+            ? 'Running'
+            : status === 'succeeded'
+              ? 'Done'
+              : status === 'interrupted'
+                ? 'Interrupted'
+                : 'Failed';
+    }
+
+    /**
      * Render one subagent status card. Rendered inline in the chat flow beneath
      * the assistant turn whose tool round spawned it (anchored via the
      * message's {@link CoWriterChatMessage.subagentIds}); orphaned subagents
@@ -1245,14 +1267,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         });
         header.createEl('span', {
             cls: 'quill-cowriter-panel__subagent-status',
-            text:
-                sub.status === 'running'
-                    ? 'Running'
-                    : sub.status === 'succeeded'
-                      ? 'Done'
-                      : sub.status === 'interrupted'
-                        ? 'Interrupted'
-                        : 'Failed'
+            text: this.subagentStatusLabel(sub.status)
         });
         header.createEl('span', {
             cls: 'quill-cowriter-panel__subagent-goal',
@@ -1389,14 +1404,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.renderEvents.registerDomEvent(back, 'click', () => this.onNavigateToParent?.());
         bar.createEl('span', {
             cls: `quill-cowriter-panel__subagent-status quill-cowriter-panel__subagent-status--${sub.status}`,
-            text:
-                sub.status === 'running'
-                    ? 'Running'
-                    : sub.status === 'succeeded'
-                      ? 'Done'
-                      : sub.status === 'interrupted'
-                        ? 'Interrupted'
-                        : 'Failed'
+            text: this.subagentStatusLabel(sub.status)
         });
         bar.createEl('span', { cls: 'quill-cowriter-panel__subagent-goal', text: truncateText(sub.goal, 60) });
 

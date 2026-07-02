@@ -18,6 +18,7 @@ import { normalizePath } from 'obsidian';
 import type { SerializedCoWriterState } from './co-writer';
 
 const SCHEMA_VERSION = 1;
+const SESSION_ID_RE = /^cw_[a-z0-9_]+$/;
 const SESSIONS_FOLDER = 'co-writer-sessions';
 const INDEX_FILENAME = 'index.json';
 
@@ -118,8 +119,16 @@ export async function saveSession(
     opts: SaveSessionOptions = {}
 ): Promise<SessionIndexEntry> {
     await ensureDir(vault, dir);
+    // Validate user-provided id before using it to construct paths.
+    if (opts.id && !SESSION_ID_RE.test(opts.id)) {
+        throw new Error(`Invalid session id: ${opts.id}`);
+    }
     const now = Date.now();
-    const id = opts.id ?? `cw_${now.toString(36)}`;
+    const id = opts.id ?? `cw_${now.toString(36)}_${(Math.random() * 46656) | 0}`;
+    if (!SESSION_ID_RE.test(id)) {
+        throw new Error(`Session id would produce unsafe path: ${id}`);
+    }
+    const sessionPath = normalizePath(`${dir}/${id}.json`);
 
     // Read the existing entry (if any) to preserve createdAt and title.
     const indexPath = normalizePath(`${dir}/${INDEX_FILENAME}`);
@@ -137,7 +146,6 @@ export async function saveSession(
         state
     };
     const json = JSON.stringify(blob);
-    const sessionPath = normalizePath(`${dir}/${id}.json`);
 
     const entry: SessionIndexEntry = {
         id,
@@ -174,19 +182,43 @@ export async function saveSession(
     } catch (err) {
         console.warn(`Quill: failed to save co-writer session ${id}`, err);
         new Notice('Could not save the conversation.');
+        throw err;
     }
     return entry;
 }
 
+function isValidState(state: unknown): state is SerializedCoWriterState {
+    if (!state || typeof state !== 'object') return false;
+    const s = state as Record<string, unknown>;
+    return (
+        Array.isArray(s.chatHistory) &&
+        Array.isArray(s.discussCurrentMessages) &&
+        Array.isArray(s.loreCoachMessages) &&
+        Array.isArray(s.subagents)
+    );
+}
+
 /** Load one session's state by id (null if missing or unparsable). */
 export async function loadSession(vault: Vault, dir: string, id: string): Promise<SerializedCoWriterState | null> {
+    if (!SESSION_ID_RE.test(id)) {
+        console.warn(`Quill: rejecting malformed session id in loadSession: ${id}`);
+        return null;
+    }
     const blob = await readJson<SessionBlob>(vault, normalizePath(`${dir}/${id}.json`));
     if (!blob) return null;
+    if (!isValidState(blob.state)) {
+        console.warn(`Quill: corrupt or incompatible session blob for ${id}`);
+        return null;
+    }
     return blob.state;
 }
 
 /** Delete one session (sidecar + index row). No-op if absent. */
 export async function deleteSession(vault: Vault, dir: string, id: string): Promise<void> {
+    if (!SESSION_ID_RE.test(id)) {
+        console.warn(`Quill: rejecting malformed session id in deleteSession: ${id}`);
+        return;
+    }
     await withIndexLock(async () => {
         const sessionPath = normalizePath(`${dir}/${id}.json`);
         if (await vault.adapter.exists(sessionPath)) {

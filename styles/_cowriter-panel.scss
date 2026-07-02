@@ -1001,6 +1001,7 @@
         &--running { border-left-color: var(--interactive-accent); }
         &--succeeded { border-left-color: var(--text-muted); }
         &--failed { border-left-color: var(--text-error); }
+        &--interrupted { border-left-color: var(--text-warning, var(--text-accent)); }
     }
 
     &__subagent-card-header {

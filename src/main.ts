@@ -1848,26 +1848,10 @@ export default class EventideQuillPlugin extends Plugin {
         // The hook exists for future use (e.g., auto-scroll to the draft).
         session.onLoreDraftReady = () => {};
         session.onLoreEditUpdate = () => {
-            const edits = [...session.loreEdits.entries()].flatMap(([filePath, entry]) =>
-                entry.changeSet.edits
-                    .filter((e) => e.state === 'pending')
-                    .map((edit) => ({
-                        edit,
-                        filePath,
-                        fileBasename: entry.fileBasename,
-                        anchorMessageId: entry.anchorMessageId
-                    }))
-            );
-            this.lintPanel?.coWriterSetLoreEdits(edits);
+            this.lintPanel?.coWriterSetLoreEdits(session.getLoreEditCardViews());
         };
         session.onProposedLoreImagesUpdate = () => {
-            const proposals = [...session.proposedLoreImages.entries()].map(([filePath, entry]) => ({
-                filePath,
-                fileBasename: entry.fileBasename,
-                images: entry.images,
-                anchorMessageId: entry.anchorMessageId
-            }));
-            this.lintPanel?.coWriterSetProposedLoreImages(proposals);
+            this.lintPanel?.coWriterSetProposedLoreImages(session.getLoreImageCardViews());
         };
     }
 
@@ -2507,8 +2491,8 @@ export default class EventideQuillPlugin extends Plugin {
      * passes false: it snapshots the OUTGOING chat, then starts a fresh one
      * (whose id is null), so the saved id must not carry over.
      */
-    async snapshotCoWriterSession(rememberId = true): Promise<void> {
-        if (this.coWriterSession.chatHistory.length === 0) return;
+    async snapshotCoWriterSession(rememberId = true): Promise<boolean> {
+        if (this.coWriterSession.chatHistory.length === 0) return false;
         const mode = this.lintPanel?.coWriterGetMode?.() ?? 'discuss';
         const state = this.coWriterSession.snapshotState(mode);
         const dir = resolveSessionsDir(this.pluginDataDir);
@@ -2521,8 +2505,10 @@ export default class EventideQuillPlugin extends Plugin {
             if (rememberId) {
                 this.currentCoWriterSessionId = entry.id;
             }
+            return true;
         } catch (err) {
             console.warn('Quill: co-writer session snapshot failed', err);
+            return false;
         }
     }
 
