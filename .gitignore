@@ -22,6 +22,9 @@ main.js
 # Same release-artifact pattern as main.js.
 styles.css
 
+# jscpd duplication-report output (local detail runs via `npm run lint:dup:report`; gitignored)
+jscpd-report/
+
 # Exclude sourcemaps
 *.map
 

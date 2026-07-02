@@ -7,6 +7,7 @@ export default tseslint.config(
 	globalIgnores([
 		'node_modules',
 		'dist',
+		'.planning', // gitignored local-only scratch (PR scope docs, sizing scripts, etc.)
 		'esbuild.config.mjs',
 		'prettier.config.mjs',
 		'version-bump.mjs',
