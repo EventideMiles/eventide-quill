@@ -1,5 +1,7 @@
 # Eventide Quill
 
+[![Sponsor](https://img.shields.io/badge/sponsor-30363C?logo=github-sponsors&logoColor=white)](https://github.com/sponsors/EventideMiles)
+
 A feedback-first, novelist-focused writing assistant for Obsidian.
 
 MIT license. Built from scratch. Mobile-ready. Local-model first.
@@ -65,6 +67,26 @@ Styles are authored in SCSS and compiled to `styles.css` — edit the sources un
 - **Capability-based model roles.** Models declare a role (`chat`, `embed`, `image`, or `chat-image`); the right model is resolved per task — a non-vision model never receives pixels.
 - **Subagents for context isolation.** Heavy batch tasks run in a fresh context and return a summary, so the main conversation stays lean and responsive — local-model friendly (one inference at a time).
 - **Mobile as a first-class target.** Test on phone before shipping desktop.
+
+## Sponsors
+
+Eventide Quill is MIT-licensed and free for everyone — the same feature-complete plugin for all, no paywalls. If it's part of your writing practice, consider [sponsoring on GitHub](https://github.com/sponsors/EventideMiles). Sponsorships keep the tool free, local-first, and open-source forever — no vendor lock-in.
+
+Tiers (rewards are recognition + influence, not gated features — every tier gets the whole plugin):
+
+- **$5/mo — Beta Reader:** your name under "Supported by Beta Readers" below, plus a community role in project discussions.
+- **$25/mo — Editor:** your logo under "Supported by Editors," 3× vote weight in monthly maintenance polls, a monthly suggestion queue, and behind-the-scenes project updates.
+- **$50/mo — Pro/team:** prominent logo placement, priority bug-report review (within 48 hours), and a quarterly 30-minute office-hours call for setup, lorebook, or workflow tuning. Custom/enterprise options available ($100+).
+
+See the [sponsor page](https://github.com/sponsors/EventideMiles) for full details.
+
+### Supported by Beta Readers
+
+*Be the first — [sponsor at the Beta Reader tier](https://github.com/sponsors/EventideMiles).*
+
+### Supported by Editors
+
+*Be the first — [sponsor at the Editor tier](https://github.com/sponsors/EventideMiles).*
 
 ## License
 

@@ -139,6 +139,13 @@ export interface EventideQuillSettings {
     lorebookFandomWikis: string[];
     /** Danger setting: when on, the model may query ANY Fandom wiki, ignoring the allowlist. Default: off. */
     lorebookFandomAllowAllWikis: boolean;
+    /**
+     * Local Fandom cache gate. When on, fandom_page/fandom_image write through to a
+     * sidecar on every live fetch, and (from Stage 3) the cache answers even when
+     * `lorebookNetworkTools` is off — consent is at sync time, silent after.
+     * Default: on (strictly improves drafting privacy). See `.planning/pr-local-fandom-cache.md`.
+     */
+    lorebookFandomCacheEnabled: boolean;
     /** Wikipedia language subdomain (e.g., 'en', 'fr', 'de'). */
     lorebookWikipediaLang: string;
     /** Per-tool result truncation cap (approximate tokens). */
@@ -288,6 +295,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     lorebookNetworkTools: true,
     lorebookFandomWikis: [],
     lorebookFandomAllowAllWikis: false,
+    lorebookFandomCacheEnabled: true,
     lorebookWikipediaLang: 'en',
     lorebookToolMaxTokens: 2000,
     lorebookImageTools: true,
@@ -1312,6 +1320,29 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(content)
+            .setName('Fandom page cache')
+            .setDesc(
+                'Save lookups to a local cache so repeats skip the network — more private, and works offline once cached. Lives in the plugin data folder, not your vault.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.lorebookFandomCacheEnabled).onChange(async (value) => {
+                    this.plugin.settings.lorebookFandomCacheEnabled = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
+            .setName('Sync fandom wiki cache')
+            .setDesc(
+                'Download every page from an allowlisted wiki into the local cache. Fair-rate and cancelable (via the cancel command). Useful before going offline.'
+            )
+            .addButton((btn) =>
+                btn.setButtonText('Sync now').onClick(() => {
+                    this.plugin.pickFandomWikiForSync();
+                })
+            );
+
+        new Setting(content)
             .setName('Wikipedia language')
             .setDesc('Wikipedia language subdomain (e.g., "en", "fr", "de"). Default: en.')
             .addText((text) =>
@@ -1662,6 +1693,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookNetworkTools = DEFAULT_SETTINGS.lorebookNetworkTools;
                     this.plugin.settings.lorebookFandomWikis = [...DEFAULT_SETTINGS.lorebookFandomWikis];
                     this.plugin.settings.lorebookFandomAllowAllWikis = DEFAULT_SETTINGS.lorebookFandomAllowAllWikis;
+                    this.plugin.settings.lorebookFandomCacheEnabled = DEFAULT_SETTINGS.lorebookFandomCacheEnabled;
                     this.plugin.settings.lorebookWikipediaLang = DEFAULT_SETTINGS.lorebookWikipediaLang;
                     this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
                     this.plugin.settings.lorebookImageTools = DEFAULT_SETTINGS.lorebookImageTools;
@@ -2968,6 +3000,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookNetworkTools = DEFAULT_SETTINGS.lorebookNetworkTools;
                     this.plugin.settings.lorebookFandomWikis = [...DEFAULT_SETTINGS.lorebookFandomWikis];
                     this.plugin.settings.lorebookFandomAllowAllWikis = DEFAULT_SETTINGS.lorebookFandomAllowAllWikis;
+                    this.plugin.settings.lorebookFandomCacheEnabled = DEFAULT_SETTINGS.lorebookFandomCacheEnabled;
                     this.plugin.settings.lorebookWikipediaLang = DEFAULT_SETTINGS.lorebookWikipediaLang;
                     this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
                     this.plugin.settings.lorebookImageTools = DEFAULT_SETTINGS.lorebookImageTools;

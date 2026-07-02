@@ -11,7 +11,7 @@ import { downscaleToJpegBase64, isImageContentType } from '../image-utils';
  */
 
 /** Custom User-Agent to comply with Wikimedia's API policy (200 req/min tier). */
-export const MEDIAWIKI_UA = 'EventideQuill/0.16.0 (https://github.com/EventideMiles/eventide-quill)';
+export const MEDIAWIKI_UA = 'EventideQuill/0.17.0 (https://github.com/EventideMiles/eventide-quill)';
 
 /** Minimum interval (ms) between requests to the same host. */
 const MIN_INTERVAL_MS = 500;
@@ -92,6 +92,60 @@ export async function mediawikiSearch(host: string, query: string, limit = 5): P
         // Snippets contain HTML highlights — strip tags for clean text.
         snippet: stripHtml(r.snippet)
     }));
+}
+
+/**
+ * Total article count for a wiki's Main namespace, via `meta=siteinfo`. Used
+ * by the bulk-sync indexer to report size + let the writer judge before a long
+ * sync. Returns 0 if the field is missing.
+ */
+export async function mediawikiArticleCount(host: string): Promise<number> {
+    const url = `https://${host}/api.php?action=query&meta=siteinfo&siprop=statistics&format=json&origin=*`;
+    await rateLimit(host);
+    const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
+    if (response.status !== 200) {
+        throw new Error(`siteinfo failed: HTTP ${response.status}`);
+    }
+    const stats = (response.json as { query?: { statistics?: { articles?: number } } }).query?.statistics;
+    return stats?.articles ?? 0;
+}
+
+/**
+ * Enumerate every page title in a wiki's Main namespace (namespace 0) via
+ * `list=allpages` with `apcontinue` pagination (500 per batch). Used by the
+ * bulk-sync indexer. Reuses the per-host rate limiter and checks the abort
+ * signal between batches. Returns all titles in one array (fine even for large
+ * wikis — tens of thousands of short strings).
+ */
+export async function mediawikiAllPages(host: string, signal?: AbortSignal): Promise<string[]> {
+    const titles: string[] = [];
+    let apcontinue = '';
+    for (;;) {
+        if (signal?.aborted) break;
+        await rateLimit(host);
+        let url =
+            `https://${host}/api.php?action=query&list=allpages` + `&apnamespace=0&aplimit=500&format=json&origin=*`;
+        if (apcontinue) url += `&apcontinue=${encodeURIComponent(apcontinue)}`;
+        const response = await requestUrl({
+            url,
+            method: 'GET',
+            headers: { 'User-Agent': MEDIAWIKI_UA },
+            throw: false
+        });
+        if (response.status !== 200) {
+            throw new Error(`allpages enumeration failed: HTTP ${response.status}`);
+        }
+        const data = response.json as {
+            query?: { allpages?: Array<{ title: string }> };
+            continue?: { apcontinue?: string };
+        };
+        const pages = data.query?.allpages ?? [];
+        for (const p of pages) titles.push(p.title);
+        const next = data['continue' as keyof typeof data];
+        apcontinue = (next as { apcontinue?: string } | undefined)?.apcontinue ?? '';
+        if (!apcontinue) break;
+    }
+    return titles;
 }
 
 /**
@@ -208,13 +262,24 @@ export async function mediawikiExtract(host: string, title: string): Promise<Med
  * @param host    The wiki host.
  * @param query   The search term.
  * @param maxTokens  Truncate the extract to this many approximate tokens.
- * @returns Either the extract text, or a candidate-list string.
+ * @returns A {@link MediaWikiLookupResult} — `text` for the response, plus
+ *   `matchedTitle`/`matchedExtract` when the lookup resolved to a single
+ *   page's extract (for cache write-through by the fandom_lookup caller).
  */
-export async function mediawikiLookup(host: string, query: string, maxTokens: number): Promise<string> {
+export interface MediaWikiLookupResult {
+    /** The formatted response string (truncated extract, candidate list, or no-results message). */
+    text: string;
+    /** Set only when the lookup resolved to a single page's extract — the canonical title. */
+    matchedTitle?: string;
+    /** The full (untruncated) extract text when `matchedTitle` is set. */
+    matchedExtract?: string;
+}
+
+export async function mediawikiLookup(host: string, query: string, maxTokens: number): Promise<MediaWikiLookupResult> {
     const results = await mediawikiSearch(host, query, 5);
 
     if (results.length === 0) {
-        return `No results found for "${query}" on ${host}.`;
+        return { text: `No results found for "${query}" on ${host}.` };
     }
 
     // If the first result's title matches the query closely, or there's only
@@ -230,7 +295,11 @@ export async function mediawikiLookup(host: string, query: string, maxTokens: nu
                 extract.extract.length > maxChars
                     ? extract.extract.slice(0, maxChars) + '\n...[truncated]'
                     : extract.extract;
-            return `${extract.title} (${host}):\n${text}`;
+            return {
+                text: `${extract.title} (${host}):\n${text}`,
+                matchedTitle: extract.title,
+                matchedExtract: extract.extract
+            };
         }
     }
 
@@ -238,10 +307,11 @@ export async function mediawikiLookup(host: string, query: string, maxTokens: nu
     // Titles are quoted so the model can reliably extract the exact title
     // (rather than guessing where the title ends and the snippet begins).
     const lines = results.map((r, i) => `${i + 1}. "${r.title}" — ${r.snippet.slice(0, 100)}`);
-    return (
-        `Found ${results.length} results for "${query}" on ${host}. ` +
-        `Use the *_page tool with the exact title (including quotes) from the list below to fetch the full extract:\n${lines.join('\n')}`
-    );
+    return {
+        text:
+            `Found ${results.length} results for "${query}" on ${host}. ` +
+            `Use the *_page tool with the exact title (including quotes) from the list below to fetch the full extract:\n${lines.join('\n')}`
+    };
 }
 
 /**

@@ -1,0 +1,9 @@
+{
+    "path": ["src"],
+    "format": ["typescript"],
+    "minLines": 6,
+    "minTokens": 70,
+    "mode": "weak",
+    "ignore": ["**/node_modules/**", "**/slash-command-suggest.ts"],
+    "threshold": 5
+}

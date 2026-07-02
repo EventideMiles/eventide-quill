@@ -20,6 +20,7 @@ MIT license. Built from scratch. Mobile-ready. Local-model first.
 - **Formatter: Prettier** (`prettier.config.mjs`: `singleQuote`, `tabWidth: 4`, `printWidth: 120`, `trailingComma: 'none'`, `semi: true`)
 - **Linting: ESLint** with `eslint-plugin-obsidianmd` (configured in `eslint.config.mts`)
 - **Style linting: stylelint** + `stylelint-scss` on `styles/**/*.scss` (configured in `.stylelintrc.json`). Lenient, color-focused: enforces `color-no-hex` (use Obsidian CSS vars / `rgba(var(--color-*-rgb), …)` instead) and a few safety nets. `scss/comment-no-empty` is deliberately disabled — the bare `//` dividers inside block comments are intentional.
+- **Duplication: jscpd v5** (Rust engine; dev-only, never bundled into `main.js`) — copy-paste detector gated in CI via `npm run lint:dup`. Configured in `.jscpd.json`: `minLines` 6, `minTokens` 70, `mode: weak` (skip comment tokens so JSDoc doesn't inflate the count), `threshold: 5` over duplicated **lines** (baseline 2.49%; **ratchet down** as duplication is extracted — the number should only ever decrease). `src/ui/slash-command-suggest.ts` is excluded via `ignore` as a known transitional mirror of `FileMentionSuggest`; a shared `SuggestBase` extraction is tracked in `.planning/road-to-1.0.0.md` PR 6 — remove the ignore entry when the base lands. The v5 Rust engine dropped v4's inline `jscpd:ignore-file` directive, so file-level exclusion lives in `.jscpd.json`, not at the code site.
 - **Types: `obsidian`** type definitions (configured in `tsconfig.json`)
 - **Editor config: `.editorconfig`** (also declares `quote_type = single`)
 
@@ -33,6 +34,8 @@ Scripts (see `package.json`):
 | `npm run lint` | `eslint .` then `stylelint 'styles/**/*.scss'` |
 | `npm run lint:styles` | `stylelint 'styles/**/*.scss'` (SCSS only) |
 | `npm run lint:fix` | `eslint . --fix` then `prettier --write 'src/**/*.ts'` then `stylelint --fix 'styles/**/*.scss'` |
+| `npm run lint:dup` | `jscpd -c .jscpd.json -r threshold` — copy-paste duplication gate; exits non-zero when duplication exceeds the `.jscpd.json` threshold. Ratchet the threshold down as duplication is extracted. |
+| `npm run lint:dup:report` | `jscpd -c .jscpd.json -r console,html -o jscpd-report` — local detail: console clone list + browsable HTML report at `jscpd-report/jscpd-report.html` (gitignored). |
 | `npm run prettier:check` | `prettier --check 'src/**/*.ts'` |
 | `npm run prettier:fix` | `prettier --write 'src/**/*.ts'` |
 | `npm run sass` | `sass styles/main.scss styles.css` (one-shot build of styles.css from SCSS sources) |
@@ -48,10 +51,11 @@ No automated test framework exists in this project (no jest/vitest/mocha, no `*.
 
 1. `npm run build` (sass + Prettier + `tsc` + esbuild), and
 2. `npm run lint`, and
-3. Manual smoke test in Obsidian (especially on mobile) for UI or provider changes.
-4. For release builds, also run `npm run build:release` to verify minification and `__DEV__` tree-shaking work correctly.
+3. `npm run lint:dup` (jscpd duplication gate — fails if the duplicated-lines % exceeds the `.jscpd.json` threshold), and
+4. Manual smoke test in Obsidian (especially on mobile) for UI or provider changes.
+5. For release builds, also run `npm run build:release` to verify minification and `__DEV__` tree-shaking work correctly.
 
-CI (`.github/workflows/lint.yml`) runs `build` + `lint` on every push and PR across Node 20/22/24. CI for releases (`.github/workflows/release.yml`) runs `build:release` instead.
+CI (`.github/workflows/lint.yml`) runs `build` + `lint` + `lint:dup` on every push and PR across Node 20/22/24. CI for releases (`.github/workflows/release.yml`) runs `build:release` instead.
 
 ## `__DEV__` compile-time constant
 
@@ -167,7 +171,8 @@ src/
       measure-folder.ts, calculate-file-sizes.ts, edit-note.ts, insert-note.ts, append-to-note.ts, revise-edit.ts,
       run-lorebook-batch.ts, research.ts (subagent spawners → SubagentSession),
       propose-entry.ts, fetch-url.ts, fetch-image-url.ts, get-lore-image.ts,
-      fandom-lookup.ts, wikipedia-lookup.ts, mediawiki.ts (shared MediaWiki client)
+      fandom-lookup.ts, wikipedia-lookup.ts, mediawiki.ts (shared MediaWiki client),
+      fandom-cache.ts (local Fandom cache sidecar — PR 2: write-through + cache-first + bulk indexer)
   ui/                  # Views, modals, panels
     quill-sidebar.ts (~1.3k lines — tabs: linter/context/review/cowriter/dashboard/lorebook),
     co-writer-panel.ts (~2.0k lines), context-panel.ts, review-panel.ts,

@@ -46,6 +46,9 @@ import {
     type AnalysisScope
 } from './ai/analysis';
 import { createReadOnlyToolRegistry } from './ai/tools';
+import { FandomCache } from './ai/tools/fandom-cache';
+import { isValidFandomSubdomain } from './ai/tools/fandom-lookup';
+import { mediawikiArticleCount } from './ai/tools/mediawiki';
 import type { ChatMessage } from './ai/provider';
 
 import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
@@ -331,6 +334,12 @@ export default class EventideQuillPlugin extends Plugin {
     /** Absolute path to the plugin's data directory (for dashboard snapshot storage). */
     private pluginDataDir = '';
 
+    /** Local Fandom wiki cache — fandom_* write-through + (Stage 3) cache-first lookup. */
+    fandomCache: FandomCache | null = null;
+
+    /** Abort controller for an in-flight bulk Fandom wiki sync (the indexer). */
+    fandomSyncAbort: AbortController | null = null;
+
     /** Plugin entry point: register commands, views, extensions, and event handlers. */
     async onload() {
         await this.loadSettings();
@@ -338,6 +347,10 @@ export default class EventideQuillPlugin extends Plugin {
 
         // Resolve the plugin's data directory for dashboard snapshot storage.
         this.pluginDataDir = `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+
+        // Local Fandom cache (sidecar under <pluginDataDir>/fandom-cache/). Stage 1:
+        // silent write-through on fandom_page/fandom_image live fetches.
+        this.fandomCache = FandomCache.create(this.app.vault, this.pluginDataDir);
 
         this.registerEditorExtension(
             getLintExtension(
@@ -835,6 +848,27 @@ export default class EventideQuillPlugin extends Plugin {
             name: 'Quill: Scan lorebook',
             callback: () => {
                 void this.refreshLorebook();
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-fandom-sync',
+            name: 'Quill: Sync fandom wiki cache',
+            callback: () => {
+                this.pickFandomWikiForSync();
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-fandom-sync-cancel',
+            name: 'Quill: Cancel fandom wiki sync',
+            callback: () => {
+                if (this.fandomSyncAbort) {
+                    this.fandomSyncAbort.abort();
+                    new Notice('Quill: cancelling fandom sync…');
+                } else {
+                    new Notice('Quill: no fandom sync is running.');
+                }
             }
         });
 
@@ -4126,6 +4160,82 @@ export default class EventideQuillPlugin extends Plugin {
             dismissedIds
         );
         this.lintPanel?.refreshLorebookPanel();
+    }
+
+    /** Show a picker of allowlisted Fandom wikis, then bulk-sync the chosen one. */
+    pickFandomWikiForSync(): void {
+        const wikis = this.settings.lorebookFandomWikis;
+        if (wikis.length === 0) {
+            new Notice('Quill: add a fandom wiki to the allowlist in settings first.');
+            return;
+        }
+        if (wikis.length === 1) {
+            void this.bulkSyncFandomWiki(wikis[0]!);
+            return;
+        }
+        const menu = new Menu();
+        for (const w of wikis) {
+            menu.addItem((item) => item.setTitle(w).onClick(() => void this.bulkSyncFandomWiki(w)));
+        }
+        menu.showAtPosition({ x: Math.floor(window.innerWidth / 2), y: Math.floor(window.innerHeight / 2) });
+    }
+
+    /**
+     * Bulk-sync (index) an entire allowlisted Fandom wiki: enumerate every
+     * Main-namespace page and cache its extract locally, so the writer has the
+     * whole wiki available offline/private. Fair-rate (500ms/host), cancelable
+     * via the "Cancel Fandom wiki sync" command. Progress surfaces as Notices.
+     */
+    async bulkSyncFandomWiki(wiki: string): Promise<void> {
+        // Validate the subdomain before any path is built — the allowlist is
+        // free-text on save, so a malformed entry (dots, slashes, "..") must not
+        // reach FandomCache.wikiDir and escape the cache root. Matches the gate
+        // `validateWiki` applies to the fandom_* tools.
+        if (!isValidFandomSubdomain(wiki)) {
+            new Notice(`Quill: "${wiki}" is not a valid Fandom wiki subdomain (letters, digits, hyphens only).`);
+            return;
+        }
+        if (!this.settings.lorebookFandomCacheEnabled) {
+            new Notice('Quill: enable the fandom page cache setting first.');
+            return;
+        }
+        if (this.fandomSyncAbort) {
+            new Notice('Quill: a fandom sync is already running — cancel it first.');
+            return;
+        }
+        if (!this.fandomCache) return;
+        const host = `${wiki}.fandom.com`;
+        this.fandomSyncAbort = new AbortController();
+        const signal = this.fandomSyncAbort.signal;
+        // Pre-estimate via siteinfo so the writer sees the scale up front.
+        let approx = 0;
+        try {
+            approx = await mediawikiArticleCount(host);
+        } catch {
+            // Non-fatal — proceed without the estimate.
+        }
+        const sizeNote = approx > 0 ? ` (~${approx} articles — this may take a while)` : '';
+        new Notice(`Quill: syncing ${wiki}${sizeNote}…`, 6000);
+        try {
+            const result = await this.fandomCache.bulkSyncWiki(wiki, {
+                signal,
+                onProgress: (done, total) => {
+                    const interval = Math.max(1, Math.floor(total / 20));
+                    if (done % interval === 0 || done === total) {
+                        new Notice(`Quill: ${wiki} — ${done}/${total} pages`, 4000);
+                    }
+                }
+            });
+            if (signal.aborted) {
+                new Notice(`Quill: cancelled — ${result.cached} pages cached from ${wiki}.`);
+            } else {
+                new Notice(`Quill: synced ${result.cached}/${result.total} pages from ${wiki}.`, 8000);
+            }
+        } catch (e) {
+            new Notice(`Quill: sync of ${wiki} failed — ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+            if (this.fandomSyncAbort?.signal === signal) this.fandomSyncAbort = null;
+        }
     }
 
     /**

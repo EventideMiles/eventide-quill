@@ -54,6 +54,7 @@ import {
 } from './vision';
 import { SubagentSession, type SubagentView, type SubagentConfig } from './subagent-session';
 import { resolveNoteFile } from './tools/lore-edit-helpers';
+import { CACHE_HIT_MARKER } from './tools/fandom-lookup';
 import {
     clearDiffEdits,
     diffEditsField,
@@ -712,7 +713,7 @@ export interface CoWriterChatMessage {
      * message rather than as separate chat entries so they don't interfere
      * with the panel's streaming-placeholder logic.
      */
-    toolUses?: { name: string; argsSummary: string; error?: string }[];
+    toolUses?: { name: string; argsSummary: string; error?: string; cached?: boolean }[];
     /**
      * Ids of subagents spawned by this turn's tool round
      * ({@link SubagentSession.id}). The panel looks each up in its subagent
@@ -1419,8 +1420,13 @@ export class CoWriterSession {
         if (!lastMsg || lastMsg.role !== 'assistant' || !lastMsg.toolUses) return;
         lastMsg.toolUses = lastMsg.toolUses.map((use, i) => {
             const execResult = results[i];
-            if (execResult?.failed) {
+            if (!execResult) return use;
+            if (execResult.failed) {
                 return { ...use, error: execResult.result };
+            }
+            // Cache-hit marker — fandom_* cache-first results embed it (see CACHE_HIT_MARKER).
+            if (execResult.result.includes(CACHE_HIT_MARKER)) {
+                return { ...use, cached: true };
             }
             return use;
         });

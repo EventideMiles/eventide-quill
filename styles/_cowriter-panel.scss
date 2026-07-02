@@ -859,6 +859,18 @@
         }
     }
 
+    &__tool-use-cached {
+        margin-left: $space-xs;
+        padding: 0 $space-xs;
+        color: var(--text-success, var(--text-accent));
+        font-size: var(--font-smallest);
+        font-style: normal;
+        font-weight: 600;
+        line-height: 1.6;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
     /* Regime B "Describing image…" indicator — renders in the chat area (in
        place of the "Thinking..." placeholder) while the proxy caption call is
        in flight. Matches the tool-use visual language: left border, muted

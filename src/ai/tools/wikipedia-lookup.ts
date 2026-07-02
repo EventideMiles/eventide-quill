@@ -51,7 +51,7 @@ export function createWikipediaLookupTool(maxResultTokens: number, lang: string)
 
             const host = wikipediaHost(lang);
             try {
-                return await mediawikiLookup(host, query, maxResultTokens);
+                return (await mediawikiLookup(host, query, maxResultTokens)).text;
             } catch (caught) {
                 const msg = caught instanceof Error ? caught.message : String(caught);
                 return `Error looking up "${query}" on ${host}: ${msg}`;

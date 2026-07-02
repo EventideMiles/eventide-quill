@@ -3,6 +3,13 @@ import type EventideQuillPlugin from '../main';
 import type { SlashCommand } from '../settings';
 import { SLASH_COMMAND_NAME_PATTERN } from '../settings';
 
+// NOTE: this suggest class intentionally mirrors FileMentionSuggest's
+// lifecycle/keydown/render pattern. It is excluded from jscpd duplication
+// detection via .jscpd.json (the v5 Rust engine dropped the inline
+// jscpd:ignore-file directive v4 honored). A shared SuggestBase extraction
+// is tracked as road-to-1.0.0.md PR 6 (the DRY-last sweep); remove the
+// ignore entry there when the base lands and this file thins out.
+
 interface RankedCommand extends SlashCommand {
     /** Index of the matched substring within `name` (lowercased). -1 when matched by fallback. */
     matchStart: number;

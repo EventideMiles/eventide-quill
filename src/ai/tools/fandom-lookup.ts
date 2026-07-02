@@ -9,6 +9,80 @@ import {
     mediawikiPageImage,
     mediawikiSearch
 } from './mediawiki';
+import { FANDOM_DEFAULT_LICENSE, fandomPageSourceUrl, type FandomCache } from './fandom-cache';
+
+/**
+ * Fandom subdomain shape: a single DNS label (letters, digits, hyphens) — no
+ * dots, slashes, or other segments that could escape the `${wiki}.fandom.com`
+ * host template or the `<cacheDir>/<wiki>` path. Shared by tool validation and
+ * the bulk-sync guard (`bulkSyncFandomWiki`) so a wiki value is checked at every
+ * entry point before any path is built.
+ */
+const FANDOM_SUBDOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+export function isValidFandomSubdomain(wiki: string): boolean {
+    return FANDOM_SUBDOMAIN_RE.test(wiki);
+}
+
+/**
+ * Substring embedded in cached tool results so the UI can badge cache hits.
+ * `annotateToolUseErrors` in `co-writer.ts` matches against this; the cached
+ * page/image return strings build their `[cached …]` text from it so the badge
+ * stays in sync if the marker ever changes.
+ */
+export const CACHE_HIT_MARKER = '[cached';
+
+/** Resolve the cache for this request, honoring the `lorebookFandomCacheEnabled` gate. */
+function cacheFor(ctx: ToolContext): FandomCache | null {
+    return ctx.plugin.settings.lorebookFandomCacheEnabled ? ctx.plugin.fandomCache : null;
+}
+
+/**
+ * Write a page to the local Fandom cache after a successful live fetch
+ * (Stage 1 write-through). Best-effort + fire-and-forget: a cache failure
+ * must never fail the tool call. Gated by `lorebookFandomCacheEnabled`.
+ */
+function tryCachePage(ctx: ToolContext, wiki: string, title: string, text: string, aliases: string[] = []): void {
+    const cache = cacheFor(ctx);
+    if (!cache) return;
+    if (__DEV__ && ctx.plugin.settings.enableDebugLogging) {
+        console.warn(`[fandom-cache] WRITE page wiki=${wiki} title="${title}" aliases=[${aliases.join(', ')}]`);
+    }
+    void cache.putPage(
+        wiki,
+        title,
+        {
+            text,
+            sourceUrl: fandomPageSourceUrl(wiki, title),
+            license: FANDOM_DEFAULT_LICENSE,
+            retrievedAt: Date.now()
+        },
+        aliases
+    );
+}
+
+/**
+ * Write an image to the local Fandom cache after a successful live fetch
+ * (Stage 1 write-through). Best-effort + fire-and-forget. Gated by
+ * `lorebookFandomCacheEnabled`.
+ */
+function tryCacheImage(
+    ctx: ToolContext,
+    wiki: string,
+    key: string,
+    base64: string,
+    contentType: string,
+    sourceUrl: string,
+    originalFilename: string
+): void {
+    const cache = cacheFor(ctx);
+    if (!cache) return;
+    void cache.putImage(wiki, key, base64, {
+        sourceUrl,
+        originalFilename,
+        contentType,
+        license: FANDOM_DEFAULT_LICENSE
+    });
+}
 
 /**
  * Validate the wiki subdomain against the allowed list. Returns an error
@@ -23,7 +97,7 @@ function validateWiki(wiki: string, allowedWikis: string[], allowAll: boolean): 
     // path separators, dots, query strings, and protocol fragments so the
     // value can never escape the `${wiki}.fandom.com` host template. `allowAll`
     // only bypasses the allowlist check below, not this sanitization.
-    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(wiki)) {
+    if (!isValidFandomSubdomain(wiki)) {
         return `Error: "wiki" must be a single Fandom subdomain (letters, digits, hyphens only). Got "${wiki}".`;
     }
     if (allowAll) return null; // danger mode: any Fandom wiki allowed
@@ -83,7 +157,7 @@ export function createFandomLookupTool(maxResultTokens: number, allowedWikis: st
         maxResultTokens,
         requiresNetwork: true,
 
-        async execute(args: Record<string, unknown>, _ctx: ToolContext): Promise<string> {
+        async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
             const wiki = typeof args.wiki === 'string' ? args.wiki.trim().toLowerCase() : '';
             const query = typeof args.query === 'string' ? args.query.trim() : '';
 
@@ -92,8 +166,42 @@ export function createFandomLookupTool(maxResultTokens: number, allowedWikis: st
             if (!query) return 'Error: "query" is required.';
 
             const host = `${wiki}.fandom.com`;
+
+            // Stage 2: cache-first. A repeat of the same query hits the alias
+            // written on the prior lookup's unambiguous extract — no network.
+            const cache = cacheFor(ctx);
+            if (cache) {
+                const cached = await cache.getPage(wiki, query);
+                if (__DEV__ && ctx.plugin.settings.enableDebugLogging) {
+                    console.warn(
+                        `[fandom-cache] fandom_lookup wiki=${wiki} query="${query}" → ${cached ? 'HIT (no network)' : 'MISS → live'}`
+                    );
+                }
+                if (cached) {
+                    const maxChars = maxResultTokens * 4;
+                    const text =
+                        cached.text.length > maxChars
+                            ? cached.text.slice(0, maxChars) + '\n...[truncated]'
+                            : cached.text;
+                    const date = new Date(cached.retrievedAt).toISOString().slice(0, 10);
+                    return `${query} (${host}) ${CACHE_HIT_MARKER} ${date} — no network request]:\n${text}`;
+                }
+            } else if (__DEV__ && ctx.plugin.settings.enableDebugLogging) {
+                console.warn(
+                    '[fandom-cache] fandom_lookup cache inactive (lorebookFandomCacheEnabled off or fandomCache null)'
+                );
+            }
+
             try {
-                return await mediawikiLookup(host, query, maxResultTokens);
+                const result = await mediawikiLookup(host, query, maxResultTokens);
+                // Cache the unambiguous extract (the common case for a character
+                // name) so a repeat of the same query cache-hits — fandom_lookup
+                // is usually the model's first call, so without this the cache
+                // stays empty until fandom_page is invoked.
+                if (result.matchedTitle && result.matchedExtract) {
+                    tryCachePage(ctx, wiki, result.matchedTitle, result.matchedExtract, [query]);
+                }
+                return result.text;
             } catch (caught) {
                 const msg = caught instanceof Error ? caught.message : String(caught);
                 return `Error looking up "${query}" on ${host}: ${msg}`;
@@ -138,7 +246,7 @@ export function createFandomPageTool(maxResultTokens: number, allowedWikis: stri
         maxResultTokens,
         requiresNetwork: true,
 
-        async execute(args: Record<string, unknown>, _ctx: ToolContext): Promise<string> {
+        async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
             const wiki = typeof args.wiki === 'string' ? args.wiki.trim().toLowerCase() : '';
             const title = typeof args.title === 'string' ? args.title.trim() : '';
 
@@ -147,11 +255,32 @@ export function createFandomPageTool(maxResultTokens: number, allowedWikis: stri
             if (!title) return 'Error: "title" is required.';
 
             const host = `${wiki}.fandom.com`;
+
+            // Stage 2: cache-first. A hit returns immediately with no network call.
+            const cache = cacheFor(ctx);
+            if (cache) {
+                const cached = await cache.getPage(wiki, title);
+                if (cached) {
+                    const maxChars = maxResultTokens * 4;
+                    const text =
+                        cached.text.length > maxChars
+                            ? cached.text.slice(0, maxChars) + '\n...[truncated]'
+                            : cached.text;
+                    const date = new Date(cached.retrievedAt).toISOString().slice(0, 10);
+                    return `${title} (${host}) ${CACHE_HIT_MARKER} ${date} — no network request]:\n${text}`;
+                }
+            }
+
             try {
                 const extract = await mediawikiExtract(host, title);
                 if (!extract) {
                     return `No page found for "${title}" on ${host}. Use fandom_lookup to search for related topics.`;
                 }
+                // Stage 1: silent write-through to the local cache (best-effort).
+                // Write under the canonical title (extract.title) AND the title the
+                // model asked for (alias) so a repeat of either form cache-hits —
+                // MediaWiki resolves partial/casual titles to a canonical form.
+                tryCachePage(ctx, wiki, extract.title, extract.extract, [title]);
                 const maxChars = maxResultTokens * 4;
                 const text =
                     extract.extract.length > maxChars
@@ -214,7 +343,7 @@ export function createFandomImageTool(
         maxResultTokens,
         requiresNetwork: true,
 
-        async execute(args: Record<string, unknown>, _ctx: ToolContext): Promise<ToolResult> {
+        async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
             const wiki = typeof args.wiki === 'string' ? args.wiki.trim().toLowerCase() : '';
             const query = typeof args.query === 'string' ? args.query.trim() : '';
             const image = typeof args.image === 'string' ? args.image.trim() : '';
@@ -229,6 +358,20 @@ export function createFandomImageTool(
             try {
                 // Path A: fetch a specific named image from the gallery.
                 if (image) {
+                    // Stage 2: cache-first for the specific-filename path.
+                    const cache = cacheFor(ctx);
+                    if (cache) {
+                        const cached = await cache.getImage(wiki, image);
+                        if (cached) {
+                            const date = new Date(cached.meta.retrievedAt).toISOString().slice(0, 10);
+                            return {
+                                text:
+                                    `Fetched "${image}" from ${host} (${cached.meta.contentType}) ` +
+                                    `${CACHE_HIT_MARKER} ${date} — no network request].`,
+                                images: [cached.base64]
+                            };
+                        }
+                    }
                     const info = await mediawikiImageInfo(host, image, maxDimension);
                     if (!info) {
                         return {
@@ -241,6 +384,7 @@ export function createFandomImageTool(
                         };
                     }
                     const { base64, contentType } = await downloadAndDownscaleImage(info.imageUrl, maxDimension);
+                    tryCacheImage(ctx, wiki, image, base64, contentType, info.imageUrl, image);
                     return {
                         text: `Fetched "${image}" from ${host} (${contentType}, downscaled to ≤${maxDimension}px).`,
                         images: [base64]
@@ -272,6 +416,7 @@ export function createFandomImageTool(
                             leadImage.imageUrl,
                             maxDimension
                         );
+                        tryCacheImage(ctx, wiki, title, base64, contentType, leadImage.imageUrl, title);
                         return {
                             text:
                                 `Fetched the lead image for "${title}" from ${host} (${contentType}, ` +
