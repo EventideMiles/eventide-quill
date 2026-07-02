@@ -1332,6 +1332,17 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(content)
+            .setName('Sync fandom wiki cache')
+            .setDesc(
+                'Download every page from an allowlisted wiki into the local cache. Fair-rate and cancelable (via the cancel command). Useful before going offline.'
+            )
+            .addButton((btn) =>
+                btn.setButtonText('Sync now').onClick(() => {
+                    this.plugin.pickFandomWikiForSync();
+                })
+            );
+
+        new Setting(content)
             .setName('Wikipedia language')
             .setDesc('Wikipedia language subdomain (e.g., "en", "fr", "de"). Default: en.')
             .addText((text) =>

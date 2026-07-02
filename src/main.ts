@@ -4163,7 +4163,7 @@ export default class EventideQuillPlugin extends Plugin {
 
     /**
     /** Show a picker of allowlisted Fandom wikis, then bulk-sync the chosen one. */
-    private pickFandomWikiForSync(): void {
+    pickFandomWikiForSync(): void {
         const wikis = this.settings.lorebookFandomWikis;
         if (wikis.length === 0) {
             new Notice('Quill: add a fandom wiki to the allowlist in settings first.');
