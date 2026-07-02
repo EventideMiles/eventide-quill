@@ -134,7 +134,7 @@ export function createFandomLookupTool(maxResultTokens: number, allowedWikis: st
         maxResultTokens,
         requiresNetwork: true,
 
-        async execute(args: Record<string, unknown>, _ctx: ToolContext): Promise<string> {
+        async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
             const wiki = typeof args.wiki === 'string' ? args.wiki.trim().toLowerCase() : '';
             const query = typeof args.query === 'string' ? args.query.trim() : '';
 
@@ -144,7 +144,15 @@ export function createFandomLookupTool(maxResultTokens: number, allowedWikis: st
 
             const host = `${wiki}.fandom.com`;
             try {
-                return await mediawikiLookup(host, query, maxResultTokens);
+                const result = await mediawikiLookup(host, query, maxResultTokens);
+                // Cache the unambiguous extract (the common case for a character
+                // name) so a repeat of the same query cache-hits — fandom_lookup
+                // is usually the model's first call, so without this the cache
+                // stays empty until fandom_page is invoked.
+                if (result.matchedTitle && result.matchedExtract) {
+                    tryCachePage(ctx, wiki, result.matchedTitle, result.matchedExtract, [query]);
+                }
+                return result.text;
             } catch (caught) {
                 const msg = caught instanceof Error ? caught.message : String(caught);
                 return `Error looking up "${query}" on ${host}: ${msg}`;
