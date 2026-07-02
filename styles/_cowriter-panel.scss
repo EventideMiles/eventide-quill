@@ -862,11 +862,10 @@
     &__tool-use-cached {
         margin-left: $space-xs;
         padding: 0 $space-xs;
-        border-radius: $radius-full;
-        background: var(--background-modifier-success);
-        color: var(--text-success, var(--text-normal));
+        color: var(--text-success, var(--text-accent));
         font-size: var(--font-smallest);
         font-style: normal;
+        font-weight: 600;
         line-height: 1.6;
         text-transform: uppercase;
         letter-spacing: 0.5px;
