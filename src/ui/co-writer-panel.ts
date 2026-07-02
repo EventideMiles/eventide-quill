@@ -1143,6 +1143,12 @@ export class CoWriterPanel extends AbstractChatPanel {
                                     text: use.argsSummary
                                 });
                             }
+                            if (use.cached) {
+                                entry.createEl('span', {
+                                    cls: 'quill-cowriter-panel__tool-use-cached',
+                                    text: 'Cached'
+                                });
+                            }
                             // Right-click failed tool calls to copy the error
                             // reason for bug reporting.
                             if (failed && use.error) {
