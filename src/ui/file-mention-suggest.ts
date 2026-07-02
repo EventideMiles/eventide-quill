@@ -233,7 +233,12 @@ export class FileMentionSuggest {
         const atIndex = textBeforeCursor.lastIndexOf('@');
         if (atIndex === -1) return;
 
-        const mention = `@${selected.file.path}`;
+        // Quote-wrap the path so the mention is space-safe: file paths like
+        // "Act 1 Plot.md" contain spaces, and the bare `@path` form truncates at
+        // the first space in resolveAtMentions. The quoted `@"path"` form is
+        // matched as a whole. (resolveAtMentions accepts both forms; the bare
+        // form remains for manual no-space typing.)
+        const mention = `@"${selected.file.path}"`;
         this.inputEl.value = textBeforeCursor.slice(0, atIndex) + mention + textAfterCursor;
 
         const newCursor = atIndex + mention.length;

@@ -100,6 +100,11 @@ export interface EventideQuillSettings {
     coWriterMaxOutputTokens: number;
     /** Max tool-calling rounds per response. 0 = unlimited. Default: 0. */
     coWriterMaxToolRounds: number;
+    /**
+     * How many saved co-writer conversations to retain on disk. Older sessions
+     * are LRU-evicted (by last-saved time) when the limit is exceeded. Default 25.
+     */
+    coWriterSessionHistoryLimit: number;
     coWriterVaultContext: boolean;
     coWriterAppendNewline: boolean;
     enableCoWriterThought: boolean;
@@ -262,6 +267,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     coWriterTemperature: 1.0,
     coWriterMaxOutputTokens: 2048,
     coWriterMaxToolRounds: 0,
+    coWriterSessionHistoryLimit: 25,
     coWriterVaultContext: true,
     coWriterAppendNewline: true,
     enableCoWriterThought: true,
@@ -2546,6 +2552,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.coWriterTemperature = DEFAULT_SETTINGS.coWriterTemperature;
                         this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
                         this.plugin.settings.coWriterMaxToolRounds = DEFAULT_SETTINGS.coWriterMaxToolRounds;
+                        this.plugin.settings.coWriterSessionHistoryLimit = DEFAULT_SETTINGS.coWriterSessionHistoryLimit;
                         this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
                         this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                         this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
@@ -2607,6 +2614,28 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             void this.plugin.saveSettings();
                         } else {
                             text.setValue(String(this.plugin.settings.coWriterMaxToolRounds));
+                            new Notice('Value must be a number ≥ 0');
+                        }
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName('Saved conversation limit')
+            .setDesc(
+                'How many co-writer conversations to keep on disk. Starting a new chat saves the current one; ' +
+                    'older sessions are deleted (newest-first) once this limit is exceeded. Set to 0 to keep all. ' +
+                    'Default: 25.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.coWriterSessionHistoryLimit))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 0) {
+                            this.plugin.settings.coWriterSessionHistoryLimit = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.coWriterSessionHistoryLimit));
                             new Notice('Value must be a number ≥ 0');
                         }
                     })

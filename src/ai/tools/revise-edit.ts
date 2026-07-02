@@ -95,6 +95,9 @@ export const reviseEditTool: Tool = {
         // unchanged. The length delta is recomputed at approve time, so later
         // edits' offset remapping stays correct.
         entry.changeSet.updateText(editId, newText);
+        // Re-anchor the card to this turn (latest-touch) so a revised edit's
+        // card follows the revise rather than the original add.
+        entry.anchorMessageId = session.currentAnchorMessageId();
         pushLoreEditDiff(opened.cm, entry.changeSet, file.path);
         session.onLoreEditUpdate?.();
 

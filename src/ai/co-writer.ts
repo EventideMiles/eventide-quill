@@ -27,7 +27,7 @@ import { parseDirectives, parseAllDirectives } from '../utils/directives';
 import { EmbeddingCache, rankBySimilarity } from './embedding-cache';
 import { parseProviderKey } from './provider-registry';
 import { parseEmbedFolderPath, loreFolderEmbedPaths } from '../utils/vault-files';
-import { ChangeSet } from '../core/change-set';
+import { ChangeSet, type ChangeSetJSON, type ProposedEdit } from '../core/change-set';
 import type { LoreEntryType, LoreDraftEntry, ProposedImage } from '../core/dashboard/lorebook-types';
 import { stripGallerySections } from '../core/dashboard/lorebook-scanner';
 
@@ -372,6 +372,28 @@ async function resolveEmbedPathsToMessages(
     return { regularPaths, messages };
 }
 
+/**
+ * Merge persistent context-file paths (the ±-button list) with per-message
+ * @-mention paths, preserving order and de-duplicating. @-mentions are passed
+ * explicitly into each send (see {@link CoWriterSession.sendDiscussion}) so the
+ * referenced files are deterministically included for THAT message — without
+ * relying on the fire-and-forget promotion to the persistent list landing
+ * before the send reads it (which could drop files when several were referenced
+ * at once).
+ */
+function mergeContextPaths(persistent: string[], mentionPaths?: string[]): string[] {
+    if (!mentionPaths || mentionPaths.length === 0) return persistent;
+    const seen = new Set(persistent);
+    const out = [...persistent];
+    for (const p of mentionPaths) {
+        if (!seen.has(p)) {
+            seen.add(p);
+            out.push(p);
+        }
+    }
+    return out;
+}
+
 export async function loadAdditionalContext(
     plugin: EventideQuillPlugin,
     contextFilePaths: string[],
@@ -666,6 +688,14 @@ export interface CoWriterOption {
 
 /** A chat message displayed in the co-writer panel. */
 export interface CoWriterChatMessage {
+    /**
+     * Stable per-session id (e.g. `msg_7`). Reviewable artifacts spawned during
+     * this turn — subagent cards, pending lore edits, proposed lore images —
+     * anchor to the message via this id so they render inline in the
+     * conversation flow at the turn that produced them, instead of stacking at
+     * the bottom. Minted by {@link CoWriterSession.pushChatMessage}.
+     */
+    id: string;
     role: 'user' | 'assistant';
     content: string;
     options?: CoWriterOption[];
@@ -684,6 +714,13 @@ export interface CoWriterChatMessage {
      */
     toolUses?: { name: string; argsSummary: string; error?: string }[];
     /**
+     * Ids of subagents spawned by this turn's tool round
+     * ({@link SubagentSession.id}). The panel looks each up in its subagent
+     * list to render the status card inline beneath this bubble. Empty/undefined
+     * for turns that didn't spawn a subagent.
+     */
+    subagentIds?: string[];
+    /**
      * Base64 JPEG thumbnails (no `data:` prefix) the writer pasted/dropped/
      * attached with this user message. Only set on user messages; rendered as
      * a thumbnail strip beneath the bubble text so the writer sees what they
@@ -691,6 +728,83 @@ export interface CoWriterChatMessage {
      * {@link prepareUserMessageWithImages} before the message reaches the API.
      */
     images?: string[];
+}
+
+/**
+ * Pending lore-edits entry for one file. `anchorMessageId` is the
+ * {@link CoWriterChatMessage.id} of the assistant turn that most recently
+ * added/modified an edit for this file; the panel renders the card inline
+ * beneath that bubble. Re-anchored on each touch (latest semantics).
+ */
+export interface LoreEditEntry {
+    changeSet: ChangeSet;
+    fileBasename: string;
+    anchorMessageId: string | null;
+}
+
+/**
+ * Pending lore-image-attachment entry for one file. `anchorMessageId` places
+ * the review card inline at the turn that attached the images.
+ */
+export interface ProposedLoreImageEntry {
+    fileBasename: string;
+    images: ProposedImage[];
+    anchorMessageId: string | null;
+}
+
+/**
+ * Serialized form of a co-writer session for persistence
+ * (see `conversation-store.ts`). Every field is plain JSON-roundtrippable data:
+ * {@link ChangeSet} via {@link ChangeSet.toJSON}, subagents as flat
+ * {@link SubagentView}s (dormant on restore — their `running` status is forced
+ * to `interrupted`). Ephemeral runtime concerns (AbortController, callbacks,
+ * editor locks) are intentionally absent and rebind on restore.
+ */
+export interface SerializedCoWriterState {
+    /** Co-writer mode active at snapshot time (`InputMode` as a plain string). */
+    mode: string;
+    chatHistory: CoWriterChatMessage[];
+    discussCurrentMessages: ChatMessage[];
+    loreCoachMessages: ChatMessage[];
+    manuscriptPath: string | null;
+    voiceProfile: VoiceProfile | null;
+    contextFilePaths: string[];
+    recentImages: string[];
+    fulfillChanges: ChangeSetJSON;
+    directChanges: ChangeSetJSON;
+    loreEdits: [string, { changeSet: ChangeSetJSON; fileBasename: string; anchorMessageId: string | null }][];
+    proposedLoreImages: [string, { fileBasename: string; images: ProposedImage[]; anchorMessageId: string | null }][];
+    subagents: SubagentView[];
+    activeSubagentId: string | null;
+    coachSession: CoachSession | null;
+    coachActive: boolean;
+    loreCoachSession: LoreCoachSession | null;
+    loreCoachActive: boolean;
+    currentLoreDraft: LoreDraftEntry | null;
+    currentOptions: CoWriterOption[];
+}
+
+/**
+ * If the conversation was saved mid-tool-round — the last message is an
+ * assistant turn that emitted `tool_calls` with no following `tool` results —
+ * append a synthetic "result unavailable" tool message per call so the provider
+ * isn't fed a malformed history on resume (OpenAI/Ollama reject an assistant
+ * tool_calls turn that isn't immediately followed by matching tool results).
+ * Returns the array unchanged when the tail is well-formed.
+ */
+function stubDanglingToolCalls(messages: ChatMessage[]): ChatMessage[] {
+    const last = messages[messages.length - 1];
+    if (last && last.role === 'assistant' && last.toolCalls && last.toolCalls.length > 0) {
+        const stubs: ChatMessage[] = last.toolCalls.map((c) => ({
+            role: 'tool',
+            content: 'Session was saved mid-tool-round; tool result unavailable.',
+            toolCallId: c.id,
+            name: c.name,
+            quillAnchorId: last.quillAnchorId
+        }));
+        return [...messages, ...stubs];
+    }
+    return messages;
 }
 
 /**
@@ -728,6 +842,50 @@ export class CoWriterSession {
     chatHistory: CoWriterChatMessage[] = [];
 
     /**
+     * Monotonic counter for {@link CoWriterChatMessage.id} within this session.
+     * Ids only need to be unique within a session (artifacts anchor to messages
+     * by id), so this counter is not persisted — it restarts at 0 on load and
+     * any restored messages keep their original ids (which remain unique by
+     * construction within the restored set).
+     */
+    private nextMessageId = 0;
+
+    /**
+     * Push a display chat message with a freshly minted stable id. Use this
+     * instead of `chatHistory.push(...)` so every message is guaranteed an id
+     * that reviewable artifacts (subagent cards, lore edits, lore images) can
+     * anchor to. Callers pass the message without an id; it is stamped here.
+     */
+    private pushChatMessage(msg: Omit<CoWriterChatMessage, 'id'>): void {
+        this.chatHistory.push({ ...msg, id: `msg_${++this.nextMessageId}` });
+    }
+
+    /**
+     * Id of the last message in {@link chatHistory}, or null if empty. Pending
+     * lore edits and proposed lore images produced during the current tool round
+     * stamp this as their anchor so they render beneath the assistant turn that
+     * produced them. Called from tool execution, where the last entry is the
+     * in-flight assistant message of this turn.
+     */
+    currentAnchorMessageId(): string | null {
+        const last = this.chatHistory[this.chatHistory.length - 1];
+        return last ? last.id : null;
+    }
+
+    /**
+     * Record that `subagentId` was spawned by the current (last) assistant turn,
+     * so its status card renders beneath that bubble. Called at subagent spawn,
+     * which always happens during the calling turn's tool round (the last
+     * chatHistory entry is that turn's assistant message).
+     */
+    private attachSubagentToLastMessage(subagentId: string): void {
+        const last = this.chatHistory[this.chatHistory.length - 1];
+        if (last && last.role === 'assistant') {
+            last.subagentIds = [...(last.subagentIds ?? []), subagentId];
+        }
+    }
+
+    /**
      * Subagent batch editors spawned via `run_lorebook_batch`, keyed by id.
      * Each runs in its own fresh context (isolated from this conversation) but
      * shares the {@link loreEdits} review queue via the tools' side effects.
@@ -736,6 +894,14 @@ export class CoWriterSession {
      * deferred conversation-persistence feature can layer on later.
      */
     subagents = new Map<string, SubagentSession>();
+    /**
+     * Dormant subagent views restored from a saved session (no live
+     * {@link SubagentSession} instance behind them). Merged into
+     * {@link getSubagentViews} so they render + drill down read-only; their
+     * `running` status was forced to `interrupted` at restore time. Cleared on
+     * new-chat / mode-switch like the live map.
+     */
+    restoredSubagentViews: SubagentView[] = [];
     /** Active subagent id for the drill-down view (stage 2); null = parent view. */
     activeSubagentId: string | null = null;
 
@@ -837,8 +1003,13 @@ export class CoWriterSession {
     /** Called when a new lore draft is ready for the review card. */
     onLoreDraftReady: (() => void) | null = null;
 
-    /** Pending note edits keyed by vault path (from edit_note / insert_note / append_to_note tools). */
-    loreEdits: Map<string, { changeSet: ChangeSet; fileBasename: string }> = new Map();
+    /**
+     * Pending note edits keyed by vault path (from edit_note / insert_note /
+     * append_to_note tools). `anchorMessageId` ties the file's review card to
+     * the assistant turn that most recently touched it (latest-touch) so the
+     * card renders inline beneath that bubble instead of at the panel bottom.
+     */
+    loreEdits: Map<string, LoreEditEntry> = new Map();
     /**
      * Pending image attachments keyed by vault path (from the
      * `attach_lore_image` tool). Path B of the lore-entry-images feature:
@@ -846,9 +1017,10 @@ export class CoWriterSession {
      * `propose_entry` images, which travel with a new-entry draft). Each
      * file's images are reviewed individually; on approval the bytes are
      * written to the attachments folder and the `![[file]]` embed is
-     * inserted into the entry's gallery section.
+     * inserted into the entry's gallery section. `anchorMessageId` places the
+     * card inline at the turn that produced it (latest-touch on each add).
      */
-    proposedLoreImages: Map<string, { fileBasename: string; images: ProposedImage[] }> = new Map();
+    proposedLoreImages: Map<string, ProposedLoreImageEntry> = new Map();
     /**
      * Files that the tool opened in a new tab (not previously open). These
      * tabs are closed when the edit is approved or rejected so multi-file
@@ -987,7 +1159,7 @@ export class CoWriterSession {
         }
 
         // Add user's message to chat history
-        this.chatHistory.push({
+        this.pushChatMessage({
             role: 'user',
             content: direction || 'Continue the passage naturally from the cursor position.'
         });
@@ -1074,7 +1246,7 @@ export class CoWriterSession {
                 ];
             }
 
-            this.chatHistory.push({
+            this.pushChatMessage({
                 role: 'assistant',
                 content: 'Here are three possible directions:',
                 options: this.currentOptions,
@@ -1272,7 +1444,12 @@ export class CoWriterSession {
      *    conversation is summarized by the AI into a single context head.
      *  - The new user message is always preserved below the context head.
      */
-    async sendDiscussion(plugin: EventideQuillPlugin, message: string, images?: string[]): Promise<void> {
+    async sendDiscussion(
+        plugin: EventideQuillPlugin,
+        message: string,
+        images?: string[],
+        mentionPaths?: string[]
+    ): Promise<void> {
         const chat = plugin.getDefaultChatProvider();
         if (!chat.provider) {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
@@ -1307,7 +1484,7 @@ export class CoWriterSession {
         if (editor) this.lockEditor();
 
         // Add user's message to display-only chat history
-        this.chatHistory.push({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
+        this.pushChatMessage({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
 
         const fullText = editor?.getValue() ?? '';
         const proseForContext = editor
@@ -1324,7 +1501,11 @@ export class CoWriterSession {
         if (vaultContext) {
             injectedContext.push({ role: 'system', content: `Vault context for reference:\n${vaultContext}` });
         }
-        const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths, fullText);
+        const additionalContextMessages = await loadAdditionalContext(
+            plugin,
+            mergeContextPaths(this.contextFilePaths, mentionPaths),
+            fullText
+        );
         injectedContext.push(...additionalContextMessages);
         const discussPlotMap = await buildPlotMapMessage(plugin);
         if (discussPlotMap) {
@@ -1422,7 +1603,8 @@ export class CoWriterSession {
         this.discussCurrentMessages.push({
             role: 'user',
             content: prepared.content,
-            ...(prepared.images ? { images: prepared.images } : {})
+            ...(prepared.images ? { images: prepared.images } : {}),
+            quillAnchorId: this.currentAnchorMessageId() ?? undefined
         });
 
         if (__DEV__ && plugin.settings.enableDebugLogging) {
@@ -1485,7 +1667,7 @@ export class CoWriterSession {
                 // Push a fresh draft before discussStartStreaming so the
                 // panel's placeholder-check (last message already assistant?)
                 // is a no-op — we own the message we'll replace post-stream.
-                this.chatHistory.push({ role: 'assistant', content: '' });
+                this.pushChatMessage({ role: 'assistant', content: '' });
                 this.onDiscussStartStreaming?.();
                 this.onDiscussChunk?.('');
 
@@ -1511,7 +1693,10 @@ export class CoWriterSession {
                 // render and duplicate the response text).
                 const lastIdx = this.chatHistory.length - 1;
                 if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
+                    const prev = this.chatHistory[lastIdx];
                     this.chatHistory[lastIdx] = {
+                        id: prev.id,
+                        subagentIds: prev.subagentIds,
                         role: 'assistant',
                         content: result.response,
                         thought: result.thought || undefined,
@@ -1530,7 +1715,8 @@ export class CoWriterSession {
                 this.discussCurrentMessages.push({
                     role: 'assistant',
                     content: result.response,
-                    toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined
+                    toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
+                    quillAnchorId: this.currentAnchorMessageId() ?? undefined
                 });
 
                 // Update token estimate so the indicator reflects tool-result
@@ -1551,7 +1737,8 @@ export class CoWriterSession {
                         role: 'tool',
                         content: toolResult.text,
                         toolCallId: call.id,
-                        name: call.name
+                        name: call.name,
+                        quillAnchorId: this.currentAnchorMessageId() ?? undefined
                     });
                     if (toolResult.images && toolResult.images.length > 0) {
                         collectedImages.push(...toolResult.images);
@@ -1629,7 +1816,12 @@ export class CoWriterSession {
      * 3. Plan — AI creates a structured plan based on clarified intent
      * 4. Direction — AI provides concrete, actionable direction
      */
-    async sendCoach(plugin: EventideQuillPlugin, message: string, images?: string[]): Promise<void> {
+    async sendCoach(
+        plugin: EventideQuillPlugin,
+        message: string,
+        images?: string[],
+        mentionPaths?: string[]
+    ): Promise<void> {
         const chat = plugin.getDefaultChatProvider();
         if (!chat.provider) {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
@@ -1662,7 +1854,7 @@ export class CoWriterSession {
         if (editor) this.lockEditor();
 
         // Add user message to display history (same as sendDiscussion)
-        this.chatHistory.push({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
+        this.pushChatMessage({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
 
         const fullText = editor?.getValue() ?? '';
         const proseForContext = editor
@@ -1678,7 +1870,11 @@ export class CoWriterSession {
         if (vaultContext) {
             injectedContext.push({ role: 'system', content: `Vault context for reference:\n${vaultContext}` });
         }
-        const additionalContextMessages = await loadAdditionalContext(plugin, this.contextFilePaths, fullText);
+        const additionalContextMessages = await loadAdditionalContext(
+            plugin,
+            mergeContextPaths(this.contextFilePaths, mentionPaths),
+            fullText
+        );
         injectedContext.push(...additionalContextMessages);
         const coachPlotMap = await buildPlotMapMessage(plugin);
         if (coachPlotMap) {
@@ -1749,7 +1945,8 @@ export class CoWriterSession {
                 this.discussCurrentMessages.push({
                     role: 'user',
                     content: prepared.content,
-                    ...(prepared.images ? { images: prepared.images } : {})
+                    ...(prepared.images ? { images: prepared.images } : {}),
+                    quillAnchorId: this.currentAnchorMessageId() ?? undefined
                 });
             } else {
                 // Normal follow-up (discern or clarify phase)
@@ -1768,7 +1965,8 @@ export class CoWriterSession {
                 this.discussCurrentMessages.push({
                     role: 'user',
                     content: prepared.content,
-                    ...(prepared.images ? { images: prepared.images } : {})
+                    ...(prepared.images ? { images: prepared.images } : {}),
+                    quillAnchorId: this.currentAnchorMessageId() ?? undefined
                 });
             }
         }
@@ -1866,7 +2064,7 @@ export class CoWriterSession {
                     ...this.discussCurrentMessages.slice(1)
                 ];
 
-                this.chatHistory.push({ role: 'assistant', content: '' });
+                this.pushChatMessage({ role: 'assistant', content: '' });
                 this.onDiscussStartStreaming?.();
                 this.onDiscussChunk?.('');
 
@@ -1892,7 +2090,10 @@ export class CoWriterSession {
                 // Replace the draft with the finalized message.
                 const lastIdx = this.chatHistory.length - 1;
                 if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
+                    const prev = this.chatHistory[lastIdx];
                     this.chatHistory[lastIdx] = {
+                        id: prev.id,
+                        subagentIds: prev.subagentIds,
                         role: 'assistant',
                         content: result.response,
                         thought: result.thought || undefined,
@@ -1909,7 +2110,8 @@ export class CoWriterSession {
                 this.discussCurrentMessages.push({
                     role: 'assistant',
                     content: result.response,
-                    toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined
+                    toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
+                    quillAnchorId: this.currentAnchorMessageId() ?? undefined
                 });
 
                 this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
@@ -1925,7 +2127,8 @@ export class CoWriterSession {
                         role: 'tool',
                         content: toolResult.text,
                         toolCallId: call.id,
-                        name: call.name
+                        name: call.name,
+                        quillAnchorId: this.currentAnchorMessageId() ?? undefined
                     });
                     if (toolResult.images && toolResult.images.length > 0) {
                         coachCollectedImages.push(...toolResult.images);
@@ -2102,7 +2305,7 @@ export class CoWriterSession {
         const coachSummary = this.buildCoachSummary();
         const prompt = getCoWriterCoachToOptions(proseForOptions || '(empty document)', coachSummary, direction);
 
-        this.chatHistory.push({
+        this.pushChatMessage({
             role: 'user',
             content: direction || 'Generate continuation options based on the coaching provided.'
         });
@@ -2163,7 +2366,7 @@ export class CoWriterSession {
                 ];
             }
 
-            this.chatHistory.push({
+            this.pushChatMessage({
                 role: 'assistant',
                 content: 'Here is a continuation option based on the coaching:',
                 options: this.currentOptions,
@@ -2243,7 +2446,7 @@ export class CoWriterSession {
         this.onOptionsLoading?.(true);
 
         // Add user message to display history.
-        this.chatHistory.push({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
+        this.pushChatMessage({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
 
         // Initialize session on first turn.
         if (!this.loreCoachSession) {
@@ -2273,7 +2476,8 @@ export class CoWriterSession {
             this.loreCoachMessages.push({
                 role: 'user',
                 content: prepared.content,
-                ...(prepared.images ? { images: prepared.images } : {})
+                ...(prepared.images ? { images: prepared.images } : {}),
+                quillAnchorId: this.currentAnchorMessageId() ?? undefined
             });
         }
 
@@ -2357,7 +2561,7 @@ export class CoWriterSession {
                 // its own push when so — by pre-pushing our own draft we
                 // prevent a duplicate placeholder and own the message we'll
                 // finalize in place after the stream.
-                this.chatHistory.push({ role: 'assistant', content: '' });
+                this.pushChatMessage({ role: 'assistant', content: '' });
                 this.thoughtBuffer = '';
                 this.onDiscussStartStreaming?.();
                 this.onDiscussChunk?.('');
@@ -2459,7 +2663,10 @@ export class CoWriterSession {
                 // output) rather than a pre-tool snapshot.
                 const lastIdx = this.chatHistory.length - 1;
                 if (lastIdx >= 0 && this.chatHistory[lastIdx]?.role === 'assistant') {
+                    const prev = this.chatHistory[lastIdx];
                     this.chatHistory[lastIdx] = {
+                        id: prev.id,
+                        subagentIds: prev.subagentIds,
                         role: 'assistant',
                         content: response,
                         thought: thought || undefined,
@@ -2476,7 +2683,8 @@ export class CoWriterSession {
                 this.loreCoachMessages.push({
                     role: 'assistant',
                     content: response,
-                    toolCalls: toolCalls.length > 0 ? toolCalls : undefined
+                    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+                    quillAnchorId: this.currentAnchorMessageId() ?? undefined
                 });
 
                 // No tools called (or tools disabled) → this round is final.
@@ -2495,7 +2703,8 @@ export class CoWriterSession {
                         role: 'tool',
                         content: toolResult.text,
                         toolCallId: call.id,
-                        name: call.name
+                        name: call.name,
+                        quillAnchorId: this.currentAnchorMessageId() ?? undefined
                     });
                     if (toolResult.images && toolResult.images.length > 0) {
                         loreCollectedImages.push(...toolResult.images);
@@ -3024,12 +3233,15 @@ export class CoWriterSession {
      * model can compose multi-step changes to one note without clobbering
      * earlier proposals. Edits for different files are independent.
      */
-    getOrCreateLoreEdit(filePath: string, fileBasename: string): { changeSet: ChangeSet; fileBasename: string } {
+    getOrCreateLoreEdit(filePath: string, fileBasename: string): LoreEditEntry {
         let entry = this.loreEdits.get(filePath);
         if (!entry) {
-            entry = { changeSet: new ChangeSet(), fileBasename };
+            entry = { changeSet: new ChangeSet(), fileBasename, anchorMessageId: null };
             this.loreEdits.set(filePath, entry);
         }
+        // Re-anchor to the current turn on every touch (latest semantics) so
+        // the card follows the most recent edit rather than the first.
+        entry.anchorMessageId = this.currentAnchorMessageId();
         return entry;
     }
 
@@ -3039,15 +3251,14 @@ export class CoWriterSession {
      * character getting one image per form via separate `attach_lore_image`
      * calls); they share one review card per file.
      */
-    getOrCreateProposedLoreImages(
-        filePath: string,
-        fileBasename: string
-    ): { fileBasename: string; images: ProposedImage[] } {
+    getOrCreateProposedLoreImages(filePath: string, fileBasename: string): ProposedLoreImageEntry {
         let entry = this.proposedLoreImages.get(filePath);
         if (!entry) {
-            entry = { fileBasename, images: [] };
+            entry = { fileBasename, images: [], anchorMessageId: null };
             this.proposedLoreImages.set(filePath, entry);
         }
+        // Re-anchor to the current turn on every touch (latest semantics).
+        entry.anchorMessageId = this.currentAnchorMessageId();
         return entry;
     }
 
@@ -3176,6 +3387,10 @@ export class CoWriterSession {
             sub.onChatUpdate = () => this.onChatUpdate?.();
             sub.onStatusChange = () => this.onChatUpdate?.();
             this.subagents.set(sub.id, sub);
+            // Anchor this subagent's status card to the calling assistant turn
+            // so it renders inline in the chat flow instead of stacking at the
+            // bottom of the panel.
+            this.attachSubagentToLastMessage(sub.id);
             this.onChatUpdate?.();
             const summary = await sub.run(); // throws AbortError on cancel → propagates, skips remaining chunks
             batchSummaries.push(`Batch ${i + 1}/${runChunks.length} (${chunkPaths.length} file(s)): ${summary}`);
@@ -3237,6 +3452,9 @@ export class CoWriterSession {
         sub.onChatUpdate = () => this.onChatUpdate?.();
         sub.onStatusChange = () => this.onChatUpdate?.();
         this.subagents.set(sub.id, sub);
+        // Anchor this subagent's status card to the calling assistant turn so
+        // it renders inline in the chat flow instead of stacking at the bottom.
+        this.attachSubagentToLastMessage(sub.id);
         this.onChatUpdate?.();
         const summary = await sub.run();
         this.onChatUpdate?.();
@@ -3245,7 +3463,45 @@ export class CoWriterSession {
 
     /** Serializable snapshots of all subagents (status cards + drill-down views). */
     getSubagentViews(): SubagentView[] {
-        return [...this.subagents.values()].map((s) => s.toView());
+        // Live subagents first (fresh values()), then any restored views merged
+        // in. Restored views are dormant (no live SubagentSession instance) —
+        // they render + drill down read-only, with `running` forced to
+        // `interrupted` at restore time.
+        return [...this.subagents.values()].map((s) => s.toView()).concat(this.restoredSubagentViews);
+    }
+
+    /** Build the list of pending lore-edit card views (matching LoreEditCardView shape). */
+    getLoreEditCardViews(): {
+        edit: ProposedEdit;
+        filePath: string;
+        fileBasename: string;
+        anchorMessageId: string | null;
+    }[] {
+        return [...this.loreEdits.entries()].flatMap(([filePath, entry]) =>
+            entry.changeSet.edits
+                .filter((e) => e.state === 'pending')
+                .map((edit) => ({
+                    edit,
+                    filePath,
+                    fileBasename: entry.fileBasename,
+                    anchorMessageId: entry.anchorMessageId
+                }))
+        );
+    }
+
+    /** Build the list of pending lore-image-attachment card views (matching LoreImageCardView shape). */
+    getLoreImageCardViews(): {
+        filePath: string;
+        fileBasename: string;
+        images: ProposedImage[];
+        anchorMessageId: string | null;
+    }[] {
+        return [...this.proposedLoreImages.entries()].map(([filePath, entry]) => ({
+            filePath,
+            fileBasename: entry.fileBasename,
+            images: entry.images,
+            anchorMessageId: entry.anchorMessageId
+        }));
     }
 
     /** Drill down into a subagent's conversation (panel view switch). No-op if not found. */
@@ -3547,7 +3803,7 @@ export class CoWriterSession {
         const cursor = editor.getCursor();
         const cursorOffset = editor.posToOffset(cursor);
 
-        this.chatHistory.push({
+        this.pushChatMessage({
             role: 'user',
             content: direction || 'Continue the passage naturally from the cursor position.'
         });
@@ -3883,7 +4139,17 @@ export class CoWriterSession {
      */
     clearSubagents(): void {
         this.subagents.clear();
+        this.restoredSubagentViews = [];
         this.activeSubagentId = null;
+        // Strip the now-dangling subagent references from chat messages so the
+        // panel doesn't keep an inline card slot whose subagent is gone (the
+        // card would simply not render, but tidying avoids confusion and keeps
+        // a restored/saved history clean).
+        for (const msg of this.chatHistory) {
+            if (msg.subagentIds?.length) {
+                msg.subagentIds = undefined;
+            }
+        }
         this.onChatUpdate?.();
     }
 
@@ -3946,5 +4212,303 @@ export class CoWriterSession {
         this.optionsLoading = false;
         this.onChatUpdate?.();
         this.onOptionsLoading?.(false);
+    }
+
+    /**
+     * Snapshot the session's serializable state for persistence. `mode` is the
+     * co-writer mode active at snapshot time (the session doesn't own it; the
+     * caller passes it in from the panel). Ephemeral runtime concerns
+     * (AbortController, callbacks, editor locks, write queues) are omitted.
+     * {@link restoreState} is the inverse.
+     *
+     * Returns a DEEP CLONE: callers fire-and-forget the write (e.g. before
+     * `resetChat`), so the returned object must not share references with the
+     * live session — a synchronous reset following the snapshot call mutates
+     * the live message objects (e.g. `clearSubagents` strips `subagentIds`),
+     * which would otherwise corrupt the in-flight serialization.
+     */
+    snapshotState(mode: string): SerializedCoWriterState {
+        const snapshot: SerializedCoWriterState = {
+            mode,
+            chatHistory: this.chatHistory,
+            discussCurrentMessages: this.discussCurrentMessages,
+            loreCoachMessages: this.loreCoachMessages,
+            manuscriptPath: this.manuscriptPath,
+            voiceProfile: this.voiceProfile,
+            contextFilePaths: this.contextFilePaths,
+            recentImages: this.recentImages,
+            fulfillChanges: this.fulfillChanges.toJSON(),
+            directChanges: this.directChanges.toJSON(),
+            loreEdits: [...this.loreEdits.entries()].map(([filePath, entry]) => [
+                filePath,
+                {
+                    changeSet: entry.changeSet.toJSON(),
+                    fileBasename: entry.fileBasename,
+                    anchorMessageId: entry.anchorMessageId
+                }
+            ]),
+            proposedLoreImages: [...this.proposedLoreImages.entries()].map(([filePath, entry]) => [
+                filePath,
+                {
+                    fileBasename: entry.fileBasename,
+                    images: entry.images,
+                    anchorMessageId: entry.anchorMessageId
+                }
+            ]),
+            subagents: this.getSubagentViews(),
+            activeSubagentId: this.activeSubagentId,
+            coachSession: this.coachSession,
+            coachActive: this.coachActive,
+            loreCoachSession: this.loreCoachSession,
+            loreCoachActive: this.loreCoachActive,
+            currentLoreDraft: this.currentLoreDraft,
+            currentOptions: this.currentOptions
+        };
+        // The state is JSON by construction; a JSON round-trip deep-clones it
+        // (arrays, plain objects, base64 strings) so later live mutations don't
+        // leak into the in-flight persistence write.
+        return JSON.parse(JSON.stringify(snapshot)) as SerializedCoWriterState;
+    }
+
+    /**
+     * Restore serializable state from a snapshot. Overwrites the data fields
+     * without invoking the reset/clear methods (which have CM-diff / tab-close
+     * / abort side effects). Ephemeral fields (callbacks, AbortController,
+     * `app`) are left null/zeroed and rebind via `wireCoWriterPanel()` on the
+     * next entry point. Returns the stored mode so the caller can re-apply it
+     * to the panel. Subagents are restored as dormant views (no live session);
+     * any that were still `running` are forced to `interrupted`.
+     */
+    restoreState(state: SerializedCoWriterState): string {
+        // Drop any in-flight generation before overwriting (no-op if idle).
+        this.cancelGeneration();
+
+        this.chatHistory = state.chatHistory;
+        // Restart the message-id counter above the highest restored id so a
+        // continued conversation doesn't collide with restored anchors.
+        this.nextMessageId = this.chatHistory.reduce((max, m) => {
+            const n = Number.parseInt(m.id.replace(/^msg_/, ''), 10);
+            return Number.isFinite(n) ? Math.max(max, n) : max;
+        }, 0);
+        this.discussCurrentMessages = stubDanglingToolCalls(state.discussCurrentMessages);
+        this.loreCoachMessages = stubDanglingToolCalls(state.loreCoachMessages);
+        this.manuscriptPath = state.manuscriptPath;
+        this.voiceProfile = state.voiceProfile;
+        this.contextFilePaths = state.contextFilePaths;
+        this.recentImages = state.recentImages;
+        this.fulfillChanges = ChangeSet.fromJSON(state.fulfillChanges);
+        this.directChanges = ChangeSet.fromJSON(state.directChanges);
+        this.loreEdits = new Map(
+            state.loreEdits.map(([filePath, entry]) => [
+                filePath,
+                {
+                    changeSet: ChangeSet.fromJSON(entry.changeSet),
+                    fileBasename: entry.fileBasename,
+                    anchorMessageId: entry.anchorMessageId
+                }
+            ])
+        );
+        this.proposedLoreImages = new Map(
+            state.proposedLoreImages.map(([filePath, entry]) => [
+                filePath,
+                {
+                    fileBasename: entry.fileBasename,
+                    images: entry.images,
+                    anchorMessageId: entry.anchorMessageId
+                }
+            ])
+        );
+        // Subagents restore as dormant views; `running` → `interrupted`.
+        this.subagents = new Map();
+        this.restoredSubagentViews = state.subagents.map((s) =>
+            s.status === 'running' ? { ...s, status: 'interrupted' } : s
+        );
+        this.activeSubagentId = this.restoredSubagentViews.some((s) => s.id === state.activeSubagentId)
+            ? state.activeSubagentId
+            : null;
+        this.coachSession = state.coachSession;
+        this.coachActive = state.coachActive;
+        this.loreCoachSession = state.loreCoachSession;
+        this.loreCoachActive = state.loreCoachActive;
+        this.currentLoreDraft = state.currentLoreDraft;
+        this.currentOptions = state.currentOptions;
+        // Transient — not restored.
+        this.optionsLoading = false;
+        this.draftState = 'idle';
+        this.thoughtBuffer = '';
+
+        this.onChatUpdate?.();
+        return state.mode;
+    }
+
+    /**
+     * Whether a display message can be rewound to. A message is rewindable iff
+     * its id still appears as a `quillAnchorId` in the active mode's API array
+     * — i.e. the model still holds that turn verbatim. Turns that were folded
+     * into a compaction summary lose their anchor id and are NOT rewindable
+     * (rewinding them can't unwind the model's summarized memory). The options
+     * flow's display messages (never pushed to the API array) are also
+     * non-rewindable. Only meaningful for user messages (the only bubbles that
+     * offer the action).
+     */
+    isRewindableMessage(id: string, mode: string): boolean {
+        const arr = mode === 'lorebook' ? this.loreCoachMessages : this.discussCurrentMessages;
+        return arr.some((m) => m.quillAnchorId === id);
+    }
+
+    /**
+     * Rewind the conversation to BEFORE the user message with `id` ("undo this
+     * send"): discard that message and everything after it from the display
+     * (`chatHistory`) and from the model's API array, and drop any reviewable
+     * artifacts (subagents, pending lore edits, proposed images, lore draft)
+     * anchored to discarded messages. The API array is truncated in lockstep via
+     * `quillAnchorId` so the model genuinely forgets the discarded turns (its
+     * array ends on the assistant turn before the rewound message — well-formed).
+     * Then the mode phase is re-evaluated from the surviving history. The
+     * caller pre-fills the input with the discarded message's text so the
+     * writer can edit and resend.
+     */
+    rewindToMessage(id: string, mode: string): void {
+        const k = this.chatHistory.findIndex((m) => m.id === id);
+        if (k < 0) return;
+        const discardedText = this.chatHistory[k]?.content ?? '';
+        const kept = this.chatHistory.slice(0, k); // exclusive: drop the target + everything after
+        const keptIds = new Set(kept.map((m) => m.id));
+
+        this.chatHistory = kept;
+        // Restart the message-id counter above the highest kept id so continued
+        // conversation doesn't collide with surviving anchors.
+        this.nextMessageId = kept.reduce((max, m) => {
+            const n = Number.parseInt(m.id.replace(/^msg_/, ''), 10);
+            return Number.isFinite(n) ? Math.max(max, n) : max;
+        }, 0);
+
+        // Truncate the model's API array: keep system/context-head messages
+        // (no quillAnchorId) + any message anchored to a surviving display turn.
+        const truncateApi = (arr: ChatMessage[]): ChatMessage[] =>
+            arr.filter((m) => !m.quillAnchorId || keptIds.has(m.quillAnchorId));
+        this.discussCurrentMessages = truncateApi(this.discussCurrentMessages);
+        this.loreCoachMessages = truncateApi(this.loreCoachMessages);
+
+        // Drop reviewable artifacts anchored to discarded messages.
+        // Subagents: keep only those still referenced by a surviving message.
+        const referencedSubIds = new Set<string>();
+        for (const m of this.chatHistory) {
+            for (const sid of m.subagentIds ?? []) referencedSubIds.add(sid);
+        }
+        for (const sid of [...this.subagents.keys()]) {
+            if (!referencedSubIds.has(sid)) this.subagents.delete(sid);
+        }
+        this.restoredSubagentViews = this.restoredSubagentViews.filter((s) => referencedSubIds.has(s.id));
+        if (this.activeSubagentId && !referencedSubIds.has(this.activeSubagentId)) {
+            this.activeSubagentId = null;
+        }
+        // Pending lore edits / proposed images: drop entries anchored to gone messages.
+        for (const filePath of [...this.loreEdits.keys()]) {
+            const entry = this.loreEdits.get(filePath);
+            if (entry?.anchorMessageId && !keptIds.has(entry.anchorMessageId)) {
+                this.loreEdits.delete(filePath);
+            }
+        }
+        for (const filePath of [...this.proposedLoreImages.keys()]) {
+            const entry = this.proposedLoreImages.get(filePath);
+            if (entry?.anchorMessageId && !keptIds.has(entry.anchorMessageId)) {
+                this.proposedLoreImages.delete(filePath);
+            }
+        }
+        // Lore draft: re-derive from the last surviving message that carries one.
+        this.currentLoreDraft = null;
+        for (let i = this.chatHistory.length - 1; i >= 0; i--) {
+            if (this.chatHistory[i]?.loreDraft) {
+                this.currentLoreDraft = this.chatHistory[i]!.loreDraft ?? null;
+                break;
+            }
+        }
+
+        this.reevaluateModePhase(mode);
+
+        this.optionsLoading = false;
+        this.thoughtBuffer = '';
+        this.onChatUpdate?.();
+        this.onLoreEditUpdate?.();
+        this.onProposedLoreImagesUpdate?.();
+        void discardedText; // returned to caller via main.ts input pre-fill
+    }
+
+    /**
+     * Re-derive the coach / lorebook mode-session phase from the surviving
+     * `chatHistory` after a rewind (the stored phase was advanced past the cut
+     * point and is now stale). Mirrors the same heuristics the live flow uses to
+     * ADVANCE phase, replayed over the kept assistant turns. Discuss mode has no
+     * phase state, so it is a no-op. Run at rewind time so the phase indicator
+     * is correct immediately (idempotent if re-run on the next send).
+     */
+    private reevaluateModePhase(mode: string): void {
+        if (mode === 'coach') {
+            this.reevaluateCoachPhase();
+        } else if (mode === 'lorebook') {
+            this.reevaluateLoreCoachPhase();
+        }
+    }
+
+    /** Replay the coach phase machine over kept assistant turns. */
+    private reevaluateCoachPhase(): void {
+        const firstUser = this.chatHistory.find((m) => m.role === 'user');
+        const assistantTurns = this.chatHistory.filter((m) => m.role === 'assistant');
+        if (assistantTurns.length === 0) {
+            // No AI response yet → back to the discern/intent phase.
+            this.coachSession = firstUser
+                ? {
+                      phase: 'discern',
+                      response: '',
+                      summary: '',
+                      isFirstTurn: true,
+                      clarifyRound: 0
+                  }
+                : null;
+            this.coachActive = !!this.coachSession;
+            return;
+        }
+        // Replay the advance heuristic (mirrors the live flow): start at discern,
+        // then for each assistant turn advance per the askedQuestions rule.
+        let phase: CoachPhase = 'discern';
+        let clarifyRound = 0;
+        let lastResponse = '';
+        for (const turn of assistantTurns) {
+            lastResponse = turn.content;
+            const askedQuestions = turn.content.includes('?');
+            if (phase === 'discern') {
+                phase = 'clarify';
+                clarifyRound = 1;
+            } else if (phase === 'clarify') {
+                if (askedQuestions && clarifyRound < 2) {
+                    clarifyRound++;
+                } else {
+                    phase = 'plan';
+                }
+            } else if (phase === 'plan') {
+                phase = 'direction';
+            }
+        }
+        this.coachSession = {
+            phase,
+            response: lastResponse,
+            summary: phase === 'direction' ? lastResponse : (this.coachSession?.summary ?? ''),
+            isFirstTurn: false,
+            clarifyRound
+        };
+        this.coachActive = true;
+    }
+
+    /** Re-derive the lorebook coach phase/scope/rounds from kept history. */
+    private reevaluateLoreCoachPhase(): void {
+        const userTurns = this.chatHistory.filter((m) => m.role === 'user');
+        const scope = this.loreCoachSession?.scope ?? userTurns[0]?.content ?? '';
+        const rounds = userTurns.length;
+        const hasDraft = this.chatHistory.some((m) => m.loreDraft);
+        const entryType = hasDraft ? (this.currentLoreDraft?.entryType ?? null) : null;
+        const phase: LoreCoachPhase = hasDraft ? 'refine' : rounds > 1 ? 'develop' : 'discover';
+        this.loreCoachSession = { phase, scope, entryType, rounds };
+        this.loreCoachActive = true;
     }
 }

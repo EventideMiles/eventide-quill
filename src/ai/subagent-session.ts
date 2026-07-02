@@ -5,8 +5,13 @@ import { estimateTokens } from '../utils/tokens';
 import { executeToolCall, type ToolContext, type ToolRegistry } from './tools';
 import { injectImagesIntoMessages } from './vision';
 
-/** Lifecycle states for a subagent batch, surfaced in the drill-down UI (stage 2). */
-export type SubagentStatus = 'running' | 'succeeded' | 'failed';
+/**
+ * Lifecycle states for a subagent batch, surfaced in the drill-down UI (stage 2).
+ * `interrupted` is only ever set at restore time — a subagent that was still
+ * `running` when a session was saved cannot resume its loop, so it is forced to
+ * `interrupted` on load and remains browseable read-only.
+ */
+export type SubagentStatus = 'running' | 'succeeded' | 'failed' | 'interrupted';
 
 /** A display frame for the drill-down view (mirrors the parent's chat-history shape). */
 export interface SubagentChatMessage {

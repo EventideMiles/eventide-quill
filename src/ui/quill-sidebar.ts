@@ -11,15 +11,8 @@ import { ReviewPanel } from './review-panel';
 import { CoWriterPanel } from './co-writer-panel';
 import { renderDashboardTab, renderDashboardSettingsTab } from './dashboard-panel';
 import { renderLorebookTab } from './lorebook-panel';
-import type { InputMode } from './co-writer-panel';
-import type {
-    CoWriterChatMessage,
-    CoWriterOption,
-    DraftState,
-    CoachPhase,
-    LoreCoachPhase,
-    ProposedImage
-} from '../ai/co-writer';
+import type { InputMode, LoreEditCardView, LoreImageCardView } from './co-writer-panel';
+import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase, LoreCoachPhase } from '../ai/co-writer';
 import type { SubagentView } from '../ai/subagent-session';
 import type { ProposedEdit } from '../core/change-set';
 import type EventideQuillPlugin from '../main';
@@ -657,9 +650,11 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setSendMessageHandler((direction: string) => {
                 void this.plugin.sendCoWriterMessage(direction);
             });
-            this.coWriterPanel.setDiscussMessageHandler((message: string, images?: string[]) => {
-                void this.plugin.sendCoWriterDiscussion(message, images);
-            });
+            this.coWriterPanel.setDiscussMessageHandler(
+                (message: string, images?: string[], mentionPaths?: string[]) => {
+                    void this.plugin.sendCoWriterDiscussion(message, images, mentionPaths);
+                }
+            );
             this.coWriterPanel.setApplyOptionHandler((index: number) => {
                 const manuscriptPath = this.plugin.coWriterSession.manuscriptPath;
                 const view = findEditorView(this.app, manuscriptPath);
@@ -690,11 +685,22 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setNewChatHandler((clearContext: boolean) => {
                 this.plugin.resetCoWriterChat(clearContext);
             });
+            this.coWriterPanel.setSaveSnapshotHandler(() => {
+                void this.plugin.snapshotCoWriterSession().then((ok) => {
+                    if (ok) new Notice('Conversation saved.');
+                });
+            });
+            this.coWriterPanel.setHistoryHandler(() => {
+                void this.plugin.openCoWriterHistory();
+            });
+            this.coWriterPanel.setRewindHandler((messageId) => {
+                this.plugin.rewindCoWriterChat(messageId);
+            });
             this.coWriterPanel.setModeSwitchHandler(() => {
                 this.plugin.clearCoWriterSubagents();
             });
-            this.coWriterPanel.setCoachMessageHandler((message: string, images?: string[]) => {
-                void this.plugin.sendCoWriterCoach(message, images);
+            this.coWriterPanel.setCoachMessageHandler((message: string, images?: string[], mentionPaths?: string[]) => {
+                void this.plugin.sendCoWriterCoach(message, images, mentionPaths);
             });
             this.coWriterPanel.setCoachToOptionsHandler(() => {
                 void this.plugin.coWriterCoachToOptions();
@@ -778,18 +784,8 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setLoreCoachActive(session.loreCoachActive);
             this.coWriterPanel.setFulfillState(session.fulfillChanges.edits, session.fulfillActive);
             this.coWriterPanel.setDirectChange(session.directChanges.edits[0] ?? null);
-            const loreEditsList = [...session.loreEdits.entries()].flatMap(([filePath, entry]) =>
-                entry.changeSet.edits
-                    .filter((e) => e.state === 'pending')
-                    .map((edit) => ({ edit, filePath, fileBasename: entry.fileBasename }))
-            );
-            this.coWriterPanel.setLoreEdits(loreEditsList);
-            const proposedLoreImagesList = [...session.proposedLoreImages.entries()].map(([filePath, entry]) => ({
-                filePath,
-                fileBasename: entry.fileBasename,
-                images: entry.images
-            }));
-            this.coWriterPanel.setProposedLoreImages(proposedLoreImagesList);
+            this.coWriterPanel.setLoreEdits(session.getLoreEditCardViews());
+            this.coWriterPanel.setProposedLoreImages(session.getLoreImageCardViews());
             this.coWriterPanel.setSubagents(session.getSubagentViews());
             this.coWriterPanel.setActiveSubagent(session.activeSubagentId);
         }
@@ -992,6 +988,21 @@ export class QuillSidebarView extends ItemView {
         this.coWriterPanel?.setMode(mode);
     }
 
+    /** Read the co-writer panel's active mode (used for snapshot metadata). */
+    coWriterGetMode(): InputMode | null {
+        return this.coWriterPanel?.getMode() ?? null;
+    }
+
+    /** Pre-fill the co-writer chat input (used after a rewind). */
+    coWriterSetInputText(text: string): void {
+        this.coWriterPanel?.setInputText(text);
+    }
+
+    /** Restore the co-writer panel's mode WITHOUT side effects (restore path only). */
+    coWriterRestoreMode(mode: InputMode): void {
+        this.coWriterPanel?.restoreMode(mode);
+    }
+
     /** Set whether coach mode is active. */
     coWriterSetCoachActive(active: boolean): void {
         this.coWriterPanel?.setCoachActive(active);
@@ -1028,14 +1039,12 @@ export class QuillSidebarView extends ItemView {
     }
 
     /** Push the pending lore edits to the co-writer panel. */
-    coWriterSetLoreEdits(edits: { edit: ProposedEdit; filePath: string; fileBasename: string }[]): void {
+    coWriterSetLoreEdits(edits: LoreEditCardView[]): void {
         this.coWriterPanel?.setLoreEdits(edits);
     }
 
     /** Push the pending lore image attachments to the co-writer panel. */
-    coWriterSetProposedLoreImages(
-        proposals: { filePath: string; fileBasename: string; images: ProposedImage[] }[]
-    ): void {
+    coWriterSetProposedLoreImages(proposals: LoreImageCardView[]): void {
         this.coWriterPanel?.setProposedLoreImages(proposals);
     }
 
