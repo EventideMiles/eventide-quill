@@ -4243,6 +4243,23 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
+     * Clear the local cache for one Fandom wiki (Stage 4 management). Deletes
+     * the per-wiki sidecar dir (pages.json + images.json + img/ binaries) and
+     * drops the wiki from the in-memory presence set. Re-validate the subdomain
+     * before building any path — matches the {@link bulkSyncFandomWiki} guard so
+     * a malformed allowlist entry can't escape the cache root.
+     */
+    async clearFandomWikiCache(wiki: string): Promise<void> {
+        if (!isValidFandomSubdomain(wiki)) {
+            new Notice(`Quill: "${wiki}" is not a valid Fandom wiki subdomain (letters, digits, hyphens only).`);
+            return;
+        }
+        if (!this.fandomCache) return;
+        await this.fandomCache.clearWiki(wiki);
+        new Notice(`Quill: cleared the fandom cache for ${wiki}.`);
+    }
+
+    /**
      * General lorebook refresh — delegates to the document-scoped method.
      * Used by the `quill-lorebook-refresh` command and `setLoreEntryType`.
      * The Manuscript subtab manages its own refresh lifecycle.

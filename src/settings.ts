@@ -9,6 +9,7 @@ import type { ReadabilityFormula } from './core/dashboard/types';
 import type { LoreEntryType } from './core/dashboard/lorebook-types';
 import { LORE_ENTRY_TYPES, LORE_TYPE_LABELS } from './core/dashboard/lorebook-types';
 import type { WikiLinkBehavior } from './ai/prompts';
+import type { WikiStats } from './ai/tools/fandom-cache';
 
 export type LinterMode = 'all' | 'prose' | 'ai';
 export type SettingsTab = 'welcome' | 'general' | 'linter' | 'ai-providers' | 'model-behaviors';
@@ -428,6 +429,24 @@ class AddProviderModal extends SuggestModal<{ type: ProviderType; label: string;
     onChooseSuggestion(option: { type: ProviderType; label: string; defaultEndpoint: string }): void {
         this.onChoose(option.type, option.defaultEndpoint);
     }
+}
+
+/** Human-readable byte count for the per-wiki cache management rows (Stage 4). */
+function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+/** One-line summary of a wiki's cache for its management-row description (Stage 4). */
+function formatFandomCacheStats(stats: WikiStats): string {
+    const size = formatBytes(stats.sizeBytes);
+    if (stats.pages === 0 && stats.images === 0) {
+        return `Empty — ${size} on disk. Use "Sync now" above to populate.`;
+    }
+    const date = stats.lastSynced > 0 ? new Date(stats.lastSynced).toISOString().slice(0, 10) : 'never';
+    return `${stats.pages} page${stats.pages === 1 ? '' : 's'}, ${stats.images} image${stats.images === 1 ? '' : 's'} — ${size} on disk. Last synced: ${date}.`;
 }
 
 export class EventideQuillSettingTab extends PluginSettingTab {
@@ -934,9 +953,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             cls: 'quill-settings__welcome-privacy',
             text:
                 'Fandom queries respect an allowlist by default (empty = Fandom disabled); the ' +
-                '"Allow any Fandom wiki" danger toggle overrides this. AI providers you ' +
-                'configure receive the manuscript text you send them — pick local providers (Ollama, LM Studio) ' +
-                'to keep everything on your machine. Full per-tool controls live on the General tab.'
+                '"Allow any Fandom wiki" danger toggle overrides this. The Fandom page cache is a ' +
+                'separate consent surface: populating it is a network act, but once cached, those ' +
+                'pages answer locally even with network tools off — consent is at sync time, and ' +
+                'you can clear each wiki from the General tab. AI providers you configure receive ' +
+                'the manuscript text you send them — pick local providers (Ollama, LM Studio) to ' +
+                'keep everything on your machine. Full per-tool controls live on the General tab.'
         });
 
         content.createEl('div', {
@@ -1322,12 +1344,15 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         new Setting(content)
             .setName('Fandom page cache')
             .setDesc(
-                'Save lookups to a local cache so repeats skip the network — more private, and works offline once cached. Lives in the plugin data folder, not your vault.'
+                'Save lookups to a local cache so repeats skip the network — more private, and works offline once cached. ' +
+                    'Once populated, cached pages answer even with network tools off (consent is at sync time). ' +
+                    'Lives in the plugin data folder, not your vault.'
             )
             .addToggle((toggle) =>
                 toggle.setValue(this.plugin.settings.lorebookFandomCacheEnabled).onChange(async (value) => {
                     this.plugin.settings.lorebookFandomCacheEnabled = value;
                     await this.plugin.saveSettings();
+                    this.display();
                 })
             );
 
@@ -1341,6 +1366,35 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.pickFandomWikiForSync();
                 })
             );
+
+        // Per-wiki cache management (Stage 4) — size/pages/images/last-synced +
+        // Clear. Rendered only when the cache is enabled; stats load async.
+        if (this.plugin.settings.lorebookFandomCacheEnabled) {
+            new Setting(content).setName('Cached wikis').setHeading();
+            const cachedWikis = this.plugin.settings.lorebookFandomWikis;
+            if (cachedWikis.length === 0) {
+                new Setting(content).setDesc(
+                    'No allowlisted wikis to show. Add a wiki subdomain above to manage its cache.'
+                );
+            } else {
+                for (const wiki of cachedWikis) {
+                    const row = new Setting(content).setName(wiki).setDesc('Loading cache stats…');
+                    row.addButton((btn) =>
+                        btn
+                            .setButtonText('Clear')
+                            .setWarning()
+                            .onClick(async () => {
+                                btn.setButtonText('Clearing…').setDisabled(true);
+                                await this.plugin.clearFandomWikiCache(wiki);
+                                this.display();
+                            })
+                    );
+                    void this.plugin.fandomCache?.getWikiStats(wiki).then((stats) => {
+                        row.setDesc(formatFandomCacheStats(stats));
+                    });
+                }
+            }
+        }
 
         new Setting(content)
             .setName('Wikipedia language')
