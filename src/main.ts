@@ -2941,6 +2941,17 @@ export default class EventideQuillPlugin extends Plugin {
         }
         const vaultContext = contextParts.length > 0 ? contextParts.join('\n\n') : '';
 
+        // Linked plot map (the writer's declared plan: subplots, themes, genre,
+        // outline). Cross-referenced by the big-picture modes to reconcile
+        // declared intent against the text. Best-effort; empty when unlinked.
+        let plotMapText = '';
+        const plotMapPath = this.currentPlotMap;
+        if (plotMapPath) {
+            plotMapText = await readVaultFileText(this.app.vault, plotMapPath, this.settings.contextMaxCharsPerFile);
+            // Discard if the writer swapped/unlinked the plot map mid-read.
+            if (plotMapPath !== this.currentPlotMap) plotMapText = '';
+        }
+
         // Build the initial system + user messages.
         const initialMessages = buildManuscriptAnalysisMessages(mode, {
             mode,
@@ -2948,6 +2959,7 @@ export default class EventideQuillPlugin extends Plugin {
             manuscriptText,
             manuscriptName: activeFile.name,
             vaultContext,
+            plotMapText,
             customInstruction,
             temperature: this.settings.manuscriptAnalysisTemperature,
             maxTokens: this.settings.manuscriptAnalysisMaxOutputTokens,
@@ -2970,6 +2982,7 @@ export default class EventideQuillPlugin extends Plugin {
                 manuscriptText,
                 manuscriptName: activeFile.name + compactionNote,
                 vaultContext,
+                plotMapText,
                 customInstruction,
                 model: chat.modelId,
                 signal: this.manuscriptAnalysisAbort.signal,

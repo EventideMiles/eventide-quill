@@ -801,7 +801,7 @@ function getVoiceDriftPrompt(
 }
 
 // =============================================================================
-// Manuscript Analysis Engine (Feature 11b) — 7 mode-specific prompt builders
+// Manuscript Analysis Engine (Feature 11b) — 10 mode-specific prompt builders
 // =============================================================================
 
 /**
@@ -950,6 +950,87 @@ function getManuscriptModeFocus(mode: ManuscriptAnalysisMode): string {
                 '  intimacy; a multi-POV epic can handle broader shifts with chapter breaks.',
                 '- Distinguish between intentional distance shifts (craft) and unintentional',
                 '  drift (error). Flag as "review" not "fix."'
+            ].join('\n');
+        case 'subplot-tracking':
+            return [
+                'Focus: map every subplot (B-stories, C-stories) and assess each as a',
+                'storyline across the whole manuscript. This is distinct from character-arc',
+                'audit (per person): a subplot is a story thread that may span several',
+                'characters (a political intrigue) or belong to one character (a romance).',
+                '',
+                "If a plot map is provided, treat its declared subplots as the writer's",
+                'stated intent and reconcile it against what the text actually does. Name',
+                'declared subplots and note whether each is honored, altered, or abandoned.',
+                '',
+                'For each subplot:',
+                '- Name it and identify the characters it belongs to; distinguish it from',
+                '  the main plot and from the other subplots.',
+                '- Trace where it enters, where it weaves into or brushes against the main',
+                '  plot, and where (if anywhere) it resolves.',
+                '- Flag subplots that vanish mid-manuscript (dropped threads) or that',
+                '  resolve offscreen.',
+                '- Flag subplots with no arc of their own (introduced but never developed)',
+                '  or that never intersect the main plot (parallel rather than woven).',
+                '- Assess whether each subplot pays into the climax or theme, or feels',
+                '  decorative.',
+                '- Map intersections: where two subplots collide, or a subplot pays off the',
+                '  main plot.',
+                '- If a plot map declared subplots the text never engages, name them as gaps.'
+            ].join('\n');
+        case 'theme-resonance':
+            return [
+                'Focus: identify the central thematic questions the manuscript actually',
+                'engages with, and judge whether each is earned or merely stated. This is',
+                'distinct from exposition density (prose show-vs-tell): a manuscript can',
+                'have clean prose and still thump its theme on every page.',
+                '',
+                "If a plot map is provided and declares themes, treat those as the writer's",
+                'stated intent and reconcile them against the themes the text actually',
+                'develops. Note declared themes the manuscript fails to dramatize, and',
+                'emergent themes the writer did not name.',
+                '',
+                'For each thematic thread:',
+                '- Ground it in specific quoted passages; never impose a theme the text does',
+                '  not support.',
+                '- Trace where it surfaces across the manuscript: does it accumulate through',
+                '  recurrence, or appear once and vanish?',
+                '- Distinguish earned theme (embodied in character choice, consequence, and',
+                '  recurring image systems) from preached theme (stated in narration,',
+                '  speechified in dialogue, or moralized in the ending).',
+                '- Flag places where the events undercut the declared theme \u2014 where the',
+                '  story argues one thing and the prose declares another.',
+                '- Assess whether the ending pays off the thematic questions raised, or',
+                '  dodges them with a pat resolution.',
+                '- Note counter-arguments and moral complexity: does the manuscript let the',
+                '  theme breathe, or flatten it into a single lesson?'
+            ].join('\n');
+        case 'genre-alignment':
+            return [
+                'Focus: judge whether the manuscript honors the conventions and promises',
+                'of its genre. Begin by naming the operative genre(s) and the implicit',
+                'contracts they make with the reader \u2014 state this up front so the writer',
+                'can sanity-check your inference. If the writer declared a genre (in a plot',
+                'map or custom instruction), audit against that instead of inferring.',
+                '',
+                'Audit genre conventions and obligations, for example:',
+                '- Mystery: are clues planted fairly and paid off? Is the solution deducible',
+                '  from what the reader is shown?',
+                '- Romance: does the central emotional arc deliver its required beats and a',
+                '  satisfying HEA/HFN?',
+                '- Thriller: does threat sustain and do stakes escalate?',
+                '- Fantasy/SF: is the worldbuilding consistent and the magic/tech system',
+                '  rule-coherent?',
+                '- Horror: does dread escalate rather than deflate?',
+                '- Literary: does the work earn its thematic weight?',
+                '',
+                'Across the manuscript:',
+                '- Flag promises made to the reader (setup, foreshadowing, genre signals)',
+                '  that go unfulfilled \u2014 the most common genre rejection reason.',
+                '- Flag genre beats that are missing, mistimed, or mishandled for the',
+                '  operative genre.',
+                '- Distinguish trope inversions that land as craft from ones that read as',
+                '  mistakes.',
+                "- Assess whether the pacing of revelations fits the genre's expectations."
             ].join('\n');
     }
 }

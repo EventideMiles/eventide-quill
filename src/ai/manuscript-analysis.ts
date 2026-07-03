@@ -8,7 +8,7 @@ import { buildCodeFence } from '../utils/text-analysis';
 /** Scope for manuscript analysis: full manuscript or surrounding N chapters. */
 export type ManuscriptScope = { kind: 'full' } | { kind: 'surrounding'; count: number };
 
-/** The seven manuscript-analysis modes. */
+/** The ten manuscript-analysis modes. */
 export type ManuscriptAnalysisMode =
     | 'scene-taxonomy'
     | 'structural-arc'
@@ -16,7 +16,10 @@ export type ManuscriptAnalysisMode =
     | 'character-arc-audit'
     | 'exposition-density'
     | 'cliffhanger-audit'
-    | 'narrative-distance';
+    | 'narrative-distance'
+    | 'subplot-tracking'
+    | 'theme-resonance'
+    | 'genre-alignment';
 
 /** Registry metadata for each manuscript analysis mode. */
 export interface ManuscriptAnalysisModeConfig {
@@ -26,6 +29,11 @@ export interface ManuscriptAnalysisModeConfig {
     label: string;
     /** One-line description. */
     description: string;
+    /** Whether the mode only makes sense over a full manuscript (never a
+     *  surrounding-chapters window). Big-picture modes (subplots, theme,
+     *  genre) set this; the scope picker disables "Surrounding chapters"
+     *  and forces full scope when such a mode is selected. */
+    fullManuscriptOnly?: boolean;
 }
 
 /** Registry of available manuscript analysis modes. */
@@ -64,6 +72,26 @@ export const MANUSCRIPT_ANALYSIS_MODES: ManuscriptAnalysisModeConfig[] = [
         id: 'narrative-distance',
         label: 'Narrative distance',
         description: 'Intimacy shifts, POV slippages, and unintended head-hopping.'
+    },
+    // --- Big-picture / whole-manuscript modes (full-manuscript only) ---
+    {
+        id: 'subplot-tracking',
+        label: 'Subplot tracking',
+        description: 'Trace B- and C-stories: do they weave in, arc, and pay off \u2014 or get dropped?',
+        fullManuscriptOnly: true
+    },
+    {
+        id: 'theme-resonance',
+        label: 'Theme resonance',
+        description: 'Are your themes earned through scene and consequence, or stated and preached?',
+        fullManuscriptOnly: true
+    },
+    {
+        id: 'genre-alignment',
+        label: 'Genre alignment',
+        description:
+            "Honor the conventions and promises of your manuscript's genre; find unkept contracts with the reader.",
+        fullManuscriptOnly: true
     }
 ];
 
@@ -101,6 +129,10 @@ export interface ManuscriptAnalysisOptions {
     narrativePreset?: NarrativeVoicePreset;
     /** Vault reference context (character notes, worldbuilding, outlines). */
     vaultContext?: string;
+    /** Linked plot map text, if any. The writer's declared plan (subplots,
+     *  themes, genre, outline). Cross-referenced by the big-picture modes to
+     *  reconcile declared intent against what the manuscript actually does. */
+    plotMapText?: string;
     /** Override the default analysis model. */
     model?: string;
     /** Sampling temperature. Falls back to DEFAULT_MANUSCRIPT_ANALYSIS_TEMPERATURE when omitted. */
@@ -145,6 +177,16 @@ export function buildManuscriptAnalysisMessages(
 
     if (options.customInstruction) {
         systemParts.push('', `--- Writer's custom instruction ---`, options.customInstruction);
+    }
+
+    if (options.plotMapText) {
+        systemParts.push(
+            '',
+            "--- Plot map (the writer's declared plan: subplots, themes, genre, outline) ---",
+            'This is reference material, not a checklist the manuscript must obey.',
+            'Reconcile what the writer declared against what the text actually does.',
+            options.plotMapText
+        );
     }
 
     if (options.compacted) {
