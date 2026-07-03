@@ -39,6 +39,15 @@ import {
 } from './utils/frontmatter';
 import { buildFeedbackMessages, getPersonaById, getFeedback } from './ai/feedback';
 import {
+    type FeedbackJob,
+    mintJobId,
+    resolveQueueDir,
+    listFeedbackJobs,
+    loadFeedbackJob,
+    saveFeedbackJob,
+    runFeedbackJob
+} from './ai/feedback-queue';
+import {
     getAnalysis,
     buildAnalysisMessages,
     ANALYSIS_MODES,
@@ -254,6 +263,18 @@ export default class EventideQuillPlugin extends Plugin {
     private manuscriptAnalysisAbort: AbortController | null = null;
     /** Full message history for the manuscript analysis conversation. */
     private manuscriptAnalysisCurrentMessages: ChatMessage[] = [];
+    /**
+     * In-memory feedback-queue jobs, keyed by id. Loaded on onload from the
+     * `feedback-queue` sidecar; each status transition is persisted to disk.
+     */
+    private feedbackJobs = new Map<string, FeedbackJob>();
+    /**
+     * Abort controller for the in-flight queue job, if any. A peer of
+     * `feedbackAbort` / `analysisAbort` (NOT a child of a global latch) — the
+     * queue runs single-slot FIFO within itself and does not coordinate with
+     * the co-writer, Review, or transform surfaces.
+     */
+    private feedbackQueueAbort: AbortController | null = null;
     /** Debounce timers for per-folder embedding warming. Keyed by folder path. */
     private embeddingWarmingTimers = new Map<string, number>();
     /** Folders currently being warmed, to avoid concurrent warming. */
@@ -355,6 +376,11 @@ export default class EventideQuillPlugin extends Plugin {
         // off until either init resolves or a live fetch flips the set.
         this.fandomCache = FandomCache.create(this.app.vault, this.pluginDataDir);
         void this.fandomCache.init();
+
+        // Async feedback queue — restore persisted jobs into the in-memory map.
+        // Any job saved as 'running' resumes as 'queued' (the run restarts).
+        // Fire-and-forget: a corrupt/missing sidecar must not block onload.
+        void this.loadFeedbackQueue();
 
         this.registerEditorExtension(
             getLintExtension(
@@ -917,6 +943,14 @@ export default class EventideQuillPlugin extends Plugin {
             name: 'Quill: Insert inline directive',
             editorCallback: (editor) => {
                 this.insertInlineDirective(editor);
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-submit-feedback-queue',
+            name: 'Quill: Submit active document for feedback (queue)',
+            editorCallback: async () => {
+                await this.submitFeedbackJob('beta-reader');
             }
         });
 
@@ -4654,6 +4688,147 @@ export default class EventideQuillPlugin extends Plugin {
             if (this.feedbackAbort === myFeedbackAbort) {
                 this.feedbackAbort = null;
             }
+        }
+    }
+
+    /** Restore persisted feedback-queue jobs into the in-memory map. */
+    private async loadFeedbackQueue(): Promise<void> {
+        try {
+            const dir = resolveQueueDir(this.pluginDataDir);
+            const entries = await listFeedbackJobs(this.app.vault, dir);
+            for (const entry of entries) {
+                const job = await loadFeedbackJob(this.app.vault, dir, entry.id);
+                if (job) this.feedbackJobs.set(job.id, job);
+            }
+        } catch (err) {
+            console.warn('Quill: failed to load feedback queue jobs', err);
+        }
+    }
+
+    /**
+     * Resolve the active document (plus layered context files) into a snapshot
+     * suitable for a queued feedback job. Mirrors {@link requestFeedback}'s
+     * resolution but captures the resolved content into a {@link SerializedContext}
+     * instead of streaming it live — a job is deterministic given its snapshot.
+     * Document scope only for the command entry point; the submit modal adds the
+     * other scopes.
+     */
+    private async buildDocumentFeedbackJob(personaId: string, focusPrompt?: string): Promise<FeedbackJob | null> {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== 'md') {
+            new Notice('Quill: Open a Markdown document to submit for feedback.');
+            return null;
+        }
+        const documentText = await this.getFileText(activeFile.path);
+        if (!documentText.trim()) {
+            new Notice('Quill: The active document is empty.');
+            return null;
+        }
+
+        const additionalPaths = this.lintPanel?.reviewContextFiles() ?? [];
+        const manuscriptPaths = additionalPaths.includes(activeFile.path)
+            ? additionalPaths
+            : [activeFile.path, ...additionalPaths];
+
+        const { regularPaths: resolvedPaths, messages: embedMessages } = await this.resolveEmbedPathsToMessages(
+            manuscriptPaths,
+            'Manuscript',
+            documentText
+        );
+
+        // Folder-context resolution is best-effort (same as requestFeedback).
+        try {
+            if (this.currentAssembly) {
+                await this.resolveFolderContextItems(this.currentAssembly, documentText);
+            }
+        } catch {
+            // Best-effort.
+        }
+
+        const contextParts: string[] = [];
+        try {
+            const assembly = this.currentAssembly;
+            if (assembly && assembly.contextItems.length > 0) {
+                for (const item of assembly.contextItems) {
+                    if (item.excerpt) contextParts.push(`--- ${item.filePath} ---`, item.excerpt);
+                }
+            }
+        } catch {
+            // Vault context is best-effort.
+        }
+        const vaultContext = contextParts.length > 0 ? contextParts.join('\n\n') : '';
+
+        const fileMessages = await readVaultFiles(this.app.vault, resolvedPaths, 'Manuscript');
+        const loreReferenceMessages = await this.loreReferenceMessages(documentText);
+        const contentMessages: ChatMessage[] = [...loreReferenceMessages, ...embedMessages, ...fileMessages];
+
+        if (contentMessages.length === 0) {
+            new Notice('Quill: Could not read any content from the selected manuscripts.');
+            return null;
+        }
+
+        const persona = getPersonaById(personaId);
+        return {
+            id: mintJobId(),
+            title: `${activeFile.basename} — ${persona?.name ?? 'Custom'}`,
+            personaId,
+            manuscriptPath: activeFile.path,
+            scope: 'document',
+            focusPrompt,
+            contextSnapshot: {
+                contentMessages,
+                vaultContext,
+                narrativePreset: this.settings.narrativeVoicePreset
+            },
+            status: 'queued',
+            createdAt: Date.now()
+        };
+    }
+
+    /**
+     * Submit a feedback job to the queue. Stage 1 runs the job immediately
+     * (single-job, command-driven). Stage 2 adds the FIFO scheduler that picks
+     * up queued jobs on a tick; the snapshot + persistence shape is already in
+     * place for it. Reuses {@link getFeedback} (NOT the co-writer tool loops),
+     * so this is independent of the DRY consolidation.
+     */
+    async submitFeedbackJob(personaId: string, focusPrompt?: string): Promise<void> {
+        if (!this.settings.enableFeedbackQueue) {
+            new Notice('Quill: The feedback queue is disabled in settings.');
+            return;
+        }
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: No AI provider configured. Set one up in settings.');
+            return;
+        }
+        await this.ensureContextInitialized();
+
+        const job = await this.buildDocumentFeedbackJob(personaId, focusPrompt);
+        if (!job) return;
+
+        this.feedbackJobs.set(job.id, job);
+        const dir = resolveQueueDir(this.pluginDataDir);
+        await saveFeedbackJob(this.app.vault, dir, job, this.settings.feedbackQueueLimit);
+        new Notice(`Quill: feedback queued — ${job.title}`);
+
+        // Stage 1: run immediately (single slot). Stage 2 replaces this with the tick scheduler.
+        const controller = new AbortController();
+        this.feedbackQueueAbort = controller;
+        try {
+            await runFeedbackJob(this, job, controller.signal);
+            await saveFeedbackJob(this.app.vault, dir, job, this.settings.feedbackQueueLimit);
+            if (job.status === 'succeeded') {
+                new Notice(
+                    job.reportNotePath
+                        ? `Quill: feedback complete — saved to ${job.reportNotePath}`
+                        : 'Quill: feedback complete.'
+                );
+            } else if (job.status === 'failed') {
+                new Notice(`Quill: feedback failed — ${job.error ?? 'unknown error'}`);
+            }
+        } finally {
+            if (this.feedbackQueueAbort === controller) this.feedbackQueueAbort = null;
         }
     }
 

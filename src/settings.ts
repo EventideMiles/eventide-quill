@@ -200,6 +200,25 @@ export interface EventideQuillSettings {
      * `normalizePath()`-wrapped before any vault write.
      */
     loreEntryImageAttachmentFolder: string;
+    /** Master toggle for the async feedback queue. Off hides the Queue tab and the Review handoff. Default: on. */
+    enableFeedbackQueue: boolean;
+    /** Max queue jobs retained on disk (sidecar blobs). Older completed jobs are LRU-evicted; the vault report note is never touched by LRU. Default 20. */
+    feedbackQueueLimit: number;
+    /** When on, the scheduler ticks while Obsidian is open and runs queued jobs. Off = jobs queue but only run on explicit "Run now". Default: on. */
+    feedbackQueueAutoRun: boolean;
+    /**
+     * Auto-save every completed feedback report (async queue + interactive
+     * Review) to the vault as dated markdown under `feedbackReportFolder`. The
+     * vault note is the single canonical home of the report content — the
+     * sidecar holds only status + the snapshot + a `reportNotePath` pointer.
+     * Off = no vault writes AND no other persistence: the report is held
+     * in-memory for the session only, and the job record persists so it can be
+     * re-run to regenerate the report (no silent sidecar fallback, by design).
+     * Default: on.
+     */
+    autoSaveFeedbackReports: boolean;
+    /** Vault folder for auto-saved feedback reports. Created on first write. `normalizePath()`-wrapped on every constructed path. Default `eventide-quill-reports`. */
+    feedbackReportFolder: string;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -307,7 +326,12 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     loreEntryImageSectionHeaders: ['Reference', 'Reference images', 'Gallery', 'Forms', 'Appearance', 'Art'],
     loreEntryImageMaxPerEntry: 4,
     loreEntryImageAttachments: true,
-    loreEntryImageAttachmentFolder: ''
+    loreEntryImageAttachmentFolder: '',
+    enableFeedbackQueue: true,
+    feedbackQueueLimit: 20,
+    feedbackQueueAutoRun: true,
+    autoSaveFeedbackReports: true,
+    feedbackReportFolder: 'eventide-quill-reports'
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
