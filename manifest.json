@@ -1,7 +1,7 @@
 {
 	"id": "eventide-quill",
 	"name": "Eventide Quill",
-	"version": "0.18.0",
+	"version": "0.19.0",
 	"minAppVersion": "1.7.2",
 	"description": "A feedback-first, novelist-focused writing assistant for Obsidian.",
 	"author": "EventideMiles",
