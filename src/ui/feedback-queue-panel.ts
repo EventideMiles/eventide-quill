@@ -18,6 +18,7 @@ export interface FeedbackQueueHandlers {
     onCancel: (id: string) => void;
     onDelete: (id: string) => void;
     onOpenReport: (job: FeedbackJob) => void;
+    onDiscuss: (job: FeedbackJob) => void;
     onRunNow: () => void;
     onClearCompleted: () => void;
 }
@@ -154,8 +155,15 @@ function renderJobCard(
     }
 
     if (job.status === 'succeeded' && job.reportNotePath) {
+        if (job.engine === 'editorial') {
+            const discuss = actions.createEl('button', {
+                cls: 'quill-feedback-queue__action quill-feedback-queue__action--primary',
+                text: 'Discuss'
+            });
+            events.registerDomEvent(discuss, 'click', () => handlers.onDiscuss(job));
+        }
         const open = actions.createEl('button', {
-            cls: 'quill-feedback-queue__action quill-feedback-queue__action--primary',
+            cls: 'quill-feedback-queue__action',
             text: 'Open report'
         });
         events.registerDomEvent(open, 'click', () => handlers.onOpenReport(job));

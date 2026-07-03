@@ -578,6 +578,7 @@ export class QuillSidebarView extends ItemView {
                 onCancel: (id) => void this.plugin.cancelFeedbackJob(id),
                 onDelete: (id) => void this.plugin.deleteFeedbackJob(id),
                 onOpenReport: (job) => this.plugin.openFeedbackReport(job),
+                onDiscuss: (job) => void this.plugin.loadReportForDiscussion(job),
                 onRunNow: () => void this.plugin.runFeedbackQueueNow(),
                 onClearCompleted: () => this.plugin.clearCompletedFeedbackJobs()
             });
@@ -839,6 +840,15 @@ export class QuillSidebarView extends ItemView {
 
     reviewError(message: string): void {
         this.reviewPanel?.showError(message);
+    }
+
+    /** Load a completed report into the Results sub-tab for follow-up discussion. */
+    reviewLoadReportForDiscussion(
+        engine: 'editorial' | 'critical' | 'manuscript',
+        headerLabel: string,
+        reportText: string
+    ): void {
+        this.reviewPanel?.loadReportForDiscussion(engine, headerLabel, reportText);
     }
 
     /** Notify the Review panel that a queue job's status changed (refreshes the Queue sub-tab + badge). */

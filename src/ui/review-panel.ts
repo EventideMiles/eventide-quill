@@ -415,6 +415,25 @@ export class ReviewPanel extends AbstractChatPanel {
         if (this.containerEl) this.render();
     }
 
+    /**
+     * Load a completed report into the Results sub-tab for follow-up discussion.
+     * Like {@link startLoading} but skips the loading state — the report is
+     * already complete. The plugin seeds the conversation messages separately.
+     */
+    loadReportForDiscussion(engine: ReviewEngine, headerLabel: string, reportText: string): void {
+        this.activeEngine = engine;
+        this.headerLabel = headerLabel;
+        this.subLabel = 'follow-up discussion';
+        this.resultsState = 'complete';
+        this.reportText = reportText;
+        this.chatHistory = [];
+        this.chatLoading = false;
+        this.contextTokenOverride = null;
+        this.chatContextFiles.clear();
+        this.subtab = 'results';
+        if (this.containerEl) this.render();
+    }
+
     appendChunk(text: string): void {
         this.reportText += text;
         if (!this.containerEl) return;

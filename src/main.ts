@@ -5264,6 +5264,76 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
+     * Load a completed queue report into the Review Results sub-tab for follow-up
+     * discussion. The report becomes the AI's first turn; the writer's follow-up
+     * messages reuse the interactive {@link sendFeedbackChatMessage} path, which
+     * re-reads the CURRENT manuscript on every turn — so the conversation is
+     * against the living document, not the snapshot.
+     *
+     * Opens the current version of the report's source file (fails to load if it
+     * was renamed/deleted — the right main file must be in context). Editorial
+     * only for now: critical/manuscript follow-up needs the compaction-aware
+     * manuscript-injection their interactive paths lack (tracked as a follow-up).
+     */
+    async loadReportForDiscussion(job: FeedbackJob): Promise<void> {
+        if (job.engine !== 'editorial') {
+            new Notice(
+                'Quill: in-report discussion is available for editorial feedback. Open the report note for critical/manuscript reports.'
+            );
+            return;
+        }
+        // The source file must exist (current version) — it's the manuscript context.
+        const file = this.app.vault.getAbstractFileByPath(job.manuscriptPath);
+        if (!(file instanceof TFile)) {
+            new Notice(
+                `Quill: the file this report was about (${job.manuscriptPath}) no longer exists. Re-open it or re-run the report.`
+            );
+            return;
+        }
+        // Recover the report text: in-memory cache (same session) or the vault note.
+        let reportText = job.reportMarkdown;
+        if (!reportText) {
+            if (!job.reportNotePath) {
+                new Notice('Quill: this report has no saved content (autosave was off). Re-run to regenerate.');
+                return;
+            }
+            const noteFile = this.app.vault.getAbstractFileByPath(job.reportNotePath);
+            if (!(noteFile instanceof TFile)) {
+                new Notice('Quill: report note moved or deleted — re-run to regenerate.');
+                return;
+            }
+            try {
+                reportText = stripFrontmatter(await this.app.vault.read(noteFile)).text;
+            } catch {
+                new Notice('Quill: could not read the report note.');
+                return;
+            }
+        }
+        if (!reportText) return; // recovery above returned on failure; narrows TS
+
+        // Open the current file so the interactive follow-up path re-reads it.
+        await this.app.workspace.getLeaf().openFile(file);
+
+        // Seed the conversation: [system prompt, assistant = report]. The
+        // interactive follow-up injects the current manuscript fresh on every
+        // turn, so the payload becomes [system, ...current manuscript, report,
+        // follow-up] — the report is the AI's first turn, the manuscript is live.
+        const snapshot = job.contextSnapshot;
+        if (snapshot.kind !== 'editorial') return; // guarded above; narrows TS
+        const persona = job.personaId === 'custom' ? undefined : getPersonaById(job.personaId ?? '');
+        const systemMsg = buildFeedbackMessages(persona, {
+            vaultContext: snapshot.vaultContext,
+            narrativePreset: snapshot.narrativePreset,
+            customInstruction: job.focusPrompt
+        })[0]!;
+        this.feedbackCurrentMessages = [systemMsg, { role: 'assistant', content: reportText }];
+        this.feedbackAbort = null;
+
+        const headerLabel = persona?.name ?? 'Editorial feedback';
+        this.lintPanel?.reviewLoadReportForDiscussion('editorial', headerLabel, reportText);
+    }
+
+    /**
      * Clear all terminal (succeeded/failed/cancelled) jobs from the queue after
      * confirmation. Active jobs (queued/running) are kept. Vault report notes are
      * never touched — only the sidecar cards are removed.
