@@ -248,6 +248,19 @@ function applyContextItemMods(items: ContextItem[], pinnedPaths: Set<string>, re
     }
 }
 
+/**
+ * Result of {@link EventideQuillPlugin.prepareManuscriptAnalysisPayload} —
+ * everything needed to call {@link getManuscriptAnalysis}: the assembled message
+ * list plus the post-compaction opts data.
+ */
+export interface PreparedManuscript {
+    existingMessages: ChatMessage[];
+    metrics: ManuscriptMetrics;
+    manuscriptText: string;
+    manuscriptName: string;
+    wasCompacted: boolean;
+}
+
 export default class EventideQuillPlugin extends Plugin {
     settings!: EventideQuillSettings;
     private lintPanel: QuillSidebarView | null = null;
@@ -2823,6 +2836,145 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
+     * Run the manuscript compaction pipeline (embed / compress / none) and build
+     * the initial messages + lore injection. Shared by the interactive
+     * {@link requestManuscriptAnalysis} and the async queue's manuscript runner so
+     * the compaction pipeline isn't duplicated. Non-abort compaction errors fall
+     * back to full text with a Notice (preserving the interactive behavior); an
+     * abort rethrows so the caller can reset UI / mark the job cancelled.
+     */
+    async prepareManuscriptAnalysisPayload(
+        args: {
+            mode: ManuscriptAnalysisMode;
+            selectedChapters: ChapterRange[];
+            entities: ExtractedEntity[];
+            dismissedIds: Set<string>;
+            manuscriptName: string;
+            compaction: CompactionStrategy;
+            customInstruction?: string;
+            vaultContext: string;
+            plotMapText: string;
+        },
+        provider: AiProvider,
+        modelId: string | undefined,
+        signal: AbortSignal
+    ): Promise<PreparedManuscript> {
+        const {
+            mode,
+            selectedChapters,
+            entities,
+            dismissedIds,
+            manuscriptName,
+            compaction,
+            customInstruction,
+            vaultContext,
+            plotMapText
+        } = args;
+        const modeMeta = getManuscriptAnalysisModeById(mode);
+        const scopeMetrics = manuscriptMetrics(selectedChapters, entities, dismissedIds);
+
+        // --- Compaction strategy ---
+        const selectedText = selectedChapters.map((c) => c.text).join('\n\n');
+        let manuscriptText = selectedText;
+        let compactionNote = '';
+        let wasCompacted = false;
+
+        if (compaction === 'embed') {
+            const embedProvider = this.getDefaultEmbedProvider();
+            if (!embedProvider) {
+                new Notice('Quill: No embed model configured. Sending full text instead.');
+            } else {
+                try {
+                    const embedKey = parseProviderKey(this.settings.aiDefaultEmbedProvider);
+                    const embedModelId = embedKey?.modelId || '';
+                    const chunkOptions = {
+                        targetTokenSize: Math.floor(this.settings.embeddingChunkTokenSize * 0.85),
+                        overlap: 0.1
+                    };
+                    // Chunk each chapter individually to preserve file associations.
+                    const chunks: Chunk[] = [];
+                    for (const chapter of selectedChapters) {
+                        chunks.push(...chunkManuscript(chapter.text, chunkOptions, chapter.filePath, chapter.title));
+                    }
+                    for (const chunk of chunks) {
+                        chunk.hash = hashString(chunk.text);
+                    }
+                    // Group chunks by source folder for cache lookup.
+                    const folderGroups = new Map<string, Chunk[]>();
+                    for (const chunk of chunks) {
+                        if (!chunk.filePath) continue;
+                        const folder = chunk.filePath.includes('/')
+                            ? chunk.filePath.substring(0, chunk.filePath.lastIndexOf('/'))
+                            : '';
+                        if (!folderGroups.has(folder)) folderGroups.set(folder, []);
+                        folderGroups.get(folder)!.push(chunk);
+                    }
+                    for (const [folder, folderChunks] of folderGroups) {
+                        const cache = await EmbeddingCache.load(this.app.vault, folder, embedModelId);
+                        await cache.ensureEmbeddings(embedProvider, folderChunks, embedModelId);
+                        await cache.save(this.app.vault);
+                    }
+                    const modeDesc = modeMeta?.description ?? mode;
+                    const query = `${modeMeta?.label ?? mode}: ${modeDesc}${customInstruction ? ` — ${customInstruction}` : ''}`;
+                    const queryResult = await embedProvider.embed({ input: query, model: embedModelId });
+                    const queryEmbedding = queryResult.embeddings[0]!;
+                    const ranked = rankBySimilarity(chunks, queryEmbedding, this.settings.embeddingsTopKChunks);
+                    manuscriptText = ranked
+                        .map((c) => {
+                            const prefix = c.chapterTitle ? `[${c.chapterTitle}] ` : '';
+                            return `${prefix}${c.text}`;
+                        })
+                        .join('\n\n');
+                    compactionNote = ` (embedded: ${ranked.length}/${chunks.length} chunks)`;
+                    wasCompacted = true;
+                } catch (err) {
+                    if (err instanceof Error && err.name === 'AbortError') throw err;
+                    new Notice('Quill: Embedding failed. Sending full text instead.');
+                    manuscriptText = selectedText;
+                }
+            }
+        } else if (compaction === 'compress') {
+            try {
+                const chunks = chunkManuscript(selectedText, {
+                    targetTokenSize: this.settings.manuscriptAnalysisChunkTokenSize,
+                    overlap: 0.1
+                });
+                manuscriptText = await compressChunks(provider, chunks, { model: modelId, signal });
+                compactionNote = ` (compressed: ${chunks.length} chunks)`;
+                wasCompacted = true;
+            } catch (err) {
+                if (err instanceof Error && err.name === 'AbortError') throw err;
+                new Notice('Quill: Compression failed. Sending full text instead.');
+                manuscriptText = selectedText;
+            }
+        }
+
+        // --- Build messages + lore injection ---
+        const initialMessages = buildManuscriptAnalysisMessages(mode, {
+            mode,
+            metrics: scopeMetrics,
+            manuscriptText,
+            manuscriptName,
+            vaultContext,
+            plotMapText,
+            customInstruction,
+            compacted: wasCompacted
+        });
+        const loreReferenceMessages = await this.loreReferenceMessages(manuscriptText);
+        const existingMessages = loreReferenceMessages.length
+            ? [initialMessages[0]!, ...loreReferenceMessages, ...initialMessages.slice(1)]
+            : initialMessages;
+
+        return {
+            existingMessages,
+            metrics: scopeMetrics,
+            manuscriptText,
+            manuscriptName: manuscriptName + compactionNote,
+            wasCompacted
+        };
+    }
+
+    /**
      * Request manuscript analysis of the active document with the given mode.
      * Streams the response into the Results sub-tab. Always refreshes dashboard
      * metrics for a full-manuscript diagnostic.
@@ -2873,181 +3025,56 @@ export default class EventideQuillPlugin extends Plugin {
         }
         const dismissedIds = new Set(msFile.dismissedEntities);
 
-        // --- Scope resolution ---
-        let selectedChapters: ChapterRange[] = chapters;
-        let scopeLabel = 'full manuscript';
+        // --- Scope resolution (shared with the async queue's manuscript builder). ---
+        const { selectedChapters, scopeLabel } = this.resolveManuscriptScope(chapters, activeFile, scope);
 
-        if (scope.kind === 'surrounding') {
-            const idx = this.findCurrentChapterIndex(chapters, activeFile);
-            if (idx === null) {
-                new Notice('Quill: Could not locate the current chapter. Falling back to full manuscript.');
-                selectedChapters = chapters;
-            } else {
-                const count = scope.count;
-                const start = Math.max(0, idx - count);
-                const end = Math.min(chapters.length, idx + count + 1);
-                selectedChapters = chapters.slice(start, end);
-                scopeLabel = `surrounding ${count} chapters (${selectedChapters.length} of ${chapters.length})`;
-            }
-        }
-
-        const scopeMetrics = manuscriptMetrics(selectedChapters, entities, dismissedIds);
         this.lintPanel?.reviewStartLoading('manuscript', modeMeta?.label ?? mode, scopeLabel);
 
-        // --- Compaction strategy ---
-        let manuscriptText: string;
-        let compactionNote = '';
-        let wasCompacted = false;
-
-        const selectedText = selectedChapters.map((c) => c.text).join('\n\n');
-
-        if (compaction === 'embed') {
-            const embedProvider = this.getDefaultEmbedProvider();
-            if (!embedProvider) {
-                new Notice('Quill: No embed model configured. Sending full text instead.');
-                manuscriptText = selectedText;
-            } else {
-                try {
-                    const embedKey = parseProviderKey(this.settings.aiDefaultEmbedProvider);
-                    const embedModelId = embedKey?.modelId || '';
-                    const chunkOptions = {
-                        targetTokenSize: Math.floor(this.settings.embeddingChunkTokenSize * 0.85),
-                        overlap: 0.1
-                    };
-
-                    // Chunk each chapter individually to preserve file associations.
-                    const chunks: Chunk[] = [];
-                    for (const chapter of selectedChapters) {
-                        const chapterChunks = chunkManuscript(
-                            chapter.text,
-                            chunkOptions,
-                            chapter.filePath,
-                            chapter.title
-                        );
-                        chunks.push(...chapterChunks);
-                    }
-
-                    // Attach hashes for cache lookups.
-                    for (const chunk of chunks) {
-                        chunk.hash = hashString(chunk.text);
-                    }
-
-                    // Group chunks by their source folder for cache lookup.
-                    const folderGroups = new Map<string, Chunk[]>();
-                    for (const chunk of chunks) {
-                        if (!chunk.filePath) continue;
-                        const folder = chunk.filePath.includes('/')
-                            ? chunk.filePath.substring(0, chunk.filePath.lastIndexOf('/'))
-                            : '';
-                        if (!folderGroups.has(folder)) {
-                            folderGroups.set(folder, []);
-                        }
-                        folderGroups.get(folder)!.push(chunk);
-                    }
-
-                    // Load caches per folder and ensure embeddings.
-                    const caches: EmbeddingCache[] = [];
-                    for (const [folder, folderChunks] of folderGroups) {
-                        const cache = await EmbeddingCache.load(this.app.vault, folder, embedModelId);
-                        await cache.ensureEmbeddings(embedProvider, folderChunks, embedModelId);
-                        await cache.save(this.app.vault);
-                        caches.push(cache);
-                    }
-
-                    // Embed the query.
-                    const modeDesc = modeMeta?.description ?? mode;
-                    const query = `${modeMeta?.label ?? mode}: ${modeDesc}${customInstruction ? ` — ${customInstruction}` : ''}`;
-                    const queryResult = await embedProvider.embed({ input: query, model: embedModelId });
-                    const queryEmbedding = queryResult.embeddings[0]!;
-
-                    // Rank all chunks by similarity.
-                    const ranked = rankBySimilarity(chunks, queryEmbedding, this.settings.embeddingsTopKChunks);
-                    manuscriptText = ranked
-                        .map((c) => {
-                            const prefix = c.chapterTitle ? `[${c.chapterTitle}] ` : '';
-                            return `${prefix}${c.text}`;
-                        })
-                        .join('\n\n');
-                    compactionNote = ` (embedded: ${ranked.length}/${chunks.length} chunks)`;
-                    wasCompacted = true;
-                } catch (err: unknown) {
-                    if (err instanceof Error && err.name === 'AbortError') {
-                        await this.lintPanel?.reviewChatFinished();
-                        return;
-                    }
-                    new Notice('Quill: Embedding failed. Sending full text instead.');
-                    manuscriptText = selectedText;
-                }
-            }
-        } else if (compaction === 'compress') {
-            try {
-                const chunks = chunkManuscript(selectedText, {
-                    targetTokenSize: this.settings.manuscriptAnalysisChunkTokenSize,
-                    overlap: 0.1
-                });
-                manuscriptText = await compressChunks(chat.provider, chunks, {
-                    model: chat.modelId,
-                    signal: this.manuscriptAnalysisAbort.signal
-                });
-                compactionNote = ` (compressed: ${chunks.length} chunks)`;
-                wasCompacted = true;
-            } catch (err: unknown) {
-                if (err instanceof Error && err.name === 'AbortError') return;
-                new Notice('Quill: Compression failed. Sending full text instead.');
-                manuscriptText = selectedText;
-            }
-        } else {
-            manuscriptText = selectedText;
-        }
-
-        // Vault context from context engine (best-effort).
+        // Vault context (best-effort) + linked plot map — resolved before the
+        // shared compaction helper, which needs them to build the messages.
         const assembly = this.contextActiveFile === activeFile.path ? this.currentAssembly : null;
-        const contextParts: string[] = [];
-        try {
-            if (assembly && assembly.contextItems.length > 0) {
-                for (const item of assembly.contextItems) {
-                    if (item.excerpt) contextParts.push(`--- ${item.filePath} ---`, item.excerpt);
-                }
-            }
-        } catch {
-            // Vault context is best-effort.
-        }
-        const vaultContext = contextParts.length > 0 ? contextParts.join('\n\n') : '';
-
+        const vaultContext = this.vaultContextFromAssembly(assembly);
         // Linked plot map (the writer's declared plan: subplots, themes, genre,
         // outline). Cross-referenced by the big-picture modes to reconcile
         // declared intent against the text. Best-effort; empty when unlinked.
         const plotMapText = await this.loadCurrentPlotMapText();
 
-        // Build the initial system + user messages.
-        const initialMessages = buildManuscriptAnalysisMessages(mode, {
-            mode,
-            metrics: scopeMetrics,
-            manuscriptText,
-            manuscriptName: activeFile.name,
-            vaultContext,
-            plotMapText,
-            customInstruction,
-            temperature: this.settings.manuscriptAnalysisTemperature,
-            maxTokens: this.settings.manuscriptAnalysisMaxOutputTokens,
-            signal: this.manuscriptAnalysisAbort.signal,
-            compacted: wasCompacted
-        });
-        // Lore reference embeds (gated on reviewLoreContext) injected between the
-        // system prompt and user instruction so the first manuscript-analysis
-        // payload receives lore context, mirroring the follow-up chat flow.
-        const loreReferenceMessages = await this.loreReferenceMessages(manuscriptText);
-        const initialWithLore = loreReferenceMessages.length
-            ? [initialMessages[0]!, ...loreReferenceMessages, ...initialMessages.slice(1)]
-            : initialMessages;
-        this.manuscriptAnalysisCurrentMessages = [...initialWithLore];
+        // Compaction + message building (shared with the async queue runner so the
+        // embed/compress pipeline isn't duplicated). An abort during compaction
+        // rethrows — reset the Results UI and bail, matching the prior behavior.
+        let prepared: PreparedManuscript;
+        try {
+            prepared = await this.prepareManuscriptAnalysisPayload(
+                {
+                    mode,
+                    selectedChapters,
+                    entities,
+                    dismissedIds,
+                    manuscriptName: activeFile.name,
+                    compaction,
+                    customInstruction,
+                    vaultContext,
+                    plotMapText
+                },
+                chat.provider,
+                chat.modelId,
+                this.manuscriptAnalysisAbort.signal
+            );
+        } catch (err) {
+            if (err instanceof Error && err.name === 'AbortError') {
+                await this.lintPanel?.reviewChatFinished();
+                return;
+            }
+            throw err;
+        }
+        this.manuscriptAnalysisCurrentMessages = [...prepared.existingMessages];
 
         try {
             const stream = getManuscriptAnalysis(chat.provider, mode, {
                 mode,
-                metrics: scopeMetrics,
-                manuscriptText,
-                manuscriptName: activeFile.name + compactionNote,
+                metrics: prepared.metrics,
+                manuscriptText: prepared.manuscriptText,
+                manuscriptName: prepared.manuscriptName,
                 vaultContext,
                 plotMapText,
                 customInstruction,
@@ -3055,8 +3082,8 @@ export default class EventideQuillPlugin extends Plugin {
                 signal: this.manuscriptAnalysisAbort.signal,
                 temperature: this.settings.manuscriptAnalysisTemperature,
                 maxTokens: this.settings.manuscriptAnalysisMaxOutputTokens,
-                existingMessages: initialWithLore,
-                compacted: wasCompacted
+                existingMessages: prepared.existingMessages,
+                compacted: prepared.wasCompacted
             });
             let fullResponse = '';
             for await (const chunk of stream) {
@@ -3146,6 +3173,34 @@ export default class EventideQuillPlugin extends Plugin {
         const entities = extractAllEntities(fullText);
 
         return { chapters, entities, msFile };
+    }
+
+    /**
+     * Resolve a manuscript scope (full / surrounding-N) against the chapter list.
+     * Shared by {@link requestManuscriptAnalysis} and the async queue's manuscript
+     * builder so the surrounding-chapters logic isn't duplicated.
+     */
+    private resolveManuscriptScope(
+        chapters: ChapterRange[],
+        activeFile: TFile,
+        scope: ManuscriptScope
+    ): { selectedChapters: ChapterRange[]; scopeLabel: string } {
+        if (scope.kind === 'surrounding') {
+            const idx = this.findCurrentChapterIndex(chapters, activeFile);
+            if (idx === null) {
+                new Notice('Quill: Could not locate the current chapter. Falling back to full manuscript.');
+                return { selectedChapters: chapters, scopeLabel: 'full manuscript' };
+            }
+            const count = scope.count;
+            const start = Math.max(0, idx - count);
+            const end = Math.min(chapters.length, idx + count + 1);
+            const selectedChapters = chapters.slice(start, end);
+            return {
+                selectedChapters,
+                scopeLabel: `surrounding ${count} chapters (${selectedChapters.length} of ${chapters.length})`
+            };
+        }
+        return { selectedChapters: chapters, scopeLabel: 'full manuscript' };
     }
 
     /**
@@ -4885,23 +4940,86 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
-     * Submit an editorial-feedback job to the queue. The job is persisted as
-     * `queued` and the scheduler is kicked — single-slot FIFO runs it when the
-     * slot is free (immediately, if idle). Reuses {@link getFeedback} (NOT the
-     * co-writer tool loops), so this is independent of the DRY consolidation.
+     * Resolve the active document's chapters + deterministic signal into a
+     * manuscript-analysis snapshot. The chapter TEXT is captured here, at submit
+     * time — so the job is fully isolated from later edits (the writer can keep
+     * writing or open other files between submit and run). The compaction pipeline
+     * (embed/compress) runs later, at run time, to keep submit cheap.
      */
-    async submitFeedbackJob(personaId: string, focusPrompt?: string): Promise<void> {
+    private async buildManuscriptFeedbackJob(
+        mode: ManuscriptAnalysisMode,
+        scope: ManuscriptScope,
+        compaction: CompactionStrategy,
+        focusPrompt?: string
+    ): Promise<FeedbackJob | null> {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== 'md') {
+            new Notice('Quill: Open a Markdown document to queue manuscript analysis.');
+            return null;
+        }
+        const resolved = await this.resolveManuscriptChapters(activeFile, true);
+        if (!resolved) return null;
+        const { chapters, entities, msFile } = resolved;
+
+        // Apply user reclassification overrides (mirrors requestManuscriptAnalysis).
+        for (const entity of entities) {
+            const newType = msFile.reclassifiedEntities[entity.id];
+            if (newType) entity.type = newType;
+        }
+
+        const { selectedChapters } = this.resolveManuscriptScope(chapters, activeFile, scope);
+        const assembly = this.contextActiveFile === activeFile.path ? this.currentAssembly : null;
+        const vaultContext = this.vaultContextFromAssembly(assembly);
+        const plotMapText = await this.loadCurrentPlotMapText();
+        const modeMeta = getManuscriptAnalysisModeById(mode);
+
+        return {
+            id: mintJobId(),
+            title: `${activeFile.basename} — ${modeMeta?.label ?? mode}`,
+            engine: 'manuscript',
+            mode,
+            manuscriptPath: activeFile.path,
+            scope: 'manuscript',
+            focusPrompt,
+            contextSnapshot: {
+                kind: 'manuscript',
+                mode,
+                compaction,
+                selectedChapters,
+                entities,
+                dismissedIds: msFile.dismissedEntities,
+                manuscriptName: activeFile.name,
+                vaultContext,
+                plotMapText
+            },
+            status: 'queued',
+            createdAt: Date.now()
+        };
+    }
+
+    /**
+     * Validate the queue + provider for a submit path and init context. Returns
+     * false (with a Notice) when the queue is disabled or no provider is set.
+     */
+    private async gateQueueSubmit(): Promise<boolean> {
         if (!this.settings.enableFeedbackQueue) {
             new Notice('Quill: The feedback queue is disabled in settings.');
-            return;
+            return false;
         }
-        const chat = this.getDefaultChatProvider();
-        if (!chat.provider) {
+        if (!this.getDefaultChatProvider().provider) {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
-            return;
+            return false;
         }
         await this.ensureContextInitialized();
+        return true;
+    }
 
+    /**
+     * Submit an editorial-feedback job to the queue. Persisted as `queued`; the
+     * scheduler runs it single-slot FIFO when the slot is free.
+     */
+    async submitFeedbackJob(personaId: string, focusPrompt?: string): Promise<void> {
+        if (!(await this.gateQueueSubmit())) return;
         const job = await this.buildDocumentFeedbackJob(personaId, focusPrompt);
         if (!job) return;
         await this.enqueueFeedbackJob(job, 'feedback queued');
@@ -4917,18 +5035,25 @@ export default class EventideQuillPlugin extends Plugin {
         scope: AnalysisScope | 'auto',
         focusPrompt?: string
     ): Promise<void> {
-        if (!this.settings.enableFeedbackQueue) {
-            new Notice('Quill: The feedback queue is disabled in settings.');
-            return;
-        }
-        const chat = this.getDefaultChatProvider();
-        if (!chat.provider) {
-            new Notice('Quill: No AI provider configured. Set one up in settings.');
-            return;
-        }
-        await this.ensureContextInitialized();
-
+        if (!(await this.gateQueueSubmit())) return;
         const job = await this.buildCriticalFeedbackJob(mode, scope, focusPrompt);
+        if (!job) return;
+        await this.enqueueFeedbackJob(job, 'analysis queued');
+    }
+
+    /**
+     * Submit a manuscript-analysis job to the queue. Snapshots the resolved
+     * chapters (with their text) at submit so the job is isolated from later
+     * edits; the compaction pipeline runs unattended at run time.
+     */
+    async submitManuscriptFeedbackJob(
+        mode: ManuscriptAnalysisMode,
+        scope: ManuscriptScope,
+        compaction: CompactionStrategy,
+        focusPrompt?: string
+    ): Promise<void> {
+        if (!(await this.gateQueueSubmit())) return;
+        const job = await this.buildManuscriptFeedbackJob(mode, scope, compaction, focusPrompt);
         if (!job) return;
         await this.enqueueFeedbackJob(job, 'analysis queued');
     }

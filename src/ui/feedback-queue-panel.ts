@@ -12,6 +12,7 @@ import type EventideQuillPlugin from '../main';
 import { type FeedbackJob, type FeedbackJobStatus } from '../ai/feedback-queue';
 import { getPersonaById } from '../ai/feedback';
 import { getAnalysisModeById } from '../ai/analysis';
+import { getManuscriptAnalysisModeById } from '../ai/manuscript-analysis';
 
 export interface FeedbackQueueHandlers {
     onCancel: (id: string) => void;
@@ -29,7 +30,7 @@ function engineLabel(job: FeedbackJob): string {
     if (job.engine === 'critical') {
         return getAnalysisModeById(job.mode ?? '')?.label ?? 'Critical analysis';
     }
-    return 'Manuscript analysis';
+    return getManuscriptAnalysisModeById(job.mode ?? '')?.label ?? 'Manuscript analysis';
 }
 
 /** Rough relative-time string for display (e.g. "just now", "3m ago", "2h ago"). */

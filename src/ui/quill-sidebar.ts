@@ -571,6 +571,9 @@ export class QuillSidebarView extends ItemView {
             this.reviewPanel.setCriticalQueueHandler((mode, scope, customInstruction) => {
                 void this.plugin.submitCriticalFeedbackJob(mode, scope, customInstruction);
             });
+            this.reviewPanel.setManuscriptQueueHandler((mode, scope, compaction, customInstruction) => {
+                void this.plugin.submitManuscriptFeedbackJob(mode, scope, compaction, customInstruction);
+            });
             this.reviewPanel.setQueueHandlers({
                 onCancel: (id) => void this.plugin.cancelFeedbackJob(id),
                 onDelete: (id) => void this.plugin.deleteFeedbackJob(id),

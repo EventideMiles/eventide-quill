@@ -135,6 +135,15 @@ export class ReviewPanel extends AbstractChatPanel {
     /** Queued-critical handler (mirrors onCriticalGenerate but routes to the queue). */
     private onCriticalQueue: ((mode: AnalysisMode, scope: ScopeChoice, customInstruction?: string) => void) | null =
         null;
+    /** Queued-manuscript handler (mirrors onManuscriptGenerate but routes to the queue). */
+    private onManuscriptQueue:
+        | ((
+              mode: ManuscriptAnalysisMode,
+              scope: ManuscriptScope,
+              compaction: CompactionStrategy,
+              customInstruction?: string
+          ) => void)
+        | null = null;
     private queueHandlers: FeedbackQueueHandlers | null = null;
 
     constructor(app: App) {
@@ -182,6 +191,18 @@ export class ReviewPanel extends AbstractChatPanel {
         handler: (mode: AnalysisMode, scope: ScopeChoice, customInstruction?: string) => void
     ): void {
         this.onCriticalQueue = handler;
+    }
+
+    /** Handler for manuscript analysis queued from the Create sub-tab. */
+    setManuscriptQueueHandler(
+        handler: (
+            mode: ManuscriptAnalysisMode,
+            scope: ManuscriptScope,
+            compaction: CompactionStrategy,
+            customInstruction?: string
+        ) => void
+    ): void {
+        this.onManuscriptQueue = handler;
     }
 
     /** Handlers for the Queue sub-tab's per-job actions + manual run. */
@@ -745,19 +766,17 @@ export class ReviewPanel extends AbstractChatPanel {
             this.customInstruction = customArea.value;
         });
 
-        // Queue-mode toggle (editorial + critical for now — manuscript arrives in 3c).
-        // When on, persona clicks + Generate route to the async queue instead of
-        // running interactively, and stay on Create so the writer can queue several.
-        if (this.engine === 'editorial' || this.engine === 'critical') {
-            const toggleWrap = scroll.createDiv({ cls: 'quill-feedback-queue__toggle' });
-            const queueToggle = toggleWrap.createEl('input', { attr: { type: 'checkbox' } });
-            queueToggle.checked = this.queueMode;
-            toggleWrap.createEl('span', { text: 'Queue instead of running' });
-            this.renderEvents.registerDomEvent(queueToggle, 'change', () => {
-                this.queueMode = queueToggle.checked;
-                if (this.containerEl) this.render();
-            });
-        }
+        // Queue-mode toggle (all engines). When on, persona clicks + Generate
+        // route to the async queue instead of running interactively, and stay on
+        // Create so the writer can queue several.
+        const toggleWrap = scroll.createDiv({ cls: 'quill-feedback-queue__toggle' });
+        const queueToggle = toggleWrap.createEl('input', { attr: { type: 'checkbox' } });
+        queueToggle.checked = this.queueMode;
+        toggleWrap.createEl('span', { text: 'Queue instead of running' });
+        this.renderEvents.registerDomEvent(queueToggle, 'change', () => {
+            this.queueMode = queueToggle.checked;
+            if (this.containerEl) this.render();
+        });
 
         const buttonLabel = this.queueMode
             ? this.engine === 'editorial'
@@ -1157,11 +1176,21 @@ export class ReviewPanel extends AbstractChatPanel {
             new Notice('Quill: Pick a manuscript analysis mode first.');
             return;
         }
+        const instruction = this.customInstruction || undefined;
+        if (this.queueMode) {
+            this.onManuscriptQueue?.(
+                this.currentManuscriptMode,
+                this.currentManuscriptScope,
+                this.currentCompactionStrategy,
+                instruction
+            );
+            return;
+        }
         this.onManuscriptGenerate?.(
             this.currentManuscriptMode,
             this.currentManuscriptScope,
             this.currentCompactionStrategy,
-            this.customInstruction || undefined
+            instruction
         );
     }
 

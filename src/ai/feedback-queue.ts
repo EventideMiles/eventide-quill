@@ -32,10 +32,18 @@ import {
 } from './analysis';
 import { createReadOnlyToolRegistry } from './tools';
 import type { ToolContext } from './tools/tool';
+import {
+    type ManuscriptAnalysisMode,
+    getManuscriptAnalysis,
+    getManuscriptAnalysisModeById
+} from './manuscript-analysis';
+import type { CompactionStrategy } from './manuscript-compaction';
+import type { ChapterRange } from '../core/dashboard/types';
 import type { ExtractedEntity, VoiceMarker } from '../core/context-engine/types';
 import { saveReportArchive, type ReportArchiveInput } from './feedback-archive';
 import type { NarrativeVoicePreset } from '../types';
 import type EventideQuillPlugin from '../main';
+import type { PreparedManuscript } from '../main';
 
 const SCHEMA_VERSION = 1;
 const JOB_ID_RE = /^fq_[a-z0-9_-]+$/;
@@ -56,7 +64,7 @@ export type FeedbackEngine = 'editorial' | 'critical' | 'manuscript';
  * Engine-specific: the discriminator `kind` lets the runner narrow without
  * correlating against {@link FeedbackJob.engine}.
  */
-export type SerializedContext = EditorialSnapshot | CriticalSnapshot;
+export type SerializedContext = EditorialSnapshot | CriticalSnapshot | ManuscriptFeedbackSnapshot;
 
 /** Editorial feedback snapshot — manuscript + lore content messages to inject. */
 export interface EditorialSnapshot {
@@ -87,6 +95,29 @@ export interface CriticalSnapshot {
     vaultContext: string;
     /** Lore reference messages resolved at submit, injected at run. */
     loreMessages: ChatMessage[];
+}
+
+/**
+ * Manuscript-analysis snapshot — the resolved chapters (with their text) plus
+ * deterministic signal, captured at submit. The runner rebuilds the payload
+ * from these chapters and runs the compaction pipeline (embed/compress) at run
+ * time. Because the chapter text lives in the snapshot, the job is fully
+ * isolated from live edits: the writer can keep writing or open other files
+ * between submit and run without affecting the report.
+ */
+export interface ManuscriptFeedbackSnapshot {
+    kind: 'manuscript';
+    mode: ManuscriptAnalysisMode;
+    compaction: CompactionStrategy;
+    /** Scope-resolved chapters (full or surrounding-N), text captured at submit. */
+    selectedChapters: ChapterRange[];
+    /** Entities with reclassification applied at submit. */
+    entities: ExtractedEntity[];
+    /** Dismissed-entity ids at submit. */
+    dismissedIds: string[];
+    manuscriptName: string;
+    vaultContext: string;
+    plotMapText: string;
 }
 
 export interface FeedbackJob {
@@ -365,8 +396,10 @@ export async function runFeedbackJob(
                 return markFailed(job, `Unknown persona: ${job.personaId ?? ''}`);
             }
             fullResponse = await streamEditorial(plugin, job, snapshot, chat.provider, chat.modelId, signal);
-        } else {
+        } else if (snapshot.kind === 'critical') {
             fullResponse = await streamCritical(plugin, job, snapshot, chat.provider, chat.modelId, signal);
+        } else {
+            fullResponse = await streamManuscript(plugin, job, snapshot, chat.provider, chat.modelId, signal);
         }
     } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') {
@@ -491,6 +524,56 @@ async function streamCritical(
     );
 }
 
+/**
+ * Run the manuscript-analysis payload from the snapshot. The compaction pipeline
+ * (embed/compress) runs here, at run time, via the shared
+ * {@link EventideQuillPlugin.prepareManuscriptAnalysisPayload} — submit stays
+ * cheap. The chapter text is already in the snapshot, so this is fully isolated
+ * from any live edits the writer makes between submit and run.
+ */
+async function streamManuscript(
+    plugin: EventideQuillPlugin,
+    job: FeedbackJob,
+    snapshot: ManuscriptFeedbackSnapshot,
+    provider: NonNullable<AiProvider>,
+    modelId: string | undefined,
+    signal: AbortSignal
+): Promise<string> {
+    const prepared: PreparedManuscript = await plugin.prepareManuscriptAnalysisPayload(
+        {
+            mode: snapshot.mode,
+            selectedChapters: snapshot.selectedChapters,
+            entities: snapshot.entities,
+            dismissedIds: new Set(snapshot.dismissedIds),
+            manuscriptName: snapshot.manuscriptName,
+            compaction: snapshot.compaction,
+            customInstruction: job.focusPrompt,
+            vaultContext: snapshot.vaultContext,
+            plotMapText: snapshot.plotMapText
+        },
+        provider,
+        modelId,
+        signal
+    );
+    return accumulate(
+        getManuscriptAnalysis(provider, snapshot.mode, {
+            mode: snapshot.mode,
+            metrics: prepared.metrics,
+            manuscriptText: prepared.manuscriptText,
+            manuscriptName: prepared.manuscriptName,
+            vaultContext: snapshot.vaultContext,
+            plotMapText: snapshot.plotMapText,
+            customInstruction: job.focusPrompt,
+            model: modelId,
+            temperature: plugin.settings.manuscriptAnalysisTemperature,
+            maxTokens: plugin.settings.manuscriptAnalysisMaxOutputTokens,
+            existingMessages: prepared.existingMessages,
+            compacted: prepared.wasCompacted
+        }),
+        signal
+    );
+}
+
 /** Build the archive input for a finished job, engine-aware. */
 function archiveInputFor(job: FeedbackJob, reportMarkdown: string): ReportArchiveInput {
     const snapshot = job.contextSnapshot;
@@ -506,11 +589,23 @@ function archiveInputFor(job: FeedbackJob, reportMarkdown: string): ReportArchiv
             manuscriptPath: job.manuscriptPath
         };
     }
-    const modeMeta = getAnalysisModeById(snapshot.mode);
+    if (snapshot.kind === 'critical') {
+        const modeMeta = getAnalysisModeById(snapshot.mode);
+        return {
+            reportMarkdown,
+            source: 'queue',
+            kind: 'critical',
+            id: snapshot.mode,
+            title: modeMeta?.label ?? snapshot.mode,
+            scope: job.scope,
+            manuscriptPath: job.manuscriptPath
+        };
+    }
+    const modeMeta = getManuscriptAnalysisModeById(snapshot.mode);
     return {
         reportMarkdown,
         source: 'queue',
-        kind: 'critical',
+        kind: 'manuscript',
         id: snapshot.mode,
         title: modeMeta?.label ?? snapshot.mode,
         scope: job.scope,
