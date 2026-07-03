@@ -128,6 +128,9 @@ export class ReviewPanel extends AbstractChatPanel {
     private plugin: EventideQuillPlugin | null = null;
     /** When true, Generate/persona actions queue a job instead of running interactively. */
     private queueMode = false;
+    /** Cached Create sub-tab scroll position — preserved across option-change re-renders
+     *  (reset only when the Review type/engine changes, since that restructures the form). */
+    private createScrollTop = 0;
     /** Cached Queue sub-tab badge element (live-updated without a full re-render). */
     private queueBadgeEl: HTMLElement | null = null;
     /** Queued-editorial handler (mirrors onEditorialGenerate but routes to the queue). */
@@ -730,6 +733,11 @@ export class ReviewPanel extends AbstractChatPanel {
     private renderCreateTab(): void {
         if (!this.containerEl) return;
         const scroll = this.containerEl.createDiv({ cls: 'quill-sidebar__content-plain' });
+        // Track scroll so option-change re-renders preserve position (only the
+        // Review-type/engine picker resets it — it restructures the whole form).
+        this.renderEvents.registerDomEvent(scroll, 'scroll', () => {
+            this.createScrollTop = scroll.scrollTop;
+        });
 
         // Document gate — both engines need a document open.
         const doc = this.requireActiveDocument(scroll, 'review');
@@ -793,6 +801,9 @@ export class ReviewPanel extends AbstractChatPanel {
             text: buttonLabel
         });
         this.renderEvents.registerDomEvent(generateBtn, 'click', () => this.triggerGenerate());
+
+        // Restore the preserved scroll position now that all content is laid out.
+        scroll.scrollTop = this.createScrollTop;
     }
 
     // ========================================================================
@@ -827,6 +838,8 @@ export class ReviewPanel extends AbstractChatPanel {
             btn.createEl('span', { cls: 'quill-option-picker__desc', text: eng.desc });
             this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.engine = eng.id;
+                // The engine picker restructures the entire form — reset scroll.
+                this.createScrollTop = 0;
                 if (this.containerEl) this.render();
             });
         }
