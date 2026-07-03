@@ -5136,15 +5136,19 @@ export default class EventideQuillPlugin extends Plugin {
         void this.runNextQueuedFeedbackJob();
     }
 
-    /** Persist a job to the sidecar (best-effort; logs on failure). */
+    /** Persist a job to the sidecar (best-effort; logs on failure). Prunes LRU-evicted jobs from memory. */
     private async persistFeedbackJob(job: FeedbackJob): Promise<void> {
         try {
-            await saveFeedbackJob(
+            const { evictedIds } = await saveFeedbackJob(
                 this.app.vault,
                 resolveQueueDir(this.pluginDataDir),
                 job,
                 this.settings.feedbackQueueLimit
             );
+            if (evictedIds.length > 0) {
+                for (const id of evictedIds) this.feedbackJobs.delete(id);
+                this.lintPanel?.feedbackQueueChanged();
+            }
         } catch (err) {
             console.warn(`Quill: failed to persist feedback job ${job.id}`, err);
         }
@@ -5198,7 +5202,16 @@ export default class EventideQuillPlugin extends Plugin {
         this.lintPanel?.feedbackQueueChanged();
 
         try {
-            await runFeedbackJob(this, job, controller.signal);
+            try {
+                await runFeedbackJob(this, job, controller.signal);
+            } catch (err) {
+                // runFeedbackJob is designed to set a terminal status itself, but
+                // guard against an unexpected throw so the job isn't stuck in
+                // 'running' and the FIFO chain isn't broken.
+                job.status = 'failed';
+                job.error = err instanceof Error ? err.message : String(err);
+                job.completedAt = Date.now();
+            }
             await this.persistFeedbackJob(job);
             this.notifyFeedbackJobOutcome(job);
             this.lintPanel?.feedbackQueueChanged();

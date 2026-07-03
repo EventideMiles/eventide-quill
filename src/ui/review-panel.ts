@@ -712,10 +712,13 @@ export class ReviewPanel extends AbstractChatPanel {
         if (!this.containerEl) return;
         const bar = this.containerEl.createDiv({ cls: 'quill-sidebar__subtab-bar' });
         this.queueBadgeEl = null;
+        const queueEnabled = this.plugin?.settings.enableFeedbackQueue ?? false;
+        // If the queue was disabled while the Queue subtab is active, fall back to Create.
+        if (!queueEnabled && this.subtab === 'queue') this.subtab = 'create';
         const tabs: { id: ReviewSubtab; label: string }[] = [
             { id: 'create', label: 'New review' },
             { id: 'results', label: 'Results' },
-            { id: 'queue', label: 'Queue' }
+            ...(queueEnabled ? [{ id: 'queue' as const, label: 'Queue' }] : [])
         ];
         for (const tab of tabs) {
             const btn = bar.createEl('button', {
@@ -795,15 +798,20 @@ export class ReviewPanel extends AbstractChatPanel {
 
         // Queue-mode toggle (all engines). When on, persona clicks + Generate
         // route to the async queue instead of running interactively, and stay on
-        // Create so the writer can queue several.
-        const toggleWrap = scroll.createDiv({ cls: 'quill-feedback-queue__toggle' });
-        const queueToggle = toggleWrap.createEl('input', { attr: { type: 'checkbox' } });
-        queueToggle.checked = this.queueMode;
-        toggleWrap.createEl('span', { text: 'Queue instead of running' });
-        this.renderEvents.registerDomEvent(queueToggle, 'change', () => {
-            this.queueMode = queueToggle.checked;
-            if (this.containerEl) this.render();
-        });
+        // Create so the writer can queue several. Hidden when the queue feature
+        // is disabled in settings.
+        if (this.plugin?.settings.enableFeedbackQueue) {
+            const toggleWrap = scroll.createDiv({ cls: 'quill-feedback-queue__toggle' });
+            const queueToggle = toggleWrap.createEl('input', { attr: { type: 'checkbox' } });
+            queueToggle.checked = this.queueMode;
+            toggleWrap.createEl('span', { text: 'Queue instead of running' });
+            this.renderEvents.registerDomEvent(queueToggle, 'change', () => {
+                this.queueMode = queueToggle.checked;
+                if (this.containerEl) this.render();
+            });
+        } else if (this.queueMode) {
+            this.queueMode = false;
+        }
 
         const buttonLabel = this.queueMode
             ? this.engine === 'editorial'

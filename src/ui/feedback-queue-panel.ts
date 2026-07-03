@@ -161,12 +161,15 @@ function renderJobCard(
         events.registerDomEvent(cancel, 'click', () => handlers.onCancel(job.id));
     }
 
-    if (job.status === 'succeeded' && job.reportNotePath) {
+    if (job.status === 'succeeded' && (job.reportMarkdown || job.reportNotePath)) {
         const discuss = actions.createEl('button', {
             cls: 'quill-feedback-queue__action quill-feedback-queue__action--primary',
             text: 'Discuss'
         });
         events.registerDomEvent(discuss, 'click', () => handlers.onDiscuss(job));
+    }
+
+    if (job.status === 'succeeded' && job.reportNotePath) {
         const open = actions.createEl('button', {
             cls: 'quill-feedback-queue__action',
             text: 'Open report'

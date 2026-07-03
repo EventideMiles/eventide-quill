@@ -3182,6 +3182,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
                     this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;
                     this.plugin.settings.enableInlineDirectives = DEFAULT_SETTINGS.enableInlineDirectives;
+                    this.plugin.settings.enableFeedbackQueue = DEFAULT_SETTINGS.enableFeedbackQueue;
+                    this.plugin.settings.feedbackQueueLimit = DEFAULT_SETTINGS.feedbackQueueLimit;
+                    this.plugin.settings.feedbackQueueAutoRun = DEFAULT_SETTINGS.feedbackQueueAutoRun;
+                    this.plugin.settings.autoSaveFeedbackReports = DEFAULT_SETTINGS.autoSaveFeedbackReports;
+                    this.plugin.settings.feedbackReportFolder = DEFAULT_SETTINGS.feedbackReportFolder;
                     await this.plugin.saveSettings();
                     this.display();
                 })

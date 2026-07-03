@@ -250,17 +250,26 @@ export async function listFeedbackJobs(vault: Vault, dir: string): Promise<JobIn
     return [...entries].sort((a, b) => b.createdAt - a.createdAt);
 }
 
+/** Result of persisting a job: the refreshed index row plus any ids evicted by LRU pruning. */
+export interface SaveFeedbackJobResult {
+    entry: JobIndexEntry;
+    /** Completed-job ids removed from disk by the LRU prune (caller should drop them from memory). */
+    evictedIds: string[];
+}
+
 /**
  * Persist a job's sidecar blob and refresh its index row. Active jobs
  * (queued/running) are always retained; LRU eviction targets only completed
- * jobs beyond {@link EventideQuillSettings.feedbackQueueLimit}.
+ * jobs beyond {@link EventideQuillSettings.feedbackQueueLimit}. Returns the
+ * refreshed index row and any evicted job ids so the caller can prune its
+ * in-memory map.
  */
 export async function saveFeedbackJob(
     vault: Vault,
     dir: string,
     job: FeedbackJob,
     limit?: number
-): Promise<JobIndexEntry> {
+): Promise<SaveFeedbackJobResult> {
     await ensureDir(vault, dir);
     if (!JOB_ID_RE.test(job.id)) {
         throw new InvalidJobIdError(job.id, 'save');
@@ -275,9 +284,10 @@ export async function saveFeedbackJob(
     const indexPath = normalizePath(`${dir}/${INDEX_FILENAME}`);
     const entry = entryFromJob(job, json.length);
 
+    let evictedIds: string[] = [];
     try {
         await vault.adapter.write(jobPath, json);
-        await withIndexLock(async () => {
+        evictedIds = await withIndexLock(async () => {
             const cur = (await readJson<JobIndexFile>(vault, indexPath)) ?? {
                 schemaVersion: SCHEMA_VERSION,
                 entries: []
@@ -306,13 +316,14 @@ export async function saveFeedbackJob(
                 entries: [...active, ...keepCompleted]
             };
             await vault.adapter.write(indexPath, JSON.stringify(out, null, 2));
+            return evict.map((e) => e.id);
         });
     } catch (err) {
         console.warn(`Quill: failed to save feedback job ${job.id}`, err);
         new Notice('Could not save the feedback job.');
         throw err;
     }
-    return entry;
+    return { entry, evictedIds };
 }
 
 /** Load one job's full blob by id (null if missing or unparsable). */
