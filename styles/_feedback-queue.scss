@@ -10,7 +10,27 @@
 
     &__toolbar {
         display: flex;
-        justify-content: flex-end;
+        align-items: center;
+        justify-content: space-between;
+        gap: $space-sm;
+    }
+
+    &__clear {
+        padding: $space-xs $space-lg;
+        border-radius: $radius-md;
+        border: 1px solid var(--background-modifier-border);
+        background: transparent;
+        color: var(--text-muted);
+        font-size: var(--font-ui-smaller);
+        cursor: pointer;
+        transition:
+            background $transition-base,
+            color $transition-base;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
     }
 
     &__run-now {

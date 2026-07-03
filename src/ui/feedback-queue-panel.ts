@@ -18,6 +18,7 @@ export interface FeedbackQueueHandlers {
     onDelete: (id: string) => void;
     onOpenReport: (job: FeedbackJob) => void;
     onRunNow: () => void;
+    onClearCompleted: () => void;
 }
 
 /** Human label for a job's engine (and its persona/mode where relevant). */
@@ -70,8 +71,18 @@ export function renderFeedbackQueue(
     const active = jobs.filter((j) => j.status === 'queued' || j.status === 'running');
     const completed = jobs.filter((j) => j.status !== 'queued' && j.status !== 'running');
 
-    // --- Toolbar: manual "Run now" (always available; respects the scheduler). ---
+    // --- Toolbar: manual "Run now" + bulk "Clear completed". ---
     const toolbar = container.createDiv({ cls: 'quill-feedback-queue__toolbar' });
+
+    const hasCompleted = jobs.some((j) => j.status !== 'queued' && j.status !== 'running');
+    if (hasCompleted) {
+        const clearBtn = toolbar.createEl('button', {
+            cls: 'quill-feedback-queue__clear',
+            text: 'Clear completed'
+        });
+        events.registerDomEvent(clearBtn, 'click', () => handlers.onClearCompleted());
+    }
+
     const runBtn = toolbar.createEl('button', {
         cls: 'quill-feedback-queue__run-now',
         text: 'Run next queued job'

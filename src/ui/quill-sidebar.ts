@@ -575,7 +575,8 @@ export class QuillSidebarView extends ItemView {
                 onCancel: (id) => void this.plugin.cancelFeedbackJob(id),
                 onDelete: (id) => void this.plugin.deleteFeedbackJob(id),
                 onOpenReport: (job) => this.plugin.openFeedbackReport(job),
-                onRunNow: () => void this.plugin.runFeedbackQueueNow()
+                onRunNow: () => void this.plugin.runFeedbackQueueNow(),
+                onClearCompleted: () => this.plugin.clearCompletedFeedbackJobs()
             });
         }
         const chat = this.plugin.getDefaultChatProvider();

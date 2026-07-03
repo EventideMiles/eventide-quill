@@ -66,6 +66,7 @@ import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
 import type { LoreDraftEntry } from './ai/co-writer';
 import { resolveSessionsDir, listSessions, saveSession, loadSession, deleteSession } from './ai/conversation-store';
 import { SessionListModal } from './ui/session-list-modal';
+import { ConfirmModal } from './ui/confirm-modal';
 import type { InputMode } from './ui/co-writer-panel';
 import {
     getManuscriptAnalysis,
@@ -5082,6 +5083,42 @@ export default class EventideQuillPlugin extends Plugin {
         } else {
             new Notice('Quill: report note moved or deleted — re-run to regenerate.');
         }
+    }
+
+    /**
+     * Clear all terminal (succeeded/failed/cancelled) jobs from the queue after
+     * confirmation. Active jobs (queued/running) are kept. Vault report notes are
+     * never touched — only the sidecar cards are removed.
+     */
+    clearCompletedFeedbackJobs(): void {
+        const completed = [...this.feedbackJobs.values()].filter(
+            (j) => j.status !== 'queued' && j.status !== 'running'
+        );
+        if (completed.length === 0) {
+            new Notice('Quill: no completed jobs to clear.');
+            return;
+        }
+        const noun = completed.length === 1 ? 'job' : 'jobs';
+        new ConfirmModal(
+            this.app,
+            'Clear completed queue jobs',
+            `Remove ${completed.length} completed ${noun} from the queue? Saved reports in the vault are not affected.`,
+            () => this.performClearCompleted(completed),
+            'Clear'
+        ).open();
+    }
+
+    private async performClearCompleted(jobs: FeedbackJob[]): Promise<void> {
+        const dir = resolveQueueDir(this.pluginDataDir);
+        for (const job of jobs) {
+            this.feedbackJobs.delete(job.id);
+            try {
+                await deleteFeedbackJob(this.app.vault, dir, job.id);
+            } catch (err) {
+                console.warn(`Quill: failed to delete feedback job ${job.id}`, err);
+            }
+        }
+        this.lintPanel?.feedbackQueueChanged();
     }
 
     /**
