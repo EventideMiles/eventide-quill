@@ -348,9 +348,13 @@ export default class EventideQuillPlugin extends Plugin {
         // Resolve the plugin's data directory for dashboard snapshot storage.
         this.pluginDataDir = `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
 
-        // Local Fandom cache (sidecar under <pluginDataDir>/fandom-cache/). Stage 1:
-        // silent write-through on fandom_page/fandom_image live fetches.
+        // Local Fandom cache (sidecar under <pluginDataDir>/fandom-cache/).
+        // Write-through (Stage 1) + cache-first (Stage 2) + answers-when-network-off
+        // (Stage 3, gated by the presence set populated in init()). Fire-and-forget
+        // the one-time presence scan — best-effort; cache-only registration stays
+        // off until either init resolves or a live fetch flips the set.
         this.fandomCache = FandomCache.create(this.app.vault, this.pluginDataDir);
+        void this.fandomCache.init();
 
         this.registerEditorExtension(
             getLintExtension(
