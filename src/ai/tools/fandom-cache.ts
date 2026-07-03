@@ -566,3 +566,56 @@ function sanitizeImageKey(key: string): string {
         .replace(/^-+|-+$/g, '');
     return slug.length > 0 ? slug : 'image';
 }
+
+/**
+ * Fandom tool reachability — the single source of truth both
+ * `createToolRegistry` (registration) and `buildNetworkToolsMessage` (prompt
+ * advertisement) call so the two-place gating mirror can't drift (Stage 3).
+ *
+ * - `'live'`        — allowlist active AND network tools on. Tools register;
+ *                     misses fall through to a live fetch + write-through.
+ * - `'cache-only'`  — allowlist active, network tools off, but the cache holds
+ *                     entries for an allowlisted wiki. Tools STILL register;
+ *                     hits answer from cache, misses return "not cached" (no
+ *                     live call). The maximal privacy posture: consent was at
+ *                     sync time, so the network toggle no longer hides cached data.
+ * - `'none'`        — allowlist empty (and allow-all off), or network off with
+ *                     no cached entries / cache disabled. Tools do NOT register.
+ *
+ * The allowlist still gates per-call (`validateWiki` in fandom-lookup.ts is
+ * unchanged) — a cached wiki removed from the allowlist goes dormant until
+ * re-listed. `cacheEnabled` (the master `lorebookFandomCacheEnabled` toggle)
+ * folds in here: when off, the cache subsystem is inert, so cache-only never
+ * activates even if sidecar files exist on disk.
+ */
+export type FandomReachability = 'live' | 'cache-only' | 'none';
+
+/**
+ * Structural subset of the plugin the reachability check reads. Declared locally
+ * (not imported from main.ts) to avoid a circular import; `EventideQuillPlugin`
+ * satisfies this structurally, so callers just pass `plugin`.
+ */
+interface FandomReachabilityHost {
+    settings: {
+        lorebookNetworkTools: boolean;
+        lorebookFandomWikis: string[];
+        lorebookFandomAllowAllWikis: boolean;
+        lorebookFandomCacheEnabled: boolean;
+    };
+    fandomCache: FandomCache | null;
+}
+
+export function fandomReachability(plugin: FandomReachabilityHost): FandomReachability {
+    const { lorebookNetworkTools, lorebookFandomWikis, lorebookFandomAllowAllWikis, lorebookFandomCacheEnabled } =
+        plugin.settings;
+    const allowlistActive = lorebookFandomAllowAllWikis || lorebookFandomWikis.length > 0;
+    if (!allowlistActive) return 'none';
+    if (lorebookNetworkTools) return 'live';
+    // Network off — only cache-only if the cache subsystem is on AND holds an
+    // entry for a currently-allowlisted wiki (any entry when allow-all is on).
+    if (!lorebookFandomCacheEnabled || !plugin.fandomCache) return 'none';
+    const cached = lorebookFandomAllowAllWikis
+        ? plugin.fandomCache.hasAnyEntries()
+        : lorebookFandomWikis.some((w) => plugin.fandomCache!.hasWiki(w));
+    return cached ? 'cache-only' : 'none';
+}

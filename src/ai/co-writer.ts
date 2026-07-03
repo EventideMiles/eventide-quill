@@ -55,6 +55,7 @@ import {
 import { SubagentSession, type SubagentView, type SubagentConfig } from './subagent-session';
 import { resolveNoteFile } from './tools/lore-edit-helpers';
 import { CACHE_HIT_MARKER } from './tools/fandom-lookup';
+import { fandomReachability } from './tools/fandom-cache';
 import {
     clearDiffEdits,
     diffEditsField,
@@ -507,57 +508,94 @@ function buildContextBudgetMessage(
 }
 
 /**
- * Build a system message telling the model which network tools are available,
- * when enabled. Returns null when network tools are off.
+ * Build a system message telling the model which network/Fandom tools are
+ * available. Mirrors `createToolRegistry()` so the prompt never advertises a
+ * tool the model can't actually call (the two-place gating mirror). Two shapes:
+ *
+ * - **Network tools on** → the full live advertisement (fandom_*, wikipedia_*,
+ *   fetch_url). Fandom lines appear only when the allowlist is active.
+ * - **Network tools off but Fandom cache populated** (Stage 3 cache-only) → a
+ *   shorter Fandom-only block warning the model that hits come from a possibly
+ *   stale local cache and misses do NOT fall through to a live fetch.
+ *
+ * Returns null when there's nothing to advertise (tools disabled, or network
+ * off with no cached Fandom).
  */
 function buildNetworkToolsMessage(plugin: EventideQuillPlugin): ChatMessage | null {
     // Mirror createToolRegistry(): no tools at all when tools are disabled, so
     // the prompt never advertises network tools the model can't actually call.
     if (!plugin.settings.coWriterToolsEnabled) return null;
-    if (!plugin.settings.lorebookNetworkTools) return null;
+
+    const networkOn = plugin.settings.lorebookNetworkTools;
+    const reachability = fandomReachability(plugin);
+    if (!networkOn && reachability === 'none') return null;
+
     const wikis = plugin.settings.lorebookFandomWikis;
     const allowAll = plugin.settings.lorebookFandomAllowAllWikis;
     const lang = plugin.settings.lorebookWikipediaLang;
-    const lines = [
-        'You have network tools available — USE THEM PROACTIVELY when the topic',
-        'involves canon, history, science, places, or real-world references:'
-    ];
-    // Mirror createToolRegistry(): advertise Fandom when the allowlist is
-    // non-empty OR the "allow any wiki" danger toggle is on. When allow-all is
-    // on with an empty allowlist, the model may query any Fandom wiki.
-    if (wikis.length > 0 || allowAll) {
-        const wikiDesc = allowAll ? 'any wiki' : wikis.join(', ');
+
+    if (networkOn) {
+        const lines = [
+            'You have network tools available — USE THEM PROACTIVELY when the topic',
+            'involves canon, history, science, places, or real-world references:'
+        ];
+        // Mirror createToolRegistry(): advertise Fandom when reachable (allowlist
+        // non-empty OR the "allow any wiki" danger toggle is on). When allow-all
+        // is on with an empty allowlist, the model may query any Fandom wiki.
+        if (reachability !== 'none') {
+            const wikiDesc = allowAll ? 'any wiki' : wikis.join(', ');
+            lines.push(
+                `- fandom_lookup / fandom_page: search Fandom (${wikiDesc}); use fandom_page with an exact title to get content.`
+            );
+            // fandom_image is registered only when image tools are also on, since it
+            // returns an image (routed through the vision layer).
+            if (plugin.settings.lorebookImageTools) {
+                lines.push(
+                    `- fandom_image: fetch the lead image for a Fandom topic (${wikiDesc}) and list the page's other images with their captions; pass a filename via the "image" param to fetch a specific gallery image. Use it to see character appearance or artwork.`
+                );
+            }
+        }
         lines.push(
-            `- fandom_lookup / fandom_page: search Fandom (${wikiDesc}); use fandom_page with an exact title to get content.`
+            `- wikipedia_lookup / wikipedia_page: search Wikipedia (${lang}); use wikipedia_page with an exact title to get content.`,
+            '- fetch_url: fetch any web page and return its text.',
+            '',
+            'Workflow: use the *_lookup tool to search, then use the *_page tool',
+            'with the exact title from the results to retrieve the full extract.',
+            '',
+            'Look things up freely — when the writer mentions a topic that a wiki or',
+            'encyclopedia would know about, go straight to the tool. You may proceed',
+            'without asking. Results count toward context — be judicious with very',
+            'large pages.'
         );
-        // fandom_image is registered only when image tools are also on, since it
-        // returns an image (routed through the vision layer).
+        // wikipedia_image is registered only when image tools are also on, since
+        // it returns an image (routed through the vision layer). Same cross-toggle
+        // gate as fandom_image above.
         if (plugin.settings.lorebookImageTools) {
             lines.push(
-                `- fandom_image: fetch the lead image for a Fandom topic (${wikiDesc}) and list the page's other images with their captions; pass a filename via the "image" param to fetch a specific gallery image. Use it to see character appearance or artwork.`
+                `- wikipedia_image: fetch the lead image for a Wikipedia topic (${lang}) — most often a portrait for biographies, cover art for works, or a photograph for places. Use it to see what a person, place, or object looks like.`
             );
         }
+        return { role: 'system', content: lines.join('\n') };
     }
-    lines.push(
-        `- wikipedia_lookup / wikipedia_page: search Wikipedia (${lang}); use wikipedia_page with an exact title to get content.`,
-        '- fetch_url: fetch any web page and return its text.',
-        '',
-        'Workflow: use the *_lookup tool to search, then use the *_page tool',
-        'with the exact title from the results to retrieve the full extract.',
-        '',
-        'Look things up freely — when the writer mentions a topic that a wiki or',
-        'encyclopedia would know about, go straight to the tool. You may proceed',
-        'without asking. Results count toward context — be judicious with very',
-        'large pages.'
-    );
-    // wikipedia_image is registered only when image tools are also on, since
-    // it returns an image (routed through the vision layer). Same cross-toggle
-    // gate as fandom_image above.
+
+    // Cache-only (Stage 3): network tools off, but a populated Fandom cache
+    // answers for an allowlisted wiki. Tell the model the shape — hits come
+    // from a possibly-stale local cache, and misses do NOT fall through live.
+    const wikiDesc = allowAll ? 'any cached wiki' : wikis.join(', ');
+    const lines = [
+        'Fandom is available from the LOCAL CACHE ONLY (network tools are off):',
+        `- fandom_lookup / fandom_page: answer from the cached Fandom content (${wikiDesc}). Hits return instantly with no network request; misses return "not cached" and do NOT fall through to a live fetch while network tools are off.`
+    ];
     if (plugin.settings.lorebookImageTools) {
         lines.push(
-            `- wikipedia_image: fetch the lead image for a Wikipedia topic (${lang}) — most often a portrait for biographies, cover art for works, or a photograph for places. Use it to see what a person, place, or object looks like.`
+            `- fandom_image: fetch a cached Fandom image by exact filename (${wikiDesc}); the query path needs the network and is unavailable, so pass a filename from a prior result.`
         );
     }
+    lines.push(
+        '',
+        'Cached content may be stale (it reflects the last sync). Re-enable network',
+        'tools in settings to fetch fresh pages or search live.'
+    );
     return { role: 'system', content: lines.join('\n') };
 }
 

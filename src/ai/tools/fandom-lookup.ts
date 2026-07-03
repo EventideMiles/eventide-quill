@@ -37,6 +37,21 @@ function cacheFor(ctx: ToolContext): FandomCache | null {
 }
 
 /**
+ * Standard result when a fandom tool misses the cache in cache-only mode
+ * (`lorebookNetworkTools` off — a populated cache is answering). Stage 3: no
+ * live fallback is permitted; the model is told how to fetch fresh data.
+ * Shared by all three fandom tools so the miss wording stays consistent.
+ */
+function cacheOnlyMiss(host: string, what: string): string {
+    return `Not in cache for "${what}" on ${host} (network tools off — re-enable network tools to fetch).`;
+}
+
+/** True when this request is running in cache-only mode (tools registered via the Stage 3 cache-only path). */
+function isCacheOnly(ctx: ToolContext): boolean {
+    return !ctx.plugin.settings.lorebookNetworkTools;
+}
+
+/**
  * Write a page to the local Fandom cache after a successful live fetch
  * (Stage 1 write-through). Best-effort + fire-and-forget: a cache failure
  * must never fail the tool call. Gated by `lorebookFandomCacheEnabled`.
@@ -192,6 +207,12 @@ export function createFandomLookupTool(maxResultTokens: number, allowedWikis: st
                 );
             }
 
+            // Stage 3: cache-only mode (network tools off) — no live fallback.
+            // [Stage 6 will try the local search index here before giving up.]
+            if (isCacheOnly(ctx)) {
+                return cacheOnlyMiss(host, query);
+            }
+
             try {
                 const result = await mediawikiLookup(host, query, maxResultTokens);
                 // Cache the unambiguous extract (the common case for a character
@@ -269,6 +290,11 @@ export function createFandomPageTool(maxResultTokens: number, allowedWikis: stri
                     const date = new Date(cached.retrievedAt).toISOString().slice(0, 10);
                     return `${title} (${host}) ${CACHE_HIT_MARKER} ${date} — no network request]:\n${text}`;
                 }
+            }
+
+            // Stage 3: cache-only mode — no live fallback on a miss.
+            if (isCacheOnly(ctx)) {
+                return cacheOnlyMiss(host, title);
             }
 
             try {
@@ -372,6 +398,10 @@ export function createFandomImageTool(
                             };
                         }
                     }
+                    // Stage 3: cache-only mode — no live fallback on a miss.
+                    if (isCacheOnly(ctx)) {
+                        return { text: cacheOnlyMiss(host, image) };
+                    }
                     const info = await mediawikiImageInfo(host, image, maxDimension);
                     if (!info) {
                         return {
@@ -392,6 +422,10 @@ export function createFandomImageTool(
                 }
 
                 // Path B: query → lead image + captioned gallery list.
+                // Cache-only mode can't search live — a query needs the network.
+                if (isCacheOnly(ctx)) {
+                    return { text: cacheOnlyMiss(host, query) };
+                }
                 const results = await mediawikiSearch(host, query, 1);
                 if (results.length === 0) {
                     return { text: `No page found for "${query}" on ${host}.` };
