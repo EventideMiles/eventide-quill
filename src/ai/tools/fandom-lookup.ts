@@ -9,7 +9,13 @@ import {
     mediawikiPageImage,
     mediawikiSearch
 } from './mediawiki';
-import { FANDOM_DEFAULT_LICENSE, fandomPageSourceUrl, type FandomCache } from './fandom-cache';
+import {
+    FANDOM_DEFAULT_LICENSE,
+    fandomPageSourceUrl,
+    formatLocalDate,
+    type CachedFandomPage,
+    type FandomCache
+} from './fandom-cache';
 
 /**
  * Fandom subdomain shape: a single DNS label (letters, digits, hyphens) — no
@@ -34,6 +40,46 @@ export const CACHE_HIT_MARKER = '[cached';
 /** Resolve the cache for this request, honoring the `lorebookFandomCacheEnabled` gate. */
 function cacheFor(ctx: ToolContext): FandomCache | null {
     return ctx.plugin.settings.lorebookFandomCacheEnabled ? ctx.plugin.fandomCache : null;
+}
+
+/**
+ * Standard result when a fandom tool misses the cache in cache-only mode
+ * (`lorebookNetworkTools` off — a populated cache is answering). Stage 3: no
+ * live fallback is permitted; the model is told how to fetch fresh data.
+ * Shared by all three fandom tools so the miss wording stays consistent.
+ */
+function cacheOnlyMiss(host: string, what: string): string {
+    return `Not in cache for "${what}" on ${host} (network tools off — re-enable network tools to fetch).`;
+}
+
+/** True when this request is running in cache-only mode (tools registered via the Stage 3 cache-only path). */
+function isCacheOnly(ctx: ToolContext): boolean {
+    return !ctx.plugin.settings.lorebookNetworkTools;
+}
+
+/**
+ * Format a cached page as a cache-hit result (with the `[cached …]` marker that
+ * the tool-use indicator detects for the green "CACHED" badge). Shared by the
+ * fandom_lookup alias-hit, the fandom_lookup search-hit (Stage 6), and the
+ * fandom_page hit so the truncation + marker wording stays identical.
+ */
+function formatCachedPage(label: string, host: string, cached: CachedFandomPage, maxResultTokens: number): string {
+    const maxChars = maxResultTokens * 4;
+    const text = cached.text.length > maxChars ? cached.text.slice(0, maxChars) + '\n...[truncated]' : cached.text;
+    const date = formatLocalDate(cached.retrievedAt);
+    return `${label} (${host}) ${CACHE_HIT_MARKER} ${date} — no network request]:\n${text}`;
+}
+
+/**
+ * Recover a display title from a cached page's canonical source URL (e.g.
+ * `https://starwars.fandom.com/wiki/Luke_Skywalker` → `Luke Skywalker`). The
+ * cache stores pages keyed by a normalized (lowercased) title, so the source
+ * URL is the only place the original casing survives. Empty if unparseable.
+ */
+function displayTitleFromSourceUrl(sourceUrl: string): string {
+    const idx = sourceUrl.indexOf('/wiki/');
+    if (idx < 0) return '';
+    return decodeURIComponent(sourceUrl.slice(idx + 6).replace(/_/g, ' '));
 }
 
 /**
@@ -172,24 +218,59 @@ export function createFandomLookupTool(maxResultTokens: number, allowedWikis: st
             const cache = cacheFor(ctx);
             if (cache) {
                 const cached = await cache.getPage(wiki, query);
-                if (__DEV__ && ctx.plugin.settings.enableDebugLogging) {
-                    console.warn(
-                        `[fandom-cache] fandom_lookup wiki=${wiki} query="${query}" → ${cached ? 'HIT (no network)' : 'MISS → live'}`
-                    );
-                }
                 if (cached) {
-                    const maxChars = maxResultTokens * 4;
-                    const text =
-                        cached.text.length > maxChars
-                            ? cached.text.slice(0, maxChars) + '\n...[truncated]'
-                            : cached.text;
-                    const date = new Date(cached.retrievedAt).toISOString().slice(0, 10);
-                    return `${query} (${host}) ${CACHE_HIT_MARKER} ${date} — no network request]:\n${text}`;
+                    if (__DEV__ && ctx.plugin.settings.enableDebugLogging) {
+                        console.warn(
+                            `[fandom-cache] fandom_lookup wiki=${wiki} query="${query}" → HIT (alias, no network)`
+                        );
+                    }
+                    return formatCachedPage(query, host, cached, maxResultTokens);
                 }
             } else if (__DEV__ && ctx.plugin.settings.enableDebugLogging) {
                 console.warn(
                     '[fandom-cache] fandom_lookup cache inactive (lorebookFandomCacheEnabled off or fandomCache null)'
                 );
+            }
+
+            // Stage 6: local search index — substring-match over cached titles +
+            // first ~500 body chars. In cache-only mode this is the only path to
+            // a hit; in live mode a cached match avoids a redundant network call
+            // (more private, and consistent with the alias-repeat hit above). A
+            // single confident match returns its text; several return a candidate
+            // list the model resolves with fandom_page.
+            if (cache) {
+                const matches = await cache.search(wiki, query);
+                if (matches.length > 0) {
+                    if (__DEV__ && ctx.plugin.settings.enableDebugLogging) {
+                        console.warn(
+                            `[fandom-cache] fandom_lookup wiki=${wiki} query="${query}" → SEARCH HIT (${matches.length} match(es), no network)`
+                        );
+                    }
+                    if (matches.length === 1) {
+                        const m = matches[0]!;
+                        return formatCachedPage(
+                            displayTitleFromSourceUrl(m.sourceUrl) || query,
+                            host,
+                            m,
+                            maxResultTokens
+                        );
+                    }
+                    const freshest = matches.reduce((a, b) => (b.retrievedAt > a.retrievedAt ? b : a));
+                    const date = formatLocalDate(freshest.retrievedAt);
+                    const list = matches
+                        .map((m, i) => `${i + 1}. ${displayTitleFromSourceUrl(m.sourceUrl) || m.sourceUrl}`)
+                        .join('\n');
+                    return (
+                        `Cached candidates for "${query}" on ${host} (${CACHE_HIT_MARKER} ${date} — no network request]:\n` +
+                        `${list}\nUse fandom_page with an exact title to read one.`
+                    );
+                }
+            }
+
+            // Stage 3: cache-only mode (network tools off) — no live fallback on
+            // a miss (neither alias nor search matched).
+            if (isCacheOnly(ctx)) {
+                return cacheOnlyMiss(host, query);
             }
 
             try {
@@ -261,14 +342,13 @@ export function createFandomPageTool(maxResultTokens: number, allowedWikis: stri
             if (cache) {
                 const cached = await cache.getPage(wiki, title);
                 if (cached) {
-                    const maxChars = maxResultTokens * 4;
-                    const text =
-                        cached.text.length > maxChars
-                            ? cached.text.slice(0, maxChars) + '\n...[truncated]'
-                            : cached.text;
-                    const date = new Date(cached.retrievedAt).toISOString().slice(0, 10);
-                    return `${title} (${host}) ${CACHE_HIT_MARKER} ${date} — no network request]:\n${text}`;
+                    return formatCachedPage(title, host, cached, maxResultTokens);
                 }
+            }
+
+            // Stage 3: cache-only mode — no live fallback on a miss.
+            if (isCacheOnly(ctx)) {
+                return cacheOnlyMiss(host, title);
             }
 
             try {
@@ -363,7 +443,7 @@ export function createFandomImageTool(
                     if (cache) {
                         const cached = await cache.getImage(wiki, image);
                         if (cached) {
-                            const date = new Date(cached.meta.retrievedAt).toISOString().slice(0, 10);
+                            const date = formatLocalDate(cached.meta.retrievedAt);
                             return {
                                 text:
                                     `Fetched "${image}" from ${host} (${cached.meta.contentType}) ` +
@@ -371,6 +451,10 @@ export function createFandomImageTool(
                                 images: [cached.base64]
                             };
                         }
+                    }
+                    // Stage 3: cache-only mode — no live fallback on a miss.
+                    if (isCacheOnly(ctx)) {
+                        return { text: cacheOnlyMiss(host, image) };
                     }
                     const info = await mediawikiImageInfo(host, image, maxDimension);
                     if (!info) {
@@ -392,6 +476,10 @@ export function createFandomImageTool(
                 }
 
                 // Path B: query → lead image + captioned gallery list.
+                // Cache-only mode can't search live — a query needs the network.
+                if (isCacheOnly(ctx)) {
+                    return { text: cacheOnlyMiss(host, query) };
+                }
                 const results = await mediawikiSearch(host, query, 1);
                 if (results.length === 0) {
                     return { text: `No page found for "${query}" on ${host}.` };

@@ -2,6 +2,7 @@ import { ToolRegistry } from './tool';
 import { appendToNoteTool } from './append-to-note';
 import { attachLoreImageTool } from './attach-lore-image';
 import { calculateFileSizesTool } from './calculate-file-sizes';
+import { fandomReachability } from './fandom-cache';
 import { createFandomImageTool, createFandomLookupTool, createFandomPageTool } from './fandom-lookup';
 import { createFetchImageUrlTool } from './fetch-image-url';
 import { createFetchUrlTool } from './fetch-url';
@@ -112,7 +113,10 @@ export function createLoreCoachToolRegistry(plugin: EventideQuillPlugin): ToolRe
 /**
  * Build the full tool registry for a co-writer mode. Handles all gating:
  * - `coWriterToolsEnabled` off → returns null (no tools)
- * - `lorebookNetworkTools` on → registers all network tools
+ * - `lorebookNetworkTools` on → registers fetch_url + wikipedia_* (network-only)
+ * - Fandom tools register when reachable (`fandomReachability`): 'live' when
+ *   network tools are on, OR 'cache-only' when network tools are off but a
+ *   populated cache answers for an allowlisted wiki (Stage 3).
  * - `includeProposeEntry` → adds propose_entry (lorebook coach only)
  * - `allowSubagents` → adds the subagent spawners (parent modes only; the
  *   subagents themselves pass false so they cannot spawn sub-subagents —
@@ -150,14 +154,24 @@ export function createToolRegistry(
 
 /**
  * Register the external (network + image) tools on `registry`, gated by the
- * user's `lorebookNetworkTools` / `lorebookImageTools` settings and the Fandom
- * allowlist. Shared by the parent co-writer registry and the research
- * subagent registry so the Fandom multi-gate logic lives in exactly one place
- * (the gating mirror is fragile when duplicated).
+ * user's `lorebookNetworkTools` / `lorebookImageTools` settings, the Fandom
+ * allowlist, and the Fandom cache. Shared by the parent co-writer registry and
+ * the research subagent registry so the Fandom multi-gate logic lives in
+ * exactly one place (the gating mirror is fragile when duplicated).
+ *
+ * Fandom is the one tool family that can register WITHOUT network tools on:
+ * a populated cache answers from disk (Stage 3 — consent was at sync time, so
+ * the network toggle no longer hides cached data). `fandomReachability` is the
+ * single source of truth shared with `buildNetworkToolsMessage`, so prompt
+ * advertisement and registration always agree. `fetch_url` + `wikipedia_*`
+ * have no cache, so they stay gated purely on `lorebookNetworkTools`.
  */
 function registerExternalTools(registry: ToolRegistry, plugin: EventideQuillPlugin): void {
+    const maxTokens = plugin.settings.lorebookToolMaxTokens;
+
+    // Network-only tools (no cache): fetch_url + wikipedia_*. Gated purely by
+    // lorebookNetworkTools.
     if (plugin.settings.lorebookNetworkTools) {
-        const maxTokens = plugin.settings.lorebookToolMaxTokens;
         registry.register(createFetchUrlTool(maxTokens));
         registry.register(createWikipediaLookupTool(maxTokens, plugin.settings.lorebookWikipediaLang));
         registry.register(createWikipediaPageTool(maxTokens, plugin.settings.lorebookWikipediaLang));
@@ -174,26 +188,29 @@ function registerExternalTools(registry: ToolRegistry, plugin: EventideQuillPlug
                 )
             );
         }
-        // Fandom tools are registered when EITHER a non-empty allowlist is
-        // configured OR the "allow any wiki" danger setting is on. An empty
-        // allowlist with allow-all off means Fandom disabled everywhere.
+    }
+
+    // Fandom tools register when reachable — 'live' (network on) OR
+    // 'cache-only' (network off but a populated cache for an allowlisted wiki).
+    // fandomReachability folds in the allowlist + cache-enabled checks, so this
+    // single condition replaces the old `lorebookNetworkTools && (allowlist ||
+    // allowAll)` nesting. 'none' → tools not registered (Fandom fully off).
+    if (fandomReachability(plugin) !== 'none') {
         const fandomAllowAll = plugin.settings.lorebookFandomAllowAllWikis;
-        if (plugin.settings.lorebookFandomWikis.length > 0 || fandomAllowAll) {
-            registry.register(createFandomLookupTool(maxTokens, plugin.settings.lorebookFandomWikis, fandomAllowAll));
-            registry.register(createFandomPageTool(maxTokens, plugin.settings.lorebookFandomWikis, fandomAllowAll));
-            // fandom_image: a Fandom lookup that returns an image, so it also
-            // requires the image-tools gate. Uses prop=pageimages to fetch the
-            // API's thumbnail URL — fetching Fandom image URLs directly 403s.
-            if (plugin.settings.lorebookImageTools) {
-                registry.register(
-                    createFandomImageTool(
-                        maxTokens,
-                        plugin.settings.lorebookImageMaxDimension,
-                        plugin.settings.lorebookFandomWikis,
-                        fandomAllowAll
-                    )
-                );
-            }
+        registry.register(createFandomLookupTool(maxTokens, plugin.settings.lorebookFandomWikis, fandomAllowAll));
+        registry.register(createFandomPageTool(maxTokens, plugin.settings.lorebookFandomWikis, fandomAllowAll));
+        // fandom_image: a Fandom lookup that returns an image, so it also
+        // requires the image-tools gate. Uses prop=pageimages to fetch the
+        // API's thumbnail URL — fetching Fandom image URLs directly 403s.
+        if (plugin.settings.lorebookImageTools) {
+            registry.register(
+                createFandomImageTool(
+                    maxTokens,
+                    plugin.settings.lorebookImageMaxDimension,
+                    plugin.settings.lorebookFandomWikis,
+                    fandomAllowAll
+                )
+            );
         }
     }
 
@@ -201,8 +218,6 @@ function registerExternalTools(registry: ToolRegistry, plugin: EventideQuillPlug
     // and downscales an image, then the tool-loop routes it through the vision
     // layer (native or proxy depending on the configured models).
     if (plugin.settings.lorebookImageTools) {
-        registry.register(
-            createFetchImageUrlTool(plugin.settings.lorebookToolMaxTokens, plugin.settings.lorebookImageMaxDimension)
-        );
+        registry.register(createFetchImageUrlTool(maxTokens, plugin.settings.lorebookImageMaxDimension));
     }
 }

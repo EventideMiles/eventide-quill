@@ -2,11 +2,13 @@
  * Local cache for Fandom wiki content — the persistence layer for the
  * `fandom_*` tools' cache-first lookup (PR 2, `.planning/pr-local-fandom-cache.md`).
  *
- * Stage 1 (this file): write-through only. `fandom_page` / `fandom_image`
- * call {@link FandomCache.putPage} / {@link FandomCache.putImage} after a
- * successful live fetch, so the cache fills silently as the writer works.
- * No reads happen here yet (Stage 2 adds cache-first `get`; Stage 3 adds
- * the "answers when network tools off" gating).
+ * Stages: write-through on live fetches (Stage 1, `putPage`/`putImage`),
+ * cache-first reads (Stage 2, `getPage`/`getImage`), and the privacy posture
+ * where a populated cache answers even with `lorebookNetworkTools` off (Stage 3,
+ * gated via `hasWiki`/`hasAnyEntries` + the `fandomReachability` helper in
+ * `index.ts`). This file also backs the local search index used when the
+ * network is off (Stage 6, `search`) and the per-wiki management UI
+ * (Stage 4, `getWikiStats`/`clearWiki`).
  *
  * Storage mirrors the `conversation-store.ts` / `embedding-cache.ts` sidecar
  * convention (NOT `loadData()`/`saveData()`): `vault.adapter` I/O,
@@ -59,6 +61,18 @@ export interface CachedFandomImage {
     retrievedAt: number;
 }
 
+/** Aggregate stats for one wiki's cache — drives the per-wiki management row in settings (Stage 4). */
+export interface WikiStats {
+    /** Number of cached page entries (alias keys collapse to one). */
+    pages: number;
+    /** Number of cached image entries. */
+    images: number;
+    /** Total bytes on disk (pages.json + images.json + img/ binaries). */
+    sizeBytes: number;
+    /** Most recent `retrievedAt` across cached pages, in epoch ms (0 if none). */
+    lastSynced: number;
+}
+
 interface FandomPagesFile {
     schemaVersion: number;
     wiki: string;
@@ -69,6 +83,13 @@ interface FandomImagesFile {
     schemaVersion: number;
     wiki: string;
     images: Record<string, CachedFandomImage>;
+}
+
+/** One row of the in-memory search index (Stage 6). Title is the normalized cache key (already lowercase); body is the first ~500 chars, lowercased for case-insensitive matching. */
+interface SearchEntry {
+    titleLower: string;
+    bodyLower: string;
+    page: CachedFandomPage;
 }
 
 /** Ensure a single directory exists (parent must already exist). Mirrors conversation-store's ensureDir — does NOT walk path segments from the root, which would either pollute the vault root (if the path is absolute) or redundantly check every ancestor. Call incrementally for nested dirs. */
@@ -89,6 +110,21 @@ export function fandomPageSourceUrl(wiki: string, title: string): string {
     // MediaWiki title URLs space-encode as underscores.
     const titlePath = title.replace(/ /g, '_');
     return `https://${wiki}.fandom.com/wiki/${encodeURIComponent(titlePath).replace(/%2F/gi, '/')}`;
+}
+
+/**
+ * Format an epoch-ms timestamp as a local `YYYY-MM-DD` date string. Uses the
+ * Date's LOCAL getters (getFullYear/getMonth/getDate), NOT `toISOString()`
+ * (which renders UTC) — so a writer west of UTC doesn't see "tomorrow's" date
+ * on a cache they just synced this afternoon. Shared by the settings "Last
+ * synced" row and the `[cached YYYY-MM-DD]` markers in the fandom tools.
+ */
+export function formatLocalDate(ms: number): string {
+    const d = new Date(ms);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
 }
 
 /** Convert a base64 string to an ArrayBuffer for `vault.adapter.writeBinary`. */
@@ -118,6 +154,10 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 export class FandomCache {
     private readonly vault: Vault;
     private readonly cacheDir: string;
+    /** Wikis known to have ≥1 cached entry. Populated eagerly by {@link init} (stat-only), maintained on every mutation. Drives the cache-only registration gate (Stage 3) — kept synchronous so `createToolRegistry` doesn't need to await. */
+    private readonly wikisWithEntries = new Set<string>();
+    /** Per-wiki tokenized search index (Stage 6). Built lazily on first {@link search} call for a wiki, invalidated on any mutation of that wiki's pages. */
+    private readonly searchIndices = new Map<string, SearchEntry[]>();
 
     private constructor(vault: Vault, dataDir: string) {
         this.vault = vault;
@@ -127,6 +167,211 @@ export class FandomCache {
     /** Construct a cache rooted at `<dataDir>/fandom-cache/`. No I/O. */
     static create(vault: Vault, dataDir: string): FandomCache {
         return new FandomCache(vault, dataDir);
+    }
+
+    /**
+     * One-time load: scan the cache directory and populate {@link wikisWithEntries}.
+     * Stat-only (no JSON parse) so a giant-wiki vault doesn't pay parse cost at
+     * Obsidian startup — the search index is built lazily on first use. Best-effort;
+     * a failure leaves the set empty (cache-only registration stays off until a
+     * live fetch populates the cache and flips the set via {@link putPage}).
+     * Call once from plugin onload right after {@link create}.
+     */
+    async init(): Promise<void> {
+        try {
+            if (!(await this.vault.adapter.exists(this.cacheDir))) return;
+            const listing = await this.vault.adapter.list(this.cacheDir);
+            for (const folder of listing.folders) {
+                const wiki = this.basename(folder);
+                if (wiki && (await this.wikiHasContent(wiki))) {
+                    this.wikisWithEntries.add(wiki);
+                }
+            }
+        } catch {
+            // Best-effort — empty set means cache-only registration stays off.
+        }
+    }
+
+    /** Synchronous presence checks for the registration gate (Stage 3). */
+    hasWiki(wiki: string): boolean {
+        return this.wikisWithEntries.has(wiki);
+    }
+
+    /** True if ANY wiki has cached content. */
+    hasAnyEntries(): boolean {
+        return this.wikisWithEntries.size > 0;
+    }
+
+    /**
+     * Drop all cached content for `wiki` (pages, images, binaries) and remove it
+     * from the presence set. Idempotent — a no-op if the wiki has no cache dir.
+     * Best-effort; never throws.
+     */
+    async clearWiki(wiki: string): Promise<void> {
+        try {
+            const dir = this.wikiDir(wiki);
+            if (await this.vault.adapter.exists(dir)) {
+                await this.vault.adapter.rmdir(dir, true);
+            }
+        } catch {
+            // Best-effort.
+        }
+        this.wikisWithEntries.delete(wiki);
+        this.searchIndices.delete(wiki);
+    }
+
+    /**
+     * Aggregate stats for `wiki` — counts + on-disk size + freshest retrievedAt.
+     * Renders into the per-wiki management row in settings (Stage 4). All-zero
+     * for a wiki with no cache dir. Reads + parses the sidecars once per call
+     * (settings-render-time only, so acceptable).
+     */
+    async getWikiStats(wiki: string): Promise<WikiStats> {
+        const pages = await this.loadPages(wiki);
+        const images = await this.loadImages(wiki);
+        const pageList = pages ? Object.values(pages) : [];
+        let lastSynced = 0;
+        for (const p of pageList) {
+            if (p.retrievedAt > lastSynced) lastSynced = p.retrievedAt;
+        }
+        // Dedupe by sourceUrl — alias keys map to the same page, so raw
+        // Object.values overcounts. sourceUrl is the stable key because JSON
+        // round-tripping breaks object identity.
+        const uniqueUrls = new Set<string>();
+        for (const p of pageList) uniqueUrls.add(p.sourceUrl);
+        return {
+            pages: uniqueUrls.size,
+            images: images ? Object.keys(images).length : 0,
+            sizeBytes: await this.computeWikiSize(wiki),
+            lastSynced
+        };
+    }
+
+    /**
+     * Local search over cached pages for `wiki` (Stage 6). Used by `fandom_lookup`
+     * so a vague/repeat query can cache-hit (and answer under cache-only mode)
+     * instead of always going live. Tokenized AND-match over title + first ~500
+     * body chars; ranked title-exact → title-prefix → all-tokens-in-title →
+     * body-match (earliest position wins). Top 8 results. Empty for a wiki with
+     * no indexable pages.
+     */
+    async search(wiki: string, query: string): Promise<CachedFandomPage[]> {
+        const q = query.trim().toLowerCase();
+        if (!q) return [];
+        const index = await this.getSearchIndex(wiki);
+        if (index.length === 0) return [];
+        const tokens = q.split(/\s+/);
+        type Scored = { page: CachedFandomPage; score: number; tieBreak: number };
+        const scored: Scored[] = [];
+        for (const entry of index) {
+            const title = entry.titleLower;
+            const hay = title + ' ' + entry.bodyLower;
+            // Every token must appear somewhere in title or body.
+            if (!tokens.every((t) => hay.includes(t))) continue;
+            let score: number;
+            if (title === q) {
+                score = 1000;
+            } else if (title.startsWith(q)) {
+                score = 800;
+            } else if (tokens.every((t) => title.includes(t))) {
+                score = 600;
+            } else {
+                // Body match — rank by earliest position of the full phrase, else
+                // earliest first-token position.
+                const pos = entry.bodyLower.indexOf(q);
+                score =
+                    pos >= 0
+                        ? 400 - Math.min(pos, 300)
+                        : 100 - Math.min(this.earliestToken(entry.bodyLower, tokens), 100);
+            }
+            scored.push({ page: entry.page, score, tieBreak: title.length });
+        }
+        scored.sort((a, b) => b.score - a.score || a.tieBreak - b.tieBreak);
+        // Dedupe by sourceUrl before the top-8 slice — alias keys can score
+        // multiple entries for the same page. scored is sorted descending, so
+        // the first-seen per sourceUrl is the highest-scoring.
+        const seenUrls = new Set<string>();
+        const unique: CachedFandomPage[] = [];
+        for (const s of scored) {
+            if (seenUrls.has(s.page.sourceUrl)) continue;
+            seenUrls.add(s.page.sourceUrl);
+            unique.push(s.page);
+        }
+        return unique.slice(0, 8);
+    }
+
+    /** Build (or return cached) tokenized index for `wiki`. Empty + cached if the wiki has no pages. */
+    private async getSearchIndex(wiki: string): Promise<SearchEntry[]> {
+        const cached = this.searchIndices.get(wiki);
+        if (cached) return cached;
+        const pages = await this.loadPages(wiki);
+        const entries: SearchEntry[] = [];
+        if (pages) {
+            for (const [key, page] of Object.entries(pages)) {
+                entries.push({
+                    titleLower: key,
+                    bodyLower: page.text.slice(0, 500).toLowerCase(),
+                    page
+                });
+            }
+        }
+        this.searchIndices.set(wiki, entries);
+        return entries;
+    }
+
+    /** Index of the earliest-occurring token in `body`, or `body.length` if none. */
+    private earliestToken(body: string, tokens: string[]): number {
+        let earliest = body.length;
+        for (const t of tokens) {
+            const pos = body.indexOf(t);
+            if (pos >= 0 && pos < earliest) earliest = pos;
+        }
+        return earliest;
+    }
+
+    /** Stat-only presence check: a populated sidecar is always >80 bytes (one entry adds ~200+; the bare empty wrapper is ~50). Avoids parsing large files at load. */
+    private async wikiHasContent(wiki: string): Promise<boolean> {
+        return (await this.fileHasEntries(this.pagesPath(wiki))) || (await this.fileHasEntries(this.imagesPath(wiki)));
+    }
+
+    private async fileHasEntries(path: string): Promise<boolean> {
+        try {
+            if (!(await this.vault.adapter.exists(path))) return false;
+            const stat = await this.vault.adapter.stat(path);
+            return !!stat && stat.size > 80;
+        } catch {
+            return false;
+        }
+    }
+
+    /** Last path segment of a normalized path (the wiki name from a listed folder). */
+    private basename(path: string): string {
+        const parts = normalizePath(path).split('/');
+        return parts[parts.length - 1] ?? '';
+    }
+
+    /** Sum file sizes under the wiki dir (pages.json + images.json + img/ binaries). The cache nests only one level, so a two-pass walk covers it. */
+    private async computeWikiSize(wiki: string): Promise<number> {
+        try {
+            const dir = this.wikiDir(wiki);
+            if (!(await this.vault.adapter.exists(dir))) return 0;
+            let total = 0;
+            const top = await this.vault.adapter.list(dir);
+            for (const f of top.files) {
+                const stat = await this.vault.adapter.stat(f);
+                if (stat) total += stat.size;
+            }
+            for (const folder of top.folders) {
+                const sub = await this.vault.adapter.list(folder);
+                for (const f of sub.files) {
+                    const stat = await this.vault.adapter.stat(f);
+                    if (stat) total += stat.size;
+                }
+            }
+            return total;
+        } catch {
+            return 0;
+        }
     }
 
     /** Per-wiki directory. `wiki` is already validated (alphanumeric + hyphens). */
@@ -175,6 +420,8 @@ export class FandomCache {
                 pages
             };
             await this.vault.adapter.write(path, JSON.stringify(file));
+            this.wikisWithEntries.add(wiki);
+            this.searchIndices.delete(wiki);
         } catch {
             // Best-effort — cache write failure must not fail the tool call.
         }
@@ -218,6 +465,7 @@ export class FandomCache {
             const safeKey = sanitizeImageKey(key);
             const binaryPath = normalizePath(`${this.imgDir(wiki)}/${safeKey}.jpg`);
             await this.vault.adapter.writeBinary(binaryPath, base64ToArrayBuffer(base64));
+            this.wikisWithEntries.add(wiki);
         } catch {
             // Best-effort.
         }
@@ -305,6 +553,8 @@ export class FandomCache {
             try {
                 const file: FandomPagesFile = { schemaVersion: SCHEMA_VERSION, wiki, pages };
                 await this.vault.adapter.write(path, JSON.stringify(file));
+                this.wikisWithEntries.add(wiki);
+                this.searchIndices.delete(wiki);
             } catch {
                 // Best-effort — a failed flush just means a re-sync later.
             }
@@ -345,4 +595,57 @@ function sanitizeImageKey(key: string): string {
         .replace(/[^a-z0-9_-]+/g, '-')
         .replace(/^-+|-+$/g, '');
     return slug.length > 0 ? slug : 'image';
+}
+
+/**
+ * Fandom tool reachability — the single source of truth both
+ * `createToolRegistry` (registration) and `buildNetworkToolsMessage` (prompt
+ * advertisement) call so the two-place gating mirror can't drift (Stage 3).
+ *
+ * - `'live'`        — allowlist active AND network tools on. Tools register;
+ *                     misses fall through to a live fetch + write-through.
+ * - `'cache-only'`  — allowlist active, network tools off, but the cache holds
+ *                     entries for an allowlisted wiki. Tools STILL register;
+ *                     hits answer from cache, misses return "not cached" (no
+ *                     live call). The maximal privacy posture: consent was at
+ *                     sync time, so the network toggle no longer hides cached data.
+ * - `'none'`        — allowlist empty (and allow-all off), or network off with
+ *                     no cached entries / cache disabled. Tools do NOT register.
+ *
+ * The allowlist still gates per-call (`validateWiki` in fandom-lookup.ts is
+ * unchanged) — a cached wiki removed from the allowlist goes dormant until
+ * re-listed. `cacheEnabled` (the master `lorebookFandomCacheEnabled` toggle)
+ * folds in here: when off, the cache subsystem is inert, so cache-only never
+ * activates even if sidecar files exist on disk.
+ */
+export type FandomReachability = 'live' | 'cache-only' | 'none';
+
+/**
+ * Structural subset of the plugin the reachability check reads. Declared locally
+ * (not imported from main.ts) to avoid a circular import; `EventideQuillPlugin`
+ * satisfies this structurally, so callers just pass `plugin`.
+ */
+interface FandomReachabilityHost {
+    settings: {
+        lorebookNetworkTools: boolean;
+        lorebookFandomWikis: string[];
+        lorebookFandomAllowAllWikis: boolean;
+        lorebookFandomCacheEnabled: boolean;
+    };
+    fandomCache: FandomCache | null;
+}
+
+export function fandomReachability(plugin: FandomReachabilityHost): FandomReachability {
+    const { lorebookNetworkTools, lorebookFandomWikis, lorebookFandomAllowAllWikis, lorebookFandomCacheEnabled } =
+        plugin.settings;
+    const allowlistActive = lorebookFandomAllowAllWikis || lorebookFandomWikis.length > 0;
+    if (!allowlistActive) return 'none';
+    if (lorebookNetworkTools) return 'live';
+    // Network off — only cache-only if the cache subsystem is on AND holds an
+    // entry for a currently-allowlisted wiki (any entry when allow-all is on).
+    if (!lorebookFandomCacheEnabled || !plugin.fandomCache) return 'none';
+    const cached = lorebookFandomAllowAllWikis
+        ? plugin.fandomCache.hasAnyEntries()
+        : lorebookFandomWikis.some((w) => plugin.fandomCache!.hasWiki(w));
+    return cached ? 'cache-only' : 'none';
 }

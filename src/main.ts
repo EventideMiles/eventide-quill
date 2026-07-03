@@ -348,9 +348,13 @@ export default class EventideQuillPlugin extends Plugin {
         // Resolve the plugin's data directory for dashboard snapshot storage.
         this.pluginDataDir = `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
 
-        // Local Fandom cache (sidecar under <pluginDataDir>/fandom-cache/). Stage 1:
-        // silent write-through on fandom_page/fandom_image live fetches.
+        // Local Fandom cache (sidecar under <pluginDataDir>/fandom-cache/).
+        // Write-through (Stage 1) + cache-first (Stage 2) + answers-when-network-off
+        // (Stage 3, gated by the presence set populated in init()). Fire-and-forget
+        // the one-time presence scan — best-effort; cache-only registration stays
+        // off until either init resolves or a live fetch flips the set.
         this.fandomCache = FandomCache.create(this.app.vault, this.pluginDataDir);
+        void this.fandomCache.init();
 
         this.registerEditorExtension(
             getLintExtension(
@@ -4236,6 +4240,23 @@ export default class EventideQuillPlugin extends Plugin {
         } finally {
             if (this.fandomSyncAbort?.signal === signal) this.fandomSyncAbort = null;
         }
+    }
+
+    /**
+     * Clear the local cache for one Fandom wiki (Stage 4 management). Deletes
+     * the per-wiki sidecar dir (pages.json + images.json + img/ binaries) and
+     * drops the wiki from the in-memory presence set. Re-validate the subdomain
+     * before building any path — matches the {@link bulkSyncFandomWiki} guard so
+     * a malformed allowlist entry can't escape the cache root.
+     */
+    async clearFandomWikiCache(wiki: string): Promise<void> {
+        if (!isValidFandomSubdomain(wiki)) {
+            new Notice(`Quill: "${wiki}" is not a valid Fandom wiki subdomain (letters, digits, hyphens only).`);
+            return;
+        }
+        if (!this.fandomCache) return;
+        await this.fandomCache.clearWiki(wiki);
+        new Notice(`Quill: cleared the fandom cache for ${wiki}.`);
     }
 
     /**
