@@ -288,9 +288,13 @@ function markFailed(job: FeedbackJob, error: string): FeedbackJob {
 
 /**
  * Run a single feedback job to completion, archiving the report to the vault.
- * Mutates and returns `job` with updated status + `reportNotePath`/`error`.
- * The caller persists the returned job (or the runner persists inline — both
- * are valid; here the caller owns persistence to keep the runner testable).
+ * Mutates and returns `job` with its TERMINAL status set (`succeeded` /
+ * `failed` / `cancelled`) plus `reportNotePath` / `error` / `completedAt`.
+ *
+ * The caller (the scheduler/orchestrator) owns the `queued → running`
+ * transition — including `startedAt` and persisting it — so that disk state
+ * reflects the running job before generation begins. This function does not
+ * touch `startedAt` and only assigns the terminal status.
  */
 export async function runFeedbackJob(
     plugin: EventideQuillPlugin,
@@ -316,10 +320,6 @@ export async function runFeedbackJob(
     // Rebuild the payload from the snapshot — do NOT re-read the live file.
     // [system, ...snapshot content, user instruction], mirroring requestFeedback.
     const apiMessages: ChatMessage[] = [baseMessages[0]!, ...context.contentMessages, baseMessages[1]!];
-
-    job.status = 'running';
-    job.startedAt = Date.now();
-    job.error = undefined;
 
     try {
         const stream = getFeedback(chat.provider, persona, {

@@ -382,6 +382,14 @@ export default class EventideQuillPlugin extends Plugin {
         // Fire-and-forget: a corrupt/missing sidecar must not block onload.
         void this.loadFeedbackQueue();
 
+        // Scheduler tick: when the in-flight slot is free and a queued job is
+        // waiting, pick it up. Fires only while Obsidian is open — overnight use
+        // requires the writer to leave Obsidian running (documented limitation).
+        // registerInterval is lifecycle-safe (auto-cleared on unload); the tick is
+        // the resume path after a vault reopen and a safety net — submit plus FIFO
+        // chaining handle the steady state without waiting for it.
+        this.registerInterval(window.setInterval(() => void this.runNextQueuedFeedbackJob(), 5000));
+
         this.registerEditorExtension(
             getLintExtension(
                 (text: string) => this.runLint(text),
@@ -951,6 +959,28 @@ export default class EventideQuillPlugin extends Plugin {
             name: 'Quill: Submit active document for feedback (queue)',
             editorCallback: async () => {
                 await this.submitFeedbackJob('beta-reader');
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-run-feedback-queue-now',
+            name: 'Quill: Run next queued feedback job',
+            callback: () => {
+                void this.runFeedbackQueueNow();
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-cancel-feedback-job',
+            name: 'Quill: Cancel running feedback job',
+            callback: () => {
+                const running = [...this.feedbackJobs.values()].find((j) => j.status === 'running');
+                if (running) {
+                    void this.cancelFeedbackJob(running.id);
+                    new Notice('Quill: cancelling feedback job…');
+                } else {
+                    new Notice('Quill: no feedback job is running.');
+                }
             }
         });
 
@@ -4786,11 +4816,10 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
-     * Submit a feedback job to the queue. Stage 1 runs the job immediately
-     * (single-job, command-driven). Stage 2 adds the FIFO scheduler that picks
-     * up queued jobs on a tick; the snapshot + persistence shape is already in
-     * place for it. Reuses {@link getFeedback} (NOT the co-writer tool loops),
-     * so this is independent of the DRY consolidation.
+     * Submit a feedback job to the queue. The job is persisted as `queued` and
+     * the scheduler is kicked — single-slot FIFO runs it when the slot is free
+     * (immediately, if idle). Reuses {@link getFeedback} (NOT the co-writer tool
+     * loops), so this is independent of the DRY consolidation.
      */
     async submitFeedbackJob(personaId: string, focusPrompt?: string): Promise<void> {
         if (!this.settings.enableFeedbackQueue) {
@@ -4808,27 +4837,110 @@ export default class EventideQuillPlugin extends Plugin {
         if (!job) return;
 
         this.feedbackJobs.set(job.id, job);
-        const dir = resolveQueueDir(this.pluginDataDir);
-        await saveFeedbackJob(this.app.vault, dir, job, this.settings.feedbackQueueLimit);
+        await this.persistFeedbackJob(job);
         new Notice(`Quill: feedback queued — ${job.title}`);
 
-        // Stage 1: run immediately (single slot). Stage 2 replaces this with the tick scheduler.
+        // Kick the scheduler so a freshly-submitted job runs without waiting for the tick.
+        void this.runNextQueuedFeedbackJob();
+    }
+
+    /** Persist a job to the sidecar (best-effort; logs on failure). */
+    private async persistFeedbackJob(job: FeedbackJob): Promise<void> {
+        try {
+            await saveFeedbackJob(
+                this.app.vault,
+                resolveQueueDir(this.pluginDataDir),
+                job,
+                this.settings.feedbackQueueLimit
+            );
+        } catch (err) {
+            console.warn(`Quill: failed to persist feedback job ${job.id}`, err);
+        }
+    }
+
+    /**
+     * Execute a single job to completion: mark it running + persist, run the
+     * generator, persist the terminal state, clear the in-flight slot, then
+     * chain to the next queued job (FIFO). Holds `feedbackQueueAbort` for the
+     * duration so the slot is single-occupancy within the queue. Does NOT
+     * coordinate with the co-writer / Review / transform surfaces — the queue
+     * is a peer of `feedbackAbort` / `analysisAbort`, not a child of some global
+     * latch.
+     */
+    private async executeFeedbackJob(job: FeedbackJob): Promise<void> {
         const controller = new AbortController();
         this.feedbackQueueAbort = controller;
+
+        job.status = 'running';
+        job.startedAt = Date.now();
+        job.error = undefined;
+        await this.persistFeedbackJob(job);
+
         try {
             await runFeedbackJob(this, job, controller.signal);
-            await saveFeedbackJob(this.app.vault, dir, job, this.settings.feedbackQueueLimit);
-            if (job.status === 'succeeded') {
-                new Notice(
-                    job.reportNotePath
-                        ? `Quill: feedback complete — saved to ${job.reportNotePath}`
-                        : 'Quill: feedback complete.'
-                );
-            } else if (job.status === 'failed') {
-                new Notice(`Quill: feedback failed — ${job.error ?? 'unknown error'}`);
-            }
+            await this.persistFeedbackJob(job);
+            this.notifyFeedbackJobOutcome(job);
         } finally {
             if (this.feedbackQueueAbort === controller) this.feedbackQueueAbort = null;
+        }
+
+        // Chain to the next queued job so FIFO runs without waiting for the tick.
+        void this.runNextQueuedFeedbackJob();
+    }
+
+    private notifyFeedbackJobOutcome(job: FeedbackJob): void {
+        if (job.status === 'succeeded') {
+            new Notice(
+                job.reportNotePath
+                    ? `Quill: feedback complete — saved to ${job.reportNotePath}`
+                    : 'Quill: feedback complete.'
+            );
+        } else if (job.status === 'failed') {
+            new Notice(`Quill: feedback failed — ${job.error ?? 'unknown error'}`);
+        }
+    }
+
+    /**
+     * Pick up the oldest queued job and run it if the in-flight slot is free.
+     * Respects `feedbackQueueAutoRun` unless `ignoreAutoRun` is set (the manual
+     * "Run now" path). No-op when a job is already running or the queue is empty.
+     */
+    private async runNextQueuedFeedbackJob(ignoreAutoRun = false): Promise<void> {
+        if (this.feedbackQueueAbort) return; // single-slot: a job is already running
+        if (!ignoreAutoRun && !this.settings.feedbackQueueAutoRun) return;
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) return; // nothing to run against
+
+        const next = [...this.feedbackJobs.values()]
+            .filter((j) => j.status === 'queued')
+            .sort((a, b) => a.createdAt - b.createdAt)[0];
+        if (!next) return;
+
+        await this.executeFeedbackJob(next);
+    }
+
+    /** Manually trigger the next queued job, ignoring the auto-run setting. */
+    async runFeedbackQueueNow(): Promise<void> {
+        await this.runNextQueuedFeedbackJob(true);
+    }
+
+    /**
+     * Cancel a feedback job. A running job is aborted via its controller (the
+     * runner marks it cancelled, then {@link executeFeedbackJob} persists the
+     * terminal state); a queued job is marked cancelled directly. No-op for
+     * already-terminal jobs.
+     */
+    async cancelFeedbackJob(id: string): Promise<void> {
+        const job = this.feedbackJobs.get(id);
+        if (!job) return;
+        if (job.status === 'running') {
+            this.feedbackQueueAbort?.abort();
+            return;
+        }
+        if (job.status === 'queued') {
+            job.status = 'cancelled';
+            job.completedAt = Date.now();
+            await this.persistFeedbackJob(job);
         }
     }
 
