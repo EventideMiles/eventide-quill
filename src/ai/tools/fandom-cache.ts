@@ -234,8 +234,13 @@ export class FandomCache {
         for (const p of pageList) {
             if (p.retrievedAt > lastSynced) lastSynced = p.retrievedAt;
         }
+        // Dedupe by sourceUrl — alias keys map to the same page, so raw
+        // Object.values overcounts. sourceUrl is the stable key because JSON
+        // round-tripping breaks object identity.
+        const uniqueUrls = new Set<string>();
+        for (const p of pageList) uniqueUrls.add(p.sourceUrl);
         return {
-            pages: pageList.length,
+            pages: uniqueUrls.size,
             images: images ? Object.keys(images).length : 0,
             sizeBytes: await this.computeWikiSize(wiki),
             lastSynced
@@ -282,7 +287,17 @@ export class FandomCache {
             scored.push({ page: entry.page, score, tieBreak: title.length });
         }
         scored.sort((a, b) => b.score - a.score || a.tieBreak - b.tieBreak);
-        return scored.slice(0, 8).map((s) => s.page);
+        // Dedupe by sourceUrl before the top-8 slice — alias keys can score
+        // multiple entries for the same page. scored is sorted descending, so
+        // the first-seen per sourceUrl is the highest-scoring.
+        const seenUrls = new Set<string>();
+        const unique: CachedFandomPage[] = [];
+        for (const s of scored) {
+            if (seenUrls.has(s.page.sourceUrl)) continue;
+            seenUrls.add(s.page.sourceUrl);
+            unique.push(s.page);
+        }
+        return unique.slice(0, 8);
     }
 
     /** Build (or return cached) tokenized index for `wiki`. Empty + cached if the wiki has no pages. */
