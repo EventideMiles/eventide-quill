@@ -52,6 +52,7 @@ import {
     getAnalysis,
     buildAnalysisMessages,
     ANALYSIS_MODES,
+    getAnalysisModeById,
     type AnalysisMode,
     type AnalysisScope
 } from './ai/analysis';
@@ -4742,6 +4743,16 @@ export default class EventideQuillPlugin extends Plugin {
         }
     }
 
+    /** Extract the vault-context excerpt string from a context assembly (best-effort). */
+    private vaultContextFromAssembly(assembly: ContextAssembly | null): string {
+        if (!assembly || assembly.contextItems.length === 0) return '';
+        const parts: string[] = [];
+        for (const item of assembly.contextItems) {
+            if (item.excerpt) parts.push(`--- ${item.filePath} ---`, item.excerpt);
+        }
+        return parts.length > 0 ? parts.join('\n\n') : '';
+    }
+
     /**
      * Resolve the active document (plus layered context files) into a snapshot
      * suitable for a queued feedback job. Mirrors {@link requestFeedback}'s
@@ -4782,18 +4793,7 @@ export default class EventideQuillPlugin extends Plugin {
             // Best-effort.
         }
 
-        const contextParts: string[] = [];
-        try {
-            const assembly = this.currentAssembly;
-            if (assembly && assembly.contextItems.length > 0) {
-                for (const item of assembly.contextItems) {
-                    if (item.excerpt) contextParts.push(`--- ${item.filePath} ---`, item.excerpt);
-                }
-            }
-        } catch {
-            // Vault context is best-effort.
-        }
-        const vaultContext = contextParts.length > 0 ? contextParts.join('\n\n') : '';
+        const vaultContext = this.vaultContextFromAssembly(this.currentAssembly);
 
         const fileMessages = await readVaultFiles(this.app.vault, resolvedPaths, 'Manuscript');
         const loreReferenceMessages = await this.loreReferenceMessages(documentText);
@@ -4814,6 +4814,7 @@ export default class EventideQuillPlugin extends Plugin {
             scope: 'document',
             focusPrompt,
             contextSnapshot: {
+                kind: 'editorial',
                 contentMessages,
                 vaultContext,
                 narrativePreset: this.settings.narrativeVoicePreset
@@ -4824,10 +4825,69 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
-     * Submit a feedback job to the queue. The job is persisted as `queued` and
-     * the scheduler is kicked — single-slot FIFO runs it when the slot is free
-     * (immediately, if idle). Reuses {@link getFeedback} (NOT the co-writer tool
-     * loops), so this is independent of the DRY consolidation.
+     * Resolve the active document's scope + deterministic signal into a critical-
+     * analysis snapshot. Mirrors {@link requestAnalysis}'s resolution but captures
+     * the resolved state into a {@link CriticalSnapshot} instead of streaming live
+     * — a job is deterministic given its snapshot. The runner rebuilds the payload
+     * (and the read-only tool registry) at run time.
+     */
+    private async buildCriticalFeedbackJob(
+        mode: AnalysisMode,
+        scope: AnalysisScope | 'auto',
+        focusPrompt?: string
+    ): Promise<FeedbackJob | null> {
+        const resolved = this.resolveAnalysisScope(scope);
+        if (!resolved) {
+            new Notice('Quill: Open a Markdown document with text before queueing analysis.');
+            return null;
+        }
+
+        // Deterministic signal from the context engine. Guard against stale
+        // assembly: if it was built for a different file, ignore it.
+        const activePath = this.app.workspace.getActiveFile()?.path ?? null;
+        const assembly = activePath && this.contextActiveFile === activePath ? this.currentAssembly : null;
+        const characters = assembly?.entities.filter((e) => e.type === 'character' && !e.removed) ?? [];
+        const plotThreads =
+            assembly?.entities.filter((e) => e.type === 'plot-thread' && !e.removed).map((e) => e.name) ?? [];
+        const voiceMarker = assembly?.voice;
+
+        const vaultContext = this.vaultContextFromAssembly(assembly);
+        const loreMessages = await this.loreReferenceMessages(resolved.text);
+
+        const modeMeta = getAnalysisModeById(mode);
+        const activeFile = this.app.workspace.getActiveFile();
+        return {
+            id: mintJobId(),
+            title: `${resolved.fileName ?? activeFile?.name ?? 'Document'} — ${modeMeta?.label ?? mode}`,
+            engine: 'critical',
+            mode,
+            manuscriptPath: activeFile?.path ?? resolved.fileName ?? '',
+            scope: resolved.scope,
+            focusPrompt,
+            contextSnapshot: {
+                kind: 'critical',
+                mode,
+                text: resolved.text,
+                scope: resolved.scope,
+                lineStart: resolved.lineStart,
+                lineEnd: resolved.lineEnd,
+                fileName: resolved.fileName,
+                characters,
+                plotThreads,
+                voiceMarker,
+                vaultContext,
+                loreMessages
+            },
+            status: 'queued',
+            createdAt: Date.now()
+        };
+    }
+
+    /**
+     * Submit an editorial-feedback job to the queue. The job is persisted as
+     * `queued` and the scheduler is kicked — single-slot FIFO runs it when the
+     * slot is free (immediately, if idle). Reuses {@link getFeedback} (NOT the
+     * co-writer tool loops), so this is independent of the DRY consolidation.
      */
     async submitFeedbackJob(personaId: string, focusPrompt?: string): Promise<void> {
         if (!this.settings.enableFeedbackQueue) {
@@ -4843,12 +4903,41 @@ export default class EventideQuillPlugin extends Plugin {
 
         const job = await this.buildDocumentFeedbackJob(personaId, focusPrompt);
         if (!job) return;
+        await this.enqueueFeedbackJob(job, 'feedback queued');
+    }
 
+    /**
+     * Submit a critical-analysis job to the queue. Resolves scope + deterministic
+     * signal at submit time into a snapshot; the runner rebuilds the payload from
+     * it (with a read-only tool registry) and streams getAnalysis unattended.
+     */
+    async submitCriticalFeedbackJob(
+        mode: AnalysisMode,
+        scope: AnalysisScope | 'auto',
+        focusPrompt?: string
+    ): Promise<void> {
+        if (!this.settings.enableFeedbackQueue) {
+            new Notice('Quill: The feedback queue is disabled in settings.');
+            return;
+        }
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: No AI provider configured. Set one up in settings.');
+            return;
+        }
+        await this.ensureContextInitialized();
+
+        const job = await this.buildCriticalFeedbackJob(mode, scope, focusPrompt);
+        if (!job) return;
+        await this.enqueueFeedbackJob(job, 'analysis queued');
+    }
+
+    /** Register a built job in the map, persist it, notify, and kick the scheduler. */
+    private async enqueueFeedbackJob(job: FeedbackJob, noticeLabel: string): Promise<void> {
         this.feedbackJobs.set(job.id, job);
         await this.persistFeedbackJob(job);
-        new Notice(`Quill: feedback queued — ${job.title}`);
+        new Notice(`Quill: ${noticeLabel} — ${job.title}`);
         this.lintPanel?.feedbackQueueChanged();
-
         // Kick the scheduler so a freshly-submitted job runs without waiting for the tick.
         void this.runNextQueuedFeedbackJob();
     }

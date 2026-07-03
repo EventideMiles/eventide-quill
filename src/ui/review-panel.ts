@@ -132,6 +132,9 @@ export class ReviewPanel extends AbstractChatPanel {
     private queueBadgeEl: HTMLElement | null = null;
     /** Queued-editorial handler (mirrors onEditorialGenerate but routes to the queue). */
     private onEditorialQueue: ((personaId: string, customInstruction?: string) => void) | null = null;
+    /** Queued-critical handler (mirrors onCriticalGenerate but routes to the queue). */
+    private onCriticalQueue: ((mode: AnalysisMode, scope: ScopeChoice, customInstruction?: string) => void) | null =
+        null;
     private queueHandlers: FeedbackQueueHandlers | null = null;
 
     constructor(app: App) {
@@ -172,6 +175,13 @@ export class ReviewPanel extends AbstractChatPanel {
     /** Handler for editorial feedback queued (not run interactively) from the Create sub-tab. */
     setEditorialQueueHandler(handler: (personaId: string, customInstruction?: string) => void): void {
         this.onEditorialQueue = handler;
+    }
+
+    /** Handler for critical analysis queued from the Create sub-tab. */
+    setCriticalQueueHandler(
+        handler: (mode: AnalysisMode, scope: ScopeChoice, customInstruction?: string) => void
+    ): void {
+        this.onCriticalQueue = handler;
     }
 
     /** Handlers for the Queue sub-tab's per-job actions + manual run. */
@@ -735,10 +745,10 @@ export class ReviewPanel extends AbstractChatPanel {
             this.customInstruction = customArea.value;
         });
 
-        // Queue-mode toggle (editorial for now — critical/manuscript arrive in 3b/3c).
+        // Queue-mode toggle (editorial + critical for now — manuscript arrives in 3c).
         // When on, persona clicks + Generate route to the async queue instead of
         // running interactively, and stay on Create so the writer can queue several.
-        if (this.engine === 'editorial') {
+        if (this.engine === 'editorial' || this.engine === 'critical') {
             const toggleWrap = scroll.createDiv({ cls: 'quill-feedback-queue__toggle' });
             const queueToggle = toggleWrap.createEl('input', { attr: { type: 'checkbox' } });
             queueToggle.checked = this.queueMode;
@@ -750,7 +760,9 @@ export class ReviewPanel extends AbstractChatPanel {
         }
 
         const buttonLabel = this.queueMode
-            ? 'Add feedback to queue'
+            ? this.engine === 'editorial'
+                ? 'Add feedback to queue'
+                : 'Add analysis to queue'
             : this.engine === 'editorial'
               ? 'Generate feedback'
               : this.engine === 'critical'
@@ -1132,7 +1144,12 @@ export class ReviewPanel extends AbstractChatPanel {
             new Notice('Quill: Pick an analysis mode first.');
             return;
         }
-        this.onCriticalGenerate?.(this.currentMode, this.currentScope, this.customInstruction || undefined);
+        const instruction = this.customInstruction || undefined;
+        if (this.queueMode) {
+            this.onCriticalQueue?.(this.currentMode, this.currentScope, instruction);
+            return;
+        }
+        this.onCriticalGenerate?.(this.currentMode, this.currentScope, instruction);
     }
 
     private triggerManuscript(): void {

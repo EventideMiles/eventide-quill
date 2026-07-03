@@ -21,9 +21,19 @@
  * for the UI when autosave is off) and stripped at persist time.
  */
 import { Notice, normalizePath, type Vault } from 'obsidian';
-import { type ChatMessage } from './provider';
+import { type AiProvider, type ChatChunk, type ChatMessage } from './provider';
 import { buildFeedbackMessages, getFeedback, getPersonaById, type FeedbackPersona } from './feedback';
-import { saveReportArchive } from './feedback-archive';
+import {
+    type AnalysisMode,
+    type AnalysisScope,
+    buildAnalysisMessages,
+    getAnalysis,
+    getAnalysisModeById
+} from './analysis';
+import { createReadOnlyToolRegistry } from './tools';
+import type { ToolContext } from './tools/tool';
+import type { ExtractedEntity, VoiceMarker } from '../core/context-engine/types';
+import { saveReportArchive, type ReportArchiveInput } from './feedback-archive';
 import type { NarrativeVoicePreset } from '../types';
 import type EventideQuillPlugin from '../main';
 
@@ -42,9 +52,16 @@ export type FeedbackEngine = 'editorial' | 'critical' | 'manuscript';
  * writer submitted, not when the runner picks it up. A job is deterministic
  * given its snapshot: re-running a cancelled job re-reads the snapshot, never
  * the live file (which may have drifted).
+ *
+ * Engine-specific: the discriminator `kind` lets the runner narrow without
+ * correlating against {@link FeedbackJob.engine}.
  */
-export interface SerializedContext {
-    /** Content injected between system prompt and user instruction (manuscript + lore reference messages). */
+export type SerializedContext = EditorialSnapshot | CriticalSnapshot;
+
+/** Editorial feedback snapshot — manuscript + lore content messages to inject. */
+export interface EditorialSnapshot {
+    kind: 'editorial';
+    /** Content injected between system prompt and user instruction (manuscript + lore reference). */
     contentMessages: ChatMessage[];
     /** Vault-context excerpt used in the system-prompt build. */
     vaultContext: string;
@@ -52,13 +69,35 @@ export interface SerializedContext {
     narrativePreset: NarrativeVoicePreset;
 }
 
+/** Critical-analysis snapshot — resolved scope text + deterministic signal + lore refs. */
+export interface CriticalSnapshot {
+    kind: 'critical';
+    mode: AnalysisMode;
+    /** Scoped text to analyze (selection / scene / document), captured at submit. */
+    text: string;
+    scope: AnalysisScope;
+    /** Absolute 1-based line range of `text` in the source file. */
+    lineStart?: number;
+    lineEnd?: number;
+    fileName?: string;
+    /** Deterministic signal from the context engine (snapshot, not re-resolved). */
+    characters: ExtractedEntity[];
+    plotThreads: string[];
+    voiceMarker?: VoiceMarker;
+    vaultContext: string;
+    /** Lore reference messages resolved at submit, injected at run. */
+    loreMessages: ChatMessage[];
+}
+
 export interface FeedbackJob {
     id: string;
     title: string;
-    /** Which Review engine this job runs. Editorial for now; critical/manuscript arrive in 3b/3c. */
+    /** Which Review engine this job runs. */
     engine: FeedbackEngine;
-    /** One of FEEDBACK_PERSONAS (or 'custom'). */
-    personaId: string;
+    /** One of FEEDBACK_PERSONAS (or 'custom'). Editorial only. */
+    personaId?: string;
+    /** Analysis mode id (critical engine; manuscript mode in 3c). */
+    mode?: string;
     manuscriptPath: string;
     scope: FeedbackJobScope;
     /** When scope = 'selection'. */
@@ -83,7 +122,8 @@ export interface JobIndexEntry {
     id: string;
     title: string;
     engine: FeedbackEngine;
-    personaId: string;
+    personaId?: string;
+    mode?: string;
     manuscriptPath: string;
     scope: FeedbackJobScope;
     status: FeedbackJobStatus;
@@ -161,6 +201,7 @@ function entryFromJob(job: FeedbackJob, sizeBytes: number): JobIndexEntry {
         title: job.title,
         engine: job.engine,
         personaId: job.personaId,
+        mode: job.mode,
         manuscriptPath: job.manuscriptPath,
         scope: job.scope,
         status: job.status,
@@ -297,10 +338,12 @@ function markFailed(job: FeedbackJob, error: string): FeedbackJob {
  * Mutates and returns `job` with its TERMINAL status set (`succeeded` /
  * `failed` / `cancelled`) plus `reportNotePath` / `error` / `completedAt`.
  *
- * The caller (the scheduler/orchestrator) owns the `queued → running`
- * transition — including `startedAt` and persisting it — so that disk state
- * reflects the running job before generation begins. This function does not
- * touch `startedAt` and only assigns the terminal status.
+ * Dispatches by snapshot kind: editorial wraps {@link getFeedback}; critical
+ * wraps {@link getAnalysis} (with a read-only tool registry, routed through
+ * streamWithTools so the model can verify findings against the vault). The
+ * caller (the scheduler/orchestrator) owns the `queued → running` transition —
+ * including `startedAt` and persisting it — so this function only assigns the
+ * terminal status.
  */
 export async function runFeedbackJob(
     plugin: EventideQuillPlugin,
@@ -312,62 +355,19 @@ export async function runFeedbackJob(
         return markFailed(job, 'No AI provider configured. Set one up in settings.');
     }
 
-    const persona: FeedbackPersona | undefined = job.personaId === 'custom' ? undefined : getPersonaById(job.personaId);
-    if (job.personaId !== 'custom' && !persona) {
-        return markFailed(job, `Unknown persona: ${job.personaId}`);
-    }
-
-    const context = job.contextSnapshot;
-    const baseMessages = buildFeedbackMessages(persona, {
-        vaultContext: context.vaultContext,
-        narrativePreset: context.narrativePreset,
-        customInstruction: job.focusPrompt
-    });
-    // Rebuild the payload from the snapshot — do NOT re-read the live file.
-    // [system, ...snapshot content, user instruction], mirroring requestFeedback.
-    const apiMessages: ChatMessage[] = [baseMessages[0]!, ...context.contentMessages, baseMessages[1]!];
-
+    let fullResponse: string;
     try {
-        const stream = getFeedback(chat.provider, persona, {
-            vaultContext: context.vaultContext,
-            narrativePreset: context.narrativePreset,
-            model: chat.modelId,
-            temperature: plugin.settings.analysisTemperature,
-            maxTokens: plugin.settings.analysisMaxOutputTokens,
-            signal,
-            customInstruction: job.focusPrompt,
-            existingMessages: apiMessages
-        });
-
-        let fullResponse = '';
-        for await (const chunk of stream) {
-            if (signal.aborted) break;
-            if (chunk.done) continue;
-            fullResponse += chunk.text ?? '';
+        const snapshot = job.contextSnapshot;
+        if (snapshot.kind === 'editorial') {
+            const persona: FeedbackPersona | undefined =
+                job.personaId === 'custom' ? undefined : getPersonaById(job.personaId ?? '');
+            if (job.personaId !== 'custom' && !persona) {
+                return markFailed(job, `Unknown persona: ${job.personaId ?? ''}`);
+            }
+            fullResponse = await streamEditorial(plugin, job, snapshot, chat.provider, chat.modelId, signal);
+        } else {
+            fullResponse = await streamCritical(plugin, job, snapshot, chat.provider, chat.modelId, signal);
         }
-
-        if (signal.aborted) {
-            job.status = 'cancelled';
-            job.completedAt = Date.now();
-            return job;
-        }
-
-        // Archive the report to the vault (the single canonical home of the content).
-        // When autosave is off, this returns null and the report stays in-memory only.
-        const reportNotePath = await saveReportArchive(plugin, {
-            reportMarkdown: fullResponse,
-            source: 'queue',
-            kind: 'editorial',
-            id: job.personaId,
-            title: persona?.name ?? 'Custom feedback',
-            scope: job.scope,
-            manuscriptPath: job.manuscriptPath
-        });
-        job.reportNotePath = reportNotePath ?? undefined;
-        job.reportMarkdown = fullResponse;
-        job.status = 'succeeded';
-        job.completedAt = Date.now();
-        return job;
     } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') {
             job.status = 'cancelled';
@@ -378,4 +378,142 @@ export async function runFeedbackJob(
         job.completedAt = Date.now();
         return job;
     }
+
+    if (signal.aborted) {
+        job.status = 'cancelled';
+        job.completedAt = Date.now();
+        return job;
+    }
+
+    // Archive the report to the vault (the single canonical home of the content).
+    // When autosave is off, this returns null and the report stays in-memory only.
+    const reportNotePath = await saveReportArchive(plugin, archiveInputFor(job, fullResponse));
+    job.reportNotePath = reportNotePath ?? undefined;
+    job.reportMarkdown = fullResponse;
+    job.status = 'succeeded';
+    job.completedAt = Date.now();
+    return job;
+}
+
+/** Accumulate a ChatChunk stream into a string, honoring the abort signal. */
+async function accumulate(stream: AsyncGenerator<ChatChunk>, signal: AbortSignal): Promise<string> {
+    let full = '';
+    for await (const chunk of stream) {
+        if (signal.aborted) break;
+        if (chunk.done) continue;
+        full += chunk.text ?? '';
+    }
+    return full;
+}
+
+/** Rebuild the editorial payload from the snapshot and stream it to completion. */
+async function streamEditorial(
+    plugin: EventideQuillPlugin,
+    job: FeedbackJob,
+    snapshot: EditorialSnapshot,
+    provider: NonNullable<AiProvider>,
+    modelId: string | undefined,
+    signal: AbortSignal
+): Promise<string> {
+    const persona = job.personaId === 'custom' ? undefined : getPersonaById(job.personaId ?? '');
+    const baseMessages = buildFeedbackMessages(persona, {
+        vaultContext: snapshot.vaultContext,
+        narrativePreset: snapshot.narrativePreset,
+        customInstruction: job.focusPrompt
+    });
+    // [system, ...snapshot content, user instruction], mirroring requestFeedback.
+    const apiMessages: ChatMessage[] = [baseMessages[0]!, ...snapshot.contentMessages, baseMessages[1]!];
+    return accumulate(
+        getFeedback(provider, persona, {
+            vaultContext: snapshot.vaultContext,
+            narrativePreset: snapshot.narrativePreset,
+            model: modelId,
+            temperature: plugin.settings.analysisTemperature,
+            maxTokens: plugin.settings.analysisMaxOutputTokens,
+            signal,
+            customInstruction: job.focusPrompt,
+            existingMessages: apiMessages
+        }),
+        signal
+    );
+}
+
+/** Rebuild the critical-analysis payload from the snapshot and stream it to completion. */
+async function streamCritical(
+    plugin: EventideQuillPlugin,
+    job: FeedbackJob,
+    snapshot: CriticalSnapshot,
+    provider: NonNullable<AiProvider>,
+    modelId: string | undefined,
+    signal: AbortSignal
+): Promise<string> {
+    const registry = createReadOnlyToolRegistry(plugin, plugin.settings.lorebookNetworkTools);
+    const ctx: ToolContext = { plugin, signal };
+    const base = buildAnalysisMessages(snapshot.mode, {
+        text: snapshot.text,
+        scope: snapshot.scope,
+        lineStart: snapshot.lineStart,
+        lineEnd: snapshot.lineEnd,
+        fileName: snapshot.fileName,
+        vaultContext: snapshot.vaultContext,
+        voiceMarker: snapshot.voiceMarker,
+        characters: snapshot.characters,
+        plotThreads: snapshot.plotThreads,
+        customInstruction: job.focusPrompt,
+        registry: registry ?? undefined
+    });
+    // Inject lore references between the system prompt and user instruction,
+    // mirroring requestAnalysis.
+    const initialWithLore = snapshot.loreMessages.length
+        ? [base[0]!, ...snapshot.loreMessages, ...base.slice(1)]
+        : base;
+    return accumulate(
+        getAnalysis(provider, snapshot.mode, {
+            text: snapshot.text,
+            scope: snapshot.scope,
+            lineStart: snapshot.lineStart,
+            lineEnd: snapshot.lineEnd,
+            fileName: snapshot.fileName,
+            vaultContext: snapshot.vaultContext,
+            voiceMarker: snapshot.voiceMarker,
+            characters: snapshot.characters,
+            plotThreads: snapshot.plotThreads,
+            model: modelId,
+            signal,
+            customInstruction: job.focusPrompt,
+            temperature: plugin.settings.analysisTemperature,
+            maxTokens: plugin.settings.analysisMaxOutputTokens,
+            existingMessages: initialWithLore,
+            registry: registry ?? undefined,
+            ctx
+        }),
+        signal
+    );
+}
+
+/** Build the archive input for a finished job, engine-aware. */
+function archiveInputFor(job: FeedbackJob, reportMarkdown: string): ReportArchiveInput {
+    const snapshot = job.contextSnapshot;
+    if (snapshot.kind === 'editorial') {
+        const persona = getPersonaById(job.personaId ?? '');
+        return {
+            reportMarkdown,
+            source: 'queue',
+            kind: 'editorial',
+            id: job.personaId ?? 'custom',
+            title: persona?.name ?? 'Custom feedback',
+            scope: job.scope,
+            manuscriptPath: job.manuscriptPath
+        };
+    }
+    const modeMeta = getAnalysisModeById(snapshot.mode);
+    return {
+        reportMarkdown,
+        source: 'queue',
+        kind: 'critical',
+        id: snapshot.mode,
+        title: modeMeta?.label ?? snapshot.mode,
+        scope: job.scope,
+        manuscriptPath: job.manuscriptPath
+    };
 }
