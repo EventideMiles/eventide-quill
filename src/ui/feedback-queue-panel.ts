@@ -162,13 +162,11 @@ function renderJobCard(
     }
 
     if (job.status === 'succeeded' && job.reportNotePath) {
-        if (job.engine === 'editorial') {
-            const discuss = actions.createEl('button', {
-                cls: 'quill-feedback-queue__action quill-feedback-queue__action--primary',
-                text: 'Discuss'
-            });
-            events.registerDomEvent(discuss, 'click', () => handlers.onDiscuss(job));
-        }
+        const discuss = actions.createEl('button', {
+            cls: 'quill-feedback-queue__action quill-feedback-queue__action--primary',
+            text: 'Discuss'
+        });
+        events.registerDomEvent(discuss, 'click', () => handlers.onDiscuss(job));
         const open = actions.createEl('button', {
             cls: 'quill-feedback-queue__action',
             text: 'Open report'

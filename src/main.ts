@@ -5309,22 +5309,16 @@ export default class EventideQuillPlugin extends Plugin {
     /**
      * Load a completed queue report into the Review Results sub-tab for follow-up
      * discussion. The report becomes the AI's first turn; the writer's follow-up
-     * messages reuse the interactive {@link sendFeedbackChatMessage} path, which
-     * re-reads the CURRENT manuscript on every turn — so the conversation is
-     * against the living document, not the snapshot.
+     * messages reuse the interactive follow-up paths, which re-read the CURRENT
+     * manuscript — so the conversation is against the living document, not the
+     * snapshot.
      *
      * Opens the current version of the report's source file (fails to load if it
-     * was renamed/deleted — the right main file must be in context). Editorial
-     * only for now: critical/manuscript follow-up needs the compaction-aware
-     * manuscript-injection their interactive paths lack (tracked as a follow-up).
+     * was renamed/deleted — the right main file must be in context). All three
+     * engines supported: editorial re-injects the manuscript fresh; critical bakes
+     * the current doc into the seed; manuscript re-runs the compaction pipeline.
      */
     async loadReportForDiscussion(job: FeedbackJob): Promise<void> {
-        if (job.engine !== 'editorial') {
-            new Notice(
-                'Quill: in-report discussion is available for editorial feedback. Open the report note for critical/manuscript reports.'
-            );
-            return;
-        }
         // The source file must exist (current version) — it's the manuscript context.
         const file = this.app.vault.getAbstractFileByPath(job.manuscriptPath);
         if (!(file instanceof TFile)) {
@@ -5354,26 +5348,55 @@ export default class EventideQuillPlugin extends Plugin {
         }
         if (!reportText) return; // recovery above returned on failure; narrows TS
 
-        // Open the current file so the interactive follow-up path re-reads it.
+        // Open the current file so the follow-up paths see the living document.
         await this.app.workspace.getLeaf().openFile(file);
 
-        // Seed the conversation: [system prompt, assistant = report]. The
-        // interactive follow-up injects the current manuscript fresh on every
-        // turn, so the payload becomes [system, ...current manuscript, report,
-        // follow-up] — the report is the AI's first turn, the manuscript is live.
         const snapshot = job.contextSnapshot;
-        if (snapshot.kind !== 'editorial') return; // guarded above; narrows TS
-        const persona = job.personaId === 'custom' ? undefined : getPersonaById(job.personaId ?? '');
-        const systemMsg = buildFeedbackMessages(persona, {
-            vaultContext: snapshot.vaultContext,
-            narrativePreset: snapshot.narrativePreset,
-            customInstruction: job.focusPrompt
-        })[0]!;
-        this.feedbackCurrentMessages = [systemMsg, { role: 'assistant', content: reportText }];
-        this.feedbackAbort = null;
-
-        const headerLabel = persona?.name ?? 'Editorial feedback';
-        this.lintPanel?.reviewLoadReportForDiscussion('editorial', headerLabel, reportText);
+        if (snapshot.kind === 'editorial') {
+            const persona = job.personaId === 'custom' ? undefined : getPersonaById(job.personaId ?? '');
+            const systemMsg = buildFeedbackMessages(persona, {
+                vaultContext: snapshot.vaultContext,
+                narrativePreset: snapshot.narrativePreset,
+                customInstruction: job.focusPrompt
+            })[0]!;
+            this.feedbackCurrentMessages = [systemMsg, { role: 'assistant', content: reportText }];
+            this.feedbackAbort = null;
+            this.lintPanel?.reviewLoadReportForDiscussion(
+                'editorial',
+                persona?.name ?? 'Editorial feedback',
+                reportText
+            );
+        } else if (snapshot.kind === 'critical') {
+            // sendAnalysisChatMessage injects reference files only, so bake the
+            // current source document into the seed as context.
+            const docText = await this.getFileText(file.path);
+            const systemMsg = buildAnalysisMessages(snapshot.mode, {
+                text: '',
+                scope: snapshot.scope,
+                vaultContext: snapshot.vaultContext,
+                voiceMarker: snapshot.voiceMarker,
+                characters: snapshot.characters,
+                plotThreads: snapshot.plotThreads,
+                customInstruction: job.focusPrompt
+            })[0]!;
+            this.analysisCurrentMessages = [
+                systemMsg,
+                { role: 'system', content: `Current manuscript (full document) — "${file.name}":\n\n${docText}` },
+                { role: 'assistant', content: reportText }
+            ];
+            this.analysisAbort = null;
+            const label = getAnalysisModeById(snapshot.mode)?.label ?? snapshot.mode;
+            this.lintPanel?.reviewLoadReportForDiscussion('critical', label, reportText);
+        } else {
+            // manuscript: re-run compaction on the current manuscript.
+            const modeMeta = getManuscriptAnalysisModeById(snapshot.mode);
+            await this.loadManuscriptReportForDiscussion(
+                file,
+                snapshot.mode,
+                reportText,
+                modeMeta?.label ?? snapshot.mode
+            );
+        }
     }
 
     /**
@@ -5383,8 +5406,7 @@ export default class EventideQuillPlugin extends Plugin {
      * `quill-mode`, `quill-manuscript-path`) to reconstruct the conversation,
      * opens the CURRENT version of the source manuscript (fails if it was
      * renamed/deleted — the right main file must be in context), and seeds the
-     * report as the AI's first turn. Editorial + critical supported; manuscript
-     * is deferred (its interactive path doesn't re-inject the manuscript).
+     * report as the AI's first turn. All three engines supported.
      */
     async loadReportFileForDiscussion(reportFile: TFile): Promise<void> {
         const cache = this.app.metadataCache.getFileCache(reportFile);
@@ -5406,13 +5428,6 @@ export default class EventideQuillPlugin extends Plugin {
             engine = getAnalysisModeById(modeStr) ? 'critical' : 'manuscript';
         } else {
             new Notice('Quill: this file does not appear to be a saved feedback report.');
-            return;
-        }
-
-        if (engine === 'manuscript') {
-            new Notice(
-                'Quill: in-panel discussion of manuscript-analysis reports is not yet supported. Open the report note to read it.'
-            );
             return;
         }
 
@@ -5451,9 +5466,9 @@ export default class EventideQuillPlugin extends Plugin {
                 persona?.name ?? 'Editorial feedback',
                 reportText
             );
-        } else {
-            // critical: sendAnalysisChatMessage injects reference files only, so
-            // bake the current source document into the seed as context.
+        } else if (engine === 'critical') {
+            // sendAnalysisChatMessage injects reference files only, so bake the
+            // current source document into the seed as context.
             const docText = await this.getFileText(sourceFile.path);
             const systemMsg = buildAnalysisMessages(modeStr as AnalysisMode, { text: '', scope: 'document' })[0]!;
             this.analysisCurrentMessages = [
@@ -5464,7 +5479,105 @@ export default class EventideQuillPlugin extends Plugin {
             this.analysisAbort = null;
             const label = getAnalysisModeById(modeStr as AnalysisMode)?.label ?? modeStr ?? 'Critical analysis';
             this.lintPanel?.reviewLoadReportForDiscussion('critical', label, reportText);
+        } else {
+            // manuscript: re-run compaction on the current manuscript.
+            const modeMeta = getManuscriptAnalysisModeById(modeStr as ManuscriptAnalysisMode);
+            await this.loadManuscriptReportForDiscussion(
+                sourceFile,
+                modeStr as ManuscriptAnalysisMode,
+                reportText,
+                modeMeta?.label ?? modeStr ?? 'Manuscript analysis'
+            );
         }
+    }
+
+    /**
+     * Seed a manuscript-analysis report discussion. The manuscript interactive
+     * follow-up path ({@link sendManuscriptAnalysisChatMessage}) injects reference
+     * files only — NOT the manuscript — so the current manuscript must be baked
+     * into the seed. Re-runs the shared compaction pipeline
+     * ({@link prepareManuscriptAnalysisPayload}) on the CURRENT manuscript to
+     * produce a compacted manuscript that fits, then seeds
+     * `manuscriptAnalysisCurrentMessages = [...prepared messages, assistant=report]`.
+     * The report is the AI's first turn; follow-up runs against the living document.
+     *
+     * Compaction always uses 'embed' (if an embed provider is configured) or
+     * 'compress' — never 'none' — so a full manuscript fits alongside the report.
+     */
+    private async loadManuscriptReportForDiscussion(
+        sourceFile: TFile,
+        mode: ManuscriptAnalysisMode,
+        reportText: string,
+        headerLabel: string
+    ): Promise<void> {
+        const chat = this.getDefaultChatProvider();
+        if (!chat.provider) {
+            new Notice('Quill: No AI provider configured. Set one up in settings.');
+            return;
+        }
+
+        // Re-resolve the CURRENT manuscript structure (the living document).
+        const resolved = await this.resolveManuscriptChapters(sourceFile, true);
+        if (!resolved) {
+            new Notice('Quill: could not resolve the current manuscript structure for discussion.');
+            return;
+        }
+        const { chapters, entities, msFile } = resolved;
+        for (const entity of entities) {
+            const newType = msFile.reclassifiedEntities[entity.id];
+            if (newType) entity.type = newType;
+        }
+        const dismissedIds = new Set(msFile.dismissedEntities);
+        const assembly = this.contextActiveFile === sourceFile.path ? this.currentAssembly : null;
+        const vaultContext = this.vaultContextFromAssembly(assembly);
+        const plotMapText = await this.loadCurrentPlotMapText();
+
+        // Always compact so the full manuscript fits (never 'none').
+        const compaction: CompactionStrategy = this.getDefaultEmbedProvider() ? 'embed' : 'compress';
+
+        // Show a loading state while compaction runs (embeddings/compression can
+        // take a while on a full manuscript).
+        this.lintPanel?.reviewStartLoading('manuscript', headerLabel, 'follow-up discussion');
+        this.manuscriptAnalysisAbort?.abort();
+        this.manuscriptAnalysisAbort = new AbortController();
+        const myAbort = this.manuscriptAnalysisAbort;
+
+        let prepared: PreparedManuscript;
+        try {
+            prepared = await this.prepareManuscriptAnalysisPayload(
+                {
+                    mode,
+                    selectedChapters: chapters,
+                    entities,
+                    dismissedIds,
+                    manuscriptName: sourceFile.name,
+                    compaction,
+                    vaultContext,
+                    plotMapText
+                },
+                chat.provider,
+                chat.modelId,
+                myAbort.signal
+            );
+        } catch (err) {
+            if (this.manuscriptAnalysisAbort === myAbort) this.manuscriptAnalysisAbort = null;
+            if (err instanceof Error && err.name === 'AbortError') {
+                await this.lintPanel?.reviewChatFinished();
+            } else {
+                new Notice('Quill: could not prepare the manuscript for discussion.');
+            }
+            return;
+        }
+        if (this.manuscriptAnalysisAbort === myAbort) this.manuscriptAnalysisAbort = null;
+
+        // Seed: [system, ...lore, user(compacted manuscript), assistant = report].
+        // The compacted manuscript is baked in; follow-up injects reference files
+        // fresh via sendManuscriptAnalysisChatMessage.
+        this.manuscriptAnalysisCurrentMessages = [
+            ...prepared.existingMessages,
+            { role: 'assistant', content: reportText }
+        ];
+        this.lintPanel?.reviewLoadReportForDiscussion('manuscript', headerLabel, reportText);
     }
 
     /** Open a picker of saved report notes (from feedbackReportFolder) to discuss. */
