@@ -562,6 +562,27 @@ export class QuillSidebarView extends ItemView {
                     this.plugin.resetAnalysisChat();
                 }
             });
+
+            // Async feedback queue — plugin ref (for the Queue sub-tab) + handlers.
+            this.reviewPanel.setPlugin(this.plugin);
+            this.reviewPanel.setEditorialQueueHandler((personaId, customInstruction) => {
+                void this.plugin.submitFeedbackJob(personaId, customInstruction);
+            });
+            this.reviewPanel.setCriticalQueueHandler((mode, scope, customInstruction) => {
+                void this.plugin.submitCriticalFeedbackJob(mode, scope, customInstruction);
+            });
+            this.reviewPanel.setManuscriptQueueHandler((mode, scope, compaction, customInstruction) => {
+                void this.plugin.submitManuscriptFeedbackJob(mode, scope, compaction, customInstruction);
+            });
+            this.reviewPanel.setQueueHandlers({
+                onCancel: (id) => void this.plugin.cancelFeedbackJob(id),
+                onDelete: (id) => void this.plugin.deleteFeedbackJob(id),
+                onOpenReport: (job) => this.plugin.openFeedbackReport(job),
+                onDiscuss: (job) => void this.plugin.loadReportForDiscussion(job),
+                onDiscussSavedReport: () => this.plugin.openReportSuggestModal(),
+                onRunNow: () => void this.plugin.runFeedbackQueueNow(),
+                onClearCompleted: () => this.plugin.clearCompletedFeedbackJobs()
+            });
         }
         const chat = this.plugin.getDefaultChatProvider();
         if (chat.provider) {
@@ -820,6 +841,20 @@ export class QuillSidebarView extends ItemView {
 
     reviewError(message: string): void {
         this.reviewPanel?.showError(message);
+    }
+
+    /** Load a completed report into the Results sub-tab for follow-up discussion. */
+    reviewLoadReportForDiscussion(
+        engine: 'editorial' | 'critical' | 'manuscript',
+        headerLabel: string,
+        reportText: string
+    ): void {
+        this.reviewPanel?.loadReportForDiscussion(engine, headerLabel, reportText);
+    }
+
+    /** Notify the Review panel that a queue job's status changed (refreshes the Queue sub-tab + badge). */
+    feedbackQueueChanged(): void {
+        this.reviewPanel?.feedbackQueueChanged();
     }
 
     reviewResetResults(): void {

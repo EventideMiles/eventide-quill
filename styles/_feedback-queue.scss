@@ -1,0 +1,214 @@
+@use 'base' as *;
+
+// Async feedback queue — rendered inside the Review tab's "Queue" sub-tab.
+// BEM block `quill-feedback-queue`. Colors use theme-aware CSS vars (no hex).
+
+.quill-feedback-queue {
+    display: flex;
+    flex-direction: column;
+    gap: $space-md;
+
+    &__toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: $space-sm;
+    }
+
+    &__clear,
+    &__pull {
+        padding: $space-xs $space-lg;
+        border-radius: $radius-md;
+        border: 1px solid var(--background-modifier-border);
+        background: transparent;
+        color: var(--text-muted);
+        font-size: var(--font-ui-smaller);
+        cursor: pointer;
+        transition:
+            background $transition-base,
+            color $transition-base;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            color: var(--text-normal);
+        }
+    }
+
+    &__run-now {
+        padding: $space-xs $space-lg;
+        border-radius: $radius-md;
+        border: 1px solid var(--background-modifier-border);
+        background: var(--background-modifier-hover);
+        color: var(--text-normal);
+        font-size: var(--font-ui-smaller);
+        cursor: pointer;
+        transition:
+            background $transition-base,
+            color $transition-base;
+
+        &:hover:not(:disabled) {
+            background: var(--interactive-accent);
+            color: var(--text-on-accent);
+        }
+
+        &:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+    }
+
+    &__empty {
+        color: var(--text-muted);
+        font-size: var(--font-ui-small);
+        line-height: 1.5;
+        margin: $space-xl $space-sm;
+    }
+
+    &__section {
+        display: flex;
+        flex-direction: column;
+        gap: $space-sm;
+    }
+
+    &__section-label {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: var(--font-ui-smallest);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    &__card {
+        display: flex;
+        flex-direction: column;
+        gap: $space-xs;
+        padding: $space-md $space-lg;
+        border-radius: $radius-lg;
+        border: 1px solid var(--background-modifier-border);
+        background: var(--background-secondary);
+        border-left: 3px solid var(--text-muted);
+
+        &--queued {
+            border-left-color: var(--text-muted);
+        }
+        &--running {
+            border-left-color: var(--color-blue, var(--interactive-accent));
+        }
+        &--succeeded {
+            border-left-color: var(--color-green);
+        }
+        &--failed {
+            border-left-color: var(--color-red);
+        }
+        &--cancelled {
+            border-left-color: var(--text-faint);
+        }
+    }
+
+    &__card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: $space-sm;
+    }
+
+    &__status {
+        font-size: var(--font-ui-smallest);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+
+        &--queued {
+            color: var(--text-muted);
+        }
+        &--running {
+            color: var(--color-blue, var(--interactive-accent));
+        }
+        &--succeeded {
+            color: var(--color-green);
+        }
+        &--failed {
+            color: var(--color-red);
+        }
+        &--cancelled {
+            color: var(--text-faint);
+        }
+    }
+
+    &__time {
+        color: var(--text-faint);
+        font-size: var(--font-ui-smallest);
+    }
+
+    &__title {
+        margin: 0;
+        color: var(--text-normal);
+        font-size: var(--font-ui-small);
+        font-weight: 500;
+        // Long titles (file + persona) wrap rather than overflow.
+        overflow-wrap: anywhere;
+    }
+
+    &__meta {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: var(--font-ui-smaller);
+    }
+
+    &__error {
+        margin: 0;
+        color: var(--text-error);
+        font-size: var(--font-ui-smaller);
+        overflow-wrap: anywhere;
+    }
+
+    &__actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: $space-sm;
+        margin-top: $space-xs;
+    }
+
+    &__action {
+        padding: $space-xs $space-md;
+        border-radius: $radius-md;
+        border: 1px solid var(--background-modifier-border);
+        background: transparent;
+        color: var(--text-normal);
+        font-size: var(--font-ui-smaller);
+        cursor: pointer;
+        transition:
+            background $transition-base,
+            border-color $transition-base;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+        }
+
+        &--primary {
+            border-color: var(--interactive-accent);
+            color: var(--text-on-accent);
+            background: var(--interactive-accent);
+
+            &:hover {
+                background: var(--interactive-accent-hover);
+            }
+        }
+    }
+
+    // Queue-mode toggle on the Create sub-tab.
+    &__toggle {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        margin: $space-sm 0;
+        color: var(--text-normal);
+        font-size: var(--font-ui-smaller);
+        cursor: pointer;
+
+        input[type='checkbox'] {
+            cursor: pointer;
+        }
+    }
+}

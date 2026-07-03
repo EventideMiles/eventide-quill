@@ -81,6 +81,7 @@ styles/
   _linter.scss           ← linter panel + tooltip + details view + Fix-with-AI modal
   _context-panel.scss    ← Context tab
   _review-panel.scss     ← Review panel (editorial feedback + critical analysis)
+  _feedback-queue.scss   ← Queue sub-tab (job cards, status dots, badge, queue-mode toggle)
   _cowriter-panel.scss   ← Co-writer panel
   _change-review.scss    ← shared change-review cards + inline diff decorations
   _option-picker.scss    ← shared BEM picker block (personas, modes)
@@ -131,8 +132,8 @@ Several files are large and intentionally monolithic; match the surrounding patt
 
 ```text
 src/
-  main.ts              # Plugin lifecycle + default-provider getters (~4.4k lines)
-  settings.ts          # Settings schema + UI (single source of truth, ~2.6k lines)
+  main.ts              # Plugin lifecycle + default-provider getters (~5.5k lines)
+  settings.ts          # Settings schema + UI (single source of truth, ~3.3k lines)
   types.ts             # Shared TypeScript interfaces (NARRATIVE_VOICE_PRESETS)
   core/
     change-set.ts
@@ -153,7 +154,8 @@ src/
     openai-provider.ts, ollama-provider.ts,
     streaming.ts, transport.ts (HttpError, StreamingUnavailableError, the one fetch exception),
     compaction.ts, embedding-cache.ts, conversation-store.ts (saved co-writer sessions sidecar),
-    feedback.ts, linter-ai.ts, analysis.ts, batch-fix.ts,
+    feedback.ts, feedback-queue.ts (async feedback queue — job model + runner + sidecar persistence; see "Async feedback queue"), feedback-archive.ts (shared report archive helper),
+    linter-ai.ts, analysis.ts, batch-fix.ts,
     manuscript-analysis.ts, manuscript-compaction.ts,
     modes.ts, prompts.ts, transform.ts,
     vision.ts (resolveImageInjection — two-regime image routing),
@@ -177,10 +179,11 @@ src/
     quill-sidebar.ts (~1.3k lines — tabs: linter/context/review/cowriter/dashboard/lorebook),
     co-writer-panel.ts (~2.0k lines), context-panel.ts, review-panel.ts,
     dashboard-panel.ts, lorebook-panel.ts, lore-entry-review.ts,
+    feedback-queue-panel.ts (encapsulated Queue sub-tab renderer),
     chat-panel.ts, chat-context-files.ts, document-header.ts,
     change-card.ts, change-diff-extension.ts, token-indicator.ts,
     confirm-modal.ts, transform-modal.ts, fix-with-ai-modal.ts,
-    filename-modal.ts, vault-file-suggest-modal.ts, file-mention-suggest.ts,
+    filename-modal.ts, vault-file-suggest-modal.ts, report-suggest-modal.ts (saved-report picker for follow-up discussion), file-mention-suggest.ts,
     session-list-modal.ts (saved-conversation switcher), slash-command-suggest.ts
   utils/               # Helpers, constants
     directives.ts, find-editor.ts, frontmatter.ts, text-analysis.ts,
@@ -250,6 +253,18 @@ Right-click a user message in the co-writer chat → "Rewind to here" discards t
 - **Compaction guard:** `isRewindableMessage(id, mode)` returns true iff the id still appears as a `quillAnchorId` in the active mode's API array. Turns folded into a compaction summary lose their anchor id, so the menu item is disabled on them ("Part of the summarized context — can't rewind"). The options flow (`generateOptions`, display-only) never touches the API array, so its messages are non-rewindable too (correct: never in the model's memory).
 - **Anchored-artifact cleanup:** a rewind drops subagents / pending lore edits / proposed lore images anchored to discarded messages (reuses the inline-card anchors), and re-derives `currentLoreDraft` from the last surviving message that carries one.
 - **Phase re-evaluation:** coach / lorebook mode-session phase isn't stored per-turn, so `reevaluateModePhase` re-derives it from the surviving `chatHistory` after a rewind — coach replays its phase-advance heuristic over the kept assistant turns; lorebook infers phase from draft presence + turn count. Run at rewind time so the phase indicator is correct immediately.
+
+## Async feedback queue
+
+The Review tab's "Queue instead of running" toggle submits any review (editorial / critical / manuscript) to run unattended instead of streaming interactively. Jobs run single-slot FIFO while Obsidian is open; completed reports auto-save to the vault as dated markdown.
+
+- **Job model + sidecar persistence** (`src/ai/feedback-queue.ts`): `FeedbackJob` (id, engine, status, timestamps, `reportNotePath`) + a `SerializedContext` snapshot discriminated by `kind` (`editorial` | `critical` | `manuscript`). Sidecars live under `<pluginDataDir>/feedback-queue/<id>.json` + an `index.json`, mirroring `conversation-store.ts` exactly (schemaVersion, serialized index write-lock, `normalizePath`, mkdir-on-first-write, LRU prune to `feedbackQueueLimit` that protects active jobs, `running → queued` restore on load). Id namespace is `fq_`.
+- **Content-canonical-in-vault:** the sidecar holds status + the snapshot + a `reportNotePath` pointer — NEVER the report markdown. The transient `FeedbackJob.reportMarkdown` is in-memory only (session cache) and stripped at persist time. The vault note is the single canonical home of the report; deleting it leaves a dangling pointer the UI detects ("report note moved or deleted — re-run to regenerate").
+- **Runner dispatch** (`runFeedbackJob`): narrows on `snapshot.kind`. Editorial wraps `getFeedback`; critical wraps `getAnalysis` (with a read-only tool registry, routed through `streamWithTools`); manuscript calls the shared `prepareManuscriptAnalysisPayload` (the embed/compress/full compaction pipeline, also used by interactive `requestManuscriptAnalysis`) then `getManuscriptAnalysis`. The orchestrator (`executeFeedbackJob`) owns the `queued → running` transition + persists on every status change.
+- **Scheduler:** single-slot FIFO *within the queue*. `plugin.feedbackQueueAbort` is a peer of `feedbackAbort` / `analysisAbort` (NOT a child of a global latch) — no cross-surface coordination (a local model serializes server-side, as today). A `registerInterval` tick (5s) is the resume path after a vault reopen + safety net; submit + FIFO chaining handle the steady state without waiting for the tick. Gated by `feedbackQueueAutoRun`.
+- **Submit stays cheap; compaction runs at run time.** The manuscript snapshot captures the resolved chapters **with their text** at submit, so a manuscript job is fully isolated from live edits — the writer can keep writing or open other files between submit and run without affecting the report.
+- **Archive (both surfaces):** `saveReportArchive` (`src/ai/feedback-archive.ts`) writes a dated `{YYYY-MM-DD_HH-MM-SS}_{label}.md` to `feedbackReportFolder` with `quill-report-*` frontmatter, collision-suffixed, gated on `autoSaveFeedbackReports`. Called from both the queue runner (`source: 'queue'`) and the interactive `requestFeedback` / `requestAnalysis` / `requestManuscriptAnalysis` completion handlers (`source: 'review'`) — so every report lands in the vault regardless of which surface produced it. Off = no vault writes AND no silent sidecar fallback (sovereignty principle).
+- **UI:** a "Queue" sub-tab under Review (with a live count badge that updates without disturbing the Create textarea), rendered by an encapsulated `feedback-queue-panel.ts`. Cards show status (queued/running/succeeded/failed/cancelled) with cancel / delete / open-report / clear-completed actions. `feedbackQueueChanged()` on the sidebar refreshes the list (when the sub-tab is active) or just the badge.
 
 ## Vision & image support
 
@@ -372,7 +387,7 @@ Each row = one JSDoc + two `setDesc(...)` copies to keep aligned. The authoritat
 2. **Manuscript Dashboard** — chapter word counts, pacing analysis, dialogue ratios, readability.
 3. **Prose Linter (Novelist Edition)** — deterministic rules for narrative prose.
 4. **AI Feedback Engine** — reads like a thoughtful editor, not a text generator.
-5. **Async Feedback Queue** — submit chapters, get reports when ready.
+5. **Async Feedback Queue** — submit any review (editorial / critical / manuscript) to run unattended via the Review tab's "Queue instead of running" toggle; single-slot FIFO scheduler, per-job snapshots (isolated from live edits), and a durable vault archive of every report. See "Async feedback queue".
 6. **Collaborative Drafting (Co-writer)** — writer leads, AI extends, turn by turn (discuss / coach / fulfill modes).
 7. **Co-writer Tool-calling** — the model can call internal vault tools and network research tools (Fandom, Wikipedia, fetch_url) mid-conversation. On by default; restrict in settings.
 8. **User-defined Slash Commands** — saved snippets in settings; typing `/` at the start of a line in the co-writer chat input opens a picker of matching commands. Choosing one inserts the body into the input, fully editable before sending. Names are kebab-case-only. Empty list (the default) disables the picker — no separate enable toggle, so the description stays single-sourced.
