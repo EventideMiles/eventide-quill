@@ -3,6 +3,7 @@ import { FEEDBACK_PERSONAS } from '../ai/feedback';
 import { ANALYSIS_MODES, type AnalysisMode, type AnalysisScope } from '../ai/analysis';
 import {
     MANUSCRIPT_ANALYSIS_MODES,
+    getManuscriptAnalysisModeById,
     type ManuscriptAnalysisMode,
     type ManuscriptScope
 } from '../ai/manuscript-analysis';
@@ -856,6 +857,12 @@ export class ReviewPanel extends AbstractChatPanel {
             btn.createEl('span', { cls: 'quill-option-picker__desc', text: mode.description });
             this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.currentManuscriptMode = mode.id;
+                // Big-picture modes only make sense over a full manuscript;
+                // force scope off "Surrounding chapters" when one is selected.
+                if (mode.fullManuscriptOnly) {
+                    this.currentManuscriptScope = { kind: 'full' };
+                    this.refreshManuscriptTokenEstimate();
+                }
                 if (this.containerEl) this.render();
             });
         }
@@ -869,8 +876,14 @@ export class ReviewPanel extends AbstractChatPanel {
         const section = container.createDiv({ cls: 'quill-form__section' });
         section.createEl('p', { cls: 'quill-form__label', text: 'Scope' });
 
+        // Big-picture modes (subplots, theme, genre) only make sense over a
+        // full manuscript. Lock the scope to "Full" and disable the alternative.
+        const fullOnly =
+            this.currentManuscriptMode !== '' &&
+            getManuscriptAnalysisModeById(this.currentManuscriptMode)?.fullManuscriptOnly === true;
+
         const scopeRow = container.createDiv({ cls: 'quill-review-panel__scope-row' });
-        const isFull = this.currentManuscriptScope.kind === 'full';
+        const isFull = fullOnly || this.currentManuscriptScope.kind === 'full';
 
         const fullBtn = scopeRow.createEl('button', {
             cls: `quill-review-panel__scope-btn${isFull ? ' quill-review-panel__scope-btn--active' : ''}`,
@@ -885,14 +898,21 @@ export class ReviewPanel extends AbstractChatPanel {
         const surrBtn = scopeRow.createEl('button', {
             cls: `quill-review-panel__scope-btn${this.currentManuscriptScope.kind === 'surrounding' ? ' quill-review-panel__scope-btn--active' : ''}`,
             text: 'Surrounding chapters',
-            title: 'Chapter at Cursor plus n chapters before and after.'
+            title: fullOnly
+                ? 'Big-picture modes (subplots, theme, genre) require the full manuscript.'
+                : 'Chapter at Cursor plus n chapters before and after.'
         });
-        this.renderEvents.registerDomEvent(surrBtn, 'click', () => {
-            this.currentManuscriptScope = { kind: 'surrounding', count: 1 };
-            this.refreshManuscriptTokenEstimate();
-        });
+        if (fullOnly) {
+            surrBtn.disabled = true;
+            surrBtn.addClass('quill-review-panel__scope-btn--disabled');
+        } else {
+            this.renderEvents.registerDomEvent(surrBtn, 'click', () => {
+                this.currentManuscriptScope = { kind: 'surrounding', count: 1 };
+                this.refreshManuscriptTokenEstimate();
+            });
+        }
 
-        if (this.currentManuscriptScope.kind === 'surrounding') {
+        if (!fullOnly && this.currentManuscriptScope.kind === 'surrounding') {
             const countRow = section.createDiv({ cls: 'quill-review-panel__scope-row' });
             countRow.createEl('span', { cls: 'quill-form__label', text: 'Chapters before/after:' });
 
