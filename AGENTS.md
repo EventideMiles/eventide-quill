@@ -172,7 +172,7 @@ src/
       run-lorebook-batch.ts, research.ts (subagent spawners → SubagentSession),
       propose-entry.ts, fetch-url.ts, fetch-image-url.ts, get-lore-image.ts,
       fandom-lookup.ts, wikipedia-lookup.ts, mediawiki.ts (shared MediaWiki client),
-      fandom-cache.ts (local Fandom cache sidecar — PR 2: write-through + cache-first + bulk indexer)
+      fandom-cache.ts (local Fandom cache sidecar — write-through + cache-first + bulk indexer + Stage 3 cache-answers-when-network-off (`fandomReachability`) + Stage 4 stats/clear + Stage 6 search index)
   ui/                  # Views, modals, panels
     quill-sidebar.ts (~1.3k lines — tabs: linter/context/review/cowriter/dashboard/lorebook),
     co-writer-panel.ts (~2.0k lines), context-panel.ts, review-panel.ts,
@@ -207,13 +207,14 @@ Tool tiers (gating):
 | Internal (default on) | `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit`, `get_lore_image` | `coWriterToolsEnabled` |
 | Lorebook coach only | `propose_entry` (surfaces a lore draft to the UI; accepts an optional `images` parameter when `loreEntryImageAttachments` is on) | `createLoreCoachToolRegistry` |
 | Parent modes only | `run_lorebook_batch` (lore edits), `run_research` (vault Q&A) — each spawns a `SubagentSession`, see "Subagents" | `allowSubagents` (all parent modes: discuss/coach/lorebook; subagents pass `false` so they can't nest) |
-| Network (default on) | `fetch_url`, `fandom_lookup` / `fandom_page`, `wikipedia_lookup` / `wikipedia_page` | `lorebookNetworkTools` |
+| Network (default on) | `fetch_url`, `wikipedia_lookup` / `wikipedia_page` | `lorebookNetworkTools` |
+| Fandom (cache-aware) | `fandom_lookup` / `fandom_page` | `lorebookNetworkTools` OR a populated local cache for an allowlisted wiki (Stage 3 `fandomReachability`); allowlist still gates per-call |
 | Image (default on) | `fetch_image_url`, `fandom_image`, `wikipedia_image` | `lorebookImageTools` |
 | Agent image attach (default on) | optional `images` parameter on `propose_entry`; `attach_lore_image` (lorebook coach + batch only) | `loreEntryImageAttachments` |
 
-`fandom_image` (Fandom image lookup: lead image via `prop=pageimages`, gallery browsing via `prop=images` + `imageinfo`, with captions parsed from `<gallery>` wikitext) needs both `lorebookNetworkTools` and `lorebookImageTools`, plus the Fandom allowlist gate — it's registered inside the fandom block with an extra image-tools check. `wikipedia_image` (Wikipedia lead portraits via the same `prop=pageimages`) follows the same cross-toggle pattern — registered inside the network-tools block with an image-tools sub-check, no gallery-listing path (Wikipedia biographies don't follow Fandom's `<title>/Gallery` convention).
+`fandom_image` (Fandom image lookup: lead image via `prop=pageimages`, gallery browsing via `prop=images` + `imageinfo`, with captions parsed from `<gallery>` wikitext) needs both `lorebookImageTools` and Fandom reachability (`lorebookNetworkTools` OR cache populated), plus the Fandom allowlist gate. `wikipedia_image` (Wikipedia lead portraits via the same `prop=pageimages`) follows the cross-toggle pattern — needs `lorebookNetworkTools` (no cache) and `lorebookImageTools`, no gallery-listing path (Wikipedia biographies don't follow Fandom's `<title>/Gallery` convention).
 
-Fandom requires a non-empty allowlist (`lorebookFandomWikis`), or the `lorebookFandomAllowAllWikis` "danger" toggle to allow any wiki; an empty allowlist with that toggle off disables Fandom everywhere. `mediawiki.ts` is the shared MediaWiki client with per-host rate limiting. Convention: tool ids are `snake_case` verbs/nouns (`manuscript_mentions`, `fetch_url`).
+Fandom requires a non-empty allowlist (`lorebookFandomWikis`), or the `lorebookFandomAllowAllWikis` "danger" toggle to allow any wiki; an empty allowlist with that toggle off disables Fandom everywhere. **Stage 3 privacy posture:** a populated local cache answers even with `lorebookNetworkTools` off — consent is at sync time, so the network toggle no longer hides cached data. The single source of truth for both registration (`createToolRegistry`) and prompt advertisement (`buildNetworkToolsMessage`) is `fandomReachability(plugin)` (`src/ai/tools/fandom-cache.ts`) → `'live' | 'cache-only' | 'none'`; the two mirror sites must agree, so any gating change goes through that helper. Cache misses in cache-only mode return `"not cached"` and never fall through to a live call. `mediawiki.ts` is the shared MediaWiki client with per-host rate limiting. Convention: tool ids are `snake_case` verbs/nouns (`manuscript_mentions`, `fetch_url`).
 
 ## Subagents
 
@@ -360,10 +361,10 @@ The three tool-gating settings each gate **more than one tool**, and each has it
 |------|-------|------|------|
 | `coWriterToolsEnabled` | all internal tools (`manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit`, `get_lore_image`) | `Co-writer tools` | `Co-writer tool use` |
 | `loreEntryImageAttachments` | the `images` parameter on `propose_entry`; the `attach_lore_image` tool (lorebook coach + batch only) | `Agent image attachments` | `Agent image attachments` |
-| `lorebookNetworkTools` | `fetch_url`, `fandom_lookup` / `fandom_page`, `wikipedia_lookup` / `wikipedia_page` | `Network research tools` | `Network tools` |
+| `lorebookNetworkTools` | `fetch_url`, `wikipedia_lookup` / `wikipedia_page`; the **live** path of `fandom_lookup` / `fandom_page` (cached Fandom pages still answer with this off — gate is `fandomReachability`, see `lorebookFandomCacheEnabled`) | `Network research tools` | `Network tools` |
 | `lorebookImageTools` | `fetch_image_url`, `fandom_image`, `wikipedia_image` | `Image tool` | `Image tools` |
 
-Each row = one JSDoc + two `setDesc(...)` copies to keep aligned. The authoritative gate logic is `createToolRegistry()` in `src/ai/tools/index.ts` — if you add or move a tool between tiers, also update the gating table in "Tool-calling architecture" and every description for the affected toggle(s). `fandom_image` and `wikipedia_image` are the cross-toggle cases: each needs both `lorebookNetworkTools` **and** `lorebookImageTools` (plus the Fandom allowlist, for `fandom_image`), so its gate spans two rows.
+Each row = one JSDoc + two `setDesc(...)` copies to keep aligned. The authoritative gate logic is `createToolRegistry()` in `src/ai/tools/index.ts` — if you add or move a tool between tiers, also update the gating table in "Tool-calling architecture" and every description for the affected toggle(s). `fandom_image` and `wikipedia_image` are the cross-toggle cases: each needs both `lorebookNetworkTools` **and** `lorebookImageTools` (plus the Fandom allowlist, for `fandom_image`), so its gate spans two rows. The Fandom tools additionally register in cache-only mode (network off + `lorebookFandomCacheEnabled` on + populated cache for an allowlisted wiki) via `fandomReachability` — that gate is mirrored between `createToolRegistry` and `buildNetworkToolsMessage`.
 
 ## Key feature areas
 
