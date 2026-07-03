@@ -2944,13 +2944,7 @@ export default class EventideQuillPlugin extends Plugin {
         // Linked plot map (the writer's declared plan: subplots, themes, genre,
         // outline). Cross-referenced by the big-picture modes to reconcile
         // declared intent against the text. Best-effort; empty when unlinked.
-        let plotMapText = '';
-        const plotMapPath = this.currentPlotMap;
-        if (plotMapPath) {
-            plotMapText = await readVaultFileText(this.app.vault, plotMapPath, this.settings.contextMaxCharsPerFile);
-            // Discard if the writer swapped/unlinked the plot map mid-read.
-            if (plotMapPath !== this.currentPlotMap) plotMapText = '';
-        }
+        const plotMapText = await this.loadCurrentPlotMapText();
 
         // Build the initial system + user messages.
         const initialMessages = buildManuscriptAnalysisMessages(mode, {
@@ -3164,9 +3158,14 @@ export default class EventideQuillPlugin extends Plugin {
             estimatedTextTokens = estimateTokens(selectedText);
         }
 
+        // Linked plot map text is injected into the system prompt by
+        // buildManuscriptAnalysisMessages, so account for it here to keep the
+        // estimate aligned with what requestManuscriptAnalysis actually sends.
+        const plotMapTokens = estimateTokens(await this.loadCurrentPlotMapText());
+
         // Add system prompt + metrics overhead (~500 tokens).
         const overhead = 500;
-        const estimated = estimatedTextTokens + overhead;
+        const estimated = estimatedTextTokens + plotMapTokens + overhead;
         const max = chat.provider.config.maxContextTokens ?? 8192;
 
         return { estimated, max };
@@ -3880,18 +3879,27 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
+     * Read the currently linked plot map note text with the staleness guard.
+     * Returns the (capped) text, or an empty string when no plot map is linked,
+     * it cannot be read, or the writer swapped/unlinked it mid-read. Shared by
+     * the manuscript-analysis flow, the token estimator, and the co-writer
+     * plot-map token indicator so the read + staleness logic lives in one place.
+     */
+    private async loadCurrentPlotMapText(): Promise<string> {
+        const path = this.currentPlotMap;
+        if (!path) return '';
+        const text = await readVaultFileText(this.app.vault, path, this.settings.contextMaxCharsPerFile);
+        // Discard if the writer swapped/unlinked the plot map mid-read.
+        if (path !== this.currentPlotMap) return '';
+        return text;
+    }
+
+    /**
      * Compute the linked plot map's token estimate and push it to the co-writer
      * panel. Reads the plot map note text (capped) and estimates its token cost.
      */
     async updateCoWriterPlotMapTokens(): Promise<void> {
-        const path = this.currentPlotMap;
-        if (!path) {
-            this.lintPanel?.coWriterSetPlotMapTokens(0);
-            return;
-        }
-        const text = await readVaultFileText(this.app.vault, path, this.settings.contextMaxCharsPerFile);
-        // Discard stale results if the linked plot map changed during the read.
-        if (path !== this.currentPlotMap) return;
+        const text = await this.loadCurrentPlotMapText();
         this.lintPanel?.coWriterSetPlotMapTokens(text ? estimateTokens(text) : 0);
     }
 
