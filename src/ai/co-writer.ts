@@ -1499,6 +1499,7 @@ export class CoWriterSession {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
             return;
         }
+        plugin.warnIfQueueRunning();
 
         // Use the active file if available; fall back to stored manuscriptPath.
         // Discuss mode works without an active file — the model can gather
@@ -1871,6 +1872,7 @@ export class CoWriterSession {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
             return;
         }
+        plugin.warnIfQueueRunning();
 
         // Use the active file if available; fall back to stored manuscriptPath.
         // Coach mode works without an active file — same rationale as discuss.
@@ -2474,6 +2476,7 @@ export class CoWriterSession {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
             return;
         }
+        plugin.warnIfQueueRunning();
         if (plugin.settings.lorebookFolders.length === 0) {
             new Notice('Quill: Add at least one lorebook folder in settings → lorebook first.');
             return;

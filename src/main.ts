@@ -292,6 +292,19 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
+     * Warn (via Notice) when an interactive AI task is starting while a queue job
+     * is running. Local models serialize server-side (one inference at a time),
+     * so the interactive turn may stall behind the queue job. No blocking, no
+     * coordination — just informs the writer. Fires only when a job is actually
+     * in-flight (feedbackQueueAbort set), not when jobs are merely queued.
+     */
+    warnIfQueueRunning(): void {
+        if (this.feedbackQueueAbort) {
+            new Notice('Quill: a feedback queue job is running — this may be slow on a local model.');
+        }
+    }
+
+    /**
      * Abort controller for the in-flight queue job, if any. A peer of
      * `feedbackAbort` / `analysisAbort` (NOT a child of a global latch) — the
      * queue runs single-slot FIFO within itself and does not coordinate with
@@ -3005,6 +3018,7 @@ export default class EventideQuillPlugin extends Plugin {
             this.lintPanel?.reviewError('No active document.');
             return;
         }
+        this.warnIfQueueRunning();
 
         // Cancel any in-flight request.
         this.manuscriptAnalysisAbort?.abort();
@@ -3746,6 +3760,7 @@ export default class EventideQuillPlugin extends Plugin {
             this.lintPanel?.reviewError('No active document to analyze.');
             return;
         }
+        this.warnIfQueueRunning();
 
         // Cancel any in-flight analysis request.
         this.analysisAbort?.abort();
@@ -4662,6 +4677,7 @@ export default class EventideQuillPlugin extends Plugin {
         // Auto-initialize context so vault context and deterministic signal
         // are available even if the writer never visited the Context tab.
         await this.ensureContextInitialized();
+        this.warnIfQueueRunning();
 
         // Cancel any in-flight feedback request
         this.feedbackAbort?.abort();
