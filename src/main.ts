@@ -45,6 +45,7 @@ import {
     listFeedbackJobs,
     loadFeedbackJob,
     saveFeedbackJob,
+    deleteFeedbackJob,
     runFeedbackJob
 } from './ai/feedback-queue';
 import {
@@ -268,6 +269,12 @@ export default class EventideQuillPlugin extends Plugin {
      * `feedback-queue` sidecar; each status transition is persisted to disk.
      */
     private feedbackJobs = new Map<string, FeedbackJob>();
+
+    /** Snapshot of all queue jobs (newest-first), for UI rendering. */
+    getFeedbackJobs(): FeedbackJob[] {
+        return [...this.feedbackJobs.values()].sort((a, b) => b.createdAt - a.createdAt);
+    }
+
     /**
      * Abort controller for the in-flight queue job, if any. A peer of
      * `feedbackAbort` / `analysisAbort` (NOT a child of a global latch) — the
@@ -4801,6 +4808,7 @@ export default class EventideQuillPlugin extends Plugin {
         return {
             id: mintJobId(),
             title: `${activeFile.basename} — ${persona?.name ?? 'Custom'}`,
+            engine: 'editorial',
             personaId,
             manuscriptPath: activeFile.path,
             scope: 'document',
@@ -4839,6 +4847,7 @@ export default class EventideQuillPlugin extends Plugin {
         this.feedbackJobs.set(job.id, job);
         await this.persistFeedbackJob(job);
         new Notice(`Quill: feedback queued — ${job.title}`);
+        this.lintPanel?.feedbackQueueChanged();
 
         // Kick the scheduler so a freshly-submitted job runs without waiting for the tick.
         void this.runNextQueuedFeedbackJob();
@@ -4875,11 +4884,13 @@ export default class EventideQuillPlugin extends Plugin {
         job.startedAt = Date.now();
         job.error = undefined;
         await this.persistFeedbackJob(job);
+        this.lintPanel?.feedbackQueueChanged();
 
         try {
             await runFeedbackJob(this, job, controller.signal);
             await this.persistFeedbackJob(job);
             this.notifyFeedbackJobOutcome(job);
+            this.lintPanel?.feedbackQueueChanged();
         } finally {
             if (this.feedbackQueueAbort === controller) this.feedbackQueueAbort = null;
         }
@@ -4935,12 +4946,52 @@ export default class EventideQuillPlugin extends Plugin {
         if (!job) return;
         if (job.status === 'running') {
             this.feedbackQueueAbort?.abort();
+            this.lintPanel?.feedbackQueueChanged();
             return;
         }
         if (job.status === 'queued') {
             job.status = 'cancelled';
             job.completedAt = Date.now();
             await this.persistFeedbackJob(job);
+            this.lintPanel?.feedbackQueueChanged();
+        }
+    }
+
+    /**
+     * Delete a feedback job (sidecar + in-memory). Refuses an in-flight job —
+     * cancel it first. The vault report note is never touched by delete (it's the
+     * writer's durable record; only re-run/delete of the note itself removes it).
+     */
+    async deleteFeedbackJob(id: string): Promise<void> {
+        const job = this.feedbackJobs.get(id);
+        if (!job) return;
+        if (job.status === 'running') {
+            new Notice('Quill: cancel the running job before deleting it.');
+            return;
+        }
+        this.feedbackJobs.delete(id);
+        try {
+            await deleteFeedbackJob(this.app.vault, resolveQueueDir(this.pluginDataDir), id);
+        } catch (err) {
+            console.warn(`Quill: failed to delete feedback job ${id}`, err);
+        }
+        this.lintPanel?.feedbackQueueChanged();
+    }
+
+    /**
+     * Open a completed job's report note. Handles the dangling-pointer edge case
+     * (writer deleted/moved the note) gracefully — the sidecar held only a path.
+     */
+    openFeedbackReport(job: FeedbackJob): void {
+        if (!job.reportNotePath) {
+            new Notice('Quill: this job has no saved report (autosave was off or the write failed).');
+            return;
+        }
+        const file = this.app.vault.getAbstractFileByPath(job.reportNotePath);
+        if (file instanceof TFile) {
+            void this.app.workspace.getLeaf().openFile(file);
+        } else {
+            new Notice('Quill: report note moved or deleted — re-run to regenerate.');
         }
     }
 

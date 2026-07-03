@@ -8,6 +8,7 @@ import {
     type ManuscriptScope
 } from '../ai/manuscript-analysis';
 import type { CompactionStrategy } from '../ai/manuscript-compaction';
+import type EventideQuillPlugin from '../main';
 import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
 import { FileMentionSuggest } from './file-mention-suggest';
@@ -15,9 +16,10 @@ import { VaultFileSuggestModal } from './vault-file-suggest-modal';
 import { buildEmbedFolderPath, embedFolderLabel, parseEmbedFolderPath, resolveAtMentions } from '../utils/vault-files';
 import { FilenameModal } from './filename-modal';
 import { ChatContextFiles } from './chat-context-files';
+import { feedbackQueueBadgeCount, renderFeedbackQueue, type FeedbackQueueHandlers } from './feedback-queue-panel';
 
 /** Sub-tabs within the Review tab. */
-type ReviewSubtab = 'create' | 'results';
+type ReviewSubtab = 'create' | 'results' | 'queue';
 
 /** State of the results sub-tab. */
 type ResultsState = 'idle' | 'loading' | 'complete' | 'error';
@@ -122,6 +124,16 @@ export class ReviewPanel extends AbstractChatPanel {
         | null = null;
     private onChatMessage: ((message: string) => void) | null = null;
 
+    /** Plugin reference (for the Queue subtab to read jobs + provider state). */
+    private plugin: EventideQuillPlugin | null = null;
+    /** When true, Generate/persona actions queue a job instead of running interactively. */
+    private queueMode = false;
+    /** Cached Queue sub-tab badge element (live-updated without a full re-render). */
+    private queueBadgeEl: HTMLElement | null = null;
+    /** Queued-editorial handler (mirrors onEditorialGenerate but routes to the queue). */
+    private onEditorialQueue: ((personaId: string, customInstruction?: string) => void) | null = null;
+    private queueHandlers: FeedbackQueueHandlers | null = null;
+
     constructor(app: App) {
         super(app);
         this.chatContextFiles = new ChatContextFiles(app, 'quill-chat-panel', () => this.updateReviewIndicator());
@@ -150,6 +162,32 @@ export class ReviewPanel extends AbstractChatPanel {
         ) => void
     ): void {
         this.onManuscriptGenerate = handler;
+    }
+
+    /** Provide the plugin reference (used by the Queue subtab). */
+    setPlugin(plugin: EventideQuillPlugin): void {
+        this.plugin = plugin;
+    }
+
+    /** Handler for editorial feedback queued (not run interactively) from the Create sub-tab. */
+    setEditorialQueueHandler(handler: (personaId: string, customInstruction?: string) => void): void {
+        this.onEditorialQueue = handler;
+    }
+
+    /** Handlers for the Queue sub-tab's per-job actions + manual run. */
+    setQueueHandlers(handlers: FeedbackQueueHandlers): void {
+        this.queueHandlers = handlers;
+    }
+
+    /** Refresh the Queue sub-tab live, or just the badge if another sub-tab is active. */
+    feedbackQueueChanged(): void {
+        if (this.subtab === 'queue' && this.containerEl) {
+            this.render();
+            return;
+        }
+        // On other sub-tabs, a full re-render would disturb the custom-instruction
+        // textarea — update only the cached badge element.
+        this.updateQueueBadge();
     }
 
     /** Update the pre-generation token estimate display for the manuscript engine.
@@ -609,6 +647,9 @@ export class ReviewPanel extends AbstractChatPanel {
         if (this.subtab === 'create') {
             this.renderCreateTab();
             if (token === this.renderToken) this.renderPending = false;
+        } else if (this.subtab === 'queue') {
+            this.renderQueueTab();
+            if (token === this.renderToken) this.renderPending = false;
         } else {
             void this.renderResultsTab(token);
         }
@@ -617,19 +658,37 @@ export class ReviewPanel extends AbstractChatPanel {
     private renderSubtabBar(): void {
         if (!this.containerEl) return;
         const bar = this.containerEl.createDiv({ cls: 'quill-sidebar__subtab-bar' });
+        this.queueBadgeEl = null;
         const tabs: { id: ReviewSubtab; label: string }[] = [
             { id: 'create', label: 'New review' },
-            { id: 'results', label: 'Results' }
+            { id: 'results', label: 'Results' },
+            { id: 'queue', label: 'Queue' }
         ];
         for (const tab of tabs) {
             const btn = bar.createEl('button', {
-                cls: `quill-sidebar__subtab${this.subtab === tab.id ? ' quill-sidebar__subtab--active' : ''}`,
-                text: tab.label
+                cls: `quill-sidebar__subtab${this.subtab === tab.id ? ' quill-sidebar__subtab--active' : ''}`
             });
+            btn.createEl('span', { text: tab.label });
+            if (tab.id === 'queue') {
+                this.queueBadgeEl = btn.createEl('span', { cls: 'quill-sidebar__subtab-badge' });
+            }
             this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.subtab = tab.id;
                 this.render();
             });
+        }
+        this.updateQueueBadge();
+    }
+
+    /** Update the cached badge element's text/visibility without a full re-render. */
+    private updateQueueBadge(): void {
+        if (!this.queueBadgeEl) return;
+        const count = this.plugin ? feedbackQueueBadgeCount(this.plugin.getFeedbackJobs()) : 0;
+        if (count > 0) {
+            this.queueBadgeEl.setText(String(count));
+            this.queueBadgeEl.show();
+        } else {
+            this.queueBadgeEl.hide();
         }
     }
 
@@ -676,18 +735,47 @@ export class ReviewPanel extends AbstractChatPanel {
             this.customInstruction = customArea.value;
         });
 
-        const buttonLabel =
-            this.engine === 'editorial'
-                ? 'Generate feedback'
-                : this.engine === 'critical'
-                  ? 'Run analysis'
-                  : 'Run manuscript analysis';
+        // Queue-mode toggle (editorial for now — critical/manuscript arrive in 3b/3c).
+        // When on, persona clicks + Generate route to the async queue instead of
+        // running interactively, and stay on Create so the writer can queue several.
+        if (this.engine === 'editorial') {
+            const toggleWrap = scroll.createDiv({ cls: 'quill-feedback-queue__toggle' });
+            const queueToggle = toggleWrap.createEl('input', { attr: { type: 'checkbox' } });
+            queueToggle.checked = this.queueMode;
+            toggleWrap.createEl('span', { text: 'Queue instead of running' });
+            this.renderEvents.registerDomEvent(queueToggle, 'change', () => {
+                this.queueMode = queueToggle.checked;
+                if (this.containerEl) this.render();
+            });
+        }
+
+        const buttonLabel = this.queueMode
+            ? 'Add feedback to queue'
+            : this.engine === 'editorial'
+              ? 'Generate feedback'
+              : this.engine === 'critical'
+                ? 'Run analysis'
+                : 'Run manuscript analysis';
 
         const generateBtn = scroll.createEl('button', {
             cls: 'quill-form__submit mod-cta',
             text: buttonLabel
         });
         this.renderEvents.registerDomEvent(generateBtn, 'click', () => this.triggerGenerate());
+    }
+
+    // ========================================================================
+    // Queue sub-tab
+    // ========================================================================
+
+    private renderQueueTab(): void {
+        if (!this.containerEl) return;
+        const scroll = this.containerEl.createDiv({ cls: 'quill-sidebar__content-plain quill-feedback-queue' });
+        if (!this.plugin || !this.queueHandlers) {
+            scroll.createEl('p', { cls: 'quill-feedback-queue__empty', text: 'Queue unavailable.' });
+            return;
+        }
+        renderFeedbackQueue(scroll, this.plugin, this.renderEvents, this.queueHandlers);
     }
 
     private renderEnginePicker(container: HTMLElement): void {
@@ -1029,7 +1117,14 @@ export class ReviewPanel extends AbstractChatPanel {
     private triggerEditorial(personaId: string): void {
         // No manuscript-count check needed — the active document is always the
         // primary manuscript. The manuscripts list is for ADDITIONAL files only.
-        this.onEditorialGenerate?.(personaId, personaId === 'custom' ? this.customInstruction : undefined);
+        const instruction = personaId === 'custom' ? this.customInstruction : undefined;
+        if (this.queueMode) {
+            // Queue and stay on Create so the writer can queue several. The Notice +
+            // badge update fire from submitFeedbackJob's feedbackQueueChanged.
+            this.onEditorialQueue?.(personaId, instruction);
+            return;
+        }
+        this.onEditorialGenerate?.(personaId, instruction);
     }
 
     private triggerCritical(): void {

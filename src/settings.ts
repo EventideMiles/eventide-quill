@@ -2858,6 +2858,89 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         new Setting(containerEl)
+            .setName('Feedback queue')
+            .setHeading()
+            .addExtraButton((btn) =>
+                btn
+                    .setIcon('rotate-ccw')
+                    .setTooltip('Restore feedback queue defaults')
+                    .onClick(async () => {
+                        this.plugin.settings.enableFeedbackQueue = DEFAULT_SETTINGS.enableFeedbackQueue;
+                        this.plugin.settings.feedbackQueueLimit = DEFAULT_SETTINGS.feedbackQueueLimit;
+                        this.plugin.settings.feedbackQueueAutoRun = DEFAULT_SETTINGS.feedbackQueueAutoRun;
+                        this.plugin.settings.autoSaveFeedbackReports = DEFAULT_SETTINGS.autoSaveFeedbackReports;
+                        this.plugin.settings.feedbackReportFolder = DEFAULT_SETTINGS.feedbackReportFolder;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName('Enable feedback queue')
+            .setDesc('Show the queue sub-tab and allow queueing reviews to run unattended. Default: on.')
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.enableFeedbackQueue).onChange(async (value) => {
+                    this.plugin.settings.enableFeedbackQueue = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(containerEl)
+            .setName('Run queued jobs automatically')
+            .setDesc(
+                'Run queued jobs automatically while Obsidian is open. Turn off to queue jobs without running them until you trigger one manually. Default: on.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.feedbackQueueAutoRun).onChange(async (value) => {
+                    this.plugin.settings.feedbackQueueAutoRun = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(containerEl)
+            .setName('Auto-save feedback reports')
+            .setDesc(
+                'Save every completed feedback report (async queue + interactive Review) to the vault as dated markdown. ' +
+                    'When off, no report is written anywhere — the report is held in-memory for the session only. Default: on.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.autoSaveFeedbackReports).onChange(async (value) => {
+                    this.plugin.settings.autoSaveFeedbackReports = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(containerEl)
+            .setName('Feedback report folder')
+            .setDesc('Vault folder for auto-saved feedback reports. Created on first write.')
+            .addText((text) =>
+                text.setValue(this.plugin.settings.feedbackReportFolder).inputEl.addEventListener('blur', () => {
+                    const v = text.inputEl.value.trim();
+                    this.plugin.settings.feedbackReportFolder = v || DEFAULT_SETTINGS.feedbackReportFolder;
+                    text.setValue(this.plugin.settings.feedbackReportFolder);
+                    void this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(containerEl)
+            .setName('Feedback queue limit')
+            .setDesc(
+                'Maximum number of queue jobs retained on disk. Older completed jobs are removed first. Default: 20.'
+            )
+            .addText((text) =>
+                text.setValue(String(this.plugin.settings.feedbackQueueLimit)).inputEl.addEventListener('blur', () => {
+                    const n = parseInt(text.inputEl.value, 10);
+                    if (!isNaN(n) && n >= 1) {
+                        this.plugin.settings.feedbackQueueLimit = n;
+                        void this.plugin.saveSettings();
+                    } else {
+                        text.setValue(String(this.plugin.settings.feedbackQueueLimit));
+                        new Notice('Value must be a number ≥ 1');
+                    }
+                })
+            );
+
+        new Setting(containerEl)
             .setName('Context engine')
             .setHeading()
             .addExtraButton((btn) =>

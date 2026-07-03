@@ -34,6 +34,8 @@ const INDEX_FILENAME = 'index.json';
 
 export type FeedbackJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 export type FeedbackJobScope = 'selection' | 'scene' | 'document' | 'manuscript';
+/** Which Review engine produced (or will run) this job. Drives runner dispatch + archive kind. */
+export type FeedbackEngine = 'editorial' | 'critical' | 'manuscript';
 
 /**
  * Resolved context at submit time — the report reflects what was true when the
@@ -53,6 +55,8 @@ export interface SerializedContext {
 export interface FeedbackJob {
     id: string;
     title: string;
+    /** Which Review engine this job runs. Editorial for now; critical/manuscript arrive in 3b/3c. */
+    engine: FeedbackEngine;
     /** One of FEEDBACK_PERSONAS (or 'custom'). */
     personaId: string;
     manuscriptPath: string;
@@ -78,6 +82,7 @@ export interface FeedbackJob {
 export interface JobIndexEntry {
     id: string;
     title: string;
+    engine: FeedbackEngine;
     personaId: string;
     manuscriptPath: string;
     scope: FeedbackJobScope;
@@ -154,6 +159,7 @@ function entryFromJob(job: FeedbackJob, sizeBytes: number): JobIndexEntry {
     return {
         id: job.id,
         title: job.title,
+        engine: job.engine,
         personaId: job.personaId,
         manuscriptPath: job.manuscriptPath,
         scope: job.scope,

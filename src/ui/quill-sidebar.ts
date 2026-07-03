@@ -562,6 +562,18 @@ export class QuillSidebarView extends ItemView {
                     this.plugin.resetAnalysisChat();
                 }
             });
+
+            // Async feedback queue — plugin ref (for the Queue sub-tab) + handlers.
+            this.reviewPanel.setPlugin(this.plugin);
+            this.reviewPanel.setEditorialQueueHandler((personaId, customInstruction) => {
+                void this.plugin.submitFeedbackJob(personaId, customInstruction);
+            });
+            this.reviewPanel.setQueueHandlers({
+                onCancel: (id) => void this.plugin.cancelFeedbackJob(id),
+                onDelete: (id) => void this.plugin.deleteFeedbackJob(id),
+                onOpenReport: (job) => this.plugin.openFeedbackReport(job),
+                onRunNow: () => void this.plugin.runFeedbackQueueNow()
+            });
         }
         const chat = this.plugin.getDefaultChatProvider();
         if (chat.provider) {
@@ -820,6 +832,11 @@ export class QuillSidebarView extends ItemView {
 
     reviewError(message: string): void {
         this.reviewPanel?.showError(message);
+    }
+
+    /** Notify the Review panel that a queue job's status changed (refreshes the Queue sub-tab + badge). */
+    feedbackQueueChanged(): void {
+        this.reviewPanel?.feedbackQueueChanged();
     }
 
     reviewResetResults(): void {

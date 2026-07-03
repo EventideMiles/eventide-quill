@@ -118,6 +118,10 @@
     }
 
     &__subtab {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: $space-xs;
         flex: 1;
         padding: $space-sm $space-lg;
         cursor: pointer;
@@ -140,6 +144,22 @@
             color: var(--text-accent);
             border-bottom-color: var(--text-accent);
         }
+    }
+
+    // Count badge on a sub-tab button (e.g. active feedback-queue jobs).
+    &__subtab-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 1.4em;
+        height: 1.4em;
+        padding: 0 0.35em;
+        border-radius: $radius-pill;
+        background: var(--interactive-accent);
+        color: var(--text-on-accent);
+        font-size: var(--font-ui-smallest);
+        font-weight: 600;
+        line-height: 1;
     }
 
     // Plain scrolling content — the scrollable area inside a tab.
