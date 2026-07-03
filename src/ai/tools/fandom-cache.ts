@@ -112,6 +112,21 @@ export function fandomPageSourceUrl(wiki: string, title: string): string {
     return `https://${wiki}.fandom.com/wiki/${encodeURIComponent(titlePath).replace(/%2F/gi, '/')}`;
 }
 
+/**
+ * Format an epoch-ms timestamp as a local `YYYY-MM-DD` date string. Uses the
+ * Date's LOCAL getters (getFullYear/getMonth/getDate), NOT `toISOString()`
+ * (which renders UTC) — so a writer west of UTC doesn't see "tomorrow's" date
+ * on a cache they just synced this afternoon. Shared by the settings "Last
+ * synced" row and the `[cached YYYY-MM-DD]` markers in the fandom tools.
+ */
+export function formatLocalDate(ms: number): string {
+    const d = new Date(ms);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
 /** Convert a base64 string to an ArrayBuffer for `vault.adapter.writeBinary`. */
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
     const binary = atob(base64);

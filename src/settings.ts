@@ -10,6 +10,7 @@ import type { LoreEntryType } from './core/dashboard/lorebook-types';
 import { LORE_ENTRY_TYPES, LORE_TYPE_LABELS } from './core/dashboard/lorebook-types';
 import type { WikiLinkBehavior } from './ai/prompts';
 import type { WikiStats } from './ai/tools/fandom-cache';
+import { formatLocalDate } from './ai/tools/fandom-cache';
 
 export type LinterMode = 'all' | 'prose' | 'ai';
 export type SettingsTab = 'welcome' | 'general' | 'linter' | 'ai-providers' | 'model-behaviors';
@@ -445,7 +446,7 @@ function formatFandomCacheStats(stats: WikiStats): string {
     if (stats.pages === 0 && stats.images === 0) {
         return `Empty — ${size} on disk. Use "Sync now" above to populate.`;
     }
-    const date = stats.lastSynced > 0 ? new Date(stats.lastSynced).toISOString().slice(0, 10) : 'never';
+    const date = stats.lastSynced > 0 ? formatLocalDate(stats.lastSynced) : 'never';
     return `${stats.pages} page${stats.pages === 1 ? '' : 's'}, ${stats.images} image${stats.images === 1 ? '' : 's'} — ${size} on disk. Last synced: ${date}.`;
 }
 

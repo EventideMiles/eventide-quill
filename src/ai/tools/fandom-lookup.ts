@@ -9,7 +9,13 @@ import {
     mediawikiPageImage,
     mediawikiSearch
 } from './mediawiki';
-import { FANDOM_DEFAULT_LICENSE, fandomPageSourceUrl, type CachedFandomPage, type FandomCache } from './fandom-cache';
+import {
+    FANDOM_DEFAULT_LICENSE,
+    fandomPageSourceUrl,
+    formatLocalDate,
+    type CachedFandomPage,
+    type FandomCache
+} from './fandom-cache';
 
 /**
  * Fandom subdomain shape: a single DNS label (letters, digits, hyphens) — no
@@ -60,7 +66,7 @@ function isCacheOnly(ctx: ToolContext): boolean {
 function formatCachedPage(label: string, host: string, cached: CachedFandomPage, maxResultTokens: number): string {
     const maxChars = maxResultTokens * 4;
     const text = cached.text.length > maxChars ? cached.text.slice(0, maxChars) + '\n...[truncated]' : cached.text;
-    const date = new Date(cached.retrievedAt).toISOString().slice(0, 10);
+    const date = formatLocalDate(cached.retrievedAt);
     return `${label} (${host}) ${CACHE_HIT_MARKER} ${date} — no network request]:\n${text}`;
 }
 
@@ -250,7 +256,7 @@ export function createFandomLookupTool(maxResultTokens: number, allowedWikis: st
                         );
                     }
                     const freshest = matches.reduce((a, b) => (b.retrievedAt > a.retrievedAt ? b : a));
-                    const date = new Date(freshest.retrievedAt).toISOString().slice(0, 10);
+                    const date = formatLocalDate(freshest.retrievedAt);
                     const list = matches
                         .map((m, i) => `${i + 1}. ${displayTitleFromSourceUrl(m.sourceUrl) || m.sourceUrl}`)
                         .join('\n');
@@ -437,7 +443,7 @@ export function createFandomImageTool(
                     if (cache) {
                         const cached = await cache.getImage(wiki, image);
                         if (cached) {
-                            const date = new Date(cached.meta.retrievedAt).toISOString().slice(0, 10);
+                            const date = formatLocalDate(cached.meta.retrievedAt);
                             return {
                                 text:
                                     `Fetched "${image}" from ${host} (${cached.meta.contentType}) ` +
