@@ -183,7 +183,7 @@ src/
     chat-panel.ts, chat-context-files.ts, document-header.ts,
     change-card.ts, change-diff-extension.ts, token-indicator.ts,
     confirm-modal.ts, transform-modal.ts, fix-with-ai-modal.ts,
-    filename-modal.ts, vault-file-suggest-modal.ts, file-mention-suggest.ts,
+    filename-modal.ts, vault-file-suggest-modal.ts, report-suggest-modal.ts (saved-report picker for follow-up discussion), file-mention-suggest.ts,
     session-list-modal.ts (saved-conversation switcher), slash-command-suggest.ts
   utils/               # Helpers, constants
     directives.ts, find-editor.ts, frontmatter.ts, text-analysis.ts,

@@ -106,6 +106,7 @@ export async function saveReportArchive(
 
     const frontmatter = [
         '---',
+        `quill-engine: ${yamlQuote(input.kind)}`,
         `quill-report-type: ${yamlQuote(input.id)}`,
         `quill-report-source: ${yamlQuote(input.source)}`,
         personaLine,

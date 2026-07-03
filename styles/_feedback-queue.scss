@@ -15,7 +15,8 @@
         gap: $space-sm;
     }
 
-    &__clear {
+    &__clear,
+    &__pull {
         padding: $space-xs $space-lg;
         border-radius: $radius-md;
         border: 1px solid var(--background-modifier-border);

@@ -579,6 +579,7 @@ export class QuillSidebarView extends ItemView {
                 onDelete: (id) => void this.plugin.deleteFeedbackJob(id),
                 onOpenReport: (job) => this.plugin.openFeedbackReport(job),
                 onDiscuss: (job) => void this.plugin.loadReportForDiscussion(job),
+                onDiscussSavedReport: () => this.plugin.openReportSuggestModal(),
                 onRunNow: () => void this.plugin.runFeedbackQueueNow(),
                 onClearCompleted: () => this.plugin.clearCompletedFeedbackJobs()
             });

@@ -19,6 +19,7 @@ export interface FeedbackQueueHandlers {
     onDelete: (id: string) => void;
     onOpenReport: (job: FeedbackJob) => void;
     onDiscuss: (job: FeedbackJob) => void;
+    onDiscussSavedReport: () => void;
     onRunNow: () => void;
     onClearCompleted: () => void;
 }
@@ -73,8 +74,14 @@ export function renderFeedbackQueue(
     const active = jobs.filter((j) => j.status === 'queued' || j.status === 'running');
     const completed = jobs.filter((j) => j.status !== 'queued' && j.status !== 'running');
 
-    // --- Toolbar: manual "Run now" + bulk "Clear completed". ---
+    // --- Toolbar: pull an old report for discussion + manual run + bulk clear. ---
     const toolbar = container.createDiv({ cls: 'quill-feedback-queue__toolbar' });
+
+    const pullBtn = toolbar.createEl('button', {
+        cls: 'quill-feedback-queue__pull',
+        text: 'Discuss saved report'
+    });
+    events.registerDomEvent(pullBtn, 'click', () => handlers.onDiscussSavedReport());
 
     const hasCompleted = jobs.some((j) => j.status !== 'queued' && j.status !== 'running');
     if (hasCompleted) {

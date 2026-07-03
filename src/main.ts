@@ -68,6 +68,7 @@ import type { LoreDraftEntry } from './ai/co-writer';
 import { resolveSessionsDir, listSessions, saveSession, loadSession, deleteSession } from './ai/conversation-store';
 import { SessionListModal } from './ui/session-list-modal';
 import { ConfirmModal } from './ui/confirm-modal';
+import { ReportSuggestModal } from './ui/report-suggest-modal';
 import type { InputMode } from './ui/co-writer-panel';
 import {
     getManuscriptAnalysis,
@@ -1017,6 +1018,32 @@ export default class EventideQuillPlugin extends Plugin {
                 } else {
                     new Notice('Quill: no feedback job is running.');
                 }
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-discuss-saved-report',
+            name: 'Quill: Discuss a saved report',
+            callback: () => {
+                this.openReportSuggestModal();
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-discuss-active-report',
+            name: 'Quill: Discuss the active report',
+            editorCallback: async (editor) => {
+                const file = this.app.workspace.getActiveFile();
+                if (!file || file.extension !== 'md') {
+                    new Notice('Quill: open a saved report note first.');
+                    return;
+                }
+                const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+                if (!fm?.['quill-report-type']) {
+                    new Notice('Quill: the active file is not a saved feedback report.');
+                    return;
+                }
+                await this.loadReportFileForDiscussion(file);
             }
         });
 
@@ -5347,6 +5374,109 @@ export default class EventideQuillPlugin extends Plugin {
 
         const headerLabel = persona?.name ?? 'Editorial feedback';
         this.lintPanel?.reviewLoadReportForDiscussion('editorial', headerLabel, reportText);
+    }
+
+    /**
+     * Load a saved report NOTE (from the vault archive) into the Review Results
+     * sub-tab for follow-up discussion — even one long since cleared from the
+     * queue. Reads the report's frontmatter (`quill-engine`, `quill-persona` /
+     * `quill-mode`, `quill-manuscript-path`) to reconstruct the conversation,
+     * opens the CURRENT version of the source manuscript (fails if it was
+     * renamed/deleted — the right main file must be in context), and seeds the
+     * report as the AI's first turn. Editorial + critical supported; manuscript
+     * is deferred (its interactive path doesn't re-inject the manuscript).
+     */
+    async loadReportFileForDiscussion(reportFile: TFile): Promise<void> {
+        const cache = this.app.metadataCache.getFileCache(reportFile);
+        const fm: Record<string, unknown> = cache?.frontmatter ?? {};
+        const engineRaw = fm['quill-engine'];
+        const personaId = typeof fm['quill-persona'] === 'string' ? fm['quill-persona'] : undefined;
+        const modeStr = typeof fm['quill-mode'] === 'string' ? fm['quill-mode'] : undefined;
+        const manuscriptPath =
+            typeof fm['quill-manuscript-path'] === 'string' ? fm['quill-manuscript-path'] : undefined;
+
+        // Determine the engine (explicit, or inferred from persona/mode for
+        // reports written before quill-engine was stamped).
+        let engine: 'editorial' | 'critical' | 'manuscript';
+        if (engineRaw === 'editorial' || engineRaw === 'critical' || engineRaw === 'manuscript') {
+            engine = engineRaw;
+        } else if (personaId) {
+            engine = 'editorial';
+        } else if (modeStr) {
+            engine = getAnalysisModeById(modeStr) ? 'critical' : 'manuscript';
+        } else {
+            new Notice('Quill: this file does not appear to be a saved feedback report.');
+            return;
+        }
+
+        if (engine === 'manuscript') {
+            new Notice(
+                'Quill: in-panel discussion of manuscript-analysis reports is not yet supported. Open the report note to read it.'
+            );
+            return;
+        }
+
+        if (!manuscriptPath) {
+            new Notice('Quill: this report has no source manuscript recorded.');
+            return;
+        }
+        const sourceFile = this.app.vault.getAbstractFileByPath(manuscriptPath);
+        if (!(sourceFile instanceof TFile)) {
+            new Notice(
+                `Quill: the source manuscript (${manuscriptPath}) no longer exists. Re-open it or re-run the report.`
+            );
+            return;
+        }
+
+        let reportText: string;
+        try {
+            reportText = stripFrontmatter(await this.app.vault.read(reportFile)).text;
+        } catch {
+            new Notice('Quill: could not read the report note.');
+            return;
+        }
+
+        // Open the current source so the follow-up path sees the living document.
+        await this.app.workspace.getLeaf().openFile(sourceFile);
+
+        if (engine === 'editorial') {
+            const persona = personaId === 'custom' ? undefined : getPersonaById(personaId ?? '');
+            const systemMsg = buildFeedbackMessages(persona, {
+                narrativePreset: this.settings.narrativeVoicePreset
+            })[0]!;
+            this.feedbackCurrentMessages = [systemMsg, { role: 'assistant', content: reportText }];
+            this.feedbackAbort = null;
+            this.lintPanel?.reviewLoadReportForDiscussion(
+                'editorial',
+                persona?.name ?? 'Editorial feedback',
+                reportText
+            );
+        } else {
+            // critical: sendAnalysisChatMessage injects reference files only, so
+            // bake the current source document into the seed as context.
+            const docText = await this.getFileText(sourceFile.path);
+            const systemMsg = buildAnalysisMessages(modeStr as AnalysisMode, { text: '', scope: 'document' })[0]!;
+            this.analysisCurrentMessages = [
+                systemMsg,
+                { role: 'system', content: `Current manuscript (full document) — "${sourceFile.name}":\n\n${docText}` },
+                { role: 'assistant', content: reportText }
+            ];
+            this.analysisAbort = null;
+            const label = getAnalysisModeById(modeStr as AnalysisMode)?.label ?? modeStr ?? 'Critical analysis';
+            this.lintPanel?.reviewLoadReportForDiscussion('critical', label, reportText);
+        }
+    }
+
+    /** Open a picker of saved report notes (from feedbackReportFolder) to discuss. */
+    openReportSuggestModal(): void {
+        const modal = new ReportSuggestModal(this.app, this, (file) => {
+            void this.loadReportFileForDiscussion(file);
+        });
+        if (modal.isEmpty) {
+            new Notice('Quill: no saved reports found. Run a review (with autosave on) to create one.');
+            return;
+        }
+        modal.open();
     }
 
     /**
