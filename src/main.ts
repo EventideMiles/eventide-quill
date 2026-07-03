@@ -48,6 +48,7 @@ import {
     deleteFeedbackJob,
     runFeedbackJob
 } from './ai/feedback-queue';
+import { saveReportArchive, type ReportArchiveInput, type ReportKind } from './ai/feedback-archive';
 import {
     getAnalysis,
     buildAnalysisMessages,
@@ -3093,6 +3094,14 @@ export default class EventideQuillPlugin extends Plugin {
                         estimateTokens(this.manuscriptAnalysisCurrentMessages)
                     );
                     await this.lintPanel?.reviewFinished();
+                    this.archiveInteractiveReport(
+                        fullResponse,
+                        'manuscript',
+                        mode,
+                        getManuscriptAnalysisModeById(mode)?.label ?? mode,
+                        scopeLabel,
+                        activeFile.path
+                    );
                 } else {
                     fullResponse += chunk.text;
                     this.lintPanel?.reviewAppendChunk(chunk.text);
@@ -3827,6 +3836,14 @@ export default class EventideQuillPlugin extends Plugin {
                     this.analysisCurrentMessages.push({ role: 'assistant', content: fullResponse });
                     this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
                     await this.lintPanel?.reviewFinished();
+                    this.archiveInteractiveReport(
+                        fullResponse,
+                        'critical',
+                        mode,
+                        getAnalysisModeById(mode)?.label ?? mode,
+                        resolved.scope,
+                        activePath ?? resolved.fileName ?? ''
+                    );
                 } else {
                     fullResponse += chunk.text;
                     this.lintPanel?.reviewAppendChunk(chunk.text);
@@ -4766,6 +4783,14 @@ export default class EventideQuillPlugin extends Plugin {
                     // indicator updates immediately when files change.
                     this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
                     await this.lintPanel?.reviewFinished();
+                    this.archiveInteractiveReport(
+                        fullResponse,
+                        'editorial',
+                        personaId,
+                        persona?.name ?? 'Custom feedback',
+                        'document',
+                        activePath ?? ''
+                    );
                 } else {
                     fullResponse += chunk.text;
                     this.lintPanel?.reviewAppendChunk(chunk.text);
@@ -5080,6 +5105,34 @@ export default class EventideQuillPlugin extends Plugin {
         } catch (err) {
             console.warn(`Quill: failed to persist feedback job ${job.id}`, err);
         }
+    }
+
+    /**
+     * Archive a completed INTERACTIVE Review report to the vault (the "both
+     * surfaces" archive goal — queue jobs archive via the runner). Fire-and-forget:
+     * the report is already shown in the Results subtab; the archive is a durable
+     * bonus. Gated on `autoSaveFeedbackReports` inside the helper; never throws.
+     */
+    private archiveInteractiveReport(
+        reportMarkdown: string,
+        kind: ReportKind,
+        id: string,
+        title: string,
+        scope: string,
+        manuscriptPath: string
+    ): void {
+        const input: ReportArchiveInput = {
+            reportMarkdown,
+            source: 'review',
+            kind,
+            id,
+            title,
+            scope,
+            manuscriptPath
+        };
+        void saveReportArchive(this, input).catch((err: unknown) =>
+            console.warn('Quill: interactive report archive failed', err)
+        );
     }
 
     /**
