@@ -421,6 +421,17 @@
             border-color: var(--interactive-accent);
             color: var(--text-normal);
         }
+
+        // Full-manuscript-only modes disable the "Surrounding chapters" option.
+        &--disabled,
+        &:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+
+            &:hover {
+                background: var(--background-normal);
+            }
+        }
     }
 
     &__scope-tag {
