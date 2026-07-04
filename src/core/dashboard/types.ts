@@ -77,6 +77,10 @@ export interface SectionMetrics {
     reweightedFleschGradeLevel: number;
     /** Custom composite score for fiction readability (0-100). */
     customCompositeScore: number;
+    /** Narrative-flow score (0-100, higher = better rhythm at sentence + paragraph scale). */
+    narrativeFlowScore: number;
+    /** Standard deviation of paragraph length (word counts) within the section. */
+    paragraphLengthStddev: number;
     /** ARI grade level (0+, lower = easier). */
     ariScore: number;
     /** Pacing flags raised within this section. */
@@ -121,6 +125,10 @@ export interface ChapterMetrics {
     reweightedFleschGradeLevel: number;
     /** Custom composite score for fiction readability (0-100). */
     customCompositeScore: number;
+    /** Narrative-flow score (0-100, higher = better rhythm at sentence + paragraph scale). */
+    narrativeFlowScore: number;
+    /** Standard deviation of paragraph length (word counts) across the chapter. */
+    paragraphLengthStddev: number;
     /** ARI grade level (0+, lower = easier). */
     ariScore: number;
     /** Pacing flags aggregated from sections. */
@@ -205,6 +213,10 @@ export interface ManuscriptMetrics {
     reweightedFleschGradeLevel: number;
     /** Manuscript-wide custom composite score for fiction readability (0-100). */
     customCompositeScore: number;
+    /** Manuscript-wide narrative-flow score (0-100, higher = better rhythm). */
+    narrativeFlowScore: number;
+    /** Manuscript-wide standard deviation of paragraph length (word counts). */
+    paragraphLengthStddev: number;
     /** Manuscript-wide ARI grade level (0+, lower = easier). */
     ariScore: number;
     /** Per-chapter metrics, in manuscript order. */

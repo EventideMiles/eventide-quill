@@ -388,7 +388,7 @@ Each row = one JSDoc + two `setDesc(...)` copies to keep aligned. The authoritat
 ## Key feature areas
 
 1. **Manuscript Context Engine** — auto-builds working context from open document.
-2. **Manuscript Dashboard** — chapter word counts, pacing analysis, dialogue ratios, readability.
+2. **Manuscript Dashboard** — chapter word counts, pacing analysis, dialogue ratios, readability, and a deterministic narrative-flow score (0-100 composite of sentence-length variety, paragraph-length rhythm, pacing-flag density, and dialogue balance).
 3. **Prose Linter (Novelist Edition)** — deterministic rules for narrative prose.
 4. **AI Feedback Engine** — reads like a thoughtful editor, not a text generator.
 5. **Async Feedback Queue** — submit any review (editorial / critical / manuscript) to run unattended via the Review tab's "Queue instead of running" toggle; single-slot FIFO scheduler, per-job snapshots (isolated from live edits), and a durable vault archive of every report. See "Async feedback queue".

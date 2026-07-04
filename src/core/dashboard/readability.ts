@@ -333,6 +333,71 @@ function compositeLabel(score: number): string {
     return 'very complex';
 }
 
+/** Result of the narrative-flow score: a 0-100 value and a human label. */
+export interface NarrativeFlowResult {
+    /** 0-100 (higher = better flow). */
+    score: number;
+    /** Tier label (sentence-case, for inline display). */
+    label: string;
+}
+
+/**
+ * Narrative-flow score for a passage.
+ *
+ * Measures the rhythm of the prose at two scales — sentence length and
+ * paragraph length — penalizes uniformly short/long runs (pacing flags), and
+ * rewards a balanced mix of dialogue and narration. Purely deterministic and
+ * local (no AI), consistent with the dashboard's other metrics.
+ *
+ * Weighting:
+ *   35% Paragraph-length rhythm (the signal sentence-level stddev can't see)
+ *   25% Sentence-length variety (mirrors the customComposite variety bonus)
+ *   25% Pacing penalty (density of uniform-short/uniform-long flags)
+ *   15% Dialogue balance (target band around 40% dialogue)
+ *
+ * Returns a 0-100 score with the following labels:
+ *   80-100: Strong flow  60-79: Good flow  40-59: Uneven
+ *   20-39: Choppy  0-19: Monotonous
+ *
+ * @param sentenceLengthStddev  Population stddev of sentence word counts.
+ * @param paragraphLengthStddev Population stddev of paragraph word counts.
+ * @param dialogueRatio         Dialogue fraction (0-1).
+ * @param pacingFlagCount       Number of uniform-short/uniform-long pacing flags.
+ * @param sentenceCount         Total sentences (used to normalize flag density).
+ */
+export function narrativeFlow(
+    sentenceLengthStddev: number,
+    paragraphLengthStddev: number,
+    dialogueRatio: number,
+    pacingFlagCount: number,
+    sentenceCount: number
+): NarrativeFlowResult {
+    if (sentenceCount === 0) return { score: 0, label: 'no data' };
+
+    // Sentence variety: stddev ~6 words = full marks (mirrors customComposite).
+    const sentenceVariety = clamp((sentenceLengthStddev / 6) * 100, 0, 100);
+    // Paragraph rhythm: stddev ~40 words = full marks (varied paragraph lengths
+    // — a healthy mix of short dialogue beats and longer description blocks).
+    const paragraphRhythm = clamp((paragraphLengthStddev / 40) * 100, 0, 100);
+    // Dialogue balance: target ~40% (a touch below customComposite's 45%).
+    const dialogueBalance = 100 - clamp(Math.abs(dialogueRatio - 0.4) * 200, 0, 100);
+    // Pacing penalty: ~1 flag per 20 sentences = saturated (no flow credit).
+    const density = pacingFlagCount / (sentenceCount / 20);
+    const pacingFactor = 1 - clamp(density, 0, 1); // 1 = no flags, 0 = saturated.
+
+    const score = paragraphRhythm * 0.35 + sentenceVariety * 0.25 + pacingFactor * 100 * 0.25 + dialogueBalance * 0.15;
+    const rounded = Math.round(score * 10) / 10;
+    return { score: rounded, label: flowLabel(rounded) };
+}
+
+function flowLabel(score: number): string {
+    if (score >= 80) return 'strong flow';
+    if (score >= 60) return 'good flow';
+    if (score >= 40) return 'uneven';
+    if (score >= 20) return 'choppy';
+    return 'monotonous';
+}
+
 function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
 }

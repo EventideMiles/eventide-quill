@@ -120,6 +120,7 @@ export function renderDashboardTab(container: HTMLElement, plugin: EventideQuill
     component.registerInterval(tickId);
 
     renderSummary(container, metrics, plugin);
+    renderFlowScore(container, metrics);
     renderChapterList(container, metrics, plugin, component);
     renderPacingHeatmap(container, metrics, plugin, component);
     renderReadability(container, metrics, plugin);
@@ -159,7 +160,8 @@ function renderSummary(container: HTMLElement, metrics: ManuscriptMetrics, plugi
         { label: 'Chapters', value: String(metrics.chapterCount) },
         { label: 'Scenes', value: String(metrics.sectionCount) },
         { label: 'Avg sentence', value: `${metrics.avgSentenceLength}w` },
-        { label: 'Dialogue', value: pct(metrics.dialogueRatio) }
+        { label: 'Dialogue', value: pct(metrics.dialogueRatio) },
+        { label: 'Flow', value: String(metrics.narrativeFlowScore) }
     ];
 
     for (const stat of stats) {
@@ -167,6 +169,51 @@ function renderSummary(container: HTMLElement, metrics: ManuscriptMetrics, plugi
         cell.createEl('div', { cls: 'quill-dashboard-panel__summary-stat-value', text: stat.value });
         cell.createEl('div', { cls: 'quill-dashboard-panel__summary-stat-label', text: stat.label });
     }
+}
+
+/**
+ * Render the narrative-flow section: a 0-100 score with a colored bar and the
+ * tier label, plus the two rhythm signals that feed it (sentence + paragraph
+ * length stddev). Deterministic and local — no AI. The bar reuses the summary
+ * progress-bar classes so the existing `--good`/`--warning`/`--danger` SCSS
+ * styles it for free.
+ */
+function renderFlowScore(container: HTMLElement, metrics: ManuscriptMetrics): void {
+    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
+    const headingRow = section.createEl('div', { cls: 'quill-dashboard-panel__heading-row' });
+    headingRow.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Narrative flow' });
+    headingRow.createEl('span', {
+        cls: 'quill-dashboard-panel__readability-info',
+        attr: {
+            title:
+                'Narrative-flow score measures prose rhythm at two scales (sentence and paragraph length), ' +
+                'penalizes uniformly short/long runs, and rewards a balanced dialogue/narration mix. ' +
+                'It is a rough guide to pacing variety, not a verdict on the writing.'
+        },
+        text: '(?)'
+    });
+
+    const score = metrics.narrativeFlowScore;
+    const status = flowStatus(score);
+    const label = flowLabel(score);
+
+    const bar = section.createEl('div', { cls: 'quill-dashboard-panel__progress-bar' });
+    bar.createEl('div', {
+        cls: `quill-dashboard-panel__progress-fill quill-dashboard-panel__progress-fill--${status}`,
+        attr: { style: `width: ${clamp(score, 0, 100)}%` }
+    });
+    section.createEl('div', {
+        cls: `quill-dashboard-panel__progress-label quill-dashboard-panel__target-status--${status}`,
+        text: `${score} \u00B7 ${label}`
+    });
+
+    const grid = section.createEl('div', { cls: 'quill-dashboard-panel__readability-grid' });
+    grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
+        `Sentence variety: \u03C3 = ${metrics.sentenceLengthStddev} words`
+    );
+    grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
+        `Paragraph rhythm: \u03C3 = ${metrics.paragraphLengthStddev} words`
+    );
 }
 
 /** Render the expandable chapter list. */
@@ -489,6 +536,22 @@ function compositeLabel(score: number): string {
     if (score >= 40) return 'moderate';
     if (score >= 20) return 'complex';
     return 'very complex';
+}
+
+/** Map a narrative-flow score to a label (peer of `compositeLabel`). */
+function flowLabel(score: number): string {
+    if (score >= 80) return 'strong flow';
+    if (score >= 60) return 'good flow';
+    if (score >= 40) return 'uneven';
+    if (score >= 20) return 'choppy';
+    return 'monotonous';
+}
+
+/** Map a narrative-flow score to a 3-tier bar color (good/warning/danger). */
+function flowStatus(score: number): TargetStatus {
+    if (score >= 60) return 'good';
+    if (score >= 40) return 'warning';
+    return 'danger';
 }
 
 /** Map an ARI score to a readability label. */
