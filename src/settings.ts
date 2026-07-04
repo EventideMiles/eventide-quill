@@ -108,6 +108,15 @@ export interface EventideQuillSettings {
      * are LRU-evicted (by last-saved time) when the limit is exceeded. Default 25.
      */
     coWriterSessionHistoryLimit: number;
+    /**
+     * When true, auto-snapshot the active co-writer conversation to its sidecar
+     * after each completed turn (discuss / coach / lorebook). Off by default —
+     * the snapshot deep-clones the full state (both API arrays, recent images,
+     * change queues) on the main thread, so it's opt-in for writers who want
+     * crash/restart resilience between explicit saves. Trailing-debounced so a
+     * turn followed immediately by auto-options collapses to one write.
+     */
+    coWriterAutoSavePerTurn: boolean;
     coWriterVaultContext: boolean;
     coWriterAppendNewline: boolean;
     enableCoWriterThought: boolean;
@@ -297,6 +306,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     coWriterMaxOutputTokens: 2048,
     coWriterMaxToolRounds: 0,
     coWriterSessionHistoryLimit: 25,
+    coWriterAutoSavePerTurn: false,
     coWriterVaultContext: true,
     coWriterAppendNewline: true,
     enableCoWriterThought: true,
@@ -2677,6 +2687,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
                         this.plugin.settings.coWriterMaxToolRounds = DEFAULT_SETTINGS.coWriterMaxToolRounds;
                         this.plugin.settings.coWriterSessionHistoryLimit = DEFAULT_SETTINGS.coWriterSessionHistoryLimit;
+                        this.plugin.settings.coWriterAutoSavePerTurn = DEFAULT_SETTINGS.coWriterAutoSavePerTurn;
                         this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
                         this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                         this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
@@ -2763,6 +2774,21 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             new Notice('Value must be a number ≥ 0');
                         }
                     })
+            );
+
+        new Setting(containerEl)
+            .setName('Auto-save after each turn')
+            .setDesc(
+                'Snapshot the active conversation to its saved-session file after every completed turn, so it ' +
+                    'survives a crash or restart without an explicit save. Off by default — the snapshot copies ' +
+                    'the full conversation state, so it adds some overhead on long sessions. De-bounced so a ' +
+                    'turn followed immediately by auto-options collapses to one write.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.coWriterAutoSavePerTurn).onChange((value) => {
+                    this.plugin.settings.coWriterAutoSavePerTurn = value;
+                    void this.plugin.saveSettings();
+                })
             );
 
         new Setting(containerEl)
@@ -3169,6 +3195,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.coWriterTemperature = DEFAULT_SETTINGS.coWriterTemperature;
                     this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
                     this.plugin.settings.coWriterMaxToolRounds = DEFAULT_SETTINGS.coWriterMaxToolRounds;
+                    this.plugin.settings.coWriterAutoSavePerTurn = DEFAULT_SETTINGS.coWriterAutoSavePerTurn;
                     this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
                     this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
                     this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
