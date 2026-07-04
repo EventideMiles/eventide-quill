@@ -626,6 +626,64 @@ function buildInternalToolsMessage(plugin: EventideQuillPlugin): ChatMessage | n
 }
 
 /**
+ * The cursor's document offset, read from the CodeMirror 6 selection state
+ * directly. Obsidian's `Editor.getCursor()` can report `{0,0}` for a markdown
+ * view that isn't the active leaf — e.g. the writer clicked into the document
+ * to place the cursor, then moved focus to the sidebar to send — which made
+ * the "cursor at position 0" fallback fire incorrectly and jump the cursor to
+ * the end. The underlying CM6 selection persists in editor state regardless of
+ * focus, so this is the reliable cursor position for an inactive document.
+ * Falls back to `getCursor()` only when the CM6 view isn't accessible
+ * (defensive — it's always present in Obsidian's markdown editor).
+ */
+function editorCursorOffset(editor: Editor): number {
+    const cm = (editor as unknown as { cm?: EditorView } | null)?.cm;
+    if (cm) return cm.state.selection.main.head;
+    return editor.posToOffset(editor.getCursor());
+}
+
+/**
+ * Prose to send to the model as context, measured from the document start to
+ * the cursor. Falls back to the document's tail (pretending the cursor is at
+ * the end) ONLY when the cursor sits at position 0 — the document is open but
+ * the writer hasn't placed the cursor (never clicked into the prose).
+ *
+ * Any non-zero cursor position is treated as deliberate (the writer clicked, or
+ * Obsidian restored the cursor where they left off) and respected as-is, so
+ * asking for options earlier in the manuscript still works — place the cursor
+ * at the point you want to continue from. Reads the cursor via
+ * {@link editorCursorOffset} so a non-active document still reports its real
+ * cursor. Capped to the last `tail` characters. Mirrors the options-generation
+ * path's "move cursor to end" fallback.
+ */
+function proseBeforeCursorOrDoc(editor: Editor, tail: number): string {
+    const full = editor.getValue();
+    const beforeCursor = full.slice(0, editorCursorOffset(editor));
+    return (beforeCursor || full).slice(-tail);
+}
+
+/**
+ * Move the cursor to the end of the document ONLY when it sits at position 0
+ * — the document is open but the writer hasn't placed the cursor, so an
+ * upcoming INSERTION should land at the end of the written prose (the
+ * "continue this chapter" intent). Any non-zero cursor position is respected
+ * as the writer's intended insertion point, so a mid-manuscript cursor
+ * continues from there. Returns true when the cursor was moved (so callers can
+ * scroll to the new position / branch on it). Reads the cursor via
+ * {@link editorCursorOffset} so a non-active document still reports its real
+ * cursor. Mirrors the generateOptions/generateDirect initialize branches.
+ */
+function moveCursorToEndIfEarly(editor: Editor): boolean {
+    const fullText = editor.getValue();
+    const cursorOffset = editorCursorOffset(editor);
+    if (cursorOffset === 0 && fullText.length > 0) {
+        editor.setCursor(editor.offsetToPos(fullText.length));
+        return true;
+    }
+    return false;
+}
+
+/**
  * Build a system message informing the model which file the writer currently
  * has open. This lets the model distinguish between edits to the active file
  * (where Direct/Fulfill mode provides a streaming live-edit UX) and edits to
@@ -1196,22 +1254,21 @@ export class CoWriterSession {
         this.onChatUpdate?.();
         this.lockEditor();
 
-        // For initialize (empty direction), move cursor to end so AI reads the full document
-        let fullText: string;
-        let proseForOptions: string;
-        if (!direction) {
-            fullText = editor.getValue();
+        // Respect the writer's cursor position whether or not a direction was
+        // given — only fall back to end-of-document when the cursor is at
+        // position 0 (document opened but never clicked into). Previously the
+        // empty-direction "initialize" path moved the cursor to end
+        // unconditionally, which hijacked a deliberately placed cursor when the
+        // writer clicked "Generate options" mid-manususcript. Scroll to the new
+        // position only when we actually moved it (so a respected cursor
+        // doesn't yank the writer's view away from where they clicked).
+        const cursorWasAtZero = moveCursorToEndIfEarly(editor);
+        const fullText = editor.getValue();
+        if (cursorWasAtZero) {
             const endPos = editor.offsetToPos(fullText.length);
-            editor.setCursor(endPos);
             editor.scrollIntoView({ from: endPos, to: endPos }, true);
-            proseForOptions = fullText.slice(-4000);
-        } else {
-            const cursor = editor.getCursor();
-            fullText = editor.getValue();
-            const cursorOffset = editor.posToOffset(cursor);
-            const textBeforeCursor = fullText.slice(0, cursorOffset);
-            proseForOptions = textBeforeCursor.slice(-4000);
         }
+        const proseForOptions = proseBeforeCursorOrDoc(editor, 4000);
 
         // Add user's message to chat history
         this.pushChatMessage({
@@ -1548,9 +1605,7 @@ export class CoWriterSession {
         this.pushChatMessage({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
 
         const fullText = editor?.getValue() ?? '';
-        const proseForContext = editor
-            ? editor.getValue().slice(0, editor.posToOffset(editor.getCursor())).slice(-4000)
-            : '';
+        const proseForContext = editor ? proseBeforeCursorOrDoc(editor, 4000) : '';
 
         // Build injected context — vault + additional files.
         // Injected fresh every call; never stored in discussCurrentMessages.
@@ -1919,9 +1974,7 @@ export class CoWriterSession {
         this.pushChatMessage({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
 
         const fullText = editor?.getValue() ?? '';
-        const proseForContext = editor
-            ? editor.getValue().slice(0, editor.posToOffset(editor.getCursor())).slice(-4000)
-            : '';
+        const proseForContext = editor ? proseBeforeCursorOrDoc(editor, 4000) : '';
 
         // Build injected context
         const injectedContext: ChatMessage[] = [];
@@ -2367,11 +2420,11 @@ export class CoWriterSession {
         this.onChatUpdate?.();
         this.lockEditor();
 
-        const cursor = editor.getCursor();
         const fullText = editor.getValue();
-        const cursorOffset = editor.posToOffset(cursor);
-        const textBeforeCursor = fullText.slice(0, cursorOffset);
-        const proseForOptions = textBeforeCursor.slice(-4000);
+        // Reuse the discuss/coach context fallback so options generate against
+        // the actual prose even when the cursor wasn't placed at a working
+        // position (document opened but not clicked into).
+        const proseForOptions = proseBeforeCursorOrDoc(editor, 4000);
 
         const coachSummary = this.buildCoachSummary();
         const prompt = getCoWriterCoachToOptions(proseForOptions || '(empty document)', coachSummary, direction);
@@ -3668,9 +3721,17 @@ export class CoWriterSession {
         this.cancelGeneration();
         this.app = plugin.app;
 
-        const cursor = editor.getCursor();
+        // If the cursor sits at position 0 (document opened but not clicked
+        // into), move it to the end so the continuation inserts at the end of
+        // the written prose — matching the "continue this chapter" intent.
+        // Any non-zero cursor position is the writer's intended insertion
+        // point and is respected.
+        moveCursorToEndIfEarly(editor);
         const fullText = editor.getValue();
-        const cursorOffset = editor.posToOffset(cursor);
+        // Read the cursor via editorCursorOffset (CM6 selection state) so an
+        // inactive document still reports its real cursor — getCursor() can
+        // report {0,0} when the sidebar has focus.
+        const cursorOffset = editorCursorOffset(editor);
 
         // Extract recent prose for voice analysis
         const textBeforeCursor = fullText.slice(0, cursorOffset);
@@ -3874,18 +3935,21 @@ export class CoWriterSession {
         this.currentOptions = [];
 
         const fullText = editor.getValue();
-        // When direction is empty, the continuation is appended at EOF, so the
-        // generation context must be built from the full document — not from
-        // the (possibly mid-document) cursor position. Move the cursor now and
-        // derive cursorOffset from the insertion point so voice/steering/prose
-        // context all match the eventual edit location.
-        if (!direction) {
+        // Respect the writer's cursor position whether or not a direction was
+        // given — only fall back to end-of-document when the cursor is at
+        // position 0 (document opened but never clicked into). Previously the
+        // empty-direction path moved the cursor to end unconditionally, which
+        // hijacked a deliberately placed cursor. Scroll to the new position
+        // only when we actually moved it.
+        const directCursorWasAtZero = moveCursorToEndIfEarly(editor);
+        if (directCursorWasAtZero) {
             const endPos = editor.offsetToPos(fullText.length);
             editor.setCursor(endPos);
             editor.scrollIntoView({ from: endPos, to: endPos }, true);
         }
-        const cursor = editor.getCursor();
-        const cursorOffset = editor.posToOffset(cursor);
+        // Read the cursor via editorCursorOffset (CM6 selection state) so an
+        // inactive document still reports its real cursor.
+        const cursorOffset = editorCursorOffset(editor);
 
         this.pushChatMessage({
             role: 'user',
