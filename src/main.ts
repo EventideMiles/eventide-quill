@@ -101,10 +101,11 @@ import {
     findLoreFolder,
     computeDocumentCoverage,
     computeManuscriptCoverage,
+    computeRelationships,
     parseAliases,
     stripGallerySections
 } from './core/dashboard/lorebook-scanner';
-import type { LoreCoverage, LoreEntryType } from './core/dashboard/lorebook-types';
+import type { LoreCoverage, LoreEntryType, LoreRelationships } from './core/dashboard/lorebook-types';
 import {
     loadManuscriptFile,
     saveManuscriptFile,
@@ -371,6 +372,12 @@ export default class EventideQuillPlugin extends Plugin {
     currentLoreDocumentCoverage: LoreCoverage | null = null;
     /** Manuscript-scoped lorebook coverage (substring + entity-based), or null. */
     currentLoreManuscriptCoverage: LoreCoverage | null = null;
+    /**
+     * Lorebook relationship view (symmetric edges from body `[[wikilinks]]`),
+     * or null when not yet computed. An opt-in layer on top of the link-free
+     * coverage core — populated only when the Relationships subtab is opened.
+     */
+    currentLoreRelationships: LoreRelationships | null = null;
     /**
      * The just-written lore entry type from `setLoreEntryType`, used to
      * re-render the active-entry dropdown before `metadataCache` catches up.
@@ -4374,6 +4381,33 @@ export default class EventideQuillPlugin extends Plugin {
         this.lintPanel?.refreshLorebookPanel();
     }
 
+    /**
+     * Refresh the lorebook relationship view.
+     *
+     * Resolves body `[[wikilinks]]` between lore entries into a symmetric
+     * adjacency view via the metadata cache. Synchronous, no file reads, no
+     * manuscript scan — relationships are entry-to-entry, so (unlike coverage)
+     * there is no document vs manuscript split and no dependency on cached
+     * dashboard text. Used by the Relationships subtab.
+     */
+    refreshLorebookRelationships(): void {
+        if (this.settings.lorebookFolders.length === 0) {
+            this.currentLoreRelationships = null;
+            this.lintPanel?.refreshLorebookPanel();
+            return;
+        }
+
+        const loreEntries = scanLorebook(
+            this.app,
+            this.settings.lorebookFolders,
+            this.settings.lorebookFolderTypes,
+            this.settings.loreEntryImageSectionHeaders,
+            this.settings.loreEntryImageMaxPerEntry
+        );
+        this.currentLoreRelationships = computeRelationships(this.app, loreEntries, this.settings.lorebookFolders);
+        this.lintPanel?.refreshLorebookPanel();
+    }
+
     /** Show a picker of allowlisted Fandom wikis, then bulk-sync the chosen one. */
     pickFandomWikiForSync(): void {
         const wikis = this.settings.lorebookFandomWikis;
@@ -4629,6 +4663,30 @@ export default class EventideQuillPlugin extends Plugin {
         const editorLine = Math.max(0, line - 1);
         view.editor.setCursor({ line: editorLine, ch: 0 });
         view.editor.scrollIntoView({ from: { line: editorLine, ch: 0 }, to: { line: editorLine, ch: 0 } }, true);
+    }
+
+    /**
+     * Open a lore entry file and place the cursor at a specific link location.
+     *
+     * Used by the Relationships subtab's dangling-link rows to navigate the
+     * writer to an unresolved `[[link]]` in its source entry. `line` and `col`
+     * are 0-based (the metadata-cache basis), matching CodeMirror / the Obsidian
+     * editor directly, so no conversion is needed.
+     */
+    async jumpToLoreLink(filePath: string, line: number, col: number): Promise<void> {
+        const file = this.app.vault.getAbstractFileByPath(filePath);
+        if (!(file instanceof TFile)) return;
+
+        let view = findEditorView(this.app, filePath);
+        if (!view) {
+            await this.app.workspace.openLinkText(filePath, '', false);
+            view = findEditorView(this.app, filePath);
+        }
+        if (!view) return;
+
+        const pos = { line, ch: col };
+        view.editor.setCursor(pos);
+        view.editor.scrollIntoView({ from: pos, to: pos }, true);
     }
 
     /**

@@ -5,8 +5,11 @@ import {
     LoreEntryImage,
     LoreCoverage,
     LoreCoverageGap,
+    LoreDanglingLink,
     LoreEntryType,
     LoreEntryTypeOrUntyped,
+    LoreRelationshipEdge,
+    LoreRelationships,
     LORE_COVERAGE_GAP_MIN_OCCURRENCES,
     LORE_ENTRY_TYPES,
     entityTypeToLoreType
@@ -567,4 +570,96 @@ export function computeManuscriptCoverage(
     const folderCount = new Set(entries.map((e) => e.folder)).size;
 
     return { totalEntries: entries.length, folderCount, referenced, orphaned, gaps };
+}
+
+// ── Relationship computation ────────────────────────────────────────────────
+
+/**
+ * Build a symmetric relationship view of the lorebook from body `[[wikilinks]]`.
+ *
+ * An opt-in, writer-authored layer ON TOP of the link-free detection/context/
+ * coverage core: those surfaces remain embedding/name based and are untouched
+ * here. A writer authors `[[wikilinks]]` between lore notes in the body (the
+ * same body-syntax-over-frontmatter choice the image gallery makes — Obsidian
+ * keeps the link valid on rename/move); this resolves them via the metadata
+ * cache and builds an undirected adjacency view.
+ *
+ * Source: `metadataCache.getCache(path).links` (zero consumers before this PR,
+ * so nothing existing breaks). Resolution: `getFirstLinkpathDest`, the same
+ * helper the image-embed parser uses. Synchronous, no file reads.
+ *
+ * Link handling:
+ * - Resolved target inside a configured lore folder, not a self-link → edge.
+ * - Resolved target outside any lore folder (manuscript chapters, loose notes)
+ *   → silently dropped (a legitimate link to something else, not a relationship).
+ * - Unresolved target (null) → {@link LoreDanglingLink}, surfaced like a
+ *   coverage gap so the writer can spot planned-but-unwritten entries.
+ * - Direction is collapsed: A→B and B→A produce ONE edge. Edges are stored
+ *   with `from` lexicographically smaller than `to` for stable dedupe.
+ *
+ * @param app     The Obsidian app (for the metadata cache + link resolution).
+ * @param entries Scanned lore entries (already folder-filtered).
+ * @param folders Configured lorebook folders, for filtering resolved targets.
+ */
+export function computeRelationships(app: App, entries: LoreEntry[], folders: string[]): LoreRelationships {
+    const edges: LoreRelationshipEdge[] = [];
+    const dangling: LoreDanglingLink[] = [];
+    const edgeKeys = new Set<string>();
+    const danglingKeys = new Set<string>();
+    const connected = new Set<string>();
+
+    for (const entry of entries) {
+        const cache = app.metadataCache.getCache(entry.filePath);
+        const links = cache?.links;
+        if (!links || links.length === 0) continue;
+
+        for (const link of links) {
+            // Strip heading reference (`#`) and display text (`|`) to get the
+            // raw file target. `link.link` usually already excludes the display
+            // text, but defensive splitting is cheap and keeps this robust.
+            const linkTarget = link.link.split('#')[0]?.split('|')[0]?.trim();
+            if (!linkTarget) continue;
+
+            const resolved = app.metadataCache.getFirstLinkpathDest(linkTarget, entry.filePath);
+            if (!(resolved instanceof TFile)) {
+                // Unresolved — dangling link (likely a planned-but-unwritten entry).
+                // Capture the source position so the UI can navigate to it on click.
+                const dkey = `${entry.filePath}\u0000${linkTarget}`;
+                if (!danglingKeys.has(dkey)) {
+                    danglingKeys.add(dkey);
+                    dangling.push({
+                        from: entry.filePath,
+                        target: linkTarget,
+                        line: link.position.start.line,
+                        col: link.position.start.col
+                    });
+                }
+                continue;
+            }
+
+            // Self-links and links to non-lore targets are not relationships.
+            if (resolved.path === entry.filePath) continue;
+            if (findLoreFolder(resolved.path, folders) === null) continue;
+
+            // Symmetric dedupe: order the pair lexicographically.
+            const [a, b] =
+                entry.filePath < resolved.path ? [entry.filePath, resolved.path] : [resolved.path, entry.filePath];
+            const key = `${a}\u0000${b}`;
+            if (edgeKeys.has(key)) continue;
+            edgeKeys.add(key);
+            edges.push({ from: a, to: b });
+            connected.add(a);
+            connected.add(b);
+        }
+    }
+
+    const unconnected = entries.filter((e) => !connected.has(e.filePath));
+
+    return {
+        totalEntries: entries.length,
+        entries,
+        edges,
+        dangling,
+        unconnected
+    };
 }

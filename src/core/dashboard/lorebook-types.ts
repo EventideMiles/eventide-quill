@@ -136,6 +136,68 @@ export interface LoreCoverage {
  */
 export const LORE_COVERAGE_GAP_MIN_OCCURRENCES = 3;
 
+// ── Relationship mapping ────────────────────────────────────────────────────
+//
+// Relationships are an opt-in, writer-authored layer ON TOP of the link-free
+// detection/context/coverage core. A writer authors `[[wikilinks]]` between
+// lore entries in note bodies; the scanner resolves them via the metadata
+// cache and builds a symmetric adjacency view. The foundation PR's "no
+// wikilinks anywhere in the flow" principle still holds for detection,
+// context fuel, and coverage — those remain embedding/name based and are
+// untouched by this surface. See `.planning/pr-lorebook-relationships.md`.
+
+/**
+ * A symmetric, untyped relationship between two lore entries. Direction is
+ * collapsed: an A→B link and a B→A link produce a single edge. {@link from}
+ * is lexicographically less than {@link to} for stable dedupe identity.
+ */
+export interface LoreRelationshipEdge {
+    /** filePath of one endpoint (lexicographically smaller). */
+    from: string;
+    /** filePath of the other endpoint (lexicographically larger). */
+    to: string;
+}
+
+/**
+ * A `[[wikilink]]` in a lore entry whose target doesn't resolve to a known
+ * lore entry. Usually a planned-but-unwritten entry; surfaced like a coverage
+ * gap so the writer can see dangling references and act on them.
+ *
+ * `line` and `col` are the link's source position (0-based, matching the
+ * metadata cache and the Obsidian editor) so the UI can navigate the writer
+ * to the exact link on click.
+ */
+export interface LoreDanglingLink {
+    /** filePath of the entry containing the link. */
+    from: string;
+    /** Raw link target text as authored (display form for the UI). */
+    target: string;
+    /** 0-based line of the link in the source entry (editor/metadata-cache basis). */
+    line: number;
+    /** 0-based character column of the link start in the line. */
+    col: number;
+}
+
+/**
+ * Relationship analysis result for the configured lorebook. Computed by
+ * {@link import('./lorebook-scanner').computeRelationships} from body
+ * wikilinks via `metadataCache.getFileCache(file).links`. Lorebook-scoped
+ * (entry-to-entry), so unlike {@link LoreCoverage} there is no document vs
+ * manuscript split — one view.
+ */
+export interface LoreRelationships {
+    /** Total entries considered (across all configured folders). */
+    totalEntries: number;
+    /** All entries considered, for matrix axis + name resolution in the UI. */
+    entries: LoreEntry[];
+    /** Symmetric, deduped edges (A→B and B→A collapse to one). */
+    edges: LoreRelationshipEdge[];
+    /** Unresolved `[[links]]` — likely planned-but-unwritten entries. */
+    dangling: LoreDanglingLink[];
+    /** Entries with zero relationships. */
+    unconnected: LoreEntry[];
+}
+
 /**
  * An image the agent (lorebook coach or batch subagent) wants to attach to a
  * lore entry, awaiting the writer's review. Carries the bytes in memory from
