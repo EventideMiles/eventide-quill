@@ -179,6 +179,15 @@ export interface EventideQuillSettings {
      */
     lorebookImageProxyPrompt: string;
     /**
+     * Two-pass image description for Regime B: when on AND more than one image
+     * is attached, the image model first counts + labels each visible
+     * character across the batch, then describes each with that list as
+     * grounding. Helps weak vision models keep per-character descriptions
+     * coherent across a group. Off by default — it costs an extra model call
+     * per batch, which writers with a strong vision model don't need.
+     */
+    lorebookImageTwoPassDescription: boolean;
+    /**
      * Heading texts (case-insensitive, trimmed) that mark a lore entry's
      * image-gallery section. The lorebook scanner parses image embeds within
      * any section under one of these headings. Empty disables image
@@ -334,6 +343,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     lorebookImageMaxDimension: 512,
     lorebookImageMaxDescriptionTokens: 2048,
     lorebookImageProxyPrompt: DEFAULT_IMAGE_PROXY_PROMPT,
+    lorebookImageTwoPassDescription: false,
     loreEntryImageSectionHeaders: ['Reference', 'Reference images', 'Gallery', 'Forms', 'Appearance', 'Art'],
     loreEntryImageMaxPerEntry: 4,
     loreEntryImageAttachments: true,
@@ -1552,6 +1562,22 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 })
             );
 
+        new Setting(content)
+            .setName('Two-pass image description')
+            .setDesc(
+                'When your chat model is text-only and a separate image model is configured, describe ' +
+                    'multi-image batches in two passes: the image model first counts and labels each ' +
+                    'visible character, then describes each with that list as grounding. Helps weaker ' +
+                    'vision models keep per-character descriptions coherent across a group. Only ' +
+                    'applies when more than one image is attached — single images skip the count pass.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.lorebookImageTwoPassDescription).onChange((value) => {
+                    this.plugin.settings.lorebookImageTwoPassDescription = value;
+                    void this.plugin.saveSettings();
+                })
+            );
+
         new Setting(content).setName('Lore entry images').setHeading();
         new Setting(content)
             .setName('Image gallery section headings')
@@ -1803,6 +1829,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookImageMaxDescriptionTokens =
                         DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
                     this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
+                    this.plugin.settings.lorebookImageTwoPassDescription =
+                        DEFAULT_SETTINGS.lorebookImageTwoPassDescription;
                     this.plugin.settings.loreEntryImageSectionHeaders = [
                         ...DEFAULT_SETTINGS.loreEntryImageSectionHeaders
                     ];
@@ -3210,6 +3238,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookImageMaxDescriptionTokens =
                         DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
                     this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
+                    this.plugin.settings.lorebookImageTwoPassDescription =
+                        DEFAULT_SETTINGS.lorebookImageTwoPassDescription;
                     this.plugin.settings.loreEntryImageSectionHeaders = [
                         ...DEFAULT_SETTINGS.loreEntryImageSectionHeaders
                     ];

@@ -293,7 +293,7 @@ Provider serialization:
 - **OpenAI-compatible** (LM Studio, primary): `ChatMessage.images` → content array of `{type:'text'}` + `{type:'image_url', image_url:{url}}` parts.
 - **Ollama:** sibling `images: [base64]` field on the message.
 
-Images are base64 strings with no `data:` prefix, normalized to JPEG and downscaled (≤ `lorebookImageMaxDimension`, default 512) by `image-utils.ts` before they reach a provider, to protect local-model context budgets. The proxy prompt is customizable (`lorebookImageProxyPrompt`).
+Images are base64 strings with no `data:` prefix, normalized to JPEG and downscaled (≤ `lorebookImageMaxDimension`, default 512) by `image-utils.ts` before they reach a provider, to protect local-model context budgets. The proxy prompt is customizable (`lorebookImageProxyPrompt`). When `lorebookImageTwoPassDescription` is on (default off) and a Regime-B batch has more than one image, the proxy runs two calls: a cheap count pass (label each visible character across the batch) then the descriptive pass with that list folded in as grounding — helps weak vision models keep per-character descriptions coherent across a group.
 
 Default-provider resolution (`main.ts`): `getDefaultChatProvider()` / `getDefaultEmbedProvider()` / `getDefaultImageProvider()` resolve a composite `"providerId/modelId"` setting key to `{ provider, modelId }`.
 

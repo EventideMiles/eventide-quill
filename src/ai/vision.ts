@@ -26,6 +26,25 @@ export const DEFAULT_IMAGE_PROXY_PROMPT =
     'If a detail is too small, distant, or unclear to identify with confidence, ' +
     'leave it out. Stop as soon as you have covered everything you can see.';
 
+/**
+ * Pass-1 prompt for two-pass image description: count + briefly label each
+ * visible character across the batch before the descriptive pass. Used only
+ * when `lorebookImageTwoPassDescription` is on AND there is more than one
+ * image — weak vision models lose track of which character is which across a
+ * group, so grounding pass 2 in pass 1's enumerated list keeps the per-
+ * character descriptions coherent.
+ */
+const TWO_PASS_COUNT_PROMPT =
+    'Look at these images together. How many distinct characters (people) are ' +
+    'visible across all of them? Reply with ONLY a numbered list — one line per ' +
+    'character — giving each a short label (a name if you can identify them, ' +
+    'otherwise a distinguishing phrase like "tall woman in red"). Note which ' +
+    'image each appears in when relevant. Do not describe them yet — the next ' +
+    'step does that.';
+
+/** Token budget reserved for the pass-1 count when two-pass is on (small slice). */
+const TWO_PASS_COUNT_BUDGET = 256;
+
 /** How an image should enter a conversation on a given provider. */
 export type ImageInjection =
     | { kind: 'native'; images: string[] }
@@ -235,6 +254,15 @@ export async function prepareUserMessageWithImages(
 /**
  * Call the image model with a caption request and return its text. Throws on
  * failure so callers can surface a Notice and inject a placeholder.
+ *
+ * Two-pass mode (when `lorebookImageTwoPassDescription` is on AND more than one
+ * image is attached): a first cheap call counts + labels each visible
+ * character across the batch, then the descriptive call folds that list in as
+ * grounding. Helps weak vision models keep per-character descriptions coherent
+ * across a group. Single images skip the count pass (nothing to enumerate
+ * relative to). The budget is split: pass 1 gets a small fixed slice
+ * (`TWO_PASS_COUNT_BUDGET`), pass 2 gets the remainder so the total stays
+ * within the writer's configured `lorebookImageMaxDescriptionTokens`.
  */
 async function captionWithModel(
     plugin: EventideQuillPlugin,
@@ -243,7 +271,24 @@ async function captionWithModel(
     images: string[],
     opts: ImageInjectionOptions
 ): Promise<string> {
-    const prompt = buildProxyPrompt(opts.intent, opts.proxyPrompt ?? plugin.settings.lorebookImageProxyPrompt);
+    const twoPass = plugin.settings.lorebookImageTwoPassDescription && images.length > 1;
+    let pass1Result: string | undefined;
+
+    if (twoPass) {
+        pass1Result = await countVisibleCharacters(plugin, provider, modelId, images, opts);
+    }
+
+    const totalBudget = plugin.settings.lorebookImageMaxDescriptionTokens;
+    // Reserve the count slice from the descriptive budget so two-pass doesn't
+    // silently exceed the writer's configured cap; floor pass 2 at 64 so a tiny
+    // total doesn't starve the descriptive call.
+    const descriptionMaxTokens = twoPass ? Math.max(64, totalBudget - TWO_PASS_COUNT_BUDGET) : totalBudget;
+
+    const prompt = buildProxyPrompt(
+        opts.intent,
+        opts.proxyPrompt ?? plugin.settings.lorebookImageProxyPrompt,
+        pass1Result
+    );
     const messages: ChatMessage[] = [
         {
             role: 'system',
@@ -262,7 +307,7 @@ async function captionWithModel(
         model: modelId,
         messages,
         temperature: 0.3,
-        maxTokens: plugin.settings.lorebookImageMaxDescriptionTokens,
+        maxTokens: descriptionMaxTokens,
         signal: opts.signal
     })) {
         if (chunk.text) caption += chunk.text;
@@ -272,11 +317,62 @@ async function captionWithModel(
     return trimmed.length > 0 ? trimmed : '(no description produced)';
 }
 
-/** Assemble the proxy prompt, folding in the writer's intent when present. */
-function buildProxyPrompt(intent: string | undefined, base: string | undefined): string {
-    const b = base && base.trim().length > 0 ? base.trim() : DEFAULT_IMAGE_PROXY_PROMPT;
-    if (intent && intent.trim().length > 0) {
-        return `${b}\n\nThe writer's framing (describe with this in mind): ${intent.trim()}`;
+/**
+ * Pass 1 of two-pass image description: a cheap, low-temperature call that
+ * counts + labels each visible character across the image batch. Returns the
+ * raw text (a numbered list), or an empty string if the model produced
+ * nothing (pass 2 then proceeds without grounding, identical to single-pass).
+ */
+async function countVisibleCharacters(
+    plugin: EventideQuillPlugin,
+    provider: AiProvider,
+    modelId: string,
+    images: string[],
+    opts: ImageInjectionOptions
+): Promise<string> {
+    // Use up to TWO_PASS_COUNT_BUDGET of the configured description budget for
+    // the count (see captionWithModel), capped by the total so a writer with a
+    // very small budget doesn't spend it all on the count.
+    const countBudget = Math.min(TWO_PASS_COUNT_BUDGET, plugin.settings.lorebookImageMaxDescriptionTokens);
+    const messages: ChatMessage[] = [
+        {
+            role: 'system',
+            content:
+                'You count and label visible characters in images for a novelist. Reply with ' +
+                'ONLY a numbered list — no prose, no description. Keep each line short.'
+        },
+        { role: 'user', content: TWO_PASS_COUNT_PROMPT, images }
+    ];
+    let out = '';
+    for await (const chunk of provider.chatCompletion({
+        model: modelId,
+        messages,
+        temperature: 0,
+        maxTokens: countBudget,
+        signal: opts.signal
+    })) {
+        if (chunk.text) out += chunk.text;
     }
-    return b;
+    const trimmed = out.trim();
+    return trimmed.length > 0 ? trimmed : '';
+}
+
+/**
+ * Assemble the proxy prompt, folding in the writer's intent and (for two-pass
+ * mode) the pass-1 character count so the descriptive pass grounds each
+ * character against the enumerated list.
+ */
+function buildProxyPrompt(intent: string | undefined, base: string | undefined, pass1Result?: string): string {
+    const b = base && base.trim().length > 0 ? base.trim() : DEFAULT_IMAGE_PROXY_PROMPT;
+    let prompt = b;
+    if (pass1Result && pass1Result.trim().length > 0) {
+        prompt +=
+            `\n\nYou previously identified these visible characters across the images:\n${pass1Result.trim()}\n` +
+            'Describe each one in detail using that same numbering, grounded in what you can ' +
+            'actually see. Keep each character tied to its label so the writer can tell them apart.';
+    }
+    if (intent && intent.trim().length > 0) {
+        prompt += `\n\nThe writer's framing (describe with this in mind): ${intent.trim()}`;
+    }
+    return prompt;
 }
