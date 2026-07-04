@@ -207,7 +207,7 @@ Tool tiers (gating):
 
 | Tier | Tools | Gate setting |
 |------|-------|--------------|
-| Internal (default on) | `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit`, `get_lore_image` | `coWriterToolsEnabled` |
+| Internal (default on) | `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit`, `get_lore_image`, `refresh_dashboard` | `coWriterToolsEnabled` (mode-aware: the lorebook coach drops `manuscript_mentions` / `grep_notes` / `refresh_dashboard` via `createInternalToolRegistry({ manuscript, grep, dashboard })` since its prompt never advertises them — ~464 token cut per coach request; the lore-batch subagent keeps the full set) |
 | Lorebook coach only | `propose_entry` (surfaces a lore draft to the UI; accepts an optional `images` parameter when `loreEntryImageAttachments` is on) | `createLoreCoachToolRegistry` |
 | Parent modes only | `run_lorebook_batch` (lore edits), `run_research` (vault Q&A) — each spawns a `SubagentSession`, see "Subagents" | `allowSubagents` (all parent modes: discuss/coach/lorebook; subagents pass `false` so they can't nest) |
 | Network (default on) | `fetch_url`, `wikipedia_lookup` / `wikipedia_page` | `lorebookNetworkTools` |
