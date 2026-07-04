@@ -144,7 +144,7 @@ src/
     dashboard/            # Manuscript dashboard + lorebook
       index.ts (barrel), manuscript-file.ts, metrics.ts, readability.ts,
       presets.ts, types.ts, dale-chall-words.json (data asset),
-      lorebook-scanner.ts (gallery-section image extraction), lorebook-types.ts (LORE_ENTRY_TYPES, LoreEntryImage, coverage)
+      lorebook-scanner.ts (gallery-section image extraction + relationship computation), lorebook-types.ts (LORE_ENTRY_TYPES, LoreEntryImage, coverage, relationships)
     linter/               # Prose linter (Novelist Edition)
       apply-fix.ts, decorations.ts (CodeMirror decorations + debounced timers),
       fixes.ts, linter.ts, rules.ts, types.ts, word-lists.json (data asset)
@@ -285,6 +285,8 @@ Regime B's proxy call is fully self-contained, so the image model may live on a 
 
 **Gallery-section stripping at retrieval time only** (landed): `![[file.png]]` embed syntax in lore entries would waste tokens and prime hallucination if it leaked into auto-injected context. `stripGallerySections` in `lorebook-scanner.ts` replaces each gallery section with a one-line marker like `[Gallery section "Gallery": 3 images available — use get_lore_image with entry + label to view. Labels: Default form, Alternate form, Third form.]`. Applied at two **retrieval** sites only: the embedding chunker (`warmEmbeddingsForFolder`) and top-K injection (both `resolveEmbedPathsToMessages` paths). NOT applied to `vault_lookup` or active-file `proseForContext` — those are **editing** contexts where the model needs a verbatim view to construct anchors for `insert_note` / `edit_note`. Stripping at the editing view breaks anchors (the model quotes marker text that doesn't exist in the actual file); the marker preserves heading/label names so the model knows what's fetchable via `get_lore_image` without dumping useless syntax.
 
+**Lorebook relationships** (landed): the Relationships subtab renders a list/matrix view of relationships between lore entries, sourced from body `[[wikilinks]]` parsed via `metadataCache.getCache(path).links` (previously an unused cache field) and resolved with `getFirstLinkpathDest`. `computeRelationships` in `lorebook-scanner.ts` builds a symmetric, deduped adjacency (`LoreRelationships` in `lorebook-types.ts`); direction collapses (A→B and B→A become one edge), self-links drop, and unresolved links surface as "dangling" (likely unwritten entries). This is a **narrow, additive reversal** of the foundation PR's "no wikilinks anywhere in the flow" principle: detection, context fuel, and coverage stay link-free and untouched — relationships are an opt-in, writer-authored layer (the same body-syntax-over-frontmatter choice the image gallery makes, for the same rename-safety reason). View-only; relationship data does NOT flow into AI context fuel. Plugin state `currentLoreRelationships` + `refreshLorebookRelationships()` (peer of the coverage methods); matrix hidden above 50 connected entries in favor of the list view.
+
 Provider serialization:
 
 - **OpenAI-compatible** (LM Studio, primary): `ChatMessage.images` → content array of `{type:'text'}` + `{type:'image_url', image_url:{url}}` parts.
@@ -391,7 +393,7 @@ Each row = one JSDoc + two `setDesc(...)` copies to keep aligned. The authoritat
 6. **Collaborative Drafting (Co-writer)** — writer leads, AI extends, turn by turn (discuss / coach / fulfill modes).
 7. **Co-writer Tool-calling** — the model can call internal vault tools and network research tools (Fandom, Wikipedia, fetch_url) mid-conversation. On by default; restrict in settings.
 8. **User-defined Slash Commands** — saved snippets in settings; typing `/` at the start of a line in the co-writer chat input opens a picker of matching commands. Choosing one inserts the body into the input, fully editable before sending. Names are kebab-case-only. Empty list (the default) disables the picker — no separate enable toggle, so the description stays single-sourced.
-9. **Lorebook + Lorebook Coach** — typed lore entries with coverage-gap detection, plus a coach mode that drafts entries from the manuscript.
+9. **Lorebook + Lorebook Coach** — typed lore entries with coverage-gap detection, a relationship-mapping view (list/matrix from body `[[wikilinks]]`), plus a coach mode that drafts entries from the manuscript.
 10. **Selection Transformations** — rewrite selected passages in place.
 11. **Critical Analysis / Continuity Engine** — plot logic, character consistency.
 12. **Vision / Image Support** — images (character art, maps, reference photos) reach a vision-capable chat model directly, or are translated to text by a separate image model when chat is text-only. See "Vision & image support".

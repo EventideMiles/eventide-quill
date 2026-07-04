@@ -2,7 +2,8 @@
 //
 // Block: quill-lorebook-panel. All elements belong to this block.
 // Renders: lorebook coverage summary (entries / referenced / orphaned / missing),
-// missing-entity gaps, and referenced/orphaned entry lists with type badges.
+// missing-entity gaps, referenced/orphaned entry lists with type badges, and
+// the Relationships subtab (connections list, matrix, dangling links).
 
 @use 'base' as *;
 
@@ -173,5 +174,161 @@
         border-radius: $radius-sm;
         padding: 2px $space-xs;
         flex-shrink: 0;
+    }
+
+    // ── Relationships subtab ──────────────────────────────────────────────
+
+    // Per-entry connections list. Each row: type badge, entry name, "→ a, b, c"
+    // neighbor list, and a degree count chip.
+    &__connections {
+        display: flex;
+        flex-direction: column;
+    }
+
+    &__connection {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        padding: $space-xs $space-md;
+        border-bottom: 1px solid var(--background-modifier-border);
+
+        &:last-child {
+            border-bottom: none;
+        }
+    }
+
+    &__connection-name {
+        font-size: var(--font-ui-small);
+        flex-shrink: 0;
+        font-weight: 600;
+        color: var(--text-normal);
+    }
+
+    // Neighbor target list ("→ Amber, Aurora"). Takes the remaining width and
+    // ellipsizes so long neighbor lists don't push the count chip off-screen.
+    &__connection-targets {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    &__connection-count {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-faint, var(--text-muted));
+        background: var(--background-modifier-hover);
+        border-radius: $radius-sm;
+        padding: 2px $space-xs;
+        flex-shrink: 0;
+    }
+
+    // Dangling-link rows reuse &__entry + this modifier to flag that the link
+    // target doesn't resolve to a lore entry yet.
+    &__entry--dangling {
+        color: var(--color-orange);
+    }
+
+    // Clickable entry rows (e.g. dangling links). Cursor + hover affordance so
+    // the writer knows the row navigates somewhere on click.
+    &__entry--clickable {
+        cursor: pointer;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+        }
+    }
+
+    // Entries × entries matrix. Filled cell = related. Split into a frozen
+    // labels column + a horizontally-scrollable cells grid so entry names stay
+    // visible across the full horizontal scroll. (position:sticky on a grid
+    // item is bounded by its grid area — it detached partway, so the labels
+    // now live outside the scroll entirely.) The cell size is a CSS var on the
+    // outer container so both grids share it and rows align exactly.
+    &__matrix-outer {
+        display: flex;
+        align-items: flex-start;
+        margin-bottom: $space-md;
+        --quill-matrix-cell: 22px;
+    }
+
+    // Frozen labels column (corner + row labels). Sits as a flex sibling
+    // outside the scroll container, so it never moves. A right border marks
+    // the seam between frozen labels and scrolling cells.
+    &__matrix-labels {
+        flex-shrink: 0;
+        display: grid;
+        grid-template-columns: 90px;
+        // Match the cells grid's row height AND row gap so rows line up exactly.
+        // Without the matching gap, the cells grid drifts ~1px/row (taller) and
+        // the bottom cell rows end up past the last label ("unlabelled rows").
+        grid-auto-rows: var(--quill-matrix-cell, 22px);
+        gap: 1px;
+        border-right: 2px solid var(--background-modifier-border);
+        background: var(--background-primary);
+    }
+
+    &__matrix-scroll {
+        overflow-x: auto;
+        flex: 1;
+        min-width: 0;
+        // Hint that the block scrolls horizontally on touch devices.
+        -webkit-overflow-scrolling: touch;
+    }
+
+    &__matrix {
+        display: grid;
+        gap: 1px;
+        // Same row height as the labels column keeps rows aligned.
+        grid-auto-rows: var(--quill-matrix-cell, 22px);
+    }
+
+    // Top-left empty corner cell (lives in the labels column).
+    &__matrix-corner {
+        // No content; just occupies the header-row cell of the labels column.
+    }
+
+    &__matrix-head {
+        font-size: 10px;
+        color: var(--text-muted);
+        min-width: var(--quill-matrix-cell, 22px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    // Entry-name row label (lives in the frozen labels column). Ellipsizes
+    // long names; the full name travels in the title tooltip.
+    &__matrix-rowhead {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-normal);
+        padding-right: $space-sm;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: flex;
+        align-items: center;
+    }
+
+    &__matrix-cell {
+        min-width: var(--quill-matrix-cell, 22px);
+        height: var(--quill-matrix-cell, 22px);
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+    }
+
+    // Filled cell — the two entries are related. Uses the theme accent so it
+    // reads as a highlight across light/dark/community themes.
+    &__matrix-cell--related {
+        background: var(--interactive-accent);
+        border-color: var(--interactive-accent);
+    }
+
+    // Self-cell (diagonal) — never an edge; tinted to distinguish from
+    // genuinely-empty cells.
+    &__matrix-cell--diagonal {
+        background: var(--background-modifier-hover);
     }
 }

@@ -39,7 +39,7 @@ export class QuillSidebarView extends ItemView {
     private activeTopTab: TopTab = 'linter';
     private activeLinterSubTab: LinterSubTab = 'results';
     private dashboardSubTab: 'overview' | 'pending' | 'settings' = 'overview';
-    private lorebookSubTab: 'document' | 'manuscript' = 'document';
+    private lorebookSubTab: 'document' | 'manuscript' | 'relationships' = 'document';
     private container!: HTMLElement;
     private tabBar!: HTMLElement;
     private content!: HTMLElement;
@@ -316,6 +316,20 @@ export class QuillSidebarView extends ItemView {
 
     /** Tear down event listeners and rebuild the sidebar DOM for the current tab. */
     private render() {
+        // Preserve scroll position across re-renders for tabs whose scroll
+        // container is built directly here (context / dashboard / lorebook).
+        // The sidebar re-renders on active-leaf-change — e.g. clicking a
+        // dangling lore link opens its source file, which fires
+        // active-leaf-change and recreates the scroll div at scrollTop=0,
+        // losing the writer's place. Co-writer/review/linter manage their own
+        // scroll. The container class is captured too, so scroll never carries
+        // across a tab switch (different class → no match → starts at top).
+        const isScrollTab =
+            this.activeTopTab === 'context' || this.activeTopTab === 'dashboard' || this.activeTopTab === 'lorebook';
+        const prevScroll = isScrollTab ? this.content.querySelector<HTMLElement>('[class*="__scroll"]') : null;
+        const savedScrollTop = prevScroll?.scrollTop ?? 0;
+        const savedScrollClass = prevScroll?.className ?? '';
+
         this.renderEvents?.unload();
         this.renderEvents = new Component();
         this.addChild(this.renderEvents);
@@ -366,6 +380,23 @@ export class QuillSidebarView extends ItemView {
         } else {
             this.renderHeader();
             this.renderReviewTab();
+        }
+
+        // Restore scroll for the rebuilt container, but only when it's the same
+        // tab (matching class) — a tab switch should start at the top.
+        if (savedScrollTop > 0 && savedScrollClass) {
+            const selector = savedScrollClass
+                .split(/\s+/)
+                .filter(Boolean)
+                .map((c) => `.${c}`)
+                .join('');
+            const newScroll = selector ? this.content.querySelector<HTMLElement>(selector) : null;
+            if (newScroll) {
+                newScroll.scrollTop = Math.min(
+                    savedScrollTop,
+                    Math.max(0, newScroll.scrollHeight - newScroll.clientHeight)
+                );
+            }
         }
     }
 
@@ -450,13 +481,14 @@ export class QuillSidebarView extends ItemView {
         }
     }
 
-    /** Render the Lorebook sub-tab bar (Document / Manuscript). */
+    /** Render the Lorebook sub-tab bar (Document / Manuscript / Relationships). */
     private renderLorebookSubTabBar() {
         const subTabBar = this.content.createDiv({ cls: 'quill-sidebar__subtab-bar' });
 
-        const tabs: { id: 'document' | 'manuscript'; label: string }[] = [
+        const tabs: { id: 'document' | 'manuscript' | 'relationships'; label: string }[] = [
             { id: 'document', label: 'Document' },
-            { id: 'manuscript', label: 'Manuscript' }
+            { id: 'manuscript', label: 'Manuscript' },
+            { id: 'relationships', label: 'Relationships' }
         ];
 
         for (const tab of tabs) {
@@ -469,6 +501,8 @@ export class QuillSidebarView extends ItemView {
                 this.render();
                 if (tab.id === 'manuscript') {
                     void this.plugin.refreshLorebookManuscriptCoverage(true);
+                } else if (tab.id === 'relationships') {
+                    this.plugin.refreshLorebookRelationships();
                 } else {
                     void this.plugin.refreshLorebookDocumentCoverage();
                 }
