@@ -324,6 +324,9 @@ export class QuillSidebarView extends ItemView {
         // losing the writer's place. Co-writer/review/linter manage their own
         // scroll. The container class is captured too, so scroll never carries
         // across a tab switch (different class → no match → starts at top).
+        // Dashboard/Lorebook scroll containers carry a subtab modifier class
+        // (e.g. `--overview`, `--relationships`) so a subtab switch also starts
+        // at the top instead of inheriting the previous subtab's position.
         const isScrollTab =
             this.activeTopTab === 'context' || this.activeTopTab === 'dashboard' || this.activeTopTab === 'lorebook';
         const prevScroll = isScrollTab ? this.content.querySelector<HTMLElement>('[class*="__scroll"]') : null;
@@ -363,10 +366,14 @@ export class QuillSidebarView extends ItemView {
             if (this.dashboardSubTab === 'pending') {
                 this.renderPendingTab();
             } else if (this.dashboardSubTab === 'settings') {
-                const settingsScroll = this.content.createDiv({ cls: 'quill-dashboard-panel__scroll' });
+                const settingsScroll = this.content.createDiv({
+                    cls: 'quill-dashboard-panel__scroll quill-dashboard-panel__scroll--settings'
+                });
                 renderDashboardSettingsTab(settingsScroll, this.plugin, this.renderEvents);
             } else {
-                const dashScroll = this.content.createDiv({ cls: 'quill-dashboard-panel__scroll' });
+                const dashScroll = this.content.createDiv({
+                    cls: 'quill-dashboard-panel__scroll quill-dashboard-panel__scroll--overview'
+                });
                 renderDashboardTab(dashScroll, this.plugin, this.renderEvents);
             }
         } else if (this.activeTopTab === 'cowriter') {
@@ -375,7 +382,9 @@ export class QuillSidebarView extends ItemView {
         } else if (this.activeTopTab === 'lorebook') {
             this.renderHeader();
             this.renderLorebookSubTabBar();
-            const loreScroll = this.content.createDiv({ cls: 'quill-lorebook-panel__scroll' });
+            const loreScroll = this.content.createDiv({
+                cls: `quill-lorebook-panel__scroll quill-lorebook-panel__scroll--${this.lorebookSubTab}`
+            });
             renderLorebookTab(loreScroll, this.plugin, this.renderEvents, this.lorebookSubTab);
         } else {
             this.renderHeader();

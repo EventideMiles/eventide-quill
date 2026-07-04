@@ -406,7 +406,7 @@ function renderLorebookRelationshipsTab(
             const source = entryByPath.get(d.from);
             const row = list.createEl('div', {
                 cls: 'quill-lorebook-panel__entry quill-lorebook-panel__entry--dangling quill-lorebook-panel__entry--clickable',
-                attr: { title: `Open ${source?.fileBasename ?? d.from} at this link` }
+                attr: { tabindex: '0', role: 'button', title: `Open ${source?.fileBasename ?? d.from} at this link` }
             });
             row.createEl('span', {
                 cls: 'quill-lorebook-panel__entry-name',
@@ -418,6 +418,12 @@ function renderLorebookRelationshipsTab(
             });
             component.registerDomEvent(row, 'click', () => {
                 void plugin.jumpToLoreLink(d.from, d.line, d.col);
+            });
+            component.registerDomEvent(row, 'keydown', (evt: KeyboardEvent) => {
+                if (evt.key === 'Enter' || evt.key === ' ') {
+                    evt.preventDefault();
+                    void plugin.jumpToLoreLink(d.from, d.line, d.col);
+                }
             });
         }
     }
