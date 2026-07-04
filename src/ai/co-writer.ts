@@ -677,6 +677,9 @@ export type DraftState = 'idle' | 'generating' | 'draft';
 /** Coach mode phase. */
 export type CoachPhase = 'discern' | 'clarify' | 'plan' | 'direction';
 
+/** Legal coach phase values — used to validate a {@link CoWriterChatMessage.phaseSnapshot}. */
+const COACH_PHASES: ReadonlySet<string> = new Set(['discern', 'clarify', 'plan', 'direction']);
+
 /** A coach session state. */
 export interface CoachSession {
     /** Current phase of the coaching process. */
@@ -701,6 +704,9 @@ export interface CoachSession {
  *  - `refine`  — a draft has been produced; subsequent turns refine it.
  */
 export type LoreCoachPhase = 'discover' | 'develop' | 'refine';
+
+/** Legal lorebook phase values — used to validate a {@link CoWriterChatMessage.phaseSnapshot}. */
+const LORE_PHASES: ReadonlySet<string> = new Set(['discover', 'develop', 'refine']);
 
 /** A lorebook coach session. */
 export interface LoreCoachSession {
@@ -767,6 +773,16 @@ export interface CoWriterChatMessage {
      * {@link prepareUserMessageWithImages} before the message reaches the API.
      */
     images?: string[];
+    /**
+     * Snapshot of the mode-session phase AFTER this assistant turn settled
+     * (coach / lorebook modes only). Used by `rewindToMessage` to restore the
+     * exact phase without re-deriving it via heuristic — the live phase
+     * advance is authoritative, the heuristic is a fallback for pre-snapshot
+     * sidecars. Undefined on user messages, discuss turns (no phase machine),
+     * and any sidecar written before this field landed. See
+     * {@link reevaluateModePhase}.
+     */
+    phaseSnapshot?: CoachPhase | LoreCoachPhase;
 }
 
 /**
@@ -2234,6 +2250,15 @@ export class CoWriterSession {
 
                 // Build summary for option generation
                 this.coachSession.summary = this.buildCoachSummary();
+
+                // Stamp the post-turn phase on the last assistant message so
+                // rewind restores it exactly instead of re-deriving via the
+                // heuristic mirror in reevaluateCoachPhase.
+                const coachLastIdx = this.chatHistory.length - 1;
+                const coachLastMsg = coachLastIdx >= 0 ? this.chatHistory[coachLastIdx] : undefined;
+                if (coachLastMsg && coachLastMsg.role === 'assistant') {
+                    coachLastMsg.phaseSnapshot = this.coachSession.phase;
+                }
             }
 
             // Determine if this is a revision (plan/direction follow-up after options generated)
@@ -2809,6 +2834,18 @@ export class CoWriterSession {
 
                 // Continue to next round — the model will see its tool_calls
                 // and the tool results and continue the conversation.
+            }
+
+            // Stamp the post-turn phase on the last assistant message so rewind
+            // restores it exactly instead of re-deriving via the lossy
+            // heuristic in reevaluateLoreCoachPhase (which can't distinguish a
+            // later-rejected draft from a live one).
+            if (this.loreCoachSession) {
+                const loreLastIdx = this.chatHistory.length - 1;
+                const loreLastMsg = loreLastIdx >= 0 ? this.chatHistory[loreLastIdx] : undefined;
+                if (loreLastMsg && loreLastMsg.role === 'assistant') {
+                    loreLastMsg.phaseSnapshot = this.loreCoachSession.phase;
+                }
             }
 
             this.onDiscussFinished?.();
@@ -4473,6 +4510,14 @@ export class CoWriterSession {
         }
 
         this.reevaluateModePhase(mode);
+        // Prefer the per-turn phase snapshot from the latest surviving
+        // assistant message — it's the authoritative post-turn phase, recorded
+        // live. The heuristic above rebuilds the surrounding session fields
+        // (response, summary, clarifyRound, scope, rounds) but its phase value
+        // is a lossy reconstruction (the coach clarify-round replay can drift;
+        // the lorebook heuristic can't distinguish a later-rejected draft from
+        // a live one). Only the phase is overridden here.
+        this.applyPhaseSnapshot(mode);
 
         this.optionsLoading = false;
         this.thoughtBuffer = '';
@@ -4557,5 +4602,34 @@ export class CoWriterSession {
         const phase: LoreCoachPhase = hasDraft ? 'refine' : rounds > 1 ? 'develop' : 'discover';
         this.loreCoachSession = { phase, scope, entryType, rounds };
         this.loreCoachActive = true;
+    }
+
+    /**
+     * Override the mode-session phase with the latest surviving assistant
+     * turn's {@link CoWriterChatMessage.phaseSnapshot}, if one exists for the
+     * current mode. {@link reevaluateModePhase} has already rebuilt the
+     * surrounding session object (response, summary, clarifyRound, scope,
+     * rounds); only the phase value is corrected here. No-op for discuss
+     * mode, for histories with no snapshots (pre-snapshot sidecars / user-only
+     * histories → the heuristic phase stands), and when the latest snapshot
+     * isn't a legal value for the current mode (defensive — coach and lorebook
+     * turns never coexist in one chatHistory because crossing into/out of
+     * lorebook resets chat, but the membership check guards against drift).
+     */
+    private applyPhaseSnapshot(mode: string): void {
+        if (mode !== 'coach' && mode !== 'lorebook') return;
+        const legal = mode === 'coach' ? COACH_PHASES : LORE_PHASES;
+        for (let i = this.chatHistory.length - 1; i >= 0; i--) {
+            const msg = this.chatHistory[i];
+            const snapshot = msg?.role === 'assistant' ? msg.phaseSnapshot : undefined;
+            if (snapshot !== undefined && legal.has(snapshot)) {
+                if (mode === 'coach' && this.coachSession) {
+                    this.coachSession.phase = snapshot as CoachPhase;
+                } else if (mode === 'lorebook' && this.loreCoachSession) {
+                    this.loreCoachSession.phase = snapshot as LoreCoachPhase;
+                }
+                return;
+            }
+        }
     }
 }
