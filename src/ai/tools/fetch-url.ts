@@ -1,5 +1,6 @@
 import { requestUrl } from 'obsidian';
 import type { Tool, ToolContext } from './tool';
+import { assertNotRateLimited, toolErrorMessage } from './http-retry';
 
 /**
  * Factory: create the `fetch_url` tool with a configurable result cap.
@@ -54,6 +55,7 @@ export function createFetchUrlTool(maxResultTokens: number): Tool {
                     headers: { Accept: 'text/html, text/plain, */*' }
                 });
 
+                assertNotRateLimited(response);
                 if (response.status !== 200) {
                     return `Error: HTTP ${response.status} fetching "${url}".`;
                 }
@@ -69,8 +71,7 @@ export function createFetchUrlTool(maxResultTokens: number): Tool {
                 // Non-HTML (plain text, JSON, etc.) — return as-is.
                 return truncate(text, maxResultTokens, url);
             } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                return `Error fetching "${url}": ${msg}`;
+                return toolErrorMessage(err, `fetching "${url}"`);
             }
         }
     };

@@ -6,6 +6,7 @@ import {
     mediawikiPageImage,
     mediawikiSearch
 } from './mediawiki';
+import { toolErrorMessage } from './http-retry';
 
 /**
  * Build the Wikipedia host from the configured language.
@@ -65,8 +66,7 @@ export function createWikipediaLookupTool(maxResultTokens: number, lang: string)
             try {
                 return (await mediawikiLookup(host, query, maxResultTokens)).text;
             } catch (caught) {
-                const msg = caught instanceof Error ? caught.message : String(caught);
-                return `Error looking up "${query}" on ${host}: ${msg}`;
+                return toolErrorMessage(caught, `looking up "${query}" on ${host}`);
             }
         }
     };
@@ -119,8 +119,7 @@ export function createWikipediaPageTool(maxResultTokens: number, lang: string): 
                         : extract.extract;
                 return `${extract.title} (${host}):\n${text}`;
             } catch (caught) {
-                const msg = caught instanceof Error ? caught.message : String(caught);
-                return `Error fetching page "${title}" from ${host}: ${msg}`;
+                return toolErrorMessage(caught, `fetching page "${title}" from ${host}`);
             }
         }
     };
@@ -200,8 +199,7 @@ export function createWikipediaImageTool(maxResultTokens: number, maxDimension: 
                     };
                 }
             } catch (caught) {
-                const msg = caught instanceof Error ? caught.message : String(caught);
-                return { text: `Error fetching image for "${query}" from ${host}: ${msg}` };
+                return { text: toolErrorMessage(caught, `fetching image for "${query}" from ${host}`) };
             }
         }
     };

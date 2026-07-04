@@ -167,6 +167,7 @@ src/
     tools/                # Tool-calling layer (see "Tool-calling architecture")
       tool.ts (Tool, ToolRegistry, ToolResult, ToolContext, DuplicateToolError),
       tool-loop.ts (streamWithTools — generic tool-loop runner; first real caller is critical analysis),
+      http-retry.ts (RateLimitError, parseRetryAfter, assertNotRateLimited, toolErrorMessage — 429/Retry-After handling for network tools),
       index.ts (registries + factory wiring + createToolRegistry gating),
       context-helpers.ts, lore-edit-helpers.ts,
       manuscript-mentions.ts, lore-siblings.ts, vault-lookup.ts, grep-notes.ts,
@@ -319,11 +320,12 @@ Default-provider resolution (`main.ts`): `getDefaultChatProvider()` / `getDefaul
 
 ### Error handling
 
-- Use typed error classes (extend `Error`) rather than throwing raw strings or generic `Error`. Four currently exist:
+- Use typed error classes (extend `Error`) rather than throwing raw strings or generic `Error`. Five currently exist:
     - `ProviderError` — `src/ai/provider.ts`
     - `HttpError` — `src/ai/transport.ts`
     - `StreamingUnavailableError` — `src/ai/transport.ts`
     - `DuplicateToolError` — `src/ai/tools/tool.ts`
+    - `RateLimitError` — `src/ai/tools/http-retry.ts` (HTTP 429 from a network tool; carries the parsed `Retry-After` in seconds so the tool surfaces an actionable "wait N seconds" message to the model rather than a bare status code)
 - Propagate errors with `throw` rather than returning error objects, unless the function signature explicitly supports `Result<T, E>` or similar patterns.
 
 ## Coding rules — enforced vs. convention

@@ -1,5 +1,6 @@
 import { requestUrl } from 'obsidian';
 import { downscaleToJpegBase64, isImageContentType } from '../image-utils';
+import { assertNotRateLimited } from './http-retry';
 
 /**
  * Shared MediaWiki API client. Both Fandom and Wikipedia serve the same
@@ -78,6 +79,7 @@ export async function mediawikiSearch(host: string, query: string, limit = 5): P
     await rateLimit(host);
     const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
 
+    assertNotRateLimited(response);
     if (response.status !== 200) {
         throw new Error(`Search failed: HTTP ${response.status}`);
     }
@@ -103,6 +105,7 @@ export async function mediawikiArticleCount(host: string): Promise<number> {
     const url = `https://${host}/api.php?action=query&meta=siteinfo&siprop=statistics&format=json&origin=*`;
     await rateLimit(host);
     const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
+    assertNotRateLimited(response);
     if (response.status !== 200) {
         throw new Error(`siteinfo failed: HTTP ${response.status}`);
     }
@@ -132,6 +135,7 @@ export async function mediawikiAllPages(host: string, signal?: AbortSignal): Pro
             headers: { 'User-Agent': MEDIAWIKI_UA },
             throw: false
         });
+        assertNotRateLimited(response);
         if (response.status !== 200) {
             throw new Error(`allpages enumeration failed: HTTP ${response.status}`);
         }
@@ -178,6 +182,7 @@ async function mediawikiExtractByExtracts(host: string, title: string): Promise<
     await rateLimit(host);
     const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
 
+    assertNotRateLimited(response);
     if (response.status !== 200) {
         throw new Error(`Extract failed: HTTP ${response.status}`);
     }
@@ -211,6 +216,9 @@ async function mediawikiExtractByParse(host: string, title: string): Promise<Med
     await rateLimit(host);
     const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
 
+    // A 429 is a rate-limit, not a missing page — let it throw before the
+    // silent non-200 → null fallback below.
+    assertNotRateLimited(response);
     if (response.status !== 200) return null;
 
     const data = response.json as {
@@ -340,6 +348,7 @@ export async function mediawikiPageImage(
     await rateLimit(host);
     const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
 
+    assertNotRateLimited(response);
     if (response.status !== 200) {
         throw new Error(`Page image query failed: HTTP ${response.status}`);
     }
@@ -372,6 +381,7 @@ export async function mediawikiPageGallery(host: string, title: string, limit: n
     await rateLimit(host);
     const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
 
+    assertNotRateLimited(response);
     if (response.status !== 200) {
         throw new Error(`Gallery query failed: HTTP ${response.status}`);
     }
@@ -404,6 +414,7 @@ export async function mediawikiImageInfo(
     await rateLimit(host);
     const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
 
+    assertNotRateLimited(response);
     if (response.status !== 200) {
         throw new Error(`Image info query failed: HTTP ${response.status}`);
     }
@@ -491,6 +502,7 @@ export async function mediawikiGalleryWithCaptions(
     await rateLimit(host);
     const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
 
+    assertNotRateLimited(response);
     if (response.status !== 200) {
         throw new Error(`Wikitext fetch failed: HTTP ${response.status}`);
     }
@@ -567,6 +579,7 @@ export async function downloadAndDownscaleImage(
         throw: false,
         headers: { Accept: 'image/*', 'User-Agent': MEDIAWIKI_UA }
     });
+    assertNotRateLimited(response);
     if (response.status !== 200) {
         throw new Error(`HTTP ${response.status}`);
     }
