@@ -11,6 +11,7 @@ import { LORE_ENTRY_TYPES, LORE_TYPE_LABELS } from './core/dashboard/lorebook-ty
 import type { WikiLinkBehavior } from './ai/prompts';
 import type { WikiStats } from './ai/tools/fandom-cache';
 import { formatLocalDate } from './ai/tools/fandom-cache';
+import { isValidWikipediaLang } from './ai/tools/wikipedia-lookup';
 
 export type LinterMode = 'all' | 'prose' | 'ai';
 export type SettingsTab = 'welcome' | 'general' | 'linter' | 'ai-providers' | 'model-behaviors';
@@ -1423,11 +1424,23 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
         new Setting(content)
             .setName('Wikipedia language')
-            .setDesc('Wikipedia language subdomain (e.g., "en", "fr", "de"). Default: en.')
+            .setDesc('Wikipedia language subdomain (e.g., "en", "fr", "de", "simple"). Default: en.')
             .addText((text) =>
                 text.setValue(this.plugin.settings.lorebookWikipediaLang).inputEl.addEventListener('blur', () => {
                     const lang = text.inputEl.value.trim().toLowerCase();
-                    this.plugin.settings.lorebookWikipediaLang = lang || 'en';
+                    if (!lang) {
+                        this.plugin.settings.lorebookWikipediaLang = 'en';
+                        void this.plugin.saveSettings();
+                        return;
+                    }
+                    if (!isValidWikipediaLang(lang)) {
+                        new Notice(
+                            `Quill: "${lang}" is not a valid Wikipedia language code (use a subdomain like "en", "fr", or "simple").`
+                        );
+                        text.inputEl.value = this.plugin.settings.lorebookWikipediaLang;
+                        return;
+                    }
+                    this.plugin.settings.lorebookWikipediaLang = lang;
                     void this.plugin.saveSettings();
                 })
             );

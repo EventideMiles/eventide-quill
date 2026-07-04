@@ -15,6 +15,18 @@ function wikipediaHost(lang: string): string {
 }
 
 /**
+ * Wikipedia language-subdomain shape: 2–3 lowercase letters, optionally
+ * followed by a hyphen + subtag (`en`, `fr`, `simple`, `zh-yue`, `be-x-old`).
+ * Shared by settings-input validation so a typo like `"en.wikipedia.org"` or
+ * `"Spanish"` can't slip through and produce a broken `${lang}.wikipedia.org`
+ * host. The empty string is rejected (callers fall back to the `'en'` default).
+ */
+const WIKIPEDIA_LANG_RE = /^[a-z]{2,3}(-[a-z0-9]+)?$/;
+export function isValidWikipediaLang(lang: string): boolean {
+    return WIKIPEDIA_LANG_RE.test(lang);
+}
+
+/**
  * Factory: create the `wikipedia_lookup` tool.
  *
  * Searches Wikipedia and returns candidate titles or the intro extract if
