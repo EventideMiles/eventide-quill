@@ -3781,13 +3781,27 @@ export class CoWriterSession {
             plugin.settings.wikiLinkBehavior
         );
 
+        // When the cursor sits mid-document, the continuation is INSERTED
+        // before the prose that follows — surface that following prose so the
+        // model can write a continuation that leads into it naturally. Empty
+        // (and so omitted) when the cursor is at the end of the document.
+        const afterCursor = fullText.slice(cursorOffset).slice(0, 4000).trim();
+        const afterCursorSection = afterCursor
+            ? [
+                  '',
+                  '--- Document after the cursor (your continuation will be inserted before this — lead into it naturally) ---',
+                  afterCursor
+              ].join('\n')
+            : '';
+
         const userMessage = [
             `Continue the passage from the cursor position following this direction: ${option.label} — ${option.description}`,
             '',
             'Write the next paragraph or paragraphs in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation, plain and without labels or explanations.',
             '',
             '--- Current document up to cursor ---',
-            textBeforeCursor.slice(-8000)
+            textBeforeCursor.slice(-8000),
+            afterCursorSection
         ].join('\n');
 
         const messages: ChatMessage[] = [
@@ -4003,6 +4017,17 @@ export class CoWriterSession {
         );
 
         const proseForContext = textBeforeCursor.slice(-12000);
+        // When the cursor sits mid-document, the continuation is INSERTED
+        // before the prose that follows — surface that following prose so the
+        // model can lead into it naturally. Empty when the cursor is at EOF.
+        const afterCursor = fullText.slice(cursorOffset).slice(0, 4000).trim();
+        const afterCursorSection = afterCursor
+            ? [
+                  '',
+                  '--- Document after the cursor (your continuation will be inserted before this — lead into it naturally) ---',
+                  afterCursor
+              ].join('\n')
+            : '';
 
         // Parse stopping point from direction
         const stoppingPoint = direction ? parseStoppingPoint(direction) : null;
@@ -4015,7 +4040,8 @@ export class CoWriterSession {
                   'Write the next paragraph or paragraphs in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation, plain and without labels or explanations.',
                   '',
                   '--- Current document up to cursor ---',
-                  proseForContext
+                  proseForContext,
+                  afterCursorSection
               ].join('\n')
             : [
                   'Continue the passage naturally from the cursor position.',
@@ -4023,7 +4049,8 @@ export class CoWriterSession {
                   'Read the document up to the cursor and continue writing in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation, plain and without labels or explanations.',
                   '',
                   '--- Current document up to cursor ---',
-                  proseForContext
+                  proseForContext,
+                  afterCursorSection
               ].join('\n');
 
         const messages: ChatMessage[] = [
