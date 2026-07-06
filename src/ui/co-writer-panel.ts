@@ -844,11 +844,15 @@ export class CoWriterPanel extends AbstractChatPanel {
             }
         }
 
-        // Restore textarea focus if the user was typing when generation completed
+        // Restore textarea focus if the user was typing when generation completed.
+        // preventScroll stops the browser from scrolling the textarea into view
+        // (it's pinned at the bottom) — without it, an async focus-scroll can
+        // overwrite the scroll restoration below, snapping a user who scrolled
+        // up to read older messages back to the bottom.
         if (textareaHadFocus) {
             const newTextarea = this.containerEl.querySelector<HTMLTextAreaElement>('.quill-cowriter-panel__input');
             if (newTextarea) {
-                newTextarea.focus();
+                newTextarea.focus({ preventScroll: true });
             }
         }
 
