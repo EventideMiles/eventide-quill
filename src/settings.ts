@@ -1116,7 +1116,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         // --- Analysis settings ---
-        new Setting(content).setName('Manuscript analysis').setHeading();
+        new Setting(content).setName('Manuscript analysis engine').setHeading();
 
         new Setting(content)
             .setName('Compression chunk size (tokens)')
@@ -1180,152 +1180,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         // --- Embedding settings ---
-        new Setting(content).setName('Embeddings').setHeading();
-
-        new Setting(content)
-            .setName('Embedding top-k chunks')
-            .setDesc(
-                'Number of chunks (paragraphs) retrieved from embedded folders. Higher = more context but more tokens; lower = tighter focus, less window pressure. Recommended: 8–12 for most use cases. 3–5 keeps overhead minimal. 15+ may crowd the context window.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.embeddingsTopKChunks))
-                    // settings.ts - no Component lifecycle available; raw addEventListener is required
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1 && n <= 100) {
-                            this.plugin.settings.embeddingsTopKChunks = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.embeddingsTopKChunks));
-                            new Notice('Value must be a number between 1 and 100');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Embedding cache warming')
-            .setDesc(
-                'Automatically pre-compute and cache embeddings for each folder containing Markdown files (cast notes, lore, outlines, manuscript chapters). Enables instant semantic retrieval. Root folder is excluded.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableEmbeddingWarming).onChange((value) => {
-                    this.plugin.settings.enableEmbeddingWarming = value;
-                    void this.plugin.saveSettings();
-                    if (value) {
-                        void this.plugin.warmAllEmbeddingCaches();
-                    }
-                })
-            );
-
-        new Setting(content)
-            .setName('Embedding warming debounce (seconds)')
-            .setDesc(
-                'How long to wait after the last file save before warming embeddings. Higher reduces API calls during active writing; lower keeps caches fresher. Default: 30.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.embeddingWarmingDebounceSeconds))
-                    // settings.ts - no Component lifecycle available; raw addEventListener is required
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 5 && n <= 600) {
-                            this.plugin.settings.embeddingWarmingDebounceSeconds = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.embeddingWarmingDebounceSeconds));
-                            new Notice('Value must be a number between 5 and 600');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Build embeddings now')
-            .setDesc(
-                'Immediately pre-compute and cache embeddings for all folders with Markdown files. ' +
-                    'Useful after adding new material or when warming is turned off.'
-            )
-            .addButton((button) =>
-                button.setButtonText('Build').onClick(() => {
-                    button.setDisabled(true);
-                    button.setButtonText('Building\u2026');
-                    void this.plugin
-                        .warmAllEmbeddingCaches()
-                        .then(() => {
-                            new Notice('Quill: Embedding caches rebuilt.');
-                        })
-                        .catch((err: unknown) => {
-                            const msg = err instanceof Error ? err.message : String(err);
-                            new Notice(`Quill: Embedding build failed. ${msg}`);
-                        })
-                        .finally(() => {
-                            button.setDisabled(false);
-                            button.setButtonText('Build');
-                        });
-                })
-            );
-
-        new Setting(content)
-            .setName('Embedding chunk size (tokens)')
-            .setDesc(
-                "Target tokens per chunk when embedding. Must not exceed your embedding model's context window. Many local embedding models (e.g. Nomic-embed-text) support 512; cloud models may support more. Default: 512."
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.embeddingChunkTokenSize))
-                    // settings.ts - no Component lifecycle available; raw addEventListener is required
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 128 && n <= 8192) {
-                            this.plugin.settings.embeddingChunkTokenSize = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.embeddingChunkTokenSize));
-                            new Notice('Value must be a number between 128 and 8192');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Show full embed in file picker')
-            .setDesc(
-                'When enabled, file pickers show a "{Folder name} full embed" option alongside "{Folder name} embedded" (top-K). Full embed sends all chunk texts from the folder; top-K sends only the most relevant. Default: off.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableFullEmbedPickerOption).onChange((value) => {
-                    this.plugin.settings.enableFullEmbedPickerOption = value;
-                    void this.plugin.saveSettings();
-                })
-            );
-
-        // --- Folder-specific top-K overrides ---
-        new Setting(content)
-            .setName('Folder-specific chunk overrides')
-            .setDesc(
-                'Set a custom top-k chunk count for specific embedded folders. Use a higher number for folders that are more important to your writing (e.g., plot maps), and a lower number for auxiliary lore. Folders without an override use the global setting above.'
-            )
-            .setHeading();
-
-        const overridesContainer = content.createDiv({ cls: 'quill-folder-overrides-list' });
-
-        this.renderFolderOverrides(overridesContainer);
-
-        new Setting(content).addButton((button) =>
-            button.setButtonText('+ add folder').onClick(() => {
-                const folders = this.getVaultFolders();
-                new FolderSuggestModal(this.app, folders, (folder) => {
-                    if (this.plugin.settings.folderTopKOverrides[folder]) {
-                        new Notice('Folder already has an override.');
-                        return;
-                    }
-                    this.plugin.settings.folderTopKOverrides[folder] = this.plugin.settings.embeddingsTopKChunks;
-                    void this.plugin.saveSettings();
-                    this.renderFolderOverrides(overridesContainer);
-                }).open();
-            })
-        );
-
-        // --- Lorebook ---
         // --- Debug logging (dev-only) ---
         if (__DEV__) {
             new Setting(content).setName('Debug').setHeading();
@@ -1479,6 +1333,156 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 
     /** Render the linter configuration section. */
+    /** Render the Embeddings settings block into `content` (retrieval index config). */
+    private renderEmbeddingsSettings(content: HTMLElement): void {
+        new Setting(content).setName('Embeddings').setHeading();
+
+        new Setting(content)
+            .setName('Embedding top-k chunks')
+            .setDesc(
+                'Number of chunks (paragraphs) retrieved from embedded folders. Higher = more context but more tokens; lower = tighter focus, less window pressure. Recommended: 8–12 for most use cases. 3–5 keeps overhead minimal. 15+ may crowd the context window.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.embeddingsTopKChunks))
+                    // settings.ts - no Component lifecycle available; raw addEventListener is required
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 1 && n <= 100) {
+                            this.plugin.settings.embeddingsTopKChunks = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.embeddingsTopKChunks));
+                            new Notice('Value must be a number between 1 and 100');
+                        }
+                    })
+            );
+
+        new Setting(content)
+            .setName('Embedding cache warming')
+            .setDesc(
+                'Automatically pre-compute and cache embeddings for each folder containing Markdown files (cast notes, lore, outlines, manuscript chapters). Enables instant semantic retrieval. Root folder is excluded.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.enableEmbeddingWarming).onChange((value) => {
+                    this.plugin.settings.enableEmbeddingWarming = value;
+                    void this.plugin.saveSettings();
+                    if (value) {
+                        void this.plugin.warmAllEmbeddingCaches();
+                    }
+                })
+            );
+
+        new Setting(content)
+            .setName('Embedding warming debounce (seconds)')
+            .setDesc(
+                'How long to wait after the last file save before warming embeddings. Higher reduces API calls during active writing; lower keeps caches fresher. Default: 30.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.embeddingWarmingDebounceSeconds))
+                    // settings.ts - no Component lifecycle available; raw addEventListener is required
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 5 && n <= 600) {
+                            this.plugin.settings.embeddingWarmingDebounceSeconds = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.embeddingWarmingDebounceSeconds));
+                            new Notice('Value must be a number between 5 and 600');
+                        }
+                    })
+            );
+
+        new Setting(content)
+            .setName('Build embeddings now')
+            .setDesc(
+                'Immediately pre-compute and cache embeddings for all folders with Markdown files. ' +
+                    'Useful after adding new material or when warming is turned off.'
+            )
+            .addButton((button) =>
+                button.setButtonText('Build').onClick(() => {
+                    button.setDisabled(true);
+                    button.setButtonText('Building\u2026');
+                    void this.plugin
+                        .warmAllEmbeddingCaches()
+                        .then(() => {
+                            new Notice('Quill: Embedding caches rebuilt.');
+                        })
+                        .catch((err: unknown) => {
+                            const msg = err instanceof Error ? err.message : String(err);
+                            new Notice(`Quill: Embedding build failed. ${msg}`);
+                        })
+                        .finally(() => {
+                            button.setDisabled(false);
+                            button.setButtonText('Build');
+                        });
+                })
+            );
+
+        new Setting(content)
+            .setName('Embedding chunk size (tokens)')
+            .setDesc(
+                "Target tokens per chunk when embedding. Must not exceed your embedding model's context window. Many local embedding models (e.g. Nomic-embed-text) support 512; cloud models may support more. Default: 512."
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.embeddingChunkTokenSize))
+                    // settings.ts - no Component lifecycle available; raw addEventListener is required
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 128 && n <= 8192) {
+                            this.plugin.settings.embeddingChunkTokenSize = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.embeddingChunkTokenSize));
+                            new Notice('Value must be a number between 128 and 8192');
+                        }
+                    })
+            );
+
+        new Setting(content)
+            .setName('Show full embed in file picker')
+            .setDesc(
+                'When enabled, file pickers show a "{Folder name} full embed" option alongside "{Folder name} embedded" (top-K). Full embed sends all chunk texts from the folder; top-K sends only the most relevant. Default: off.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.enableFullEmbedPickerOption).onChange((value) => {
+                    this.plugin.settings.enableFullEmbedPickerOption = value;
+                    void this.plugin.saveSettings();
+                })
+            );
+
+        // --- Folder-specific top-K overrides ---
+        new Setting(content)
+            .setName('Folder-specific chunk overrides')
+            .setDesc(
+                'Set a custom top-k chunk count for specific embedded folders. Use a higher number for folders that are more important to your writing (e.g., plot maps), and a lower number for auxiliary lore. Folders without an override use the global setting above.'
+            )
+            .setHeading();
+
+        const overridesContainer = content.createDiv({ cls: 'quill-folder-overrides-list' });
+
+        this.renderFolderOverrides(overridesContainer);
+
+        new Setting(content).addButton((button) =>
+            button.setButtonText('+ add folder').onClick(() => {
+                const folders = this.getVaultFolders();
+                new FolderSuggestModal(this.app, folders, (folder) => {
+                    if (this.plugin.settings.folderTopKOverrides[folder]) {
+                        new Notice('Folder already has an override.');
+                        return;
+                    }
+                    this.plugin.settings.folderTopKOverrides[folder] = this.plugin.settings.embeddingsTopKChunks;
+                    void this.plugin.saveSettings();
+                    this.renderFolderOverrides(overridesContainer);
+                }).open();
+            })
+        );
+
+        // --- Lorebook ---
+    }
+
     /** Render the Lorebook tab — lorebook config, cached wikis, lore entry images, lore folders. */
     private renderLorebookTab(containerEl: HTMLElement): void {
         const content = containerEl.createEl('div', { cls: 'quill-settings-content-lorebook' });
@@ -3047,6 +3051,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }
                 })
             );
+
+        // Embeddings are the retrieval index that feeds the context assembler —
+        // kept next to the Context engine section for that reason.
+        this.renderEmbeddingsSettings(containerEl);
 
         new Setting(containerEl)
             .setName('Context engine')
