@@ -1030,9 +1030,10 @@ export class CoWriterPanel extends AbstractChatPanel {
                     this.renderEvents.registerDomEvent(bubble, 'contextmenu', (e: MouseEvent) => {
                         e.preventDefault();
                         e.stopPropagation();
+                        const selection = this.selectionWithin(bubble);
                         const menu = new Menu();
-                        this.addCopyMessageItem(menu, msg.content);
-                        this.addSaveToNoteItem(menu, msg.content, 'user');
+                        this.addCopyMessageItem(menu, msg.content, selection);
+                        this.addSaveToNoteItem(menu, msg.content, 'user', selection);
                         menu.addSeparator();
                         const generating =
                             this.optionsLoading ||
@@ -1205,13 +1206,15 @@ export class CoWriterPanel extends AbstractChatPanel {
                     }
 
                     // Right-click → "Copy message" / "Save to note": capture
-                    // the assistant's response without selecting it first.
+                    // the response (or just the selected text) without selecting
+                    // the whole bubble first.
                     this.renderEvents.registerDomEvent(bubble, 'contextmenu', (e: MouseEvent) => {
                         e.preventDefault();
                         e.stopPropagation();
+                        const selection = this.selectionWithin(bubble);
                         const menu = new Menu();
-                        this.addCopyMessageItem(menu, msg.content);
-                        this.addSaveToNoteItem(menu, msg.content, 'assistant');
+                        this.addCopyMessageItem(menu, msg.content, selection);
+                        this.addSaveToNoteItem(menu, msg.content, 'assistant', selection);
                         menu.showAtMouseEvent(e);
                     });
                 }
@@ -1509,65 +1512,92 @@ export class CoWriterPanel extends AbstractChatPanel {
     }
 
     /**
-     * Add a "Copy message" item to a context menu, copying `content` to the
-     * clipboard without requiring the writer to select it first. Shared by the
-     * user-bubble and assistant-bubble context menus.
+     * Return the current text selection if it lies entirely within `el`
+     * (both anchor and focus nodes contained), else empty string. Captured at
+     * context-menu open time so it survives the menu being shown.
      */
-    private addCopyMessageItem(menu: Menu, content: string): void {
-        const text = content.trim();
+    private selectionWithin(el: HTMLElement): string {
+        const sel = el.ownerDocument.getSelection();
+        if (!sel || sel.isCollapsed || sel.rangeCount === 0) return '';
+        const text = sel.toString();
+        if (!text.trim()) return '';
+        const anchor = sel.anchorNode;
+        const focus = sel.focusNode;
+        if (!anchor || !focus || !el.contains(anchor) || !el.contains(focus)) return '';
+        return text;
+    }
+
+    /**
+     * Add a copy item to a context menu. When `selection` is non-empty, it
+     * becomes "Copy selection" acting on the selected text; otherwise "Copy
+     * message" copying the whole bubble. Shared by both bubble context menus.
+     */
+    private addCopyMessageItem(menu: Menu, content: string, selection?: string): void {
+        const selTrim = selection?.trim() ?? '';
+        const text = selTrim || content.trim();
+        const isSelection = selTrim.length > 0;
         menu.addItem((item) =>
             item
-                .setTitle('Copy message')
-                .setIcon('copy')
+                .setTitle(isSelection ? 'Copy selection' : 'Copy message')
+                .setIcon(isSelection ? 'text-select' : 'copy')
                 .setDisabled(text.length === 0)
                 .onClick(() => {
                     if (!text) return;
                     void navigator.clipboard.writeText(text).then(() => {
-                        new Notice('Copied to clipboard');
+                        new Notice(isSelection ? 'Copied selection to clipboard' : 'Copied to clipboard');
                     });
                 })
         );
     }
 
     /**
-     * Add a "Save to note" item to a context menu. Opens the vault file picker
-     * (files only) and appends the message to the chosen note under a
-     * timestamped header — for capturing useful feedback/suggestions/snippets
-     * without select+copy+paste. Shared by both bubble context menus.
+     * Add a "Save to note" item to a context menu. When `selection` is
+     * non-empty, it becomes "Save selection to note" appending only the
+     * selected text; otherwise appends the whole message. Opens the vault file
+     * picker (files only) and appends under a timestamped header. Shared by
+     * both bubble context menus.
      */
-    private addSaveToNoteItem(menu: Menu, content: string, role: 'user' | 'assistant'): void {
-        const text = content.trim();
+    private addSaveToNoteItem(menu: Menu, content: string, role: 'user' | 'assistant', selection?: string): void {
+        const selTrim = selection?.trim() ?? '';
+        const text = selTrim || content.trim();
+        const isSelection = selTrim.length > 0;
         menu.addItem((item) =>
             item
-                .setTitle('Save to note')
+                .setTitle(isSelection ? 'Save selection to note' : 'Save to note')
                 .setIcon('file-plus')
                 .setDisabled(text.length === 0)
-                .onClick(() => this.promptSaveToNote(text, role))
+                .onClick(() => this.promptSaveToNote(text, role, isSelection))
         );
     }
 
-    /** Open the file picker and append the message to the chosen note. */
-    private promptSaveToNote(text: string, role: 'user' | 'assistant'): void {
+    /** Open the file picker and append the captured text to the chosen note. */
+    private promptSaveToNote(text: string, role: 'user' | 'assistant', isSelection: boolean): void {
         new VaultFileSuggestModal(
             this.app,
             (item) => {
                 if (item.kind !== 'file') return;
-                void this.appendToNote(item.file, text, role);
+                void this.appendToNote(item.file, text, role, isSelection);
             },
             [],
-            'Select a note to append the message to...',
+            'Select a note to append to...',
             false,
             true
         ).open();
     }
 
     /** Append `text` to `file` under a timestamped header. */
-    private async appendToNote(file: TFile, text: string, role: 'user' | 'assistant'): Promise<void> {
+    private async appendToNote(
+        file: TFile,
+        text: string,
+        role: 'user' | 'assistant',
+        isSelection: boolean
+    ): Promise<void> {
         try {
             const existing = await this.app.vault.read(file);
             const stamp = new Date().toLocaleString();
             const sep = existing.length === 0 || existing.endsWith('\n\n') ? '' : '\n\n';
-            const header = `---\n\n**Quill co-writer (${role}, ${stamp})**\n\n`;
+            const kind = isSelection ? 'selection' : 'message';
+            const header = `---\n\n**Quill co-writer (${role} ${kind}, ${stamp})**\n\n`;
             const next = `${existing}${sep}${header}${text}\n`;
             await this.app.vault.modify(file, next);
             new Notice(`Saved to "${file.basename}"`);
