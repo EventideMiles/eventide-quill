@@ -1,4 +1,4 @@
-import { App, MarkdownRenderer, Menu, Notice, setIcon } from 'obsidian';
+import { App, MarkdownRenderer, Menu, Notice, setIcon, TFile } from 'obsidian';
 import {
     buildFileLabel,
     formatTokenIndicatorText,
@@ -1025,6 +1025,7 @@ export class CoWriterPanel extends AbstractChatPanel {
                         e.stopPropagation();
                         const menu = new Menu();
                         this.addCopyMessageItem(menu, msg.content);
+                        this.addSaveToNoteItem(menu, msg.content, 'user');
                         menu.addSeparator();
                         const generating =
                             this.optionsLoading ||
@@ -1189,13 +1190,14 @@ export class CoWriterPanel extends AbstractChatPanel {
                         });
                     }
 
-                    // Right-click → "Copy message": copy the assistant's
-                    // response text without selecting it first.
+                    // Right-click → "Copy message" / "Save to note": capture
+                    // the assistant's response without selecting it first.
                     this.renderEvents.registerDomEvent(bubble, 'contextmenu', (e: MouseEvent) => {
                         e.preventDefault();
                         e.stopPropagation();
                         const menu = new Menu();
                         this.addCopyMessageItem(menu, msg.content);
+                        this.addSaveToNoteItem(menu, msg.content, 'assistant');
                         menu.showAtMouseEvent(e);
                     });
                 }
@@ -1511,6 +1513,54 @@ export class CoWriterPanel extends AbstractChatPanel {
                     });
                 })
         );
+    }
+
+    /**
+     * Add a "Save to note" item to a context menu. Opens the vault file picker
+     * (files only) and appends the message to the chosen note under a
+     * timestamped header — for capturing useful feedback/suggestions/snippets
+     * without select+copy+paste. Shared by both bubble context menus.
+     */
+    private addSaveToNoteItem(menu: Menu, content: string, role: 'user' | 'assistant'): void {
+        const text = content.trim();
+        menu.addItem((item) =>
+            item
+                .setTitle('Save to note')
+                .setIcon('file-plus')
+                .setDisabled(text.length === 0)
+                .onClick(() => this.promptSaveToNote(text, role))
+        );
+    }
+
+    /** Open the file picker and append the message to the chosen note. */
+    private promptSaveToNote(text: string, role: 'user' | 'assistant'): void {
+        new VaultFileSuggestModal(
+            this.app,
+            (item) => {
+                if (item.kind !== 'file') return;
+                void this.appendToNote(item.file, text, role);
+            },
+            [],
+            'Select a note to append the message to...',
+            false,
+            true
+        ).open();
+    }
+
+    /** Append `text` to `file` under a timestamped header. */
+    private async appendToNote(file: TFile, text: string, role: 'user' | 'assistant'): Promise<void> {
+        try {
+            const existing = await this.app.vault.read(file);
+            const stamp = new Date().toLocaleString();
+            const sep = existing.length === 0 || existing.endsWith('\n\n') ? '' : '\n\n';
+            const header = `---\n\n**Quill co-writer (${role}, ${stamp})**\n\n`;
+            const next = `${existing}${sep}${header}${text}\n`;
+            await this.app.vault.modify(file, next);
+            new Notice(`Saved to "${file.basename}"`);
+        } catch (err) {
+            new Notice('Quill: failed to save to note.');
+            console.warn('Quill: appendToNote failed', err);
+        }
     }
 
     /** Render the Direct continuation review card (Approve/Reject), using the
