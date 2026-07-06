@@ -11,9 +11,10 @@ import { LORE_ENTRY_TYPES, LORE_TYPE_LABELS } from './core/dashboard/lorebook-ty
 import type { WikiLinkBehavior } from './ai/prompts';
 import type { WikiStats } from './ai/tools/fandom-cache';
 import { formatLocalDate } from './ai/tools/fandom-cache';
+import { isValidWikipediaLang } from './ai/tools/wikipedia-lookup';
 
 export type LinterMode = 'all' | 'prose' | 'ai';
-export type SettingsTab = 'welcome' | 'general' | 'linter' | 'ai-providers' | 'model-behaviors';
+export type SettingsTab = 'welcome' | 'general' | 'lorebook' | 'linter' | 'ai-providers' | 'model-behaviors';
 /** Which sidebar tab opens by default. Mirrors the dropdown options in the General settings. */
 export type DefaultTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard' | 'lorebook';
 
@@ -107,6 +108,15 @@ export interface EventideQuillSettings {
      * are LRU-evicted (by last-saved time) when the limit is exceeded. Default 25.
      */
     coWriterSessionHistoryLimit: number;
+    /**
+     * When true, auto-snapshot the active co-writer conversation to its sidecar
+     * after each completed turn (discuss / coach / lorebook). Off by default —
+     * the snapshot deep-clones the full state (both API arrays, recent images,
+     * change queues) on the main thread, so it's opt-in for writers who want
+     * crash/restart resilience between explicit saves. Trailing-debounced so a
+     * turn followed immediately by auto-options collapses to one write.
+     */
+    coWriterAutoSavePerTurn: boolean;
     coWriterVaultContext: boolean;
     coWriterAppendNewline: boolean;
     enableCoWriterThought: boolean;
@@ -168,6 +178,15 @@ export interface EventideQuillSettings {
      * chat model. Customizable per-writer focus.
      */
     lorebookImageProxyPrompt: string;
+    /**
+     * Two-pass image description for Regime B: when on AND more than one image
+     * is attached, the image model first counts + labels each visible
+     * character across the batch, then describes each with that list as
+     * grounding. Helps weak vision models keep per-character descriptions
+     * coherent across a group. Off by default — it costs an extra model call
+     * per batch, which writers with a strong vision model don't need.
+     */
+    lorebookImageTwoPassDescription: boolean;
     /**
      * Heading texts (case-insensitive, trimmed) that mark a lore entry's
      * image-gallery section. The lorebook scanner parses image embeds within
@@ -296,6 +315,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     coWriterMaxOutputTokens: 2048,
     coWriterMaxToolRounds: 0,
     coWriterSessionHistoryLimit: 25,
+    coWriterAutoSavePerTurn: false,
     coWriterVaultContext: true,
     coWriterAppendNewline: true,
     enableCoWriterThought: true,
@@ -323,6 +343,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     lorebookImageMaxDimension: 512,
     lorebookImageMaxDescriptionTokens: 2048,
     lorebookImageProxyPrompt: DEFAULT_IMAGE_PROXY_PROMPT,
+    lorebookImageTwoPassDescription: false,
     loreEntryImageSectionHeaders: ['Reference', 'Reference images', 'Gallery', 'Forms', 'Appearance', 'Art'],
     loreEntryImageMaxPerEntry: 4,
     loreEntryImageAttachments: true,
@@ -516,9 +537,15 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         const scrollArea = containerEl.createDiv({ cls: 'quill-settings__scroll-area' });
         this.renderWelcomeTab(scrollArea);
         this.renderGeneralTab(scrollArea);
+        this.renderLorebookTab(scrollArea);
         this.renderLinterTab(scrollArea);
         this.renderAiProvidersTab(scrollArea);
         this.renderModelBehaviorsTab(scrollArea);
+
+        // Wrap runs of settings under each heading into visually distinct
+        // groups (background + border) so tabs don't read as a flat list.
+        const tabContents = scrollArea.querySelectorAll<HTMLElement>('[class*="quill-settings-content-"]');
+        tabContents.forEach((c) => this.groupSettingsByHeading(c));
 
         this.renderFooter(containerEl);
 
@@ -532,6 +559,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         const tabs: { id: SettingsTab; label: string }[] = [
             { id: 'welcome', label: 'Welcome' },
             { id: 'general', label: 'General' },
+            { id: 'lorebook', label: 'Lorebook' },
             { id: 'linter', label: 'Linter' },
             { id: 'ai-providers', label: 'AI providers' },
             { id: 'model-behaviors', label: 'Model behaviors' }
@@ -562,7 +590,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
      *                   previous scroll area and also falls back to 0.
      */
     private showActiveTab(scrollTop = 0): void {
-        const tabIds: SettingsTab[] = ['welcome', 'general', 'linter', 'ai-providers', 'model-behaviors'];
+        const tabIds: SettingsTab[] = ['welcome', 'general', 'lorebook', 'linter', 'ai-providers', 'model-behaviors'];
         const tabs = this.containerEl.querySelectorAll('.quill-settings__tab');
 
         for (const id of tabIds) {
@@ -794,6 +822,31 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 void this.plugin.saveSettings();
             });
         });
+    }
+
+    /**
+     * Wrap each run of settings under a heading (`.setting-item-heading`)
+     * into a styled `.quill-settings__section` group, so a long tab reads as
+     * visually distinct blocks instead of a flat list that bleeds together.
+     *
+     * Idempotent and DOM-move-based: elements aren't recreated, so event
+     * listeners registered on them (and Setting objects' internal refs)
+     * survive. Called from {@link display} after every tab's content is built.
+     * Children appearing before the first heading stay at the top (ungrouped).
+     */
+    private groupSettingsByHeading(container: HTMLElement): void {
+        const snapshot = Array.from(container.children) as HTMLElement[];
+        let group: HTMLElement | null = null;
+        for (const child of snapshot) {
+            if (child.classList.contains('setting-item-heading')) {
+                group = container.ownerDocument.createElement('div');
+                group.className = 'quill-settings__section';
+                container.insertBefore(group, child);
+                group.appendChild(child);
+            } else if (group) {
+                group.appendChild(child);
+            }
+        }
     }
 
     /** Render the welcome tab (onboarding + feature overview). */
@@ -1063,7 +1116,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         // --- Analysis settings ---
-        new Setting(content).setName('Analysis').setHeading();
+        new Setting(content).setName('Manuscript analysis engine').setHeading();
 
         new Setting(content)
             .setName('Compression chunk size (tokens)')
@@ -1127,6 +1180,160 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         // --- Embedding settings ---
+        // --- Debug logging (dev-only) ---
+        if (__DEV__) {
+            new Setting(content).setName('Debug').setHeading();
+
+            new Setting(content)
+                .setName('Enable debug logging')
+                .setDesc(
+                    'When enabled, logs AI payload context to the browser console (console.warn). Useful for inspecting the actual data sent to providers.'
+                )
+                .addToggle((toggle) =>
+                    toggle.setValue(this.plugin.settings.enableDebugLogging).onChange(async (value) => {
+                        this.plugin.settings.enableDebugLogging = value;
+                        await this.plugin.saveSettings();
+                    })
+                );
+        }
+
+        // --- Dashboard settings ---
+        new Setting(content).setName('Dashboard').setHeading();
+
+        new Setting(content)
+            .setName('Readability formula')
+            .setDesc('Which readability formula to display in the dashboard.')
+            .addDropdown((dropdown) => {
+                dropdown.addOption('reweighted-flesch', 'Reweighted flesch');
+                dropdown.addOption('flesch-kincaid', 'Flesch-kincaid');
+                dropdown.addOption('ari', 'Automated readability index');
+                dropdown.addOption('custom-composite', 'Custom composite');
+                dropdown.addOption('dale-chall', 'Dale-chall');
+                dropdown.setValue(this.plugin.settings.readabilityFormula).onChange(async (value) => {
+                    this.plugin.settings.readabilityFormula = value as ReadabilityFormula;
+                    await this.plugin.saveSettings();
+                });
+            });
+
+        new Setting(content)
+            .setName('Auto-refresh interval')
+            .setDesc('Refresh the dashboard every n minutes when the tab is active (0 disables).')
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.dashboardAutoRefreshMinutes))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 0 && n <= 60) {
+                            this.plugin.settings.dashboardAutoRefreshMinutes = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.dashboardAutoRefreshMinutes));
+                            new Notice('Value must be between 0 and 60');
+                        }
+                    })
+            );
+
+        new Setting(content)
+            .setName('Auto-snapshot on save')
+            .setDesc('Record a word-count snapshot whenever a chapter file is saved.')
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.dashboardAutoSnapshotOnSave).onChange(async (value) => {
+                    this.plugin.settings.dashboardAutoSnapshotOnSave = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
+            .setName('Max snapshots retained')
+            .setDesc(
+                'Maximum number of historical snapshots to keep per manuscript (10-1000). Oldest are pruned first.'
+            )
+            .addText((text) =>
+                text
+                    .setValue(String(this.plugin.settings.dashboardMaxSnapshots))
+                    .inputEl.addEventListener('blur', () => {
+                        const n = parseInt(text.inputEl.value, 10);
+                        if (!isNaN(n) && n >= 10 && n <= 1000) {
+                            this.plugin.settings.dashboardMaxSnapshots = n;
+                            void this.plugin.saveSettings();
+                        } else {
+                            text.setValue(String(this.plugin.settings.dashboardMaxSnapshots));
+                            new Notice('Value must be between 10 and 1000');
+                        }
+                    })
+            );
+
+        // --- Restore defaults ---
+        new Setting(content)
+            .setName('Restore defaults')
+            .setDesc('Reset all general settings to their default values.')
+            .addButton((button) =>
+                button.setButtonText('Restore defaults').onClick(async () => {
+                    this.plugin.settings.defaultTab = DEFAULT_SETTINGS.defaultTab;
+                    this.plugin.settings.enableDashboard = DEFAULT_SETTINGS.enableDashboard;
+                    this.plugin.settings.enableCriticalAnalysis = DEFAULT_SETTINGS.enableCriticalAnalysis;
+                    this.plugin.settings.enableManuscriptAnalysis = DEFAULT_SETTINGS.enableManuscriptAnalysis;
+                    this.plugin.settings.manuscriptAnalysisTemperature = DEFAULT_SETTINGS.manuscriptAnalysisTemperature;
+                    this.plugin.settings.manuscriptAnalysisMaxOutputTokens =
+                        DEFAULT_SETTINGS.manuscriptAnalysisMaxOutputTokens;
+                    this.plugin.settings.manuscriptAnalysisChunkTokenSize =
+                        DEFAULT_SETTINGS.manuscriptAnalysisChunkTokenSize;
+                    this.plugin.settings.embeddingsTopKChunks = DEFAULT_SETTINGS.embeddingsTopKChunks;
+                    this.plugin.settings.embeddingChunkTokenSize = DEFAULT_SETTINGS.embeddingChunkTokenSize;
+                    this.plugin.settings.enableEmbeddingWarming = DEFAULT_SETTINGS.enableEmbeddingWarming;
+                    this.plugin.settings.enableFullEmbedPickerOption = DEFAULT_SETTINGS.enableFullEmbedPickerOption;
+                    this.plugin.settings.folderTopKOverrides = { ...DEFAULT_SETTINGS.folderTopKOverrides };
+                    this.plugin.settings.enableDebugLogging = DEFAULT_SETTINGS.enableDebugLogging;
+                    this.plugin.settings.embeddingWarmingDebounceSeconds =
+                        DEFAULT_SETTINGS.embeddingWarmingDebounceSeconds;
+                    this.plugin.settings.dashboardAutoRefreshMinutes = DEFAULT_SETTINGS.dashboardAutoRefreshMinutes;
+                    this.plugin.settings.dashboardAutoSnapshotOnSave = DEFAULT_SETTINGS.dashboardAutoSnapshotOnSave;
+                    this.plugin.settings.dashboardMaxSnapshots = DEFAULT_SETTINGS.dashboardMaxSnapshots;
+                    this.plugin.settings.readabilityFormula = DEFAULT_SETTINGS.readabilityFormula;
+                    this.plugin.settings.lorebookFolders = [...DEFAULT_SETTINGS.lorebookFolders];
+                    this.plugin.settings.lorebookFolderTypes = { ...DEFAULT_SETTINGS.lorebookFolderTypes };
+                    this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
+                    this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
+                    this.plugin.settings.coWriterToolsEnabled = DEFAULT_SETTINGS.coWriterToolsEnabled;
+                    this.plugin.settings.lorebookNetworkTools = DEFAULT_SETTINGS.lorebookNetworkTools;
+                    this.plugin.settings.lorebookFandomWikis = [...DEFAULT_SETTINGS.lorebookFandomWikis];
+                    this.plugin.settings.lorebookFandomAllowAllWikis = DEFAULT_SETTINGS.lorebookFandomAllowAllWikis;
+                    this.plugin.settings.lorebookFandomCacheEnabled = DEFAULT_SETTINGS.lorebookFandomCacheEnabled;
+                    this.plugin.settings.lorebookWikipediaLang = DEFAULT_SETTINGS.lorebookWikipediaLang;
+                    this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
+                    this.plugin.settings.lorebookImageTools = DEFAULT_SETTINGS.lorebookImageTools;
+                    this.plugin.settings.lorebookImageMaxDimension = DEFAULT_SETTINGS.lorebookImageMaxDimension;
+                    this.plugin.settings.lorebookImageMaxDescriptionTokens =
+                        DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
+                    this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
+                    this.plugin.settings.lorebookImageTwoPassDescription =
+                        DEFAULT_SETTINGS.lorebookImageTwoPassDescription;
+                    this.plugin.settings.loreEntryImageSectionHeaders = [
+                        ...DEFAULT_SETTINGS.loreEntryImageSectionHeaders
+                    ];
+                    this.plugin.settings.loreEntryImageMaxPerEntry = DEFAULT_SETTINGS.loreEntryImageMaxPerEntry;
+                    this.plugin.settings.loreEntryImageAttachments = DEFAULT_SETTINGS.loreEntryImageAttachments;
+                    this.plugin.settings.loreEntryImageAttachmentFolder =
+                        DEFAULT_SETTINGS.loreEntryImageAttachmentFolder;
+                    this.plugin.settings.slashCommands = [...DEFAULT_SETTINGS.slashCommands];
+                    await this.plugin.saveSettings();
+                    this.display();
+                })
+            );
+    }
+
+    /**
+     * Render the footer area. Currently empty and collapsed to 0 height in
+     * `_settings.scss` so it occupies no space. Reserved for a future donation /
+     * support ask — restore the footer sizing there (rules are commented out)
+     * when adding content here.
+     */
+    private renderFooter(containerEl: HTMLElement): void {
+        containerEl.createEl('div', { cls: 'quill-settings__footer' });
+    }
+
+    /** Render the Embeddings settings block into `content` (retrieval index config). */
+    private renderEmbeddingsSettings(content: HTMLElement): void {
         new Setting(content).setName('Embeddings').setHeading();
 
         new Setting(content)
@@ -1273,6 +1480,16 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         );
 
         // --- Lorebook ---
+    }
+
+    /** Render the Lorebook tab — lorebook config, cached wikis, lore entry images, lore folders. */
+    private renderLorebookTab(containerEl: HTMLElement): void {
+        const content = containerEl.createEl('div', { cls: 'quill-settings-content-lorebook' });
+        this.renderLorebookSettings(content);
+    }
+
+    /** Render the lorebook settings block into `content`. */
+    private renderLorebookSettings(content: HTMLElement): void {
         new Setting(content).setName('Lorebook').setHeading();
 
         new Setting(content)
@@ -1423,11 +1640,25 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
         new Setting(content)
             .setName('Wikipedia language')
-            .setDesc('Wikipedia language subdomain (e.g., "en", "fr", "de"). Default: en.')
+            .setDesc('Wikipedia language subdomain (e.g., "en", "fr", "de", "simple"). Default: en.')
             .addText((text) =>
                 text.setValue(this.plugin.settings.lorebookWikipediaLang).inputEl.addEventListener('blur', () => {
                     const lang = text.inputEl.value.trim().toLowerCase();
-                    this.plugin.settings.lorebookWikipediaLang = lang || 'en';
+                    if (!lang) {
+                        this.plugin.settings.lorebookWikipediaLang = 'en';
+                        void this.plugin.saveSettings();
+                        // Keep the visible field in sync with the reverted default.
+                        text.inputEl.value = 'en';
+                        return;
+                    }
+                    if (!isValidWikipediaLang(lang)) {
+                        new Notice(
+                            `Quill: "${lang}" is not a valid Wikipedia language code (use a subdomain like "en", "fr", or "simple").`
+                        );
+                        text.inputEl.value = this.plugin.settings.lorebookWikipediaLang;
+                        return;
+                    }
+                    this.plugin.settings.lorebookWikipediaLang = lang;
                     void this.plugin.saveSettings();
                 })
             );
@@ -1525,6 +1756,22 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_IMAGE_PROXY_PROMPT;
                         text.inputEl.value = DEFAULT_IMAGE_PROXY_PROMPT;
                     }
+                    void this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(content)
+            .setName('Two-pass image description')
+            .setDesc(
+                'When your chat model is text-only and a separate image model is configured, describe ' +
+                    'multi-image batches in two passes: the image model first counts and labels each ' +
+                    'visible character, then describes each with that list as grounding. Helps weaker ' +
+                    'vision models keep per-character descriptions coherent across a group. Only ' +
+                    'applies when more than one image is attached — single images skip the count pass.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.lorebookImageTwoPassDescription).onChange((value) => {
+                    this.plugin.settings.lorebookImageTwoPassDescription = value;
                     void this.plugin.saveSettings();
                 })
             );
@@ -1653,158 +1900,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 }).open();
             })
         );
-
-        // --- Debug logging (dev-only) ---
-        if (__DEV__) {
-            new Setting(content).setName('Debug').setHeading();
-
-            new Setting(content)
-                .setName('Enable debug logging')
-                .setDesc(
-                    'When enabled, logs AI payload context to the browser console (console.warn). Useful for inspecting the actual data sent to providers.'
-                )
-                .addToggle((toggle) =>
-                    toggle.setValue(this.plugin.settings.enableDebugLogging).onChange(async (value) => {
-                        this.plugin.settings.enableDebugLogging = value;
-                        await this.plugin.saveSettings();
-                    })
-                );
-        }
-
-        // --- Dashboard settings ---
-        new Setting(content).setName('Dashboard').setHeading();
-
-        new Setting(content)
-            .setName('Readability formula')
-            .setDesc('Which readability formula to display in the dashboard.')
-            .addDropdown((dropdown) => {
-                dropdown.addOption('reweighted-flesch', 'Reweighted flesch');
-                dropdown.addOption('flesch-kincaid', 'Flesch-kincaid');
-                dropdown.addOption('ari', 'Automated readability index');
-                dropdown.addOption('custom-composite', 'Custom composite');
-                dropdown.addOption('dale-chall', 'Dale-chall');
-                dropdown.setValue(this.plugin.settings.readabilityFormula).onChange(async (value) => {
-                    this.plugin.settings.readabilityFormula = value as ReadabilityFormula;
-                    await this.plugin.saveSettings();
-                });
-            });
-
-        new Setting(content)
-            .setName('Auto-refresh interval')
-            .setDesc('Refresh the dashboard every n minutes when the tab is active (0 disables).')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.dashboardAutoRefreshMinutes))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 0 && n <= 60) {
-                            this.plugin.settings.dashboardAutoRefreshMinutes = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.dashboardAutoRefreshMinutes));
-                            new Notice('Value must be between 0 and 60');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Auto-snapshot on save')
-            .setDesc('Record a word-count snapshot whenever a chapter file is saved.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.dashboardAutoSnapshotOnSave).onChange(async (value) => {
-                    this.plugin.settings.dashboardAutoSnapshotOnSave = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Max snapshots retained')
-            .setDesc(
-                'Maximum number of historical snapshots to keep per manuscript (10-1000). Oldest are pruned first.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.dashboardMaxSnapshots))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 10 && n <= 1000) {
-                            this.plugin.settings.dashboardMaxSnapshots = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.dashboardMaxSnapshots));
-                            new Notice('Value must be between 10 and 1000');
-                        }
-                    })
-            );
-
-        // --- Restore defaults ---
-        new Setting(content)
-            .setName('Restore defaults')
-            .setDesc('Reset all general settings to their default values.')
-            .addButton((button) =>
-                button.setButtonText('Restore defaults').onClick(async () => {
-                    this.plugin.settings.defaultTab = DEFAULT_SETTINGS.defaultTab;
-                    this.plugin.settings.enableDashboard = DEFAULT_SETTINGS.enableDashboard;
-                    this.plugin.settings.enableCriticalAnalysis = DEFAULT_SETTINGS.enableCriticalAnalysis;
-                    this.plugin.settings.enableManuscriptAnalysis = DEFAULT_SETTINGS.enableManuscriptAnalysis;
-                    this.plugin.settings.manuscriptAnalysisTemperature = DEFAULT_SETTINGS.manuscriptAnalysisTemperature;
-                    this.plugin.settings.manuscriptAnalysisMaxOutputTokens =
-                        DEFAULT_SETTINGS.manuscriptAnalysisMaxOutputTokens;
-                    this.plugin.settings.manuscriptAnalysisChunkTokenSize =
-                        DEFAULT_SETTINGS.manuscriptAnalysisChunkTokenSize;
-                    this.plugin.settings.embeddingsTopKChunks = DEFAULT_SETTINGS.embeddingsTopKChunks;
-                    this.plugin.settings.embeddingChunkTokenSize = DEFAULT_SETTINGS.embeddingChunkTokenSize;
-                    this.plugin.settings.enableEmbeddingWarming = DEFAULT_SETTINGS.enableEmbeddingWarming;
-                    this.plugin.settings.enableFullEmbedPickerOption = DEFAULT_SETTINGS.enableFullEmbedPickerOption;
-                    this.plugin.settings.folderTopKOverrides = { ...DEFAULT_SETTINGS.folderTopKOverrides };
-                    this.plugin.settings.enableDebugLogging = DEFAULT_SETTINGS.enableDebugLogging;
-                    this.plugin.settings.embeddingWarmingDebounceSeconds =
-                        DEFAULT_SETTINGS.embeddingWarmingDebounceSeconds;
-                    this.plugin.settings.dashboardAutoRefreshMinutes = DEFAULT_SETTINGS.dashboardAutoRefreshMinutes;
-                    this.plugin.settings.dashboardAutoSnapshotOnSave = DEFAULT_SETTINGS.dashboardAutoSnapshotOnSave;
-                    this.plugin.settings.dashboardMaxSnapshots = DEFAULT_SETTINGS.dashboardMaxSnapshots;
-                    this.plugin.settings.readabilityFormula = DEFAULT_SETTINGS.readabilityFormula;
-                    this.plugin.settings.lorebookFolders = [...DEFAULT_SETTINGS.lorebookFolders];
-                    this.plugin.settings.lorebookFolderTypes = { ...DEFAULT_SETTINGS.lorebookFolderTypes };
-                    this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
-                    this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
-                    this.plugin.settings.coWriterToolsEnabled = DEFAULT_SETTINGS.coWriterToolsEnabled;
-                    this.plugin.settings.lorebookNetworkTools = DEFAULT_SETTINGS.lorebookNetworkTools;
-                    this.plugin.settings.lorebookFandomWikis = [...DEFAULT_SETTINGS.lorebookFandomWikis];
-                    this.plugin.settings.lorebookFandomAllowAllWikis = DEFAULT_SETTINGS.lorebookFandomAllowAllWikis;
-                    this.plugin.settings.lorebookFandomCacheEnabled = DEFAULT_SETTINGS.lorebookFandomCacheEnabled;
-                    this.plugin.settings.lorebookWikipediaLang = DEFAULT_SETTINGS.lorebookWikipediaLang;
-                    this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
-                    this.plugin.settings.lorebookImageTools = DEFAULT_SETTINGS.lorebookImageTools;
-                    this.plugin.settings.lorebookImageMaxDimension = DEFAULT_SETTINGS.lorebookImageMaxDimension;
-                    this.plugin.settings.lorebookImageMaxDescriptionTokens =
-                        DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
-                    this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
-                    this.plugin.settings.loreEntryImageSectionHeaders = [
-                        ...DEFAULT_SETTINGS.loreEntryImageSectionHeaders
-                    ];
-                    this.plugin.settings.loreEntryImageMaxPerEntry = DEFAULT_SETTINGS.loreEntryImageMaxPerEntry;
-                    this.plugin.settings.loreEntryImageAttachments = DEFAULT_SETTINGS.loreEntryImageAttachments;
-                    this.plugin.settings.loreEntryImageAttachmentFolder =
-                        DEFAULT_SETTINGS.loreEntryImageAttachmentFolder;
-                    this.plugin.settings.slashCommands = [...DEFAULT_SETTINGS.slashCommands];
-                    await this.plugin.saveSettings();
-                    this.display();
-                })
-            );
     }
 
-    /**
-     * Render the footer area. Currently empty and collapsed to 0 height in
-     * `_settings.scss` so it occupies no space. Reserved for a future donation /
-     * support ask — restore the footer sizing there (rules are commented out)
-     * when adding content here.
-     */
-    private renderFooter(containerEl: HTMLElement): void {
-        containerEl.createEl('div', { cls: 'quill-settings__footer' });
-    }
-
-    /** Render the linter configuration section. */
     private renderLinterTab(containerEl: HTMLElement): void {
         const content = containerEl.createEl('div', { cls: 'quill-settings-content-linter' });
 
@@ -2664,6 +2761,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
                         this.plugin.settings.coWriterMaxToolRounds = DEFAULT_SETTINGS.coWriterMaxToolRounds;
                         this.plugin.settings.coWriterSessionHistoryLimit = DEFAULT_SETTINGS.coWriterSessionHistoryLimit;
+                        this.plugin.settings.coWriterAutoSavePerTurn = DEFAULT_SETTINGS.coWriterAutoSavePerTurn;
                         this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
                         this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                         this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
@@ -2750,6 +2848,21 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             new Notice('Value must be a number ≥ 0');
                         }
                     })
+            );
+
+        new Setting(containerEl)
+            .setName('Auto-save after each turn')
+            .setDesc(
+                'Snapshot the active conversation to its saved-session file after every completed turn, so it ' +
+                    'survives a crash or restart without an explicit save. Off by default — the snapshot copies ' +
+                    'the full conversation state, so it adds some overhead on long sessions. De-bounced so a ' +
+                    'turn followed immediately by auto-options collapses to one write.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.coWriterAutoSavePerTurn).onChange((value) => {
+                    this.plugin.settings.coWriterAutoSavePerTurn = value;
+                    void this.plugin.saveSettings();
+                })
             );
 
         new Setting(containerEl)
@@ -2939,6 +3052,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }
                 })
             );
+
+        // Embeddings are the retrieval index that feeds the context assembler —
+        // kept next to the Context engine section for that reason.
+        this.renderEmbeddingsSettings(containerEl);
 
         new Setting(containerEl)
             .setName('Context engine')
@@ -3156,6 +3273,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.coWriterTemperature = DEFAULT_SETTINGS.coWriterTemperature;
                     this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
                     this.plugin.settings.coWriterMaxToolRounds = DEFAULT_SETTINGS.coWriterMaxToolRounds;
+                    this.plugin.settings.coWriterAutoSavePerTurn = DEFAULT_SETTINGS.coWriterAutoSavePerTurn;
                     this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
                     this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
                     this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
@@ -3170,6 +3288,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.lorebookImageMaxDescriptionTokens =
                         DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
                     this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
+                    this.plugin.settings.lorebookImageTwoPassDescription =
+                        DEFAULT_SETTINGS.lorebookImageTwoPassDescription;
                     this.plugin.settings.loreEntryImageSectionHeaders = [
                         ...DEFAULT_SETTINGS.loreEntryImageSectionHeaders
                     ];

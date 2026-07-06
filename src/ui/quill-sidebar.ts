@@ -760,6 +760,9 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setRewindHandler((messageId) => {
                 this.plugin.rewindCoWriterChat(messageId);
             });
+            this.coWriterPanel.setRegenerateHandler((messageId) => {
+                void this.plugin.regenerateCoWriterResponse(messageId);
+            });
             this.coWriterPanel.setModeSwitchHandler(() => {
                 this.plugin.clearCoWriterSubagents();
             });

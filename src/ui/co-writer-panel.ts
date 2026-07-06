@@ -1,4 +1,4 @@
-import { App, MarkdownRenderer, Menu, Notice, setIcon } from 'obsidian';
+import { App, MarkdownRenderer, Menu, Notice, setIcon, TFile } from 'obsidian';
 import {
     buildFileLabel,
     formatTokenIndicatorText,
@@ -226,6 +226,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onSaveSnapshot: (() => void) | null = null;
     /** Rewind the chat to before a user message (discard it + everything after). */
     private onRewind: ((messageId: string) => void) | null = null;
+    /** Regenerate the response to a user message (rewind + auto-resend same text). */
+    private onRegenerate: ((messageId: string) => void) | null = null;
 
     /**
      * Conversation token estimate pushed from the plugin layer.
@@ -572,6 +574,11 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.onRewind = handler;
     }
 
+    /** Set the handler invoked when the writer regenerates a response. */
+    setRegenerateHandler(handler: (messageId: string) => void): void {
+        this.onRegenerate = handler;
+    }
+
     /**
      * Pre-fill the chat input with `text` (and focus it) — used after a rewind
      * to restore the discarded message's text so the writer can edit and resend.
@@ -844,11 +851,15 @@ export class CoWriterPanel extends AbstractChatPanel {
             }
         }
 
-        // Restore textarea focus if the user was typing when generation completed
+        // Restore textarea focus if the user was typing when generation completed.
+        // preventScroll stops the browser from scrolling the textarea into view
+        // (it's pinned at the bottom) — without it, an async focus-scroll can
+        // overwrite the scroll restoration below, snapping a user who scrolled
+        // up to read older messages back to the bottom.
         if (textareaHadFocus) {
             const newTextarea = this.containerEl.querySelector<HTMLTextAreaElement>('.quill-cowriter-panel__input');
             if (newTextarea) {
-                newTextarea.focus();
+                newTextarea.focus({ preventScroll: true });
             }
         }
 
@@ -1019,7 +1030,11 @@ export class CoWriterPanel extends AbstractChatPanel {
                     this.renderEvents.registerDomEvent(bubble, 'contextmenu', (e: MouseEvent) => {
                         e.preventDefault();
                         e.stopPropagation();
+                        const selection = this.selectionWithin(bubble);
                         const menu = new Menu();
+                        this.addCopyMessageItem(menu, msg.content, selection);
+                        this.addSaveToNoteItem(menu, msg.content, 'user', selection);
+                        menu.addSeparator();
                         const generating =
                             this.optionsLoading ||
                             this.draftState === 'generating' ||
@@ -1034,13 +1049,20 @@ export class CoWriterPanel extends AbstractChatPanel {
                                 .setDisabled(!rewindable)
                                 .onClick(() => this.onRewind?.(msg.id))
                         );
+                        menu.addItem((item) =>
+                            item
+                                .setTitle('Regenerate response')
+                                .setIcon('refresh-cw')
+                                .setDisabled(!rewindable)
+                                .onClick(() => this.onRegenerate?.(msg.id))
+                        );
                         if (!rewindable) {
                             menu.addItem((item) =>
                                 item
                                     .setTitle(
                                         generating
-                                            ? 'Stop generation before rewinding'
-                                            : 'Part of the summarized context (compacted) — can\u2019t rewind'
+                                            ? 'Stop generation before rewinding or regenerating'
+                                            : 'Part of the summarized context (compacted) — can\u2019t rewind or regenerate'
                                     )
                                     .setDisabled(true)
                             );
@@ -1182,6 +1204,19 @@ export class CoWriterPanel extends AbstractChatPanel {
                             }
                         });
                     }
+
+                    // Right-click → "Copy message" / "Save to note": capture
+                    // the response (or just the selected text) without selecting
+                    // the whole bubble first.
+                    this.renderEvents.registerDomEvent(bubble, 'contextmenu', (e: MouseEvent) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const selection = this.selectionWithin(bubble);
+                        const menu = new Menu();
+                        this.addCopyMessageItem(menu, msg.content, selection);
+                        this.addSaveToNoteItem(menu, msg.content, 'assistant', selection);
+                        menu.showAtMouseEvent(e);
+                    });
                 }
 
                 // Reviewable cards anchored to this message (subagent status
@@ -1474,6 +1509,105 @@ export class CoWriterPanel extends AbstractChatPanel {
         const p = MarkdownRenderer.render(this.app, normalizeParagraphBreaks(content), target, '', this.renderEvents);
         void p;
         this.renderPromises.push(p);
+    }
+
+    /**
+     * Return the current text selection if it lies entirely within `el`
+     * (both anchor and focus nodes contained), else empty string. Captured at
+     * context-menu open time so it survives the menu being shown.
+     */
+    private selectionWithin(el: HTMLElement): string {
+        const sel = el.ownerDocument.getSelection();
+        if (!sel || sel.isCollapsed || sel.rangeCount === 0) return '';
+        const text = sel.toString();
+        if (!text.trim()) return '';
+        const anchor = sel.anchorNode;
+        const focus = sel.focusNode;
+        if (!anchor || !focus || !el.contains(anchor) || !el.contains(focus)) return '';
+        return text;
+    }
+
+    /**
+     * Add a copy item to a context menu. When `selection` is non-empty, it
+     * becomes "Copy selection" acting on the selected text; otherwise "Copy
+     * message" copying the whole bubble. Shared by both bubble context menus.
+     */
+    private addCopyMessageItem(menu: Menu, content: string, selection?: string): void {
+        const selTrim = selection?.trim() ?? '';
+        const text = selTrim || content.trim();
+        const isSelection = selTrim.length > 0;
+        menu.addItem((item) =>
+            item
+                .setTitle(isSelection ? 'Copy selection' : 'Copy message')
+                .setIcon(isSelection ? 'text-select' : 'copy')
+                .setDisabled(text.length === 0)
+                .onClick(() => {
+                    if (!text) return;
+                    void navigator.clipboard.writeText(text).then(() => {
+                        new Notice(isSelection ? 'Copied selection to clipboard' : 'Copied to clipboard');
+                    });
+                })
+        );
+    }
+
+    /**
+     * Add a "Save to note" item to a context menu. When `selection` is
+     * non-empty, it becomes "Save selection to note" appending only the
+     * selected text; otherwise appends the whole message. Opens the vault file
+     * picker (files only) and appends under a timestamped header. Shared by
+     * both bubble context menus.
+     */
+    private addSaveToNoteItem(menu: Menu, content: string, role: 'user' | 'assistant', selection?: string): void {
+        const selTrim = selection?.trim() ?? '';
+        const text = selTrim || content.trim();
+        const isSelection = selTrim.length > 0;
+        menu.addItem((item) =>
+            item
+                .setTitle(isSelection ? 'Save selection to note' : 'Save to note')
+                .setIcon('file-plus')
+                .setDisabled(text.length === 0)
+                .onClick(() => this.promptSaveToNote(text, role, isSelection))
+        );
+    }
+
+    /** Open the file picker and append the captured text to the chosen note. */
+    private promptSaveToNote(text: string, role: 'user' | 'assistant', isSelection: boolean): void {
+        new VaultFileSuggestModal(
+            this.app,
+            (item) => {
+                if (item.kind !== 'file') return;
+                void this.appendToNote(item.file, text, role, isSelection);
+            },
+            [],
+            'Select a note to append to...',
+            false,
+            true
+        ).open();
+    }
+
+    /** Append `text` to `file` under a timestamped header. */
+    private async appendToNote(
+        file: TFile,
+        text: string,
+        role: 'user' | 'assistant',
+        isSelection: boolean
+    ): Promise<void> {
+        try {
+            const stamp = new Date().toLocaleString();
+            const kind = isSelection ? 'selection' : 'message';
+            const header = `---\n\n**Quill co-writer (${role} ${kind}, ${stamp})**\n\n`;
+            // vault.process reads + writes atomically, so a concurrent edit to
+            // the same note between our read and write is preserved rather than
+            // clobbered (the separate read → modify path would lose it).
+            await this.app.vault.process(file, (existing) => {
+                const sep = existing.length === 0 || existing.endsWith('\n\n') ? '' : '\n\n';
+                return `${existing}${sep}${header}${text}\n`;
+            });
+            new Notice(`Saved to "${file.basename}"`);
+        } catch (err) {
+            new Notice('Quill: failed to save to note.');
+            console.warn('Quill: appendToNote failed', err);
+        }
     }
 
     /** Render the Direct continuation review card (Approve/Reject), using the

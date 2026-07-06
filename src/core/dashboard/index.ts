@@ -21,7 +21,7 @@ export {
     manuscriptMetrics,
     pacingAnalysis
 } from './metrics';
-export { daleChall, reweightedFlesch, customComposite, automatedReadabilityIndex } from './readability';
+export { daleChall, reweightedFlesch, customComposite, automatedReadabilityIndex, narrativeFlow } from './readability';
 export {
     loadManuscriptFile,
     saveManuscriptFile,

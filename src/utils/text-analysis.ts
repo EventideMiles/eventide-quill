@@ -382,3 +382,39 @@ export function listSections(text: string, options: { splitOnAllHeadings?: boole
 
     return ranges;
 }
+
+/**
+ * Split text into paragraphs for rhythm analysis. A paragraph is a maximal run
+ * of consecutive non-blank lines. Scene-break markers (`***`, `* * *`, `---`)
+ * and markdown headings (`#`-`######`) each start a new paragraph, so a scene
+ * break or structural heading is treated as a rhythm boundary — consistent
+ * with {@link listSections}, which splits on the same markers. Blank lines and
+ * the boundary markers themselves are excluded from the returned text.
+ *
+ * Used by the dashboard's narrative-flow score to compute paragraph-length
+ * variance — a rhythm signal sentence-level stddev can't capture.
+ *
+ * @returns Paragraph texts in document order. Empty array if `text` is blank.
+ */
+export function splitParagraphs(text: string): string[] {
+    if (!text.trim()) return [];
+    const lines = text.split('\n');
+    const paragraphs: string[] = [];
+    let current: string[] = [];
+    const flush = (): void => {
+        if (current.length > 0) {
+            const joined = current.join('\n').trim();
+            if (joined) paragraphs.push(joined);
+            current = [];
+        }
+    };
+    for (const line of lines) {
+        if (line.trim() === '' || SCENE_BREAK_RULE.test(line) || SCENE_BREAK_HEADING.test(line)) {
+            flush();
+        } else {
+            current.push(line);
+        }
+    }
+    flush();
+    return paragraphs;
+}

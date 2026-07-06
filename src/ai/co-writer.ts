@@ -626,6 +626,64 @@ function buildInternalToolsMessage(plugin: EventideQuillPlugin): ChatMessage | n
 }
 
 /**
+ * The cursor's document offset, read from the CodeMirror 6 selection state
+ * directly. Obsidian's `Editor.getCursor()` can report `{0,0}` for a markdown
+ * view that isn't the active leaf — e.g. the writer clicked into the document
+ * to place the cursor, then moved focus to the sidebar to send — which made
+ * the "cursor at position 0" fallback fire incorrectly and jump the cursor to
+ * the end. The underlying CM6 selection persists in editor state regardless of
+ * focus, so this is the reliable cursor position for an inactive document.
+ * Falls back to `getCursor()` only when the CM6 view isn't accessible
+ * (defensive — it's always present in Obsidian's markdown editor).
+ */
+function editorCursorOffset(editor: Editor): number {
+    const cm = (editor as unknown as { cm?: EditorView } | null)?.cm;
+    if (cm) return cm.state.selection.main.head;
+    return editor.posToOffset(editor.getCursor());
+}
+
+/**
+ * Prose to send to the model as context, measured from the document start to
+ * the cursor. Falls back to the document's tail (pretending the cursor is at
+ * the end) ONLY when the cursor sits at position 0 — the document is open but
+ * the writer hasn't placed the cursor (never clicked into the prose).
+ *
+ * Any non-zero cursor position is treated as deliberate (the writer clicked, or
+ * Obsidian restored the cursor where they left off) and respected as-is, so
+ * asking for options earlier in the manuscript still works — place the cursor
+ * at the point you want to continue from. Reads the cursor via
+ * {@link editorCursorOffset} so a non-active document still reports its real
+ * cursor. Capped to the last `tail` characters. Mirrors the options-generation
+ * path's "move cursor to end" fallback.
+ */
+function proseBeforeCursorOrDoc(editor: Editor, tail: number): string {
+    const full = editor.getValue();
+    const beforeCursor = full.slice(0, editorCursorOffset(editor));
+    return (beforeCursor || full).slice(-tail);
+}
+
+/**
+ * Move the cursor to the end of the document ONLY when it sits at position 0
+ * — the document is open but the writer hasn't placed the cursor, so an
+ * upcoming INSERTION should land at the end of the written prose (the
+ * "continue this chapter" intent). Any non-zero cursor position is respected
+ * as the writer's intended insertion point, so a mid-manuscript cursor
+ * continues from there. Returns true when the cursor was moved (so callers can
+ * scroll to the new position / branch on it). Reads the cursor via
+ * {@link editorCursorOffset} so a non-active document still reports its real
+ * cursor. Mirrors the generateOptions/generateDirect initialize branches.
+ */
+function moveCursorToEndIfEarly(editor: Editor): boolean {
+    const fullText = editor.getValue();
+    const cursorOffset = editorCursorOffset(editor);
+    if (cursorOffset === 0 && fullText.length > 0) {
+        editor.setCursor(editor.offsetToPos(fullText.length));
+        return true;
+    }
+    return false;
+}
+
+/**
  * Build a system message informing the model which file the writer currently
  * has open. This lets the model distinguish between edits to the active file
  * (where Direct/Fulfill mode provides a streaming live-edit UX) and edits to
@@ -677,6 +735,9 @@ export type DraftState = 'idle' | 'generating' | 'draft';
 /** Coach mode phase. */
 export type CoachPhase = 'discern' | 'clarify' | 'plan' | 'direction';
 
+/** Legal coach phase values — used to validate a {@link CoWriterChatMessage.phaseSnapshot}. */
+const COACH_PHASES: ReadonlySet<string> = new Set(['discern', 'clarify', 'plan', 'direction']);
+
 /** A coach session state. */
 export interface CoachSession {
     /** Current phase of the coaching process. */
@@ -701,6 +762,9 @@ export interface CoachSession {
  *  - `refine`  — a draft has been produced; subsequent turns refine it.
  */
 export type LoreCoachPhase = 'discover' | 'develop' | 'refine';
+
+/** Legal lorebook phase values — used to validate a {@link CoWriterChatMessage.phaseSnapshot}. */
+const LORE_PHASES: ReadonlySet<string> = new Set(['discover', 'develop', 'refine']);
 
 /** A lorebook coach session. */
 export interface LoreCoachSession {
@@ -767,6 +831,24 @@ export interface CoWriterChatMessage {
      * {@link prepareUserMessageWithImages} before the message reaches the API.
      */
     images?: string[];
+    /**
+     * @-mentioned file paths the writer attached to this user message (discuss
+     * / coach modes only). Captured on the message so a regenerate of the
+     * response can re-send the same additional context via mergeContextPaths
+     * instead of dropping it. Lorebook mode doesn't accept mentions, so this
+     * stays undefined there.
+     */
+    mentionPaths?: string[];
+    /**
+     * Snapshot of the mode-session phase AFTER this assistant turn settled
+     * (coach / lorebook modes only). Used by `rewindToMessage` to restore the
+     * exact phase without re-deriving it via heuristic — the live phase
+     * advance is authoritative, the heuristic is a fallback for pre-snapshot
+     * sidecars. Undefined on user messages, discuss turns (no phase machine),
+     * and any sidecar written before this field landed. See
+     * {@link reevaluateModePhase}.
+     */
+    phaseSnapshot?: CoachPhase | LoreCoachPhase;
 }
 
 /**
@@ -1180,22 +1262,21 @@ export class CoWriterSession {
         this.onChatUpdate?.();
         this.lockEditor();
 
-        // For initialize (empty direction), move cursor to end so AI reads the full document
-        let fullText: string;
-        let proseForOptions: string;
-        if (!direction) {
-            fullText = editor.getValue();
+        // Respect the writer's cursor position whether or not a direction was
+        // given — only fall back to end-of-document when the cursor is at
+        // position 0 (document opened but never clicked into). Previously the
+        // empty-direction "initialize" path moved the cursor to end
+        // unconditionally, which hijacked a deliberately placed cursor when the
+        // writer clicked "Generate options" mid-manususcript. Scroll to the new
+        // position only when we actually moved it (so a respected cursor
+        // doesn't yank the writer's view away from where they clicked).
+        const cursorWasAtZero = moveCursorToEndIfEarly(editor);
+        const fullText = editor.getValue();
+        if (cursorWasAtZero) {
             const endPos = editor.offsetToPos(fullText.length);
-            editor.setCursor(endPos);
             editor.scrollIntoView({ from: endPos, to: endPos }, true);
-            proseForOptions = fullText.slice(-4000);
-        } else {
-            const cursor = editor.getCursor();
-            fullText = editor.getValue();
-            const cursorOffset = editor.posToOffset(cursor);
-            const textBeforeCursor = fullText.slice(0, cursorOffset);
-            proseForOptions = textBeforeCursor.slice(-4000);
         }
+        const proseForOptions = proseBeforeCursorOrDoc(editor, 4000);
 
         // Add user's message to chat history
         this.pushChatMessage({
@@ -1529,12 +1610,15 @@ export class CoWriterSession {
         if (editor) this.lockEditor();
 
         // Add user's message to display-only chat history
-        this.pushChatMessage({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
+        this.pushChatMessage({
+            role: 'user',
+            content: message,
+            ...(images && images.length > 0 ? { images } : {}),
+            ...(mentionPaths && mentionPaths.length > 0 ? { mentionPaths } : {})
+        });
 
         const fullText = editor?.getValue() ?? '';
-        const proseForContext = editor
-            ? editor.getValue().slice(0, editor.posToOffset(editor.getCursor())).slice(-4000)
-            : '';
+        const proseForContext = editor ? proseBeforeCursorOrDoc(editor, 4000) : '';
 
         // Build injected context — vault + additional files.
         // Injected fresh every call; never stored in discussCurrentMessages.
@@ -1900,12 +1984,15 @@ export class CoWriterSession {
         if (editor) this.lockEditor();
 
         // Add user message to display history (same as sendDiscussion)
-        this.pushChatMessage({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
+        this.pushChatMessage({
+            role: 'user',
+            content: message,
+            ...(images && images.length > 0 ? { images } : {}),
+            ...(mentionPaths && mentionPaths.length > 0 ? { mentionPaths } : {})
+        });
 
         const fullText = editor?.getValue() ?? '';
-        const proseForContext = editor
-            ? editor.getValue().slice(0, editor.posToOffset(editor.getCursor())).slice(-4000)
-            : '';
+        const proseForContext = editor ? proseBeforeCursorOrDoc(editor, 4000) : '';
 
         // Build injected context
         const injectedContext: ChatMessage[] = [];
@@ -2234,6 +2321,15 @@ export class CoWriterSession {
 
                 // Build summary for option generation
                 this.coachSession.summary = this.buildCoachSummary();
+
+                // Stamp the post-turn phase on the last assistant message so
+                // rewind restores it exactly instead of re-deriving via the
+                // heuristic mirror in reevaluateCoachPhase.
+                const coachLastIdx = this.chatHistory.length - 1;
+                const coachLastMsg = coachLastIdx >= 0 ? this.chatHistory[coachLastIdx] : undefined;
+                if (coachLastMsg && coachLastMsg.role === 'assistant') {
+                    coachLastMsg.phaseSnapshot = this.coachSession.phase;
+                }
             }
 
             // Determine if this is a revision (plan/direction follow-up after options generated)
@@ -2342,11 +2438,11 @@ export class CoWriterSession {
         this.onChatUpdate?.();
         this.lockEditor();
 
-        const cursor = editor.getCursor();
         const fullText = editor.getValue();
-        const cursorOffset = editor.posToOffset(cursor);
-        const textBeforeCursor = fullText.slice(0, cursorOffset);
-        const proseForOptions = textBeforeCursor.slice(-4000);
+        // Reuse the discuss/coach context fallback so options generate against
+        // the actual prose even when the cursor wasn't placed at a working
+        // position (document opened but not clicked into).
+        const proseForOptions = proseBeforeCursorOrDoc(editor, 4000);
 
         const coachSummary = this.buildCoachSummary();
         const prompt = getCoWriterCoachToOptions(proseForOptions || '(empty document)', coachSummary, direction);
@@ -2809,6 +2905,18 @@ export class CoWriterSession {
 
                 // Continue to next round — the model will see its tool_calls
                 // and the tool results and continue the conversation.
+            }
+
+            // Stamp the post-turn phase on the last assistant message so rewind
+            // restores it exactly instead of re-deriving via the lossy
+            // heuristic in reevaluateLoreCoachPhase (which can't distinguish a
+            // later-rejected draft from a live one).
+            if (this.loreCoachSession) {
+                const loreLastIdx = this.chatHistory.length - 1;
+                const loreLastMsg = loreLastIdx >= 0 ? this.chatHistory[loreLastIdx] : undefined;
+                if (loreLastMsg && loreLastMsg.role === 'assistant') {
+                    loreLastMsg.phaseSnapshot = this.loreCoachSession.phase;
+                }
             }
 
             this.onDiscussFinished?.();
@@ -3631,9 +3739,22 @@ export class CoWriterSession {
         this.cancelGeneration();
         this.app = plugin.app;
 
-        const cursor = editor.getCursor();
+        // If the cursor sits at position 0 (document opened but not clicked
+        // into), move it to the end so the continuation inserts at the end of
+        // the written prose — matching the "continue this chapter" intent.
+        // Any non-zero cursor position is the writer's intended insertion
+        // point and is respected. Scroll to the new position only when we
+        // actually moved it, mirroring generateOptions/generateDirect.
+        const optionCursorWasAtZero = moveCursorToEndIfEarly(editor);
         const fullText = editor.getValue();
-        const cursorOffset = editor.posToOffset(cursor);
+        if (optionCursorWasAtZero) {
+            const endPos = editor.offsetToPos(fullText.length);
+            editor.scrollIntoView({ from: endPos, to: endPos }, true);
+        }
+        // Read the cursor via editorCursorOffset (CM6 selection state) so an
+        // inactive document still reports its real cursor — getCursor() can
+        // report {0,0} when the sidebar has focus.
+        const cursorOffset = editorCursorOffset(editor);
 
         // Extract recent prose for voice analysis
         const textBeforeCursor = fullText.slice(0, cursorOffset);
@@ -3683,13 +3804,27 @@ export class CoWriterSession {
             plugin.settings.wikiLinkBehavior
         );
 
+        // When the cursor sits mid-document, the continuation is INSERTED
+        // before the prose that follows — surface that following prose so the
+        // model can write a continuation that leads into it naturally. Empty
+        // (and so omitted) when the cursor is at the end of the document.
+        const afterCursor = fullText.slice(cursorOffset).slice(0, 4000).trim();
+        const afterCursorSection = afterCursor
+            ? [
+                  '',
+                  '--- Document after the cursor (your continuation will be inserted before this — lead into it naturally) ---',
+                  afterCursor
+              ].join('\n')
+            : '';
+
         const userMessage = [
             `Continue the passage from the cursor position following this direction: ${option.label} — ${option.description}`,
             '',
             'Write the next paragraph or paragraphs in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation, plain and without labels or explanations.',
             '',
             '--- Current document up to cursor ---',
-            textBeforeCursor.slice(-8000)
+            textBeforeCursor.slice(-8000),
+            afterCursorSection
         ].join('\n');
 
         const messages: ChatMessage[] = [
@@ -3837,18 +3972,21 @@ export class CoWriterSession {
         this.currentOptions = [];
 
         const fullText = editor.getValue();
-        // When direction is empty, the continuation is appended at EOF, so the
-        // generation context must be built from the full document — not from
-        // the (possibly mid-document) cursor position. Move the cursor now and
-        // derive cursorOffset from the insertion point so voice/steering/prose
-        // context all match the eventual edit location.
-        if (!direction) {
+        // Respect the writer's cursor position whether or not a direction was
+        // given — only fall back to end-of-document when the cursor is at
+        // position 0 (document opened but never clicked into). Previously the
+        // empty-direction path moved the cursor to end unconditionally, which
+        // hijacked a deliberately placed cursor. Scroll to the new position
+        // only when we actually moved it.
+        const directCursorWasAtZero = moveCursorToEndIfEarly(editor);
+        if (directCursorWasAtZero) {
             const endPos = editor.offsetToPos(fullText.length);
             editor.setCursor(endPos);
             editor.scrollIntoView({ from: endPos, to: endPos }, true);
         }
-        const cursor = editor.getCursor();
-        const cursorOffset = editor.posToOffset(cursor);
+        // Read the cursor via editorCursorOffset (CM6 selection state) so an
+        // inactive document still reports its real cursor.
+        const cursorOffset = editorCursorOffset(editor);
 
         this.pushChatMessage({
             role: 'user',
@@ -3902,6 +4040,17 @@ export class CoWriterSession {
         );
 
         const proseForContext = textBeforeCursor.slice(-12000);
+        // When the cursor sits mid-document, the continuation is INSERTED
+        // before the prose that follows — surface that following prose so the
+        // model can lead into it naturally. Empty when the cursor is at EOF.
+        const afterCursor = fullText.slice(cursorOffset).slice(0, 4000).trim();
+        const afterCursorSection = afterCursor
+            ? [
+                  '',
+                  '--- Document after the cursor (your continuation will be inserted before this — lead into it naturally) ---',
+                  afterCursor
+              ].join('\n')
+            : '';
 
         // Parse stopping point from direction
         const stoppingPoint = direction ? parseStoppingPoint(direction) : null;
@@ -3914,7 +4063,8 @@ export class CoWriterSession {
                   'Write the next paragraph or paragraphs in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation, plain and without labels or explanations.',
                   '',
                   '--- Current document up to cursor ---',
-                  proseForContext
+                  proseForContext,
+                  afterCursorSection
               ].join('\n')
             : [
                   'Continue the passage naturally from the cursor position.',
@@ -3922,7 +4072,8 @@ export class CoWriterSession {
                   'Read the document up to the cursor and continue writing in the same voice, maintaining the established narrative perspective and tense. Advance the scene naturally. Output only the continuation, plain and without labels or explanations.',
                   '',
                   '--- Current document up to cursor ---',
-                  proseForContext
+                  proseForContext,
+                  afterCursorSection
               ].join('\n');
 
         const messages: ChatMessage[] = [
@@ -4473,6 +4624,14 @@ export class CoWriterSession {
         }
 
         this.reevaluateModePhase(mode);
+        // Prefer the per-turn phase snapshot from the latest surviving
+        // assistant message — it's the authoritative post-turn phase, recorded
+        // live. The heuristic above rebuilds the surrounding session fields
+        // (response, summary, clarifyRound, scope, rounds) but its phase value
+        // is a lossy reconstruction (the coach clarify-round replay can drift;
+        // the lorebook heuristic can't distinguish a later-rejected draft from
+        // a live one). Only the phase is overridden here.
+        this.applyPhaseSnapshot(mode);
 
         this.optionsLoading = false;
         this.thoughtBuffer = '';
@@ -4557,5 +4716,34 @@ export class CoWriterSession {
         const phase: LoreCoachPhase = hasDraft ? 'refine' : rounds > 1 ? 'develop' : 'discover';
         this.loreCoachSession = { phase, scope, entryType, rounds };
         this.loreCoachActive = true;
+    }
+
+    /**
+     * Override the mode-session phase with the latest surviving assistant
+     * turn's {@link CoWriterChatMessage.phaseSnapshot}, if one exists for the
+     * current mode. {@link reevaluateModePhase} has already rebuilt the
+     * surrounding session object (response, summary, clarifyRound, scope,
+     * rounds); only the phase value is corrected here. No-op for discuss
+     * mode, for histories with no snapshots (pre-snapshot sidecars / user-only
+     * histories → the heuristic phase stands), and when the latest snapshot
+     * isn't a legal value for the current mode (defensive — coach and lorebook
+     * turns never coexist in one chatHistory because crossing into/out of
+     * lorebook resets chat, but the membership check guards against drift).
+     */
+    private applyPhaseSnapshot(mode: string): void {
+        if (mode !== 'coach' && mode !== 'lorebook') return;
+        const legal = mode === 'coach' ? COACH_PHASES : LORE_PHASES;
+        for (let i = this.chatHistory.length - 1; i >= 0; i--) {
+            const msg = this.chatHistory[i];
+            const snapshot = msg?.role === 'assistant' ? msg.phaseSnapshot : undefined;
+            if (snapshot !== undefined && legal.has(snapshot)) {
+                if (mode === 'coach' && this.coachSession) {
+                    this.coachSession.phase = snapshot as CoachPhase;
+                } else if (mode === 'lorebook' && this.loreCoachSession) {
+                    this.loreCoachSession.phase = snapshot as LoreCoachPhase;
+                }
+                return;
+            }
+        }
     }
 }

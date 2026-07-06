@@ -313,6 +313,15 @@ export default class EventideQuillPlugin extends Plugin {
      * the co-writer, Review, or transform surfaces.
      */
     private feedbackQueueAbort: AbortController | null = null;
+    /**
+     * Trailing-debounce timer for `coWriterAutoSavePerTurn`. A turn that
+     * immediately fires auto-options (common in coach mode) would otherwise
+     * snapshot twice back-to-back; the debounce coalesces them and also cuts
+     * index.json churn (the LRU prune re-runs on every save). Raw setTimeout
+     * because Obsidian offers no debouncing helper and Plugin#registerInterval
+     * is for repeating ticks, not one-shot deferrals.
+     */
+    private coWriterAutoSaveTimer: number | null = null;
     /** Debounce timers for per-folder embedding warming. Keyed by folder path. */
     private embeddingWarmingTimers = new Map<string, number>();
     /** Folders currently being warmed, to avoid concurrent warming. */
@@ -1081,8 +1090,15 @@ export default class EventideQuillPlugin extends Plugin {
         this.clearEmbeddingWarmingTimers();
         // Best-effort snapshot of the active conversation so it survives a
         // quit/crash. onunload is synchronous, so the async write is
-        // fire-and-forget (the vault adapter remains briefly available). The
-        // authoritative trigger is snapshot-on-new-chat; this is a safety net.
+        // fire-and-forget (the vault adapter remains briefly available). With
+        // `coWriterAutoSavePerTurn` on, the per-turn snapshot is authoritative
+        // and this only catches a turn whose debounce hadn't fired yet; with it
+        // off, the authoritative trigger is snapshot-on-new-chat and this is a
+        // safety net.
+        if (this.coWriterAutoSaveTimer !== null) {
+            window.clearTimeout(this.coWriterAutoSaveTimer);
+            this.coWriterAutoSaveTimer = null;
+        }
         void this.snapshotCoWriterSession();
     }
 
@@ -1991,6 +2007,7 @@ export default class EventideQuillPlugin extends Plugin {
         };
         session.onDiscussFinished = () => {
             void this.lintPanel?.coWriterDiscussFinished();
+            this.scheduleCoWriterAutoSave();
         };
         session.onDiscussError = (message: string) => {
             void this.lintPanel?.coWriterDiscussError(message);
@@ -2624,6 +2641,12 @@ export default class EventideQuillPlugin extends Plugin {
         // not block the clear); snapshotState deep-clones so the synchronous
         // reset can't corrupt the in-flight serialization.
         void this.snapshotCoWriterSession(false);
+        // Cancel any pending per-turn auto-save so the outgoing conversation
+        // doesn't snapshot again moments after the writer started a fresh one.
+        if (this.coWriterAutoSaveTimer !== null) {
+            window.clearTimeout(this.coWriterAutoSaveTimer);
+            this.coWriterAutoSaveTimer = null;
+        }
         this.currentCoWriterSessionId = null;
         this.coWriterSession.resetChat(clearContext);
         this.lintPanel?.coWriterSetCoachActive(false);
@@ -2685,6 +2708,29 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
+     * Trailing-debounced per-turn auto-save. No-op when `coWriterAutoSavePerTurn`
+     * is off. Fires ~1.5s after the last completed turn so a turn immediately
+     * followed by auto-options (coach mode) collapses to one write instead of
+     * two back-to-back snapshots + index.json rewrites. The in-flight timer is
+     * cleared on new-chat / reset so an outgoing conversation doesn't snapshot
+     * again after the writer has moved on.
+     */
+    scheduleCoWriterAutoSave(): void {
+        if (this.coWriterAutoSaveTimer !== null) {
+            window.clearTimeout(this.coWriterAutoSaveTimer);
+        }
+        if (!this.settings.coWriterAutoSavePerTurn) {
+            this.coWriterAutoSaveTimer = null;
+            return;
+        }
+        // Raw setTimeout: see the field comment on `coWriterAutoSaveTimer`.
+        this.coWriterAutoSaveTimer = window.setTimeout(() => {
+            this.coWriterAutoSaveTimer = null;
+            void this.snapshotCoWriterSession();
+        }, 1500);
+    }
+
+    /**
      * Restore a saved conversation by id. Rehydrates the session, re-applies the
      * stored mode to the panel, and refreshes the sidebar's full-state sync so
      * review queues + subagent cards render. Returns true on success.
@@ -2722,6 +2768,36 @@ export default class EventideQuillPlugin extends Plugin {
         this.syncCoWriterPanel();
         if (discardedText) {
             this.lintPanel?.coWriterSetInputText(discardedText);
+        }
+    }
+
+    /**
+     * Regenerate the response to a user message: rewind to before it (discarding
+     * its response and everything after), then re-send the same text + images
+     * through the active mode for a fresh take. Mirrors {@link rewindCoWriterChat}
+     * but auto-resends instead of pre-filling the input for editing.
+     */
+    async regenerateCoWriterResponse(messageId: string): Promise<void> {
+        const mode = this.lintPanel?.coWriterGetMode() ?? 'discuss';
+        const msg = this.coWriterSession.chatHistory.find((m) => m.id === messageId);
+        if (!msg || msg.role !== 'user') return;
+        const text = msg.content;
+        const images = msg.images;
+        const mentionPaths = msg.mentionPaths;
+        if (!text.trim()) return;
+        // Rewind to before this user message (discard it + its response + after).
+        this.coWriterSession.rewindToMessage(messageId, mode);
+        this.syncCoWriterPanel();
+        // Re-bind panel callbacks (mirrors sendCoWriterDiscussion / sendCoWriterCoach)
+        // so streaming chunks and follow-up hooks still fire after a restore.
+        this.wireCoWriterPanel();
+        // Re-send the same text + images + mentions through the active mode.
+        if (mode === 'coach') {
+            await this.coWriterSession.sendCoach(this, text, images, mentionPaths);
+        } else if (mode === 'lorebook') {
+            await this.coWriterSession.sendLoreCoach(this, text, images);
+        } else {
+            await this.coWriterSession.sendDiscussion(this, text, images, mentionPaths);
         }
     }
 

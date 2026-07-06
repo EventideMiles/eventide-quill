@@ -47,24 +47,48 @@ export { runResearchTool } from './research';
 export { vaultLookupTool } from './vault-lookup';
 
 /**
+ * Options for {@link createInternalToolRegistry}. Each flag defaults to true,
+ * preserving the full twelve-tool set for callers that omit the options
+ * (read-only registry, lore-batch subagent, discuss/coach via the default
+ * path). The lorebook coach passes a reduced set — see
+ * {@link createLoreCoachToolRegistry}.
+ */
+export interface InternalToolOptions {
+    /** Include `manuscript_mentions` (entity occurrences in the active manuscript). Default true. */
+    manuscript?: boolean;
+    /** Include `grep_notes` (full-text search across vault notes). Default true. */
+    grep?: boolean;
+    /** Include `refresh_dashboard` (recompute the manuscript dashboard). Default true. */
+    dashboard?: boolean;
+}
+
+/**
  * Build a registry containing the twelve internal-only tools:
  * `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`,
  * `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`,
  * `append_to_note`, `revise_edit`, `refresh_dashboard`, `get_lore_image`.
+ *
+ * Pass {@link InternalToolOptions} to drop tools a mode never advertises (the
+ * lorebook coach drops `manuscript_mentions` / `grep_notes` / `refresh_dashboard`
+ * — its system prompt never references them, so registering them only spends
+ * tool-definition tokens on every request).
  */
-export function createInternalToolRegistry(): ToolRegistry {
+export function createInternalToolRegistry(opts?: InternalToolOptions): ToolRegistry {
+    const includeManuscript = opts?.manuscript ?? true;
+    const includeGrep = opts?.grep ?? true;
+    const includeDashboard = opts?.dashboard ?? true;
     const registry = new ToolRegistry();
-    registry.register(manuscriptMentionsTool);
+    if (includeManuscript) registry.register(manuscriptMentionsTool);
     registry.register(loreSiblingsTool);
     registry.register(vaultLookupTool);
-    registry.register(grepNotesTool);
+    if (includeGrep) registry.register(grepNotesTool);
     registry.register(measureFolderTool);
     registry.register(calculateFileSizesTool);
     registry.register(editNoteTool);
     registry.register(insertNoteTool);
     registry.register(appendToNoteTool);
     registry.register(reviseEditTool);
-    registry.register(refreshDashboardTool);
+    if (includeDashboard) registry.register(refreshDashboardTool);
     registry.register(getLoreImageTool);
     return registry;
 }
@@ -94,14 +118,22 @@ export function createReadOnlyToolRegistry(plugin: EventideQuillPlugin, includeE
 }
 
 /**
- * Build a registry for the Lorebook Coach: the twelve internal tools plus
+ * Build a registry for the Lorebook Coach: the internal tools plus
  * `propose_entry` (which surfaces a draft to the UI for review). When the
  * writer has enabled agent image attachments (`loreEntryImageAttachments`),
  * `propose_entry` is built with the `images` parameter in its schema, and
  * `attach_lore_image` is registered for batch edits to existing entries.
+ *
+ * The coach works on lore entries (`vault_lookup` / `lore_siblings`), not the
+ * active manuscript's entity list, full-text search, or the dashboard — its
+ * system prompt (`getLoreCoachSystemPrompt`) never references
+ * `manuscript_mentions`, `grep_notes`, or `refresh_dashboard`, so those three
+ * are dropped here to cut tool-definition token overhead on every coach
+ * request. (The lore-batch subagent keeps the full set via the default path —
+ * it runs in its own fresh context where the savings matter less.)
  */
 export function createLoreCoachToolRegistry(plugin: EventideQuillPlugin): ToolRegistry {
-    const registry = createInternalToolRegistry();
+    const registry = createInternalToolRegistry({ manuscript: false, grep: false, dashboard: false });
     const allowImages = plugin.settings.loreEntryImageAttachments;
     registry.register(createProposeEntryTool(allowImages));
     if (allowImages) {

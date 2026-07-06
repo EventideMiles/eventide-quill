@@ -16,6 +16,7 @@ import {
     type CachedFandomPage,
     type FandomCache
 } from './fandom-cache';
+import { toolErrorMessage } from './http-retry';
 
 /**
  * Fandom subdomain shape: a single DNS label (letters, digits, hyphens) — no
@@ -284,8 +285,7 @@ export function createFandomLookupTool(maxResultTokens: number, allowedWikis: st
                 }
                 return result.text;
             } catch (caught) {
-                const msg = caught instanceof Error ? caught.message : String(caught);
-                return `Error looking up "${query}" on ${host}: ${msg}`;
+                return toolErrorMessage(caught, `looking up "${query}" on ${host}`);
             }
         }
     };
@@ -368,8 +368,7 @@ export function createFandomPageTool(maxResultTokens: number, allowedWikis: stri
                         : extract.extract;
                 return `${extract.title} (${host}):\n${text}`;
             } catch (caught) {
-                const msg = caught instanceof Error ? caught.message : String(caught);
-                return `Error fetching page "${title}" from ${host}: ${msg}`;
+                return toolErrorMessage(caught, `fetching page "${title}" from ${host}`);
             }
         }
     };
@@ -513,10 +512,12 @@ export function createFandomImageTool(
                         };
                     } catch (dlErr) {
                         // Lead image download failed — still surface the gallery.
-                        const dlMsg = dlErr instanceof Error ? dlErr.message : String(dlErr);
+                        // Route through toolErrorMessage so a 429 surfaces the
+                        // shared actionable retry guidance, not a bare status.
                         return {
                             text:
-                                `Found "${title}" on ${host} but the lead image could not be fetched (${dlMsg}). ` +
+                                `Found "${title}" on ${host} but the lead image could not be fetched ` +
+                                `(${toolErrorMessage(dlErr, `downloading the lead image from ${host}`)}). ` +
                                 `Other images available:\n${galleryNote}${pickHint}`
                         };
                     }
@@ -527,8 +528,7 @@ export function createFandomImageTool(
                     text: `No lead image on "${title}" (${host}). Images available:\n${galleryNote}${pickHint}`
                 };
             } catch (caught) {
-                const msg = caught instanceof Error ? caught.message : String(caught);
-                return { text: `Error fetching image for "${query || image}" from ${host}: ${msg}` };
+                return { text: toolErrorMessage(caught, `fetching image for "${query || image}" from ${host}`) };
             }
         }
     };

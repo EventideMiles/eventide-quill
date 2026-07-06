@@ -167,6 +167,7 @@ src/
     tools/                # Tool-calling layer (see "Tool-calling architecture")
       tool.ts (Tool, ToolRegistry, ToolResult, ToolContext, DuplicateToolError),
       tool-loop.ts (streamWithTools — generic tool-loop runner; first real caller is critical analysis),
+      http-retry.ts (RateLimitError, parseRetryAfter, assertNotRateLimited, toolErrorMessage — 429/Retry-After handling for network tools),
       index.ts (registries + factory wiring + createToolRegistry gating),
       context-helpers.ts, lore-edit-helpers.ts,
       manuscript-mentions.ts, lore-siblings.ts, vault-lookup.ts, grep-notes.ts,
@@ -207,7 +208,7 @@ Tool tiers (gating):
 
 | Tier | Tools | Gate setting |
 |------|-------|--------------|
-| Internal (default on) | `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit`, `get_lore_image` | `coWriterToolsEnabled` |
+| Internal (default on) | `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`, `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`, `append_to_note`, `revise_edit`, `get_lore_image`, `refresh_dashboard` | `coWriterToolsEnabled` (mode-aware: the lorebook coach drops `manuscript_mentions` / `grep_notes` / `refresh_dashboard` via `createInternalToolRegistry({ manuscript, grep, dashboard })` since its prompt never advertises them — ~464 token cut per coach request; the lore-batch subagent keeps the full set) |
 | Lorebook coach only | `propose_entry` (surfaces a lore draft to the UI; accepts an optional `images` parameter when `loreEntryImageAttachments` is on) | `createLoreCoachToolRegistry` |
 | Parent modes only | `run_lorebook_batch` (lore edits), `run_research` (vault Q&A) — each spawns a `SubagentSession`, see "Subagents" | `allowSubagents` (all parent modes: discuss/coach/lorebook; subagents pass `false` so they can't nest) |
 | Network (default on) | `fetch_url`, `wikipedia_lookup` / `wikipedia_page` | `lorebookNetworkTools` |
@@ -215,7 +216,7 @@ Tool tiers (gating):
 | Image (default on) | `fetch_image_url`, `fandom_image`, `wikipedia_image` | `lorebookImageTools` |
 | Agent image attach (default on) | optional `images` parameter on `propose_entry`; `attach_lore_image` (lorebook coach + batch only) | `loreEntryImageAttachments` |
 
-`fandom_image` (Fandom image lookup: lead image via `prop=pageimages`, gallery browsing via `prop=images` + `imageinfo`, with captions parsed from `<gallery>` wikitext) needs both `lorebookImageTools` and Fandom reachability (`lorebookNetworkTools` OR cache populated), plus the Fandom allowlist gate. `wikipedia_image` (Wikipedia lead portraits via the same `prop=pageimages`) follows the cross-toggle pattern — needs `lorebookNetworkTools` (no cache) and `lorebookImageTools`, no gallery-listing path (Wikipedia biographies don't follow Fandom's `<title>/Gallery` convention).
+`fandom_image` (Fandom image lookup: lead image via `prop=pageimages`, gallery browsing via `prop=images` + `imageinfo`, with captions parsed from `<gallery>` wikitext) needs both `lorebookImageTools` and Fandom reachability (`lorebookNetworkTools` OR cache populated), plus the Fandom allowlist gate. `wikipedia_image` (Wikipedia lead portraits via the same `prop=pageimages`) follows the cross-toggle pattern — needs `lorebookNetworkTools` (no cache) and `lorebookImageTools`, no gallery-listing path (Wikipedia biographies don't follow Fandom's `<title>/Gallery` convention). All `wikipedia_*` tools build their host from the `lorebookWikipediaLang` setting (`${lang}.wikipedia.org`, default `en`); settings input is validated by `isValidWikipediaLang` (`src/ai/tools/wikipedia-lookup.ts`). Wikipedia is not cached (Fandom-only).
 
 Fandom requires a non-empty allowlist (`lorebookFandomWikis`), or the `lorebookFandomAllowAllWikis` "danger" toggle to allow any wiki; an empty allowlist with that toggle off disables Fandom everywhere. **Stage 3 privacy posture:** a populated local cache answers even with `lorebookNetworkTools` off — consent is at sync time, so the network toggle no longer hides cached data. The single source of truth for both registration (`createToolRegistry`) and prompt advertisement (`buildNetworkToolsMessage`) is `fandomReachability(plugin)` (`src/ai/tools/fandom-cache.ts`) → `'live' | 'cache-only' | 'none'`; the two mirror sites must agree, so any gating change goes through that helper. Cache misses in cache-only mode return `"not cached"` and never fall through to a live call. `mediawiki.ts` is the shared MediaWiki client with per-host rate limiting. Convention: tool ids are `snake_case` verbs/nouns (`manuscript_mentions`, `fetch_url`).
 
@@ -238,7 +239,7 @@ Landed: the runner + registry + both spawners, plus the drill-down UX — status
 
 Saved / resumable co-writer conversations live as per-session JSON sidecars under `<pluginDataDir>/co-writer-sessions/<id>.json` plus a lightweight `index.json` (id, title, mode, timestamps, message count, size), managed by `src/ai/conversation-store.ts`. Mirrors the `manuscript-file.ts` / `embedding-cache.ts` sidecar convention (`vault.adapter` read/write, `normalizePath()` everywhere, mkdir-on-first-write, a serialized index write-lock, Notice-on-error) — NOT Obsidian's `loadData()`/`saveData()` (settings-only).
 
-- **Snapshot triggers:** auto-snapshot before `resetChat` (new chat) and on `onunload` (best-effort, sync), plus an explicit "Save snapshot" action. `snapshotCoWriterSession()` skips empty chats; when a restored session's id is current it overwrites in place, else it creates a new sidecar. LRU-pruned to `coWriterSessionHistoryLimit` (default 25, configurable in settings).
+- **Snapshot triggers:** auto-snapshot before `resetChat` (new chat) and on `onunload` (best-effort, sync), plus an explicit "Save snapshot" action. When `coWriterAutoSavePerTurn` is on, `scheduleCoWriterAutoSave()` also fires a trailing-debounced (~1.5s) snapshot after each completed discuss/coach/lorebook turn via the `onDiscussFinished` hook (cancelled on new-chat so the outgoing conversation doesn't re-snapshot). `snapshotCoWriterSession()` skips empty chats; when a restored session's id is current it overwrites in place, else it creates a new sidecar. LRU-pruned to `coWriterSessionHistoryLimit` (default 25, configurable in settings).
 - **What persists:** the `SerializedCoWriterState` blob (`CoWriterSession.snapshotState`) — `chatHistory` (with per-message `id` + `subagentIds`), the two API arrays (`discussCurrentMessages`, `loreCoachMessages`), review queues (`fulfillChanges`/`directChanges`/`loreEdits`/`proposedLoreImages` as `ChangeSet.toJSON`), `recentImages` (base64), `voiceProfile`, mode-session phase objects, and `subagents` as flat `SubagentView`s. Ephemeral runtime concerns (AbortController, callbacks, editor locks, write queues) are absent and rebind on restore via `wireCoWriterPanel()`.
 - **Restore** (`CoWriterSession.restoreState`) overwrites the data fields WITHOUT invoking the reset/clear methods (which have CM-diff / tab-close / abort side effects), restarts the message-id counter above the highest restored id, stubs a "result unavailable" `tool` message after any assistant turn saved mid-tool-round (so the provider isn't fed a malformed history), and restores subagents as dormant views (`running` → `interrupted`, browseable read-only). `main.ts` then re-applies the stored mode and calls `syncCoWriterPanel()` to repaint.
 - **Listing:** the "History" button (icon in the co-writer button row; also in the overflow menu under compact width) opens `SessionListModal` (Open / Delete).
@@ -252,7 +253,7 @@ Right-click a user message in the co-writer chat → "Rewind to here" discards t
 - **Reliable API truncation via `quillAnchorId`:** every message pushed to `discussCurrentMessages` / `loreCoachMessages` is stamped with `quillAnchorId` = the originating `CoWriterChatMessage.id` (the user message's id; during a tool round, the assistant placeholder's id, so the whole round — assistant + tool results — shares one id). Both providers build their payload by picking known fields, so `quillAnchorId` is dropped on the wire (never sent to the model) but round-trips through the persistence sidecar. Rewind keeps API messages with no `quillAnchorId` (system prompt / context heads) + any whose anchor is a surviving display message; the rest drop. The model genuinely forgets.
 - **Compaction guard:** `isRewindableMessage(id, mode)` returns true iff the id still appears as a `quillAnchorId` in the active mode's API array. Turns folded into a compaction summary lose their anchor id, so the menu item is disabled on them ("Part of the summarized context — can't rewind"). The options flow (`generateOptions`, display-only) never touches the API array, so its messages are non-rewindable too (correct: never in the model's memory).
 - **Anchored-artifact cleanup:** a rewind drops subagents / pending lore edits / proposed lore images anchored to discarded messages (reuses the inline-card anchors), and re-derives `currentLoreDraft` from the last surviving message that carries one.
-- **Phase re-evaluation:** coach / lorebook mode-session phase isn't stored per-turn, so `reevaluateModePhase` re-derives it from the surviving `chatHistory` after a rewind — coach replays its phase-advance heuristic over the kept assistant turns; lorebook infers phase from draft presence + turn count. Run at rewind time so the phase indicator is correct immediately.
+- **Phase re-evaluation:** coach / lorebook mode-session phase is restored authoritatively from the latest surviving assistant turn's `phaseSnapshot` field (`applyPhaseSnapshot` — stamped live at the end of each turn), with `reevaluateModePhase` as a lossy fallback for pre-snapshot sidecars / user-only histories. The heuristic still runs first to rebuild the surrounding session fields (response, summary, clarifyRound, scope, rounds); only the phase value is overridden from the snapshot. The snapshot eliminates the live/rewind phase-machine sync hazard: the live advance path is authoritative, the coach clarify-round replay and the lorebook draft-presence inference no longer need to track it exactly.
 
 ## Async feedback queue
 
@@ -292,7 +293,7 @@ Provider serialization:
 - **OpenAI-compatible** (LM Studio, primary): `ChatMessage.images` → content array of `{type:'text'}` + `{type:'image_url', image_url:{url}}` parts.
 - **Ollama:** sibling `images: [base64]` field on the message.
 
-Images are base64 strings with no `data:` prefix, normalized to JPEG and downscaled (≤ `lorebookImageMaxDimension`, default 512) by `image-utils.ts` before they reach a provider, to protect local-model context budgets. The proxy prompt is customizable (`lorebookImageProxyPrompt`).
+Images are base64 strings with no `data:` prefix, normalized to JPEG and downscaled (≤ `lorebookImageMaxDimension`, default 512) by `image-utils.ts` before they reach a provider, to protect local-model context budgets. The proxy prompt is customizable (`lorebookImageProxyPrompt`). When `lorebookImageTwoPassDescription` is on (default off) and a Regime-B batch has more than one image, the proxy runs two calls: a cheap count pass (label each visible character across the batch) then the descriptive pass with that list folded in as grounding — helps weak vision models keep per-character descriptions coherent across a group.
 
 Default-provider resolution (`main.ts`): `getDefaultChatProvider()` / `getDefaultEmbedProvider()` / `getDefaultImageProvider()` resolve a composite `"providerId/modelId"` setting key to `{ provider, modelId }`.
 
@@ -319,11 +320,12 @@ Default-provider resolution (`main.ts`): `getDefaultChatProvider()` / `getDefaul
 
 ### Error handling
 
-- Use typed error classes (extend `Error`) rather than throwing raw strings or generic `Error`. Four currently exist:
+- Use typed error classes (extend `Error`) rather than throwing raw strings or generic `Error`. Five currently exist:
     - `ProviderError` — `src/ai/provider.ts`
     - `HttpError` — `src/ai/transport.ts`
     - `StreamingUnavailableError` — `src/ai/transport.ts`
     - `DuplicateToolError` — `src/ai/tools/tool.ts`
+    - `RateLimitError` — `src/ai/tools/http-retry.ts` (HTTP 429 from a network tool; carries the parsed `Retry-After` in seconds so the tool surfaces an actionable "wait N seconds" message to the model rather than a bare status code)
 - Propagate errors with `throw` rather than returning error objects, unless the function signature explicitly supports `Result<T, E>` or similar patterns.
 
 ## Coding rules — enforced vs. convention
@@ -386,7 +388,7 @@ Each row = one JSDoc + two `setDesc(...)` copies to keep aligned. The authoritat
 ## Key feature areas
 
 1. **Manuscript Context Engine** — auto-builds working context from open document.
-2. **Manuscript Dashboard** — chapter word counts, pacing analysis, dialogue ratios, readability.
+2. **Manuscript Dashboard** — chapter word counts, pacing analysis, dialogue ratios, readability, and a deterministic narrative-flow score (0-100 composite of sentence-length variety, paragraph-length rhythm, pacing-flag density, and dialogue balance).
 3. **Prose Linter (Novelist Edition)** — deterministic rules for narrative prose.
 4. **AI Feedback Engine** — reads like a thoughtful editor, not a text generator.
 5. **Async Feedback Queue** — submit any review (editorial / critical / manuscript) to run unattended via the Review tab's "Queue instead of running" toggle; single-slot FIFO scheduler, per-job snapshots (isolated from live edits), and a durable vault archive of every report. See "Async feedback queue".

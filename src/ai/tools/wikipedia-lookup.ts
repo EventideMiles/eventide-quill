@@ -6,12 +6,26 @@ import {
     mediawikiPageImage,
     mediawikiSearch
 } from './mediawiki';
+import { toolErrorMessage } from './http-retry';
 
 /**
  * Build the Wikipedia host from the configured language.
  */
 function wikipediaHost(lang: string): string {
     return `${lang}.wikipedia.org`;
+}
+
+/**
+ * Wikipedia language-subdomain shape: 2–3 lowercase letters, optionally
+ * followed by a hyphen + subtag (`en`, `fr`, `zh-yue`, `be-x-old`), plus the
+ * special `simple` subdomain (simple.wikipedia.org). Shared by settings-input
+ * validation so a typo like `"en.wikipedia.org"` or `"Spanish"` can't slip
+ * through and produce a broken `${lang}.wikipedia.org` host. The empty string
+ * is rejected (callers fall back to the `'en'` default).
+ */
+const WIKIPEDIA_LANG_RE = /^([a-z]{2,3}|simple)(-[a-z0-9]+)?$/;
+export function isValidWikipediaLang(lang: string): boolean {
+    return WIKIPEDIA_LANG_RE.test(lang);
 }
 
 /**
@@ -53,8 +67,7 @@ export function createWikipediaLookupTool(maxResultTokens: number, lang: string)
             try {
                 return (await mediawikiLookup(host, query, maxResultTokens)).text;
             } catch (caught) {
-                const msg = caught instanceof Error ? caught.message : String(caught);
-                return `Error looking up "${query}" on ${host}: ${msg}`;
+                return toolErrorMessage(caught, `looking up "${query}" on ${host}`);
             }
         }
     };
@@ -107,8 +120,7 @@ export function createWikipediaPageTool(maxResultTokens: number, lang: string): 
                         : extract.extract;
                 return `${extract.title} (${host}):\n${text}`;
             } catch (caught) {
-                const msg = caught instanceof Error ? caught.message : String(caught);
-                return `Error fetching page "${title}" from ${host}: ${msg}`;
+                return toolErrorMessage(caught, `fetching page "${title}" from ${host}`);
             }
         }
     };
@@ -180,16 +192,17 @@ export function createWikipediaImageTool(maxResultTokens: number, maxDimension: 
                         images: [base64]
                     };
                 } catch (dlErr) {
-                    const dlMsg = dlErr instanceof Error ? dlErr.message : String(dlErr);
+                    // Route through toolErrorMessage so a 429 surfaces the
+                    // shared actionable retry guidance, not a bare status.
                     return {
                         text:
-                            `Found "${title}" on ${host} but the lead image could not be fetched (${dlMsg}). ` +
+                            `Found "${title}" on ${host} but the lead image could not be fetched ` +
+                            `(${toolErrorMessage(dlErr, `downloading the lead image from ${host}`)}). ` +
                             'If you have a direct image URL, use fetch_image_url instead.'
                     };
                 }
             } catch (caught) {
-                const msg = caught instanceof Error ? caught.message : String(caught);
-                return { text: `Error fetching image for "${query}" from ${host}: ${msg}` };
+                return { text: toolErrorMessage(caught, `fetching image for "${query}" from ${host}`) };
             }
         }
     };

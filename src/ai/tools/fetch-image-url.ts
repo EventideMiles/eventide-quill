@@ -2,6 +2,7 @@ import { requestUrl } from 'obsidian';
 import { downscaleToJpegBase64, isImageContentType } from '../image-utils';
 import type { Tool, ToolContext, ToolResult } from './tool';
 import { validatePublicHost } from './fetch-url';
+import { assertNotRateLimited, toolErrorMessage } from './http-retry';
 
 /**
  * Factory: create the `fetch_image_url` tool.
@@ -63,6 +64,7 @@ export function createFetchImageUrlTool(maxResultTokens: number, maxDimension: n
                     headers: { Accept: 'image/*' }
                 });
 
+                assertNotRateLimited(response);
                 if (response.status !== 200) {
                     return { text: `Error: HTTP ${response.status} fetching image "${url}".` };
                 }
@@ -83,8 +85,7 @@ export function createFetchImageUrlTool(maxResultTokens: number, maxDimension: n
                     images: [base64]
                 };
             } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                return { text: `Error fetching image "${url}": ${msg}` };
+                return { text: toolErrorMessage(err, `fetching image "${url}"`) };
             }
         }
     };

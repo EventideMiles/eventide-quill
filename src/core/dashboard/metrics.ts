@@ -1,8 +1,8 @@
 import type { ExtractedEntity, EntityType } from '../context-engine/types';
 import { computeDialogueRatio } from '../context-engine/voice-analyzer';
-import { countSyllables, splitSentences, listSections } from '../../utils/text-analysis';
+import { countSyllables, splitSentences, listSections, splitParagraphs } from '../../utils/text-analysis';
 import type { SectionRange } from '../../utils/text-analysis';
-import { daleChall, reweightedFlesch, customComposite, automatedReadabilityIndex } from './readability';
+import { daleChall, reweightedFlesch, customComposite, automatedReadabilityIndex, narrativeFlow } from './readability';
 import type {
     ChapterMetrics,
     ChapterRange,
@@ -56,6 +56,22 @@ function stats(values: number[]): { mean: number; stddev: number } {
     for (const v of values) variance += (v - mean) * (v - mean);
     variance /= values.length;
     return { mean, stddev: Math.sqrt(variance) };
+}
+
+/**
+ * Population standard deviation of paragraph word counts. Paragraphs are split
+ * by {@link splitParagraphs} (blank lines, scene breaks, and headings each
+ * start a new paragraph). Feeds the narrative-flow score's rhythm signal — a
+ * passage with varied paragraph lengths (short dialogue beats mixed with
+ * longer description) scores higher than one of uniformly sized blocks.
+ * Returns 0 for empty/blank text.
+ */
+function computeParagraphLengthStddev(text: string): number {
+    const paragraphs = splitParagraphs(text);
+    if (paragraphs.length === 0) return 0;
+    const counts = paragraphs.map((p) => countWords(p));
+    const { stddev } = stats(counts);
+    return Math.round(stddev * 10) / 10;
 }
 
 /** Build an array of line-start offsets for O(log n) offset-to-line lookups. */
@@ -231,6 +247,8 @@ function computeSectionMetrics(section: SectionRange, filePath: string): Section
         lineStart: section.lineStart + flag.lineStart - 1,
         lineEnd: section.lineStart + flag.lineEnd - 1
     }));
+    const paragraphStddev = computeParagraphLengthStddev(section.text);
+    const flow = narrativeFlow(stddev, paragraphStddev, dialogueRatio, sectionFlags.length, sentenceCount);
 
     return {
         title: section.title,
@@ -246,6 +264,8 @@ function computeSectionMetrics(section: SectionRange, filePath: string): Section
         reweightedFleschReadingEase: readability.reweightedFleschReadingEase,
         reweightedFleschGradeLevel: readability.reweightedFleschGradeLevel,
         customCompositeScore: readability.customCompositeScore,
+        narrativeFlowScore: flow.score,
+        paragraphLengthStddev: paragraphStddev,
         ariScore: readability.ariScore,
         pacingFlags: sectionFlags
     };
@@ -368,6 +388,8 @@ export function chapterMetrics(chapter: ChapterRange): ChapterMetrics {
     const { readingEase, gradeLevel } = fleschKincaid(chapter.text);
     const readability = computeSectionReadability(chapter.text, stddev, dialogueRatio);
     const flags = pacingAnalysis(chapter.text, lineTable, chapter.filePath);
+    const paragraphStddev = computeParagraphLengthStddev(chapter.text);
+    const flow = narrativeFlow(stddev, paragraphStddev, dialogueRatio, flags.length, sentenceCount);
 
     return {
         filePath: chapter.filePath,
@@ -388,6 +410,8 @@ export function chapterMetrics(chapter: ChapterRange): ChapterMetrics {
         reweightedFleschReadingEase: readability.reweightedFleschReadingEase,
         reweightedFleschGradeLevel: readability.reweightedFleschGradeLevel,
         customCompositeScore: readability.customCompositeScore,
+        narrativeFlowScore: flow.score,
+        paragraphLengthStddev: paragraphStddev,
         ariScore: readability.ariScore,
         pacingFlags: flags,
         sections: chapter.sections.map((s) => computeSectionMetrics(s, chapter.filePath))
@@ -510,8 +534,10 @@ export function manuscriptMetrics(
     let weightedReweightedRE = 0;
     let weightedReweightedGrade = 0;
     let weightedComposite = 0;
+    let weightedFlow = 0;
     let weightedAri = 0;
     const allWordCounts: number[] = [];
+    const allParagraphCounts: number[] = [];
     const allFlags: PacingFlag[] = [];
 
     for (const cm of chapterMetricsList) {
@@ -526,6 +552,7 @@ export function manuscriptMetrics(
         weightedReweightedRE += cm.reweightedFleschReadingEase * cm.wordCount;
         weightedReweightedGrade += cm.reweightedFleschGradeLevel * cm.wordCount;
         weightedComposite += cm.customCompositeScore * cm.wordCount;
+        weightedFlow += cm.narrativeFlowScore * cm.wordCount;
         weightedAri += cm.ariScore * cm.wordCount;
         // Adjust flag lines from chapter-relative to file-absolute for navigation.
         for (const flag of cm.pacingFlags) {
@@ -543,8 +570,14 @@ export function manuscriptMetrics(
         for (const s of sentences) {
             allWordCounts.push(s.text.split(/\s+/).filter(Boolean).length);
         }
+        // Recompute manuscript-wide paragraph-length stats the same way so the
+        // flow rhythm signal reflects the whole manuscript, not a per-chapter avg.
+        for (const para of splitParagraphs(chapter.text)) {
+            allParagraphCounts.push(countWords(para));
+        }
     }
     const { mean: avgSentenceLength, stddev: sentenceLengthStddev } = stats(allWordCounts);
+    const { stddev: paragraphLengthStddevRaw } = stats(allParagraphCounts);
 
     const characters = characterAppearances(chapters, activeEntities);
     const reclassified = collectReclassified(activeEntities);
@@ -567,6 +600,8 @@ export function manuscriptMetrics(
         reweightedFleschReadingEase: totalWords > 0 ? Math.round((weightedReweightedRE / totalWords) * 10) / 10 : 0,
         reweightedFleschGradeLevel: totalWords > 0 ? Math.round((weightedReweightedGrade / totalWords) * 10) / 10 : 0,
         customCompositeScore: totalWords > 0 ? Math.round((weightedComposite / totalWords) * 10) / 10 : 0,
+        narrativeFlowScore: totalWords > 0 ? Math.round((weightedFlow / totalWords) * 10) / 10 : 0,
+        paragraphLengthStddev: Math.round(paragraphLengthStddevRaw * 10) / 10,
         ariScore: totalWords > 0 ? Math.round((weightedAri / totalWords) * 10) / 10 : 0,
         chapters: chapterMetricsList,
         characters,
