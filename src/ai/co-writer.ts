@@ -832,6 +832,14 @@ export interface CoWriterChatMessage {
      */
     images?: string[];
     /**
+     * @-mentioned file paths the writer attached to this user message (discuss
+     * / coach modes only). Captured on the message so a regenerate of the
+     * response can re-send the same additional context via mergeContextPaths
+     * instead of dropping it. Lorebook mode doesn't accept mentions, so this
+     * stays undefined there.
+     */
+    mentionPaths?: string[];
+    /**
      * Snapshot of the mode-session phase AFTER this assistant turn settled
      * (coach / lorebook modes only). Used by `rewindToMessage` to restore the
      * exact phase without re-deriving it via heuristic — the live phase
@@ -1602,7 +1610,12 @@ export class CoWriterSession {
         if (editor) this.lockEditor();
 
         // Add user's message to display-only chat history
-        this.pushChatMessage({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
+        this.pushChatMessage({
+            role: 'user',
+            content: message,
+            ...(images && images.length > 0 ? { images } : {}),
+            ...(mentionPaths && mentionPaths.length > 0 ? { mentionPaths } : {})
+        });
 
         const fullText = editor?.getValue() ?? '';
         const proseForContext = editor ? proseBeforeCursorOrDoc(editor, 4000) : '';
@@ -1971,7 +1984,12 @@ export class CoWriterSession {
         if (editor) this.lockEditor();
 
         // Add user message to display history (same as sendDiscussion)
-        this.pushChatMessage({ role: 'user', content: message, ...(images && images.length > 0 ? { images } : {}) });
+        this.pushChatMessage({
+            role: 'user',
+            content: message,
+            ...(images && images.length > 0 ? { images } : {}),
+            ...(mentionPaths && mentionPaths.length > 0 ? { mentionPaths } : {})
+        });
 
         const fullText = editor?.getValue() ?? '';
         const proseForContext = editor ? proseBeforeCursorOrDoc(editor, 4000) : '';
@@ -3725,9 +3743,14 @@ export class CoWriterSession {
         // into), move it to the end so the continuation inserts at the end of
         // the written prose — matching the "continue this chapter" intent.
         // Any non-zero cursor position is the writer's intended insertion
-        // point and is respected.
-        moveCursorToEndIfEarly(editor);
+        // point and is respected. Scroll to the new position only when we
+        // actually moved it, mirroring generateOptions/generateDirect.
+        const optionCursorWasAtZero = moveCursorToEndIfEarly(editor);
         const fullText = editor.getValue();
+        if (optionCursorWasAtZero) {
+            const endPos = editor.offsetToPos(fullText.length);
+            editor.scrollIntoView({ from: endPos, to: endPos }, true);
+        }
         // Read the cursor via editorCursorOffset (CM6 selection state) so an
         // inactive document still reports its real cursor — getCursor() can
         // report {0,0} when the sidebar has focus.

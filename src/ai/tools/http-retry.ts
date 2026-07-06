@@ -56,6 +56,17 @@ export function parseRetryAfter(headerValue: string | undefined | null): number 
 }
 
 /**
+ * Minimal response shape inspected for a 429 — a structural subset of
+ * Obsidian's `RequestUrlResponse` (just the fields {@link assertNotRateLimited}
+ * reads). Kept as a named interface so every network-tool call site passes a
+ * consistently-shaped response.
+ */
+export interface RateLimitResponse {
+    status: number;
+    headers?: Record<string, string>;
+}
+
+/**
  * Inspect a `requestUrl` response and throw {@link RateLimitError} when it is
  * a 429. The thrown error carries the parsed `Retry-After` (or a 60s default).
  * Returns silently for every other status — callers keep their own
@@ -65,7 +76,7 @@ export function parseRetryAfter(headerValue: string | undefined | null): number 
  * `requestUrl` returns lowercase header keys (e.g. `response.headers['content-type']`);
  * both lowercase and title-case are checked defensively.
  */
-export function assertNotRateLimited(response: { status: number; headers?: Record<string, string> }): void {
+export function assertNotRateLimited(response: RateLimitResponse): void {
     if (response.status !== 429) return;
     const headers = response.headers ?? {};
     const raw = headers['retry-after'] ?? headers['Retry-After'];

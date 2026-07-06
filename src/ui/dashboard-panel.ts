@@ -9,6 +9,7 @@ import {
     DEFAULT_SPLIT_BY_HEADING,
     DEFAULT_INCLUDE_SUBFOLDERS
 } from '../core/dashboard/presets';
+import { flowLabel } from '../core/dashboard/readability';
 import { getActiveDocument, renderDocumentHeader } from './document-header';
 
 /** Expand state for chapter rows, keyed by `${filePath}:${lineStart}`. Survives re-renders. */
@@ -536,15 +537,6 @@ function compositeLabel(score: number): string {
     if (score >= 40) return 'moderate';
     if (score >= 20) return 'complex';
     return 'very complex';
-}
-
-/** Map a narrative-flow score to a label (peer of `compositeLabel`). */
-function flowLabel(score: number): string {
-    if (score >= 80) return 'strong flow';
-    if (score >= 60) return 'good flow';
-    if (score >= 40) return 'uneven';
-    if (score >= 20) return 'choppy';
-    return 'monotonous';
 }
 
 /** Map a narrative-flow score to a 3-tier bar color (good/warning/danger). */

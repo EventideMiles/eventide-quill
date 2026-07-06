@@ -390,7 +390,7 @@ export function narrativeFlow(
     return { score: rounded, label: flowLabel(rounded) };
 }
 
-function flowLabel(score: number): string {
+export function flowLabel(score: number): string {
     if (score >= 80) return 'strong flow';
     if (score >= 60) return 'good flow';
     if (score >= 40) return 'uneven';

@@ -1332,7 +1332,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         containerEl.createEl('div', { cls: 'quill-settings__footer' });
     }
 
-    /** Render the linter configuration section. */
     /** Render the Embeddings settings block into `content` (retrieval index config). */
     private renderEmbeddingsSettings(content: HTMLElement): void {
         new Setting(content).setName('Embeddings').setHeading();
@@ -1648,6 +1647,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     if (!lang) {
                         this.plugin.settings.lorebookWikipediaLang = 'en';
                         void this.plugin.saveSettings();
+                        // Keep the visible field in sync with the reverted default.
+                        text.inputEl.value = 'en';
                         return;
                     }
                     if (!isValidWikipediaLang(lang)) {

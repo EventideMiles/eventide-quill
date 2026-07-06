@@ -1061,8 +1061,8 @@ export class CoWriterPanel extends AbstractChatPanel {
                                 item
                                     .setTitle(
                                         generating
-                                            ? 'Stop generation before rewinding'
-                                            : 'Part of the summarized context (compacted) — can\u2019t rewind'
+                                            ? 'Stop generation before rewinding or regenerating'
+                                            : 'Part of the summarized context (compacted) — can\u2019t rewind or regenerate'
                                     )
                                     .setDisabled(true)
                             );
@@ -1593,13 +1593,16 @@ export class CoWriterPanel extends AbstractChatPanel {
         isSelection: boolean
     ): Promise<void> {
         try {
-            const existing = await this.app.vault.read(file);
             const stamp = new Date().toLocaleString();
-            const sep = existing.length === 0 || existing.endsWith('\n\n') ? '' : '\n\n';
             const kind = isSelection ? 'selection' : 'message';
             const header = `---\n\n**Quill co-writer (${role} ${kind}, ${stamp})**\n\n`;
-            const next = `${existing}${sep}${header}${text}\n`;
-            await this.app.vault.modify(file, next);
+            // vault.process reads + writes atomically, so a concurrent edit to
+            // the same note between our read and write is preserved rather than
+            // clobbered (the separate read → modify path would lose it).
+            await this.app.vault.process(file, (existing) => {
+                const sep = existing.length === 0 || existing.endsWith('\n\n') ? '' : '\n\n';
+                return `${existing}${sep}${header}${text}\n`;
+            });
             new Notice(`Saved to "${file.basename}"`);
         } catch (err) {
             new Notice('Quill: failed to save to note.');

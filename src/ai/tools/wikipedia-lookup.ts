@@ -17,12 +17,13 @@ function wikipediaHost(lang: string): string {
 
 /**
  * Wikipedia language-subdomain shape: 2–3 lowercase letters, optionally
- * followed by a hyphen + subtag (`en`, `fr`, `simple`, `zh-yue`, `be-x-old`).
- * Shared by settings-input validation so a typo like `"en.wikipedia.org"` or
- * `"Spanish"` can't slip through and produce a broken `${lang}.wikipedia.org`
- * host. The empty string is rejected (callers fall back to the `'en'` default).
+ * followed by a hyphen + subtag (`en`, `fr`, `zh-yue`, `be-x-old`), plus the
+ * special `simple` subdomain (simple.wikipedia.org). Shared by settings-input
+ * validation so a typo like `"en.wikipedia.org"` or `"Spanish"` can't slip
+ * through and produce a broken `${lang}.wikipedia.org` host. The empty string
+ * is rejected (callers fall back to the `'en'` default).
  */
-const WIKIPEDIA_LANG_RE = /^[a-z]{2,3}(-[a-z0-9]+)?$/;
+const WIKIPEDIA_LANG_RE = /^([a-z]{2,3}|simple)(-[a-z0-9]+)?$/;
 export function isValidWikipediaLang(lang: string): boolean {
     return WIKIPEDIA_LANG_RE.test(lang);
 }
@@ -191,10 +192,12 @@ export function createWikipediaImageTool(maxResultTokens: number, maxDimension: 
                         images: [base64]
                     };
                 } catch (dlErr) {
-                    const dlMsg = dlErr instanceof Error ? dlErr.message : String(dlErr);
+                    // Route through toolErrorMessage so a 429 surfaces the
+                    // shared actionable retry guidance, not a bare status.
                     return {
                         text:
-                            `Found "${title}" on ${host} but the lead image could not be fetched (${dlMsg}). ` +
+                            `Found "${title}" on ${host} but the lead image could not be fetched ` +
+                            `(${toolErrorMessage(dlErr, `downloading the lead image from ${host}`)}). ` +
                             'If you have a direct image URL, use fetch_image_url instead.'
                     };
                 }

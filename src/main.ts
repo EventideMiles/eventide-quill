@@ -2783,17 +2783,21 @@ export default class EventideQuillPlugin extends Plugin {
         if (!msg || msg.role !== 'user') return;
         const text = msg.content;
         const images = msg.images;
+        const mentionPaths = msg.mentionPaths;
         if (!text.trim()) return;
         // Rewind to before this user message (discard it + its response + after).
         this.coWriterSession.rewindToMessage(messageId, mode);
         this.syncCoWriterPanel();
-        // Re-send the same text + images through the active mode.
+        // Re-bind panel callbacks (mirrors sendCoWriterDiscussion / sendCoWriterCoach)
+        // so streaming chunks and follow-up hooks still fire after a restore.
+        this.wireCoWriterPanel();
+        // Re-send the same text + images + mentions through the active mode.
         if (mode === 'coach') {
-            await this.coWriterSession.sendCoach(this, text, images);
+            await this.coWriterSession.sendCoach(this, text, images, mentionPaths);
         } else if (mode === 'lorebook') {
             await this.coWriterSession.sendLoreCoach(this, text, images);
         } else {
-            await this.coWriterSession.sendDiscussion(this, text, images);
+            await this.coWriterSession.sendDiscussion(this, text, images, mentionPaths);
         }
     }
 

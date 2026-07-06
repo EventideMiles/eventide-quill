@@ -512,10 +512,12 @@ export function createFandomImageTool(
                         };
                     } catch (dlErr) {
                         // Lead image download failed — still surface the gallery.
-                        const dlMsg = dlErr instanceof Error ? dlErr.message : String(dlErr);
+                        // Route through toolErrorMessage so a 429 surfaces the
+                        // shared actionable retry guidance, not a bare status.
                         return {
                             text:
-                                `Found "${title}" on ${host} but the lead image could not be fetched (${dlMsg}). ` +
+                                `Found "${title}" on ${host} but the lead image could not be fetched ` +
+                                `(${toolErrorMessage(dlErr, `downloading the lead image from ${host}`)}). ` +
                                 `Other images available:\n${galleryNote}${pickHint}`
                         };
                     }

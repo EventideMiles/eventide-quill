@@ -272,17 +272,22 @@ async function captionWithModel(
     opts: ImageInjectionOptions
 ): Promise<string> {
     const twoPass = plugin.settings.lorebookImageTwoPassDescription && images.length > 1;
+
+    const totalBudget = plugin.settings.lorebookImageMaxDescriptionTokens;
+    // Split the configured budget between the count pass and the descriptive
+    // pass so two-pass never silently exceeds the writer's cap. Pass 1 gets up
+    // to TWO_PASS_COUNT_BUDGET; pass 2 gets the remainder, floored at 64 so a
+    // tiny total doesn't starve the descriptive call. countBudget is derived
+    // from descriptionMaxTokens (not independently) so the two always sum to
+    // totalBudget or less.
+    const descriptionMaxTokens = twoPass ? Math.max(64, totalBudget - TWO_PASS_COUNT_BUDGET) : totalBudget;
+    const countBudget = twoPass ? Math.max(0, totalBudget - descriptionMaxTokens) : 0;
+
     let pass1Result: string | undefined;
 
     if (twoPass) {
-        pass1Result = await countVisibleCharacters(plugin, provider, modelId, images, opts);
+        pass1Result = await countVisibleCharacters(provider, modelId, images, opts, countBudget);
     }
-
-    const totalBudget = plugin.settings.lorebookImageMaxDescriptionTokens;
-    // Reserve the count slice from the descriptive budget so two-pass doesn't
-    // silently exceed the writer's configured cap; floor pass 2 at 64 so a tiny
-    // total doesn't starve the descriptive call.
-    const descriptionMaxTokens = twoPass ? Math.max(64, totalBudget - TWO_PASS_COUNT_BUDGET) : totalBudget;
 
     const prompt = buildProxyPrompt(
         opts.intent,
@@ -322,18 +327,18 @@ async function captionWithModel(
  * counts + labels each visible character across the image batch. Returns the
  * raw text (a numbered list), or an empty string if the model produced
  * nothing (pass 2 then proceeds without grounding, identical to single-pass).
+ *
+ * @param countBudget  Token budget for the count, derived from the same split
+ *                     as the descriptive pass in {@link captionWithModel} so
+ *                     the two together stay within the configured cap.
  */
 async function countVisibleCharacters(
-    plugin: EventideQuillPlugin,
     provider: AiProvider,
     modelId: string,
     images: string[],
-    opts: ImageInjectionOptions
+    opts: ImageInjectionOptions,
+    countBudget: number
 ): Promise<string> {
-    // Use up to TWO_PASS_COUNT_BUDGET of the configured description budget for
-    // the count (see captionWithModel), capped by the total so a writer with a
-    // very small budget doesn't spend it all on the count.
-    const countBudget = Math.min(TWO_PASS_COUNT_BUDGET, plugin.settings.lorebookImageMaxDescriptionTokens);
     const messages: ChatMessage[] = [
         {
             role: 'system',
