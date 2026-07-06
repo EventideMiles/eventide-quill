@@ -541,6 +541,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         this.renderAiProvidersTab(scrollArea);
         this.renderModelBehaviorsTab(scrollArea);
 
+        // Wrap runs of settings under each heading into visually distinct
+        // groups (background + border) so tabs don't read as a flat list.
+        const tabContents = scrollArea.querySelectorAll<HTMLElement>('[class*="quill-settings-content-"]');
+        tabContents.forEach((c) => this.groupSettingsByHeading(c));
+
         this.renderFooter(containerEl);
 
         this.showActiveTab(savedScrollTop);
@@ -815,6 +820,31 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 void this.plugin.saveSettings();
             });
         });
+    }
+
+    /**
+     * Wrap each run of settings under a heading (`.setting-item-heading`)
+     * into a styled `.quill-settings__section` group, so a long tab reads as
+     * visually distinct blocks instead of a flat list that bleeds together.
+     *
+     * Idempotent and DOM-move-based: elements aren't recreated, so event
+     * listeners registered on them (and Setting objects' internal refs)
+     * survive. Called from {@link display} after every tab's content is built.
+     * Children appearing before the first heading stay at the top (ungrouped).
+     */
+    private groupSettingsByHeading(container: HTMLElement): void {
+        const snapshot = Array.from(container.children) as HTMLElement[];
+        let group: HTMLElement | null = null;
+        for (const child of snapshot) {
+            if (child.classList.contains('setting-item-heading')) {
+                group = container.ownerDocument.createElement('div');
+                group.className = 'quill-settings__section';
+                container.insertBefore(group, child);
+                group.appendChild(child);
+            } else if (group) {
+                group.appendChild(child);
+            }
+        }
     }
 
     /** Render the welcome tab (onboarding + feature overview). */
