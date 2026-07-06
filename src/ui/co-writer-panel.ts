@@ -1024,6 +1024,8 @@ export class CoWriterPanel extends AbstractChatPanel {
                         e.preventDefault();
                         e.stopPropagation();
                         const menu = new Menu();
+                        this.addCopyMessageItem(menu, msg.content);
+                        menu.addSeparator();
                         const generating =
                             this.optionsLoading ||
                             this.draftState === 'generating' ||
@@ -1186,6 +1188,16 @@ export class CoWriterPanel extends AbstractChatPanel {
                             }
                         });
                     }
+
+                    // Right-click → "Copy message": copy the assistant's
+                    // response text without selecting it first.
+                    this.renderEvents.registerDomEvent(bubble, 'contextmenu', (e: MouseEvent) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const menu = new Menu();
+                        this.addCopyMessageItem(menu, msg.content);
+                        menu.showAtMouseEvent(e);
+                    });
                 }
 
                 // Reviewable cards anchored to this message (subagent status
@@ -1478,6 +1490,27 @@ export class CoWriterPanel extends AbstractChatPanel {
         const p = MarkdownRenderer.render(this.app, normalizeParagraphBreaks(content), target, '', this.renderEvents);
         void p;
         this.renderPromises.push(p);
+    }
+
+    /**
+     * Add a "Copy message" item to a context menu, copying `content` to the
+     * clipboard without requiring the writer to select it first. Shared by the
+     * user-bubble and assistant-bubble context menus.
+     */
+    private addCopyMessageItem(menu: Menu, content: string): void {
+        const text = content.trim();
+        menu.addItem((item) =>
+            item
+                .setTitle('Copy message')
+                .setIcon('copy')
+                .setDisabled(text.length === 0)
+                .onClick(() => {
+                    if (!text) return;
+                    void navigator.clipboard.writeText(text).then(() => {
+                        new Notice('Copied to clipboard');
+                    });
+                })
+        );
     }
 
     /** Render the Direct continuation review card (Approve/Reject), using the
