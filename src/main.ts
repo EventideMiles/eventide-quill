@@ -2771,6 +2771,32 @@ export default class EventideQuillPlugin extends Plugin {
         }
     }
 
+    /**
+     * Regenerate the response to a user message: rewind to before it (discarding
+     * its response and everything after), then re-send the same text + images
+     * through the active mode for a fresh take. Mirrors {@link rewindCoWriterChat}
+     * but auto-resends instead of pre-filling the input for editing.
+     */
+    async regenerateCoWriterResponse(messageId: string): Promise<void> {
+        const mode = this.lintPanel?.coWriterGetMode() ?? 'discuss';
+        const msg = this.coWriterSession.chatHistory.find((m) => m.id === messageId);
+        if (!msg || msg.role !== 'user') return;
+        const text = msg.content;
+        const images = msg.images;
+        if (!text.trim()) return;
+        // Rewind to before this user message (discard it + its response + after).
+        this.coWriterSession.rewindToMessage(messageId, mode);
+        this.syncCoWriterPanel();
+        // Re-send the same text + images through the active mode.
+        if (mode === 'coach') {
+            await this.coWriterSession.sendCoach(this, text, images);
+        } else if (mode === 'lorebook') {
+            await this.coWriterSession.sendLoreCoach(this, text, images);
+        } else {
+            await this.coWriterSession.sendDiscussion(this, text, images);
+        }
+    }
+
     /** Open the saved-conversation switcher (History). */
     async openCoWriterHistory(): Promise<void> {
         const dir = resolveSessionsDir(this.pluginDataDir);

@@ -226,6 +226,8 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onSaveSnapshot: (() => void) | null = null;
     /** Rewind the chat to before a user message (discard it + everything after). */
     private onRewind: ((messageId: string) => void) | null = null;
+    /** Regenerate the response to a user message (rewind + auto-resend same text). */
+    private onRegenerate: ((messageId: string) => void) | null = null;
 
     /**
      * Conversation token estimate pushed from the plugin layer.
@@ -570,6 +572,11 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Set the handler invoked when the writer rewinds to a user message. */
     setRewindHandler(handler: (messageId: string) => void): void {
         this.onRewind = handler;
+    }
+
+    /** Set the handler invoked when the writer regenerates a response. */
+    setRegenerateHandler(handler: (messageId: string) => void): void {
+        this.onRegenerate = handler;
     }
 
     /**
@@ -1040,6 +1047,13 @@ export class CoWriterPanel extends AbstractChatPanel {
                                 .setIcon('rotate-ccw')
                                 .setDisabled(!rewindable)
                                 .onClick(() => this.onRewind?.(msg.id))
+                        );
+                        menu.addItem((item) =>
+                            item
+                                .setTitle('Regenerate response')
+                                .setIcon('refresh-cw')
+                                .setDisabled(!rewindable)
+                                .onClick(() => this.onRegenerate?.(msg.id))
                         );
                         if (!rewindable) {
                             menu.addItem((item) =>
