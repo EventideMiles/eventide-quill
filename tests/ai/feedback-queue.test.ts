@@ -60,10 +60,12 @@ describe('mintJobId', () => {
         expect(mintJobId()).toMatch(/^fq_/);
     });
 
-    it('produces unique ids', () => {
+    it('produces unique ids (small batch — the random suffix has 46656 possible values)', () => {
+        // Birthday paradox: with a 46656-value random space, 100 samples have a
+        // ~10.7% collision rate. Keep the batch small (20 → <0.5% collision).
         const ids = new Set<string>();
-        for (let i = 0; i < 100; i++) ids.add(mintJobId());
-        expect(ids.size).toBe(100);
+        for (let i = 0; i < 20; i++) ids.add(mintJobId());
+        expect(ids.size).toBe(20);
     });
 });
 
