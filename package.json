@@ -1,6 +1,6 @@
 {
 	"name": "eventide-quill",
-	"version": "0.23.0",
+	"version": "1.0.0",
 	"description": "A feedback-first, novelist-focused writing assistant for Obsidian.",
 	"main": "main.js",
 	"type": "module",
