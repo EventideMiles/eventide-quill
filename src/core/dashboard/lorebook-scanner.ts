@@ -246,8 +246,10 @@ export function stripGallerySections(body: string, sectionHeaders: string[]): { 
                 // Subheading inside the gallery section becomes the current
                 // label for any embeds that follow. Heading line dropped.
                 currentLabel = headingMatch[2].trim();
+            } else {
+                // Heading outside a gallery section — pass through unchanged.
+                out.push(line);
             }
-            // Headings outside a gallery section pass through unchanged.
         } else if (!inGallery) {
             out.push(line);
         } else {
