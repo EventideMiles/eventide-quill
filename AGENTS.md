@@ -74,7 +74,7 @@ Tests run on **Vitest** (native ESM, esbuild-based transform matching the projec
 
 ### What's covered vs. deferred
 
-**Covered:** `src/utils/text-analysis`, `src/core/linter/rules`, `src/core/dashboard/readability`, `src/core/change-set`, `src/ai/provider` (role/capability resolution), `src/ai/tools/http-retry` (429 / Retry-After parsing). All are pure-logic — zero mocks.
+**Covered:** `src/utils/text-analysis`, `src/core/linter/rules`, `src/core/dashboard/readability`, `src/core/change-set`, `src/ai/provider` (role/capability resolution), `src/ai/tools/http-retry` (429 / Retry-After parsing), `src/core/linter/linter` (orchestrator + enableX toggles), `src/core/dashboard/metrics` (word/sentence counts), `src/ai/streaming` (SSE/NDJSON parsing, thought extraction), `src/utils/tokens`, `src/utils/directives`, `src/core/dashboard/lorebook-scanner` (pure subset: type/alias parsing, gallery stripping), `src/ai/conversation-store` (sidecar persistence + LRU), `src/ai/feedback-queue` (sidecar persistence + running→queued restore). Most are pure-logic — zero mocks; the two sidecar stores use an in-memory `Vault` adapter stub.
 
 **Deferred (post-1.0.0):** UI tests (`src/ui/*`, `main.ts`, `settings.ts`), CodeMirror decoration tests, provider integration tests (`openai-provider.ts` / `ollama-provider.ts` end-to-end), and the heavy AI pipelines (`co-writer.ts`, `runFeedbackJob`). These need jsdom + lifecycle simulation or real HTTP fixtures — a separate, larger effort.
 
