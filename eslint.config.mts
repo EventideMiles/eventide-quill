@@ -36,6 +36,15 @@ export default tseslint.config(
 	},
 	...obsidianmd.configs.recommended,
 	{
+		// Placeholder example URLs (e.g. the provider endpoint) aren't prose,
+		// so any UI string containing a URL scheme is exempt from sentence-case.
+		// The rule stays active everywhere else — this is the rule's documented
+		// ignoreRegex escape hatch, not a disable.
+		rules: {
+			'obsidianmd/ui/sentence-case': ['error', { enforceCamelCaseLower: true, ignoreRegex: ['https?://'] }],
+		},
+	},
+	{
 		// Obsidian-specific rules don't apply to test files (no popout windows,
 		// no vault config folder — tests run under Node via Vitest).
 		files: ['tests/**/*.ts'],

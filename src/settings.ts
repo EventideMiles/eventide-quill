@@ -2286,7 +2286,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(provider.endpoint)
-                    .setPlaceholder('E.g., localhost:1234/v1')
+                    .setPlaceholder('E.g., http://localhost:1234/v1')
                     .onChange(async (value) => {
                         provider.endpoint = value;
                         await this.plugin.saveSettings();
