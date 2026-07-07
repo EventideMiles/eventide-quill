@@ -40,22 +40,50 @@ Scripts (see `package.json`):
 | `npm run prettier:fix` | `prettier --write 'src/**/*.ts'` |
 | `npm run sass` | `sass styles/main.scss styles.css` (one-shot build of styles.css from SCSS sources) |
 | `npm run sass:watch` | `sass --watch styles/main.scss styles.css` (rebuild on SCSS change during dev) |
+| `npm test` | `vitest run` — runs the test suite once and exits non-zero on failure. Used by CI. |
+| `npm run test:watch` | `vitest` — watch mode, re-runs on file change during development. |
+| `npm run test:coverage` | `vitest run --coverage` — test suite with V8 coverage report. |
 | `npm run version` | `node version-bump.mjs && git add manifest.json versions.json` (run via `npm version`) |
 | `npm run set-version -- <v>` | Chore: rewrite the version string everywhere it appears (release files + embedded copies like the MediaWiki User-Agent). Adds a new `versions.json` key without dropping history. Does **not** tag/commit/push. Supports `--dry-run`. |
 
-There is **no standalone `typecheck` script** — `tsc` runs inside `build`. There is **no `test` script and no test framework** (see Verification below).
+There is **no standalone `typecheck` script** — `tsc` runs inside `build`. The test suite lives under `tests/` (see "Testing" below).
 
 ## Verification
 
-No automated test framework exists in this project (no jest/vitest/mocha, no `*.test.ts`). Verify changes by:
+The test suite covers the deterministic core (text analysis, linter rules, readability formulas, change-set logic, provider resolution, HTTP retry parsing). Verify changes by:
 
 1. `npm run build` (sass + Prettier + `tsc` + esbuild), and
-2. `npm run lint`, and
-3. `npm run lint:dup` (jscpd duplication gate — fails if the duplicated-lines % exceeds the `.jscpd.json` threshold), and
-4. Manual smoke test in Obsidian (especially on mobile) for UI or provider changes.
-5. For release builds, also run `npm run build:release` to verify minification and `__DEV__` tree-shaking work correctly.
+2. `npm test` (Vitest — pure-logic unit tests; runs in ~200ms), and
+3. `npm run lint`, and
+4. `npm run lint:dup` (jscpd duplication gate — fails if the duplicated-lines % exceeds the `.jscpd.json` threshold), and
+5. Manual smoke test in Obsidian (especially on mobile) for UI or provider changes.
+6. For release builds, also run `npm run build:release` to verify minification and `__DEV__` tree-shaking work correctly.
 
-CI (`.github/workflows/lint.yml`) runs `build` + `lint` + `lint:dup` on every push and PR across Node 20/22/24. CI for releases (`.github/workflows/release.yml`) runs `build:release` instead.
+CI (`.github/workflows/lint.yml`) runs `build` + `test` + `lint` + `lint:dup` on every push and PR across Node 20/22/24. CI for releases (`.github/workflows/release.yml`) runs `build:release` instead.
+
+## Testing
+
+Tests run on **Vitest** (native ESM, esbuild-based transform matching the project's bundler). The suite targets the deterministic core — pure-logic modules with no Obsidian coupling — so most tests need zero mocking.
+
+### Layout
+
+- Tests live under `tests/` at the repo root (NOT `src/__tests__/`), so the jscpd duplication gate (which scans `src/` only) keeps its baseline pristine.
+- `tests/**/*.ts` is included in `tsconfig.json`, so `tsc -noEmit` type-checks tests alongside source.
+- `__mocks__/obsidian.ts` at the repo root is a minimal stub of the `obsidian` module (no-op `Notice`, `requestUrl`, `normalizePath` with the real implementation, class shells for `TFile`/`Vault`/`App`/`Component`/`Modal`). Vitest auto-resolves it for any module with a runtime `import ... from 'obsidian'`. Type-only imports (`import type`) are erased by esbuild and never hit the stub.
+- `vitest.config.ts` defines `__DEV__: true` (matching dev builds), uses `environment: 'node'`, and includes `tests/**/*.test.ts`.
+
+### What's covered vs. deferred
+
+**Covered:** `src/utils/text-analysis`, `src/core/linter/rules`, `src/core/dashboard/readability`, `src/core/change-set`, `src/ai/provider` (role/capability resolution), `src/ai/tools/http-retry` (429 / Retry-After parsing). All are pure-logic — zero mocks.
+
+**Deferred (post-1.0.0):** UI tests (`src/ui/*`, `main.ts`, `settings.ts`), CodeMirror decoration tests, provider integration tests (`openai-provider.ts` / `ollama-provider.ts` end-to-end), and the heavy AI pipelines (`co-writer.ts`, `runFeedbackJob`). These need jsdom + lifecycle simulation or real HTTP fixtures — a separate, larger effort.
+
+### Conventions
+
+- Test files mirror the source path: `src/utils/text-analysis.ts` → `tests/utils/text-analysis.test.ts`.
+- Use `import { describe, it, expect } from 'vitest'` (explicit imports — `globals: false` in the vitest config).
+- Prefer table-style tests for multi-case functions (e.g., `roleSatisfies` over all role/capability pairs).
+- For modules that import from `'obsidian'` at runtime, the `__mocks__/obsidian.ts` stub resolves automatically. Override per-test with `vi.mock('obsidian', ...)` when you need controlled `requestUrl` or `Vault.adapter` behavior.
 
 ## `__DEV__` compile-time constant
 
