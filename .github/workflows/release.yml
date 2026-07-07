@@ -3,7 +3,7 @@ name: Release Obsidian plugin
 on:
     push:
         tags:
-            - '*'
+            - '[0-9]*' # only version-like tags (0.23.0, 1.0.0, etc.)
 
 jobs:
     build:
@@ -21,10 +21,17 @@ jobs:
                   node-version: 24
                   cache: 'npm'
 
-            - name: Build plugin
-              run: |
-                  npm ci
-                  npm run build:release
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Verify (typecheck + build)
+              run: npm run build:release
+
+            - name: Verify (test suite)
+              run: npm test
+
+            - name: Verify (lint + duplication gate)
+              run: npm run lint && npm run lint:dup
 
             - name: Check for optional styles
               id: styles
@@ -47,4 +54,5 @@ jobs:
                   gh release create "$tag" \
                     --title="$tag" \
                     --draft \
+                    --generate-notes \
                     main.js manifest.json ${{ steps.styles.outputs.exists == 'true' && 'styles.css' || '' }}
