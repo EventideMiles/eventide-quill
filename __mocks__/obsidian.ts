@@ -79,8 +79,8 @@ export class Vault {
         async write(_path: string, _data: string): Promise<void> {},
         async remove(_path: string): Promise<void> {},
         async mkdir(_path: string): Promise<void> {},
-        async list(_path: string): Promise<[string, string][]> {
-            return [];
+        async list(_path: string): Promise<{ files: string[]; folders: string[] }> {
+            return { files: [], folders: [] };
         }
     };
 }

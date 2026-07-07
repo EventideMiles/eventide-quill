@@ -15,9 +15,8 @@ function makeTool(id: string, opts: Partial<Tool> = {}): Tool {
     };
 }
 
-function makeCtx(signal?: AbortSignal): ToolContext {
+function makeCtx(): ToolContext {
     return { plugin: {} } as unknown as ToolContext;
-    void signal;
 }
 
 function makeCall(name: string, args: string = '{}'): ToolCallRequest {

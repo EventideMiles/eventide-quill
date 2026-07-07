@@ -43,65 +43,39 @@ function makeEntity(name: string, type: string, occurrences: number): ExtractedE
 }
 
 describe('parseLoreType', () => {
-    it('returns the type for valid lowercase types', () => {
-        expect(parseLoreType('character')).toBe('character');
-        expect(parseLoreType('location')).toBe('location');
-        expect(parseLoreType('plot-thread')).toBe('plot-thread');
-        expect(parseLoreType('theme')).toBe('theme');
-    });
-
-    it('normalizes case and whitespace', () => {
-        expect(parseLoreType('Character')).toBe('character');
-        expect(parseLoreType('  LOCATION  ')).toBe('location');
-    });
-
-    it('returns "untyped" for unknown types', () => {
-        expect(parseLoreType('creature')).toBe('untyped');
-        expect(parseLoreType('spell')).toBe('untyped');
-    });
-
-    it('returns "untyped" for non-string values', () => {
-        expect(parseLoreType(undefined)).toBe('untyped');
-        expect(parseLoreType(null)).toBe('untyped');
-        expect(parseLoreType(42)).toBe('untyped');
-        expect(parseLoreType({})).toBe('untyped');
+    it.each<{ input: unknown; expected: string }>([
+        { input: 'character', expected: 'character' },
+        { input: 'location', expected: 'location' },
+        { input: 'plot-thread', expected: 'plot-thread' },
+        { input: 'theme', expected: 'theme' },
+        { input: 'Character', expected: 'character' },
+        { input: '  LOCATION  ', expected: 'location' },
+        { input: 'creature', expected: 'untyped' },
+        { input: 'spell', expected: 'untyped' },
+        { input: undefined, expected: 'untyped' },
+        { input: null, expected: 'untyped' },
+        { input: 42, expected: 'untyped' },
+        { input: {}, expected: 'untyped' }
+    ])('returns "$expected" for $input', ({ input, expected }) => {
+        expect(parseLoreType(input)).toBe(expected);
     });
 });
 
 describe('parseAliases', () => {
-    it('parses a string array', () => {
-        expect(parseAliases(['Sarah Connor', 'Sarah'])).toEqual(['sarah connor', 'sarah']);
-    });
-
-    it('parses a comma-separated string', () => {
-        expect(parseAliases('Sarah, Sara, S')).toEqual(['sarah', 'sara', 's']);
-    });
-
-    it('parses a newline-separated string', () => {
-        expect(parseAliases('Sarah\nSara\nS')).toEqual(['sarah', 'sara', 's']);
-    });
-
-    it('deduplicates aliases', () => {
-        expect(parseAliases(['Sarah', 'sarah', 'SARAH'])).toEqual(['sarah']);
-    });
-
-    it('collapses internal whitespace', () => {
-        expect(parseAliases(['Sarah   Connor'])).toEqual(['sarah connor']);
-    });
-
-    it('returns empty array for non-string, non-array input', () => {
-        expect(parseAliases(undefined)).toEqual([]);
-        expect(parseAliases(null)).toEqual([]);
-        expect(parseAliases(42)).toEqual([]);
-    });
-
-    it('returns empty array for empty input', () => {
-        expect(parseAliases([])).toEqual([]);
-        expect(parseAliases('')).toEqual([]);
-    });
-
-    it('skips non-string items in an array', () => {
-        expect(parseAliases(['real', 42, null, 'also'])).toEqual(['real', 'also']);
+    it.each<{ input: unknown; expected: string[] }>([
+        { input: ['Sarah Connor', 'Sarah'], expected: ['sarah connor', 'sarah'] },
+        { input: 'Sarah, Sara, S', expected: ['sarah', 'sara', 's'] },
+        { input: 'Sarah\nSara\nS', expected: ['sarah', 'sara', 's'] },
+        { input: ['Sarah', 'sarah', 'SARAH'], expected: ['sarah'] },
+        { input: ['Sarah   Connor'], expected: ['sarah connor'] },
+        { input: undefined, expected: [] },
+        { input: null, expected: [] },
+        { input: 42, expected: [] },
+        { input: [], expected: [] },
+        { input: '', expected: [] },
+        { input: ['real', 42, null, 'also'], expected: ['real', 'also'] }
+    ])('returns $expected for $input', ({ input, expected }) => {
+        expect(parseAliases(input)).toEqual(expected);
     });
 });
 

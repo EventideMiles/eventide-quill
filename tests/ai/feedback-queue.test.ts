@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import type { Vault } from 'obsidian';
 import {
     resolveQueueDir,
     mintJobId,
@@ -9,26 +8,7 @@ import {
     deleteFeedbackJob
 } from '../../src/ai/feedback-queue';
 import type { FeedbackJob } from '../../src/ai/feedback-queue';
-
-function makeMemoryVault(): Vault {
-    const files = new Map<string, string>();
-    const adapter = {
-        async exists(p: string): Promise<boolean> {
-            return files.has(p);
-        },
-        async mkdir(): Promise<void> {},
-        async read(p: string): Promise<string> {
-            return files.get(p) ?? '';
-        },
-        async write(p: string, data: string): Promise<void> {
-            files.set(p, data);
-        },
-        async remove(p: string): Promise<void> {
-            files.delete(p);
-        }
-    };
-    return { adapter } as unknown as Vault;
-}
+import { makeMemoryVault } from '../helpers/memory-vault';
 
 function makeJob(overrides: Partial<FeedbackJob> = {}): FeedbackJob {
     return {

@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { Vault } from 'obsidian';
 import {
     resolveSessionsDir,
     listSessions,
@@ -8,27 +7,7 @@ import {
     deleteSession
 } from '../../src/ai/conversation-store';
 import type { SerializedCoWriterState } from '../../src/ai/co-writer';
-
-/** Build an in-memory Vault with a Map-backed adapter for sidecar persistence tests. */
-function makeMemoryVault(): Vault {
-    const files = new Map<string, string>();
-    const adapter = {
-        async exists(p: string): Promise<boolean> {
-            return files.has(p);
-        },
-        async mkdir(): Promise<void> {},
-        async read(p: string): Promise<string> {
-            return files.get(p) ?? '';
-        },
-        async write(p: string, data: string): Promise<void> {
-            files.set(p, data);
-        },
-        async remove(p: string): Promise<void> {
-            files.delete(p);
-        }
-    };
-    return { adapter } as unknown as Vault;
-}
+import { makeMemoryVault } from '../helpers/memory-vault';
 
 /** Minimal valid state that passes the isValidState() shape check. */
 function makeState(title?: string): SerializedCoWriterState {

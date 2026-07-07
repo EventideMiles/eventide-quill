@@ -14,14 +14,12 @@ describe('MANUSCRIPT_PRESETS', () => {
         expect(ids).toContain('standard-novel');
     });
 
-    it('every preset has non-empty label, description, and positive targets', () => {
-        for (const preset of MANUSCRIPT_PRESETS) {
-            expect(preset.label.length).toBeGreaterThan(0);
-            expect(preset.description.length).toBeGreaterThan(0);
-            expect(preset.wordCountTarget).toBeGreaterThan(0);
-            expect(preset.manuscriptTarget).toBeGreaterThan(0);
-            expect(preset.targetGradeLevel).toBeGreaterThan(0);
-        }
+    it.each(MANUSCRIPT_PRESETS)('$id has non-empty label, description, and positive targets', (preset) => {
+        expect(preset.label.length).toBeGreaterThan(0);
+        expect(preset.description.length).toBeGreaterThan(0);
+        expect(preset.wordCountTarget).toBeGreaterThan(0);
+        expect(preset.manuscriptTarget).toBeGreaterThan(0);
+        expect(preset.targetGradeLevel).toBeGreaterThan(0);
     });
 
     it('has no duplicate ids', () => {

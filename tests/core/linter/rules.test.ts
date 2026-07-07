@@ -99,8 +99,12 @@ describe('checkRepeatedWords', () => {
     });
 
     it('respects the minLength parameter', () => {
-        const text = 'The the the the the the.'; // "the" is 3 chars, below default minLength=4
-        expect(checkRepeatedWords(text, 4)).toEqual([]);
+        // "dragon" (6 chars, non-skip word) repeated 3× in a 9-word sentence.
+        const text = 'The dragon roared and dragon flew and dragon burned.';
+        // minLength 5 → "dragon" (6) qualifies → flagged.
+        expect(checkRepeatedWords(text, 5).some((r) => r.rule === 'repeated-words')).toBe(true);
+        // minLength 7 → "dragon" (6) is below threshold → not flagged.
+        expect(checkRepeatedWords(text, 7)).toEqual([]);
     });
 });
 

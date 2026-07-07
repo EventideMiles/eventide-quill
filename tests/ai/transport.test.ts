@@ -103,21 +103,15 @@ describe('httpErrorResponse', () => {
 });
 
 describe('catchErrorResponse', () => {
-    it('builds an ok=false result from an Error', () => {
-        const result = catchErrorResponse(new Error('connection refused'), 'Provider X');
+    it.each([
+        { input: new Error('connection refused'), prefix: 'Provider X', expected: ['Provider X', 'connection refused'] },
+        { input: 'string error', prefix: 'Test', expected: ['string error'] },
+        { input: 42, prefix: 'Test', expected: ['42'] }
+    ])('builds an ok=false result containing the message for $input', ({ input, prefix, expected }) => {
+        const result = catchErrorResponse(input, prefix);
         expect(result.ok).toBe(false);
-        expect(result.error).toContain('Provider X');
-        expect(result.error).toContain('connection refused');
-    });
-
-    it('handles non-Error caught values', () => {
-        const result = catchErrorResponse('string error', 'Test');
-        expect(result.ok).toBe(false);
-        expect(result.error).toContain('string error');
-    });
-
-    it('handles numeric caught values', () => {
-        const result = catchErrorResponse(42, 'Test');
-        expect(result.error).toContain('42');
+        for (const substr of expected) {
+            expect(result.error).toContain(substr);
+        }
     });
 });

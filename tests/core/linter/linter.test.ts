@@ -1,5 +1,15 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// Wrap checkAdverbs in a vi.fn so the error-handling test can make it throw
+// once, then revert. By default it delegates to the real implementation, so
+// all other tests behave identically.
+vi.mock('../../../src/core/linter/rules', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../../src/core/linter/rules')>();
+    return { ...actual, checkAdverbs: vi.fn(actual.checkAdverbs) };
+});
+
 import { lint } from '../../../src/core/linter/linter';
+import { checkAdverbs } from '../../../src/core/linter/rules';
 
 describe('lint orchestrator', () => {
     it('returns empty array for clean text', () => {
@@ -61,8 +71,22 @@ describe('lint orchestrator', () => {
     });
 
     it('catches and logs errors from individual rules without crashing', () => {
-        // Passing unusual input; the orchestrator's try/catch should handle it
-        expect(() => lint('normal text')).not.toThrow();
+        vi.mocked(checkAdverbs).mockImplementationOnce(() => {
+            throw new Error('rule exploded');
+        });
+        const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        // "slowly" triggers adverbs (which throws) and "very" triggers qualifiers.
+        const results = lint('He walked slowly and very quickly.');
+
+        // The throwing rule was caught and logged.
+        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('adverbs'), expect.anything());
+        // Remaining rules still produced results.
+        expect(results.some((r) => r.rule === 'qualifiers')).toBe(true);
+        // The throwing rule contributed no results.
+        expect(results.some((r) => r.rule === 'adverbs')).toBe(false);
+
+        consoleSpy.mockRestore();
     });
 
     it('combines results from all enabled rules', () => {

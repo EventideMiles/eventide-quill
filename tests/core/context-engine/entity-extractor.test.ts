@@ -38,9 +38,10 @@ describe('extractCharacters', () => {
             '"One," Sarah said.\n"Two," Sarah said.\n"Three," Sarah said.\n"Four," Sarah said.\n' +
             '"One," John said.\n"Two," John said.';
         const entities = extractCharacters(text);
-        if (entities.length >= 2) {
-            expect(entities[0]!.occurrences).toBeGreaterThanOrEqual(entities[1]!.occurrences);
-        }
+        // Both Sarah (4×) and John (2×) clear the MIN_TOTAL_OCCURRENCES threshold;
+        // fail explicitly if the extractor regresses and drops either one.
+        expect(entities.length).toBeGreaterThanOrEqual(2);
+        expect(entities[0]!.occurrences).toBeGreaterThanOrEqual(entities[1]!.occurrences);
     });
 
     it('respects the excludeNames filter', () => {
