@@ -70,14 +70,13 @@ Styles are authored in SCSS and compiled to `styles.css` — edit the sources un
 
 ## Network & privacy
 
-The plugin works fully offline with a local model. The following network features are **optional and off by default** unless noted:
+The plugin has three layers of functionality:
 
-| Feature | Remote service | Why | Default |
-|---------|---------------|-----|---------|
-| **AI providers** | User-configured endpoints (Ollama, LM Studio, OpenAI-compatible servers) | Chat, feedback, embeddings, vision | On (but only reaches the endpoints you configure) |
-| **Network research tools** | Wikipedia API, Fandom API, arbitrary URLs via `fetch_url` | Check lore against external references | On (toggleable in settings; Fandom additionally gated by an allowlist) |
-| **Image tools** | Same endpoints as above | Fetch reference images for the vision pipeline | On (toggleable) |
-| **Local Fandom cache** | Fandom API (only during sync) | Cache wiki pages/images for offline use | Off |
+1. **No model, no network.** The prose linter, manuscript dashboard (word counts, pacing, readability, flow score), context engine (character/location/plot-thread extraction), and lorebook coverage scanner all run locally with zero AI cost and zero network access. The plugin is useful immediately after install.
+
+2. **Local model, no network.** Configure a local model (Ollama, LM Studio, or any OpenAI-compatible local server) to unlock AI feedback, co-writer collaboration, critical analysis, manuscript analysis, lorebook coach, and selection transformations. All processing stays on your machine.
+
+3. **Optional network research tools.** Wikipedia lookups, Fandom lookups, and URL fetching let the co-writer check lore against external references. These are toggleable in settings and gated by allowlists. A local Fandom cache can sync pages for offline use.
 
 No telemetry. Vault contents are never sent anywhere you didn't explicitly configure. The plugin does not access files outside of Obsidian vaults.
 
