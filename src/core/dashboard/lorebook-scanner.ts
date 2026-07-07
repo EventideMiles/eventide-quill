@@ -234,7 +234,15 @@ export function stripGallerySections(body: string, sectionHeaders: string[]): { 
             if (inGallery && level <= galleryLevel) {
                 // Section ends at a same-or-shallower heading.
                 emitMarker();
-                out.push(line);
+                if (headerSet.has(heading)) {
+                    // This heading simultaneously opens a new gallery section.
+                    inGallery = true;
+                    galleryLevel = level;
+                    galleryHeading = headingMatch[2].trim();
+                    currentLabel = '';
+                } else {
+                    out.push(line);
+                }
             } else if (!inGallery && headerSet.has(heading)) {
                 // Section starts.
                 inGallery = true;

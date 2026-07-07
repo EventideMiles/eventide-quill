@@ -238,7 +238,9 @@ describe('parseSseStream', () => {
         for await (const ev of parseSseStream(reader)) {
             events.push(ev);
         }
-        expect(events.length).toBeGreaterThanOrEqual(1);
+        expect(events).toHaveLength(2);
+        expect((events[0] as { data: string }).data).toBe('{"a":1}');
+        expect((events[1] as { data: string }).data).toBe('[DONE]');
     });
 
     it('respects abort signal', async () => {

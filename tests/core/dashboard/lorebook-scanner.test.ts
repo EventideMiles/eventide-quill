@@ -130,12 +130,20 @@ describe('stripGallerySections', () => {
     });
 
     it('handles multiple gallery sections', () => {
-        // A heading that closes one gallery section does NOT simultaneously
-        // open another — insert a non-gallery heading between them.
         const body =
-            '## Gallery\n![[a.png]]\n## Biography\nText.\n## Reference\n![[b.png]]\n![[c.png]]';
+            '## Gallery\n![[a.png]]\n## Reference\n![[b.png]]\n![[c.png]]';
         const result = stripGallerySections(body, ['gallery', 'reference']);
         expect(result.imageCount).toBe(3);
+    });
+
+    it('handles back-to-back gallery sections (closing heading reopens)', () => {
+        // A heading that closes one gallery section and is itself in the header
+        // set should simultaneously open the next section.
+        const body = '## Gallery\n![[a.png]]\n## Reference\n![[b.png]]';
+        const result = stripGallerySections(body, ['gallery', 'reference']);
+        expect(result.imageCount).toBe(2);
+        expect(result.stripped).not.toContain('![[a.png]]');
+        expect(result.stripped).not.toContain('![[b.png]]');
     });
 
     it('tracks subheading labels within a gallery section', () => {
