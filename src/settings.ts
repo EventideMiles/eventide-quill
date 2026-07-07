@@ -2286,8 +2286,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addText((text) =>
                 text
                     .setValue(provider.endpoint)
-                    // eslint-disable-next-line obsidianmd/ui/sentence-case
-                    .setPlaceholder('http://localhost:1234/v1')
+                    .setPlaceholder('E.g., http://localhost:1234/v1')
                     .onChange(async (value) => {
                         provider.endpoint = value;
                         await this.plugin.saveSettings();
@@ -2302,8 +2301,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 .addText((text) =>
                     text
                         .setValue(provider.apiKey)
-                        // eslint-disable-next-line obsidianmd/ui/sentence-case
-                        .setPlaceholder('sk-...')
+                        .setPlaceholder('E.g., sk-...')
                         .onChange(async (value) => {
                             provider.apiKey = value;
                             await this.plugin.saveSettings();
@@ -2415,8 +2413,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 .addText((text) =>
                     text
                         .setValue(model.model)
-                        // eslint-disable-next-line obsidianmd/ui/sentence-case
-                        .setPlaceholder('llama-3.3-70b')
+                        .setPlaceholder('E.g., llama-3.3-70b')
                         .onChange(async (value) => {
                             model.model = value;
                             await this.plugin.saveSettings();

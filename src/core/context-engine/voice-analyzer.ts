@@ -69,12 +69,7 @@ function detectTense(text: string): string {
 
 /** Count the number of regex matches in a string using matchAll. */
 function countMatches(text: string, pattern: RegExp): number {
-    let count = 0;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    for (const _ of text.matchAll(pattern)) {
-        count++;
-    }
-    return count;
+    return Array.from(text.matchAll(pattern)).length;
 }
 
 /** Compute the average sentence length in words from the given text. */

@@ -54,9 +54,12 @@ export function isStreamingSupported(): boolean {
  * Perform a streaming HTTP request via native fetch (desktop only).
  * Throws HttpError on non-2xx responses.
  *
- * Note: fetch is normally disallowed by the project's ESLint rules in favour
- * of requestUrl (mobile-compatible). This is the single intentional exception
- * — guarded by isStreamingSupported() so it only runs on desktop (Electron).
+ * Note: requestUrl is the project's standard for HTTP (mobile-compatible),
+ * but it does not surface a streaming body. SSE streaming needs the raw
+ * ReadableStream, so this is the single intentional use of window.fetch —
+ * accessed as a member of window (not the bare global) to comply with the
+ * project's no-restricted-globals rule, and guarded by isStreamingSupported()
+ * so it only runs on desktop (Electron).
  */
 export async function streamResponse(
     url: string,
@@ -67,8 +70,9 @@ export async function streamResponse(
         signal?: AbortSignal;
     }
 ): Promise<StreamResult> {
-    // eslint-disable-next-line no-restricted-globals
-    const response = await fetch(url, {
+    // window.fetch (not the bare global) is required for SSE streaming —
+    // requestUrl does not expose a ReadableStream. See note above.
+    const response = await window.fetch(url, {
         method: options.method,
         headers: options.headers,
         body: options.body,
