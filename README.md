@@ -74,7 +74,7 @@ The plugin has three layers of functionality:
 
 1. **No model, no network.** The prose linter, manuscript dashboard (word counts, pacing, readability, flow score), context engine (character/location/plot-thread extraction), and lorebook coverage scanner all run locally with zero AI cost and zero network access. The plugin is useful immediately after install.
 
-2. **Local model, no network.** Configure a local model (Ollama, LM Studio, or any OpenAI-compatible local server) to unlock AI feedback, co-writer collaboration, critical analysis, manuscript analysis, lorebook coach, and selection transformations. All processing stays on your machine.
+2. **Local model, no network.** Configure a local model (Ollama, LM Studio, or any OpenAI-compatible local server) to unlock AI feedback, co-writer collaboration, critical analysis, manuscript analysis, lorebook coach, and selection transformations. All processing stays on your machine. Cloud providers (OpenAI and other OpenAI-compatible endpoints) also work if you prefer — you choose where your data goes.
 
 3. **Optional network research tools.** Wikipedia lookups, Fandom lookups, and URL fetching let the co-writer check lore against external references. These are toggleable in settings and gated by allowlists. A local Fandom cache can sync pages for offline use.
 
