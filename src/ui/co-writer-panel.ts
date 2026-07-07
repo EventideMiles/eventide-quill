@@ -2310,6 +2310,8 @@ export class CoWriterPanel extends AbstractChatPanel {
             if (this.inputMode === 'direct') {
                 this.onSendMessage?.(text);
             } else if (this.inputMode === 'fulfill') {
+                // Defer to the next frame so the browser paints the button change
+                // before the async sweep work blocks the main thread.
                 const timeoutId = window.setTimeout(() => this.onRunFulfill?.(''));
                 this.renderEvents.register(() => window.clearTimeout(timeoutId));
             } else if (this.inputMode === 'coach') {
