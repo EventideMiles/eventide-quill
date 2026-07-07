@@ -3,7 +3,7 @@
 	"name": "Eventide Quill",
 	"version": "1.0.0",
 	"minAppVersion": "1.7.2",
-	"description": "A feedback-first, novelist-focused writing assistant for Obsidian.",
+	"description": "A feedback-first, novelist-focused writing assistant.",
 	"author": "EventideMiles",
 	"authorUrl": "https://github.com/EventideMiles",
 	"fundingUrl": "https://github.com/sponsors/EventideMiles",
