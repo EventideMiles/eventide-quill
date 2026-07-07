@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { Vault } from 'obsidian';
 import {
     resolveSessionsDir,
@@ -55,6 +55,17 @@ function makeState(title?: string): SerializedCoWriterState {
         currentOptions: []
     } as unknown as SerializedCoWriterState;
 }
+
+// Use fake timers (Date only) so LRU eviction tests have deterministic timestamps.
+// Real setTimeout/setInterval still work — only Date.now() is controlled.
+beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2025, 0, 1, 0, 0, 0));
+});
+
+afterEach(() => {
+    vi.useRealTimers();
+});
 
 describe('resolveSessionsDir', () => {
     it('resolves the sessions folder under the plugin data dir', () => {
@@ -113,7 +124,7 @@ describe('listSessions', () => {
     it('returns sessions sorted newest-first by updatedAt', async () => {
         const vault = makeMemoryVault();
         const e1 = await saveSession(vault, 'sessions', makeState('First'));
-        await new Promise((r) => setTimeout(r, 15));
+        vi.advanceTimersByTime(1000);
         const e2 = await saveSession(vault, 'sessions', makeState('Second'));
 
         const list = await listSessions(vault, 'sessions');
@@ -128,9 +139,9 @@ describe('saveSession LRU eviction', () => {
         const vault = makeMemoryVault();
         const dir = 'sessions';
         const e1 = await saveSession(vault, dir, makeState('First'), { limit: 2 });
-        await new Promise((r) => setTimeout(r, 15));
+        vi.advanceTimersByTime(1000);
         await saveSession(vault, dir, makeState('Second'), { limit: 2 });
-        await new Promise((r) => setTimeout(r, 15));
+        vi.advanceTimersByTime(1000);
         await saveSession(vault, dir, makeState('Third'), { limit: 2 });
 
         const list = await listSessions(vault, dir);
@@ -143,7 +154,7 @@ describe('saveSession LRU eviction', () => {
         const vault = makeMemoryVault();
         const dir = 'sessions';
         const e1 = await saveSession(vault, dir, makeState('First'), { limit: 1 });
-        await new Promise((r) => setTimeout(r, 15));
+        vi.advanceTimersByTime(1000);
         await saveSession(vault, dir, makeState('Second'), { limit: 1 });
 
         // e1 should be evicted; loading it should return null.
