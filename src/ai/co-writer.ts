@@ -4142,7 +4142,9 @@ export class CoWriterSession {
             // Stopping-point enforcement on the buffered text.
             if (stoppingPoint && directEdit.newText.length > 0) {
                 if (!respectsStoppingPoint(directEdit.newText, stoppingPoint.instruction)) {
-                    console.warn('[Quill Co-writer] Content exceeded stopping point, truncating');
+                    if (__DEV__ && plugin.settings.enableDebugLogging) {
+                        console.warn('[Quill Co-writer] Content exceeded stopping point, truncating');
+                    }
                     const truncated = truncateToStoppingPoint(directEdit.newText, stoppingPoint.instruction);
                     if (truncated.length < directEdit.newText.length) {
                         directEdit.newText = truncated;

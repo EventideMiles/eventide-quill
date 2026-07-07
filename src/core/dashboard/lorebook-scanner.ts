@@ -234,7 +234,15 @@ export function stripGallerySections(body: string, sectionHeaders: string[]): { 
             if (inGallery && level <= galleryLevel) {
                 // Section ends at a same-or-shallower heading.
                 emitMarker();
-                out.push(line);
+                if (headerSet.has(heading)) {
+                    // This heading simultaneously opens a new gallery section.
+                    inGallery = true;
+                    galleryLevel = level;
+                    galleryHeading = headingMatch[2].trim();
+                    currentLabel = '';
+                } else {
+                    out.push(line);
+                }
             } else if (!inGallery && headerSet.has(heading)) {
                 // Section starts.
                 inGallery = true;
@@ -246,8 +254,10 @@ export function stripGallerySections(body: string, sectionHeaders: string[]): { 
                 // Subheading inside the gallery section becomes the current
                 // label for any embeds that follow. Heading line dropped.
                 currentLabel = headingMatch[2].trim();
+            } else {
+                // Heading outside a gallery section — pass through unchanged.
+                out.push(line);
             }
-            // Headings outside a gallery section pass through unchanged.
         } else if (!inGallery) {
             out.push(line);
         } else {

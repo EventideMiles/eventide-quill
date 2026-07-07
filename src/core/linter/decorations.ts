@@ -99,6 +99,8 @@ class LintDecorations {
         if (this.debounceTimer !== null) {
             window.clearTimeout(this.debounceTimer);
         }
+        // Raw setTimeout: per-view debounce cleared via destroy() on the CodeMirror
+        // view lifecycle (this class is not a Component).
         this.debounceTimer = window.setTimeout(() => {
             const text = view.state.doc.toString();
             const results = this.lintFn(text);

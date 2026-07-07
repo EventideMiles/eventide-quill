@@ -40,22 +40,50 @@ Scripts (see `package.json`):
 | `npm run prettier:fix` | `prettier --write 'src/**/*.ts'` |
 | `npm run sass` | `sass styles/main.scss styles.css` (one-shot build of styles.css from SCSS sources) |
 | `npm run sass:watch` | `sass --watch styles/main.scss styles.css` (rebuild on SCSS change during dev) |
+| `npm test` | `vitest run` — runs the test suite once and exits non-zero on failure. Used by CI. |
+| `npm run test:watch` | `vitest` — watch mode, re-runs on file change during development. |
+| `npm run test:coverage` | `vitest run --coverage` — test suite with V8 coverage report. |
 | `npm run version` | `node version-bump.mjs && git add manifest.json versions.json` (run via `npm version`) |
 | `npm run set-version -- <v>` | Chore: rewrite the version string everywhere it appears (release files + embedded copies like the MediaWiki User-Agent). Adds a new `versions.json` key without dropping history. Does **not** tag/commit/push. Supports `--dry-run`. |
 
-There is **no standalone `typecheck` script** — `tsc` runs inside `build`. There is **no `test` script and no test framework** (see Verification below).
+There is **no standalone `typecheck` script** — `tsc` runs inside `build`. The test suite lives under `tests/` (see "Testing" below).
 
 ## Verification
 
-No automated test framework exists in this project (no jest/vitest/mocha, no `*.test.ts`). Verify changes by:
+The test suite covers the deterministic core (text analysis, linter rules, readability formulas, change-set logic, provider resolution, HTTP retry parsing). Verify changes by:
 
 1. `npm run build` (sass + Prettier + `tsc` + esbuild), and
-2. `npm run lint`, and
-3. `npm run lint:dup` (jscpd duplication gate — fails if the duplicated-lines % exceeds the `.jscpd.json` threshold), and
-4. Manual smoke test in Obsidian (especially on mobile) for UI or provider changes.
-5. For release builds, also run `npm run build:release` to verify minification and `__DEV__` tree-shaking work correctly.
+2. `npm test` (Vitest — pure-logic unit tests; runs in ~200ms), and
+3. `npm run lint`, and
+4. `npm run lint:dup` (jscpd duplication gate — fails if the duplicated-lines % exceeds the `.jscpd.json` threshold), and
+5. Manual smoke test in Obsidian (especially on mobile) for UI or provider changes.
+6. For release builds, also run `npm run build:release` to verify minification and `__DEV__` tree-shaking work correctly.
 
-CI (`.github/workflows/lint.yml`) runs `build` + `lint` + `lint:dup` on every push and PR across Node 20/22/24. CI for releases (`.github/workflows/release.yml`) runs `build:release` instead.
+CI (`.github/workflows/lint.yml`) runs `build` + `test` + `lint` + `lint:dup` on every push and PR across Node 20/22/24. CI for releases (`.github/workflows/release.yml`) runs `build:release` instead.
+
+## Testing
+
+Tests run on **Vitest** (native ESM, esbuild-based transform matching the project's bundler). The suite targets the deterministic core — pure-logic modules with no Obsidian coupling — so most tests need zero mocking.
+
+### Layout
+
+- Tests live under `tests/` at the repo root (NOT `src/__tests__/`), so the jscpd duplication gate (which scans `src/` only) keeps its baseline pristine.
+- `tests/**/*.ts` is included in `tsconfig.json`, so `tsc -noEmit` type-checks tests alongside source.
+- `__mocks__/obsidian.ts` at the repo root is a minimal stub of the `obsidian` module (no-op `Notice`, `requestUrl`, `normalizePath` with the real implementation, class shells for `TFile`/`Vault`/`App`/`Component`/`Modal`). Vitest auto-resolves it for any module with a runtime `import ... from 'obsidian'`. Type-only imports (`import type`) are erased by esbuild and never hit the stub.
+- `vitest.config.ts` defines `__DEV__: true` (matching dev builds), uses `environment: 'node'`, and includes `tests/**/*.test.ts`.
+
+### What's covered vs. deferred
+
+**Covered:** `src/utils/text-analysis`, `src/core/linter/rules`, `src/core/dashboard/readability`, `src/core/change-set`, `src/ai/provider` (role/capability resolution), `src/ai/tools/http-retry` (429 / Retry-After parsing), `src/core/linter/linter` (orchestrator + enableX toggles), `src/core/dashboard/metrics` (word/sentence counts), `src/ai/streaming` (SSE/NDJSON parsing, thought extraction), `src/utils/tokens`, `src/utils/directives`, `src/core/dashboard/lorebook-scanner` (pure subset: type/alias parsing, gallery stripping), `src/ai/conversation-store` (sidecar persistence + LRU), `src/ai/feedback-queue` (sidecar persistence + running→queued restore). Most are pure-logic — zero mocks; the two sidecar stores use an in-memory `Vault` adapter stub. Additional coverage: `src/core/context-engine/voice-analyzer` (POV/tense/dialogue detection), `src/core/context-engine/entity-extractor` (character/location/plot-thread extraction), `src/ai/provider-registry` (parseProviderKey, generateModelId), `src/ai/transport` (HttpError, throwOnNonOk, error formatting), `src/ai/tools/tool` (ToolRegistry, executeToolCall), `src/ai/embedding-cache` (hashString), `src/ai/compaction` (compactConversation with mock provider), `src/ai/feedback` (personas, buildFeedbackMessages), `src/ai/tools/fandom-cache` (URL/date helpers, fandomReachability), `src/types` (NARRATIVE_VOICE_PRESETS), `src/ai/modes` (AI_MODE_CONFIGS), `src/core/dashboard/presets` (MANUSCRIPT_PRESETS), `src/core/dashboard/manuscript-file` (manuscriptDataPath), `src/core/linter/fixes` (FIXABLE_RULES coverage).
+
+**Deferred (post-1.0.0):** UI tests (`src/ui/*`, `main.ts`, `settings.ts`), CodeMirror decoration tests, provider integration tests (`openai-provider.ts` / `ollama-provider.ts` end-to-end), and the heavy AI pipelines (`co-writer.ts`, `runFeedbackJob`). These need jsdom + lifecycle simulation or real HTTP fixtures — a separate, larger effort.
+
+### Conventions
+
+- Test files mirror the source path: `src/utils/text-analysis.ts` → `tests/utils/text-analysis.test.ts`.
+- Use `import { describe, it, expect } from 'vitest'` (explicit imports — `globals: false` in the vitest config).
+- Prefer table-style tests for multi-case functions (e.g., `roleSatisfies` over all role/capability pairs).
+- For modules that import from `'obsidian'` at runtime, the `__mocks__/obsidian.ts` stub resolves automatically. Override per-test with `vi.mock('obsidian', ...)` when you need controlled `requestUrl` or `Vault.adapter` behavior.
 
 ## `__DEV__` compile-time constant
 
@@ -64,6 +92,8 @@ CI (`.github/workflows/lint.yml`) runs `build` + `lint` + `lint:dup` on every pu
 - **Release builds** (`npm run build:release`): `__DEV__ = false`
 
 Use it to gate debug-only code (console logging, dev-only settings, etc.). In release builds esbuild tree-shakes the dead branches, eliminating the code entirely.
+
+The runtime complement is the `enableDebugLogging` setting (`src/settings.ts`, default `false`). For debug logging that should also be toggleable by writers in dev builds, use the idiom `__DEV__ && plugin.settings.enableDebugLogging && console.log(...)`. `__DEV__` strips the call entirely from release builds; `enableDebugLogging` lets writers opt in to diagnostic output in dev builds without code changes.
 
 To add a new global that ESLint knows about, edit `eslint.config.mts` globals and `src/global.d.ts` for TypeScript.
 
@@ -83,12 +113,16 @@ styles/
   _review-panel.scss     ← Review panel (editorial feedback + critical analysis)
   _feedback-queue.scss   ← Queue sub-tab (job cards, status dots, badge, queue-mode toggle)
   _cowriter-panel.scss   ← Co-writer panel
+  _dashboard-panel.scss  ← Dashboard panel (metrics, flow score, readability, chapters)
+  _lorebook-panel.scss   ← Lorebook panel (entries, coverage, relationships)
   _change-review.scss    ← shared change-review cards + inline diff decorations
+  _lore-entry-review.scss ← lore-entry review cards (propose/approve/reject, image thumbnails)
   _option-picker.scss    ← shared BEM picker block (personas, modes)
   _form.scss             ← shared BEM form block (sections, labels, textareas, submits)
   _chat-shared.scss      ← shared BEM chat-panel block (bubbles, bottom area, indicator)
   _file-mention.scss     ← @-mention suggest dropdown (chat input)
   _slash-command.scss    ← slash-command picker dropdown (co-writer chat input)
+  _active-document.scss  ← active document header (shared BEM block, rendered by document-header.ts)
   _modals.scss           ← shared modal chrome (input/save/confirm modals)
   _settings.scss         ← settings UI (tabs, provider cards, narrative rules, slash-command editor)
 ```
@@ -132,8 +166,8 @@ Several files are large and intentionally monolithic; match the surrounding patt
 
 ```text
 src/
-  main.ts              # Plugin lifecycle + default-provider getters (~5.5k lines)
-  settings.ts          # Settings schema + UI (single source of truth, ~3.3k lines)
+  main.ts              # Plugin lifecycle + default-provider getters (~5.9k lines)
+  settings.ts          # Settings schema + UI (single source of truth, ~3.5k lines)
   types.ts             # Shared TypeScript interfaces (NARRATIVE_VOICE_PRESETS)
   core/
     change-set.ts
@@ -160,7 +194,7 @@ src/
     modes.ts, prompts.ts, transform.ts,
     vision.ts (resolveImageInjection — two-regime image routing),
     image-utils.ts (decode → downscale → JPEG base64),
-    co-writer.ts (~3.8k lines, largest file in repo — discuss/coach/fulfill/lorebook-coach
+    co-writer.ts (~4.8k lines, largest file in repo — discuss/coach/fulfill/lorebook-coach
                   modes, each with its own tool loop; NOT streamWithTools),
     subagent-session.ts (SubagentSession — isolated-context lorebook batch runner
                          spawned by the run_lorebook_batch tool; see "Subagents"),
@@ -173,18 +207,19 @@ src/
       manuscript-mentions.ts, lore-siblings.ts, vault-lookup.ts, grep-notes.ts,
       measure-folder.ts, calculate-file-sizes.ts, edit-note.ts, insert-note.ts, append-to-note.ts, revise-edit.ts,
       run-lorebook-batch.ts, research.ts (subagent spawners → SubagentSession),
-      propose-entry.ts, fetch-url.ts, fetch-image-url.ts, get-lore-image.ts,
+      propose-entry.ts, attach-lore-image.ts (lorebook coach + batch image attachment), fetch-url.ts, fetch-image-url.ts, get-lore-image.ts,
       fandom-lookup.ts, wikipedia-lookup.ts, mediawiki.ts (shared MediaWiki client),
-      fandom-cache.ts (local Fandom cache sidecar — write-through + cache-first + bulk indexer + Stage 3 cache-answers-when-network-off (`fandomReachability`) + Stage 4 stats/clear + Stage 6 search index)
+      fandom-cache.ts (local Fandom cache sidecar — write-through + cache-first + bulk indexer + Stage 3 cache-answers-when-network-off (`fandomReachability`) + Stage 4 stats/clear + Stage 6 search index),
+      refresh-dashboard.ts (dashboard recompute invoked by the co-writer `refresh_dashboard` tool)
   ui/                  # Views, modals, panels
-    quill-sidebar.ts (~1.3k lines — tabs: linter/context/review/cowriter/dashboard/lorebook),
-    co-writer-panel.ts (~2.0k lines), context-panel.ts, review-panel.ts,
+    quill-sidebar.ts (~1.4k lines — tabs: linter/context/review/cowriter/dashboard/lorebook),
+    co-writer-panel.ts (~2.5k lines), context-panel.ts, review-panel.ts,
     dashboard-panel.ts, lorebook-panel.ts, lore-entry-review.ts,
     feedback-queue-panel.ts (encapsulated Queue sub-tab renderer),
     chat-panel.ts, chat-context-files.ts, document-header.ts,
     change-card.ts, change-diff-extension.ts, token-indicator.ts,
     confirm-modal.ts, transform-modal.ts, fix-with-ai-modal.ts,
-    filename-modal.ts, vault-file-suggest-modal.ts, report-suggest-modal.ts (saved-report picker for follow-up discussion), file-mention-suggest.ts,
+    filename-modal.ts, vault-file-suggest-modal.ts (vault markdown file + embedded-folder picker for context files), report-suggest-modal.ts (saved-report picker for follow-up discussion), file-mention-suggest.ts,
     session-list-modal.ts (saved-conversation switcher), slash-command-suggest.ts
   utils/               # Helpers, constants
     directives.ts, find-editor.ts, frontmatter.ts, text-analysis.ts,
@@ -320,12 +355,13 @@ Default-provider resolution (`main.ts`): `getDefaultChatProvider()` / `getDefaul
 
 ### Error handling
 
-- Use typed error classes (extend `Error`) rather than throwing raw strings or generic `Error`. Five currently exist:
+- Use typed error classes (extend `Error`) rather than throwing raw strings or generic `Error`. Five are exported:
     - `ProviderError` — `src/ai/provider.ts`
     - `HttpError` — `src/ai/transport.ts`
     - `StreamingUnavailableError` — `src/ai/transport.ts`
     - `DuplicateToolError` — `src/ai/tools/tool.ts`
     - `RateLimitError` — `src/ai/tools/http-retry.ts` (HTTP 429 from a network tool; carries the parsed `Retry-After` in seconds so the tool surfaces an actionable "wait N seconds" message to the model rather than a bare status code)
+    - Two additional internal (non-exported) classes follow the same pattern: `InvalidJobIdError` (`src/ai/feedback-queue.ts`) and `InvalidSessionIdError` (`src/ai/conversation-store.ts`) — thrown by their respective sidecar persistence layers on malformed ids.
 - Propagate errors with `throw` rather than returning error objects, unless the function signature explicitly supports `Result<T, E>` or similar patterns.
 
 ## Coding rules — enforced vs. convention
@@ -358,7 +394,7 @@ The project does not use `eslint-config-prettier`. The obsidianmd ESLint rules a
 
 - No `innerHTML`. Use `createEl()` + `textContent`. (Currently zero uses in `src/`.)
 - No raw DOM listeners. Prefer Obsidian's `registerDomEvent()` on a `Component` — often a child `Component` stored on a local field (e.g. `this.renderEvents.registerDomEvent(...)` in `quill-sidebar.ts`, `co-writer-panel.ts`; `component.registerDomEvent(...)` in `context-panel.ts`). Raw `addEventListener` is currently used in 14 files (`settings.ts`, `core/linter/decorations.ts`, and `ui/` {`change-diff-extension`, `chat-context-files`, `chat-panel`, `confirm-modal`, `co-writer-panel`, `dashboard-panel`, `file-mention-suggest`, `filename-modal`, `fix-with-ai-modal`, `session-list-modal`, `slash-command-suggest`, `transform-modal`}.ts); the heaviest is `settings.ts` via the `.inputEl.addEventListener('blur', ...)` idiom for reading values out of `TextComponent`. Prefer `registerDomEvent()` for new code; if `addEventListener` is unavoidable, leave an inline comment.
-- No raw timers. Prefer teardown via the `Component` lifecycle (`register()` / child components). Raw `window.setTimeout` is currently used in 8 files — `core/linter/decorations.ts` and `ui/co-writer-panel.ts` (defer-to-next-frame paints), `ai/tools/mediawiki.ts` and `ai/tools/lore-edit-helpers.ts` (rate-limit sleeps), `ai/tools/refresh-dashboard.ts` (bounded leaf-ready poll), `main.ts`, `ui/file-mention-suggest.ts`, and `ui/slash-command-suggest.ts` (blur-deferred close). `Plugin#registerInterval` is not currently used anywhere in the codebase; when a raw timer is unavoidable, add an inline comment explaining why.
+- No raw timers. Prefer `Plugin#registerInterval` / `Component#registerInterval` for recurring ticks and the `Component` lifecycle (`register()` / child components) for one-shot deferrals. `registerInterval` is currently used in 2 files (`main.ts`: feedback-queue 5s tick, dashboard auto-refresh, startup embedding-warming delay; `ui/dashboard-panel.ts`: 60s timestamp tick). Raw `window.setTimeout` / `window.setInterval` is still used in 9 files where the registered patterns don't fit — `core/linter/decorations.ts` (per-view debounce cleared via the CodeMirror view lifecycle), `ui/co-writer-panel.ts` and `ai/tools/refresh-dashboard.ts` (defer-to-next-frame paints + bounded leaf-ready poll), `ai/tools/mediawiki.ts` and `ai/tools/lore-edit-helpers.ts` (one-shot rate-limit sleeps — `registerInterval` is for recurring ticks), `main.ts` (per-folder embedding-warming debounce + in-flight-warming poll), `ui/dashboard-panel.ts` (alongside its registered interval), `ui/file-mention-suggest.ts` and `ui/slash-command-suggest.ts` (blur-deferred close). When a raw timer is unavoidable, add an inline comment explaining why.
 - No `fetch`. Use `requestUrl()` for HTTP (mobile-compatible). Sole exception: `fetch` in `src/ai/transport.ts` for SSE streaming, guarded by `isStreamingSupported()` with an inline `eslint-disable-next-line` comment.
 - Use `Component` lifecycle + `register()` for proper teardown.
 - All UI text is sentence-case.

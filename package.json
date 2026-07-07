@@ -1,6 +1,6 @@
 {
 	"name": "eventide-quill",
-	"version": "0.22.0",
+	"version": "1.0.0",
 	"description": "A feedback-first, novelist-focused writing assistant for Obsidian.",
 	"main": "main.js",
 	"type": "module",
@@ -18,13 +18,17 @@
 		"prettier:check": "prettier --check 'src/**/*.ts'",
 		"prettier:fix": "prettier --write 'src/**/*.ts'",
 		"sass": "sass styles/main.scss styles.css --style=expanded --no-source-map",
-		"sass:watch": "sass --watch styles/main.scss styles.css --style=expanded"
+		"sass:watch": "sass --watch styles/main.scss styles.css --style=expanded",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage"
 	},
 	"keywords": [],
 	"license": "MIT",
 	"devDependencies": {
 		"@eslint/js": "^9.39.4",
 		"@types/node": "^22.15.17",
+		"@vitest/coverage-v8": "^4.1.10",
 		"esbuild": "^0.28.1",
 		"eslint": "^9.39.4",
 		"eslint-plugin-obsidianmd": "^0.3.0",
@@ -38,7 +42,8 @@
 		"stylelint": "^17.13.0",
 		"stylelint-scss": "^7.2.0",
 		"typescript": "^5.8.3",
-		"typescript-eslint": "^8.59.1"
+		"typescript-eslint": "^8.59.1",
+		"vitest": "^4.1.10"
 	},
 	"dependencies": {
 		"@codemirror/state": "6.5.0",

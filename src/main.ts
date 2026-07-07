@@ -3616,6 +3616,8 @@ export default class EventideQuillPlugin extends Plugin {
         // recreate stale cache files after deletion. The warmers' own
         // re-validation check (modelId mismatch) provides a safety net.
         while (this.embeddingWarmingActive.size > 0) {
+            // Raw setTimeout: bounded polling loop that resolves once warming
+            // completes — not a recurring tick, so registerInterval doesn't fit.
             await new Promise((resolve) => window.setTimeout(resolve, 50));
         }
 
@@ -5445,7 +5447,7 @@ export default class EventideQuillPlugin extends Plugin {
             new Notice('Quill: this job has no saved report (autosave was off or the write failed).');
             return;
         }
-        const file = this.app.vault.getAbstractFileByPath(job.reportNotePath);
+        const file = this.app.vault.getAbstractFileByPath(normalizePath(job.reportNotePath));
         if (file instanceof TFile) {
             void this.app.workspace.getLeaf().openFile(file);
         } else {
@@ -5467,7 +5469,7 @@ export default class EventideQuillPlugin extends Plugin {
      */
     async loadReportForDiscussion(job: FeedbackJob): Promise<void> {
         // The source file must exist (current version) — it's the manuscript context.
-        const file = this.app.vault.getAbstractFileByPath(job.manuscriptPath);
+        const file = this.app.vault.getAbstractFileByPath(normalizePath(job.manuscriptPath));
         if (!(file instanceof TFile)) {
             new Notice(
                 `Quill: the file this report was about (${job.manuscriptPath}) no longer exists. Re-open it or re-run the report.`
@@ -5481,7 +5483,7 @@ export default class EventideQuillPlugin extends Plugin {
                 new Notice('Quill: this report has no saved content (autosave was off). Re-run to regenerate.');
                 return;
             }
-            const noteFile = this.app.vault.getAbstractFileByPath(job.reportNotePath);
+            const noteFile = this.app.vault.getAbstractFileByPath(normalizePath(job.reportNotePath));
             if (!(noteFile instanceof TFile)) {
                 new Notice('Quill: report note moved or deleted — re-run to regenerate.');
                 return;
@@ -5582,7 +5584,7 @@ export default class EventideQuillPlugin extends Plugin {
             new Notice('Quill: this report has no source manuscript recorded.');
             return;
         }
-        const sourceFile = this.app.vault.getAbstractFileByPath(manuscriptPath);
+        const sourceFile = this.app.vault.getAbstractFileByPath(normalizePath(manuscriptPath));
         if (!(sourceFile instanceof TFile)) {
             new Notice(
                 `Quill: the source manuscript (${manuscriptPath}) no longer exists. Re-open it or re-run the report.`

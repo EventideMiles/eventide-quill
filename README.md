@@ -4,7 +4,7 @@
 
 A feedback-first, novelist-focused writing assistant for Obsidian.
 
-MIT license. Built from scratch. Mobile-ready. Local-model first.
+MIT license. Built from scratch. Mobile-targeted. Local-model first.
 
 ## What it is
 
@@ -66,7 +66,19 @@ Styles are authored in SCSS and compiled to `styles.css` — edit the sources un
 - **Pluggable providers.** Ollama by default, plus any OpenAI-compatible endpoint (LM Studio is the primary local test target; OpenAI and other compatible servers work too).
 - **Capability-based model roles.** Models declare a role (`chat`, `embed`, `image`, or `chat-image`); the right model is resolved per task — a non-vision model never receives pixels.
 - **Subagents for context isolation.** Heavy batch tasks run in a fresh context and return a summary, so the main conversation stays lean and responsive — local-model friendly (one inference at a time).
-- **Mobile as a first-class target.** Test on phone before shipping desktop.
+- **Mobile as a first-class target.** The plugin ships with `isDesktopOnly: false`, `requestUrl` transport, and touch-target sizing — but it has not yet been smoke-tested on a real mobile device. A Capacitor install + on-device pass is scheduled for immediately after the 1.0.0 release; report mobile issues against the `1.0.x` milestone.
+
+## Network & privacy
+
+The plugin has three layers of functionality:
+
+1. **No model, no network.** The prose linter, manuscript dashboard (word counts, pacing, readability, flow score), context engine (character/location/plot-thread extraction), and lorebook coverage scanner all run locally with zero AI cost and zero network access. The plugin is useful immediately after install.
+
+2. **Local model, no network.** Configure a local model (Ollama, LM Studio, or any OpenAI-compatible local server) to unlock AI feedback, co-writer collaboration, critical analysis, manuscript analysis, lorebook coach, and selection transformations. All processing stays on your machine. Cloud providers (OpenAI and other OpenAI-compatible endpoints) also work if you prefer — you choose where your data goes.
+
+3. **Optional network research tools.** Wikipedia lookups, Fandom lookups, and URL fetching let the co-writer check lore against external references. These are toggleable in settings and gated by allowlists. A local Fandom cache can sync pages for offline use.
+
+No telemetry. Vault contents are never sent anywhere you didn't explicitly configure. The plugin does not access files outside of Obsidian vaults.
 
 ## Sponsors
 

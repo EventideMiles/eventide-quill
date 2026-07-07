@@ -12,7 +12,7 @@ import { assertNotRateLimited } from './http-retry';
  */
 
 /** Custom User-Agent to comply with Wikimedia's API policy (200 req/min tier). */
-export const MEDIAWIKI_UA = 'EventideQuill/0.22.0 (https://github.com/EventideMiles/eventide-quill)';
+export const MEDIAWIKI_UA = 'EventideQuill/1.0.0 (https://github.com/EventideMiles/eventide-quill)';
 
 /** Minimum interval (ms) between requests to the same host. */
 const MIN_INTERVAL_MS = 500;
@@ -28,7 +28,7 @@ const lastCall = new Map<string, number>();
  */
 const rateLimitQueue = new Map<string, Promise<void>>();
 
-/** Promise-based sleep. */
+/** Promise-based sleep. Raw setTimeout: a one-shot promise resolution can't use registerInterval (which is for recurring ticks) and must resolve exactly once after the delay. */
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
