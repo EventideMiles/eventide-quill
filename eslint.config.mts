@@ -35,4 +35,13 @@ export default tseslint.config(
 		},
 	},
 	...obsidianmd.configs.recommended,
+	{
+		// Obsidian-specific rules don't apply to test files (no popout windows,
+		// no vault config folder — tests run under Node via Vitest).
+		files: ['tests/**/*.ts'],
+		rules: {
+			'obsidianmd/prefer-window-timers': 'off',
+			'obsidianmd/hardcoded-config-path': 'off',
+		},
+	},
 );
