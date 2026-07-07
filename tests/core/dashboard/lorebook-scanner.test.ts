@@ -3,8 +3,44 @@ import {
     parseLoreType,
     parseAliases,
     findLoreFolder,
-    stripGallerySections
+    stripGallerySections,
+    computeDocumentCoverage,
+    computeManuscriptCoverage
 } from '../../../src/core/dashboard/lorebook-scanner';
+import type { LoreEntry } from '../../../src/core/dashboard/lorebook-types';
+import type { ExtractedEntity } from '../../../src/core/context-engine/types';
+
+function makeEntry(
+    name: string,
+    filePath: string,
+    type: string = 'character',
+    aliases: string[] = []
+): LoreEntry {
+    const matchNames = [name.toLowerCase().trim(), ...aliases.map((a) => a.toLowerCase().trim())];
+    return {
+        filePath,
+        fileBasename: name,
+        folder: 'Lore',
+        type: type as LoreEntry['type'],
+        aliases,
+        matchNames: [...new Set(matchNames)],
+        images: []
+    };
+}
+
+function makeEntity(name: string, type: string, occurrences: number): ExtractedEntity {
+    return {
+        id: `${type}:${name.toLowerCase().replace(/\s+/g, '-')}`,
+        type: type as ExtractedEntity['type'],
+        name,
+        occurrences,
+        lines: [],
+        aliases: [],
+        pinned: false,
+        removed: false,
+        manual: false
+    };
+}
 
 describe('parseLoreType', () => {
     it('returns the type for valid lowercase types', () => {
@@ -172,5 +208,96 @@ describe('stripGallerySections', () => {
         const body = '## GALLERY\n![[art.png]]';
         const result = stripGallerySections(body, ['gallery']);
         expect(result.imageCount).toBe(1);
+    });
+});
+
+describe('computeDocumentCoverage', () => {
+    it('classifies entries as referenced when their name appears in the doc', () => {
+        const entries = [
+            makeEntry('Sarah Connor', 'Lore/sarah.md'),
+            makeEntry('Unknown Character', 'Lore/unknown.md')
+        ];
+        const coverage = computeDocumentCoverage('Sarah Connor walked into the bar.', entries, null);
+        expect(coverage.referenced).toHaveLength(1);
+        expect(coverage.referenced[0]!.fileBasename).toBe('Sarah Connor');
+        expect(coverage.orphaned).toHaveLength(1);
+        expect(coverage.orphaned[0]!.fileBasename).toBe('Unknown Character');
+    });
+
+    it('excludes the active file from both lists', () => {
+        const entries = [
+            makeEntry('Sarah', 'Lore/sarah.md'),
+            makeEntry('John', 'Lore/john.md')
+        ];
+        const coverage = computeDocumentCoverage('Sarah and John.', entries, 'Lore/sarah.md');
+        expect(coverage.referenced.find((e) => e.filePath === 'Lore/sarah.md')).toBeUndefined();
+        expect(coverage.orphaned.find((e) => e.filePath === 'Lore/sarah.md')).toBeUndefined();
+    });
+
+    it('counts total entries and folders', () => {
+        const entries = [
+            makeEntry('Sarah', 'Lore/sarah.md'),
+            makeEntry('John', 'Lore/john.md')
+        ];
+        const coverage = computeDocumentCoverage('text', entries, null);
+        expect(coverage.totalEntries).toBe(2);
+        expect(coverage.folderCount).toBe(1); // both in 'Lore'
+    });
+
+    it('matches aliases', () => {
+        const entries = [makeEntry('John', 'Lore/john.md', 'character', ['Johnny', 'John Boy'])];
+        const coverage = computeDocumentCoverage('Johnny walked in.', entries, null);
+        expect(coverage.referenced).toHaveLength(1);
+    });
+});
+
+describe('computeManuscriptCoverage', () => {
+    it('classifies typed entries as referenced or orphaned', () => {
+        const entries = [
+            makeEntry('Sarah', 'Lore/sarah.md', 'character'),
+            makeEntry('Dragon', 'Lore/dragon.md', 'character')
+        ];
+        const coverage = computeManuscriptCoverage('Sarah was brave.', entries, [], null, new Set());
+        expect(coverage.referenced).toHaveLength(1);
+        expect(coverage.orphaned).toHaveLength(1);
+    });
+
+    it('skips untyped entries from referenced/orphaned lists', () => {
+        const entries = [makeEntry('Misc', 'Lore/misc.md', 'untyped')];
+        const coverage = computeManuscriptCoverage('Misc text.', entries, [], null, new Set());
+        expect(coverage.referenced).toHaveLength(0);
+        expect(coverage.orphaned).toHaveLength(0);
+        expect(coverage.totalEntries).toBe(1); // still counted in total
+    });
+
+    it('detects gaps for entities with no matching lore entry', () => {
+        const entries = [makeEntry('Sarah', 'Lore/sarah.md', 'character')];
+        const entities = [
+            makeEntity('Sarah', 'character', 10),
+            makeEntity('Unknown', 'character', 8)
+        ];
+        const coverage = computeManuscriptCoverage('Sarah and Unknown.', entries, entities, null, new Set());
+        expect(coverage.gaps.length).toBeGreaterThanOrEqual(1);
+        const gap = coverage.gaps.find((g) => g.entityName === 'Unknown');
+        expect(gap).toBeDefined();
+        expect(gap!.occurrences).toBe(8);
+    });
+
+    it('suppresses gaps for dismissed entities', () => {
+        const entries: LoreEntry[] = [];
+        const entities = [makeEntity('Dismissed', 'character', 10)];
+        const dismissed = new Set(['character:dismissed']);
+        const coverage = computeManuscriptCoverage('Dismissed text.', entries, entities, null, dismissed);
+        expect(coverage.gaps.find((g) => g.entityName === 'Dismissed')).toBeUndefined();
+    });
+
+    it('excludes the active file from referenced/orphaned', () => {
+        const entries = [
+            makeEntry('Sarah', 'Lore/sarah.md', 'character'),
+            makeEntry('John', 'Lore/john.md', 'character')
+        ];
+        const coverage = computeManuscriptCoverage('Sarah and John.', entries, [], 'Lore/sarah.md', new Set());
+        expect(coverage.referenced.find((e) => e.filePath === 'Lore/sarah.md')).toBeUndefined();
+        expect(coverage.orphaned.find((e) => e.filePath === 'Lore/sarah.md')).toBeUndefined();
     });
 });
