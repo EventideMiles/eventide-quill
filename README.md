@@ -68,6 +68,19 @@ Styles are authored in SCSS and compiled to `styles.css` — edit the sources un
 - **Subagents for context isolation.** Heavy batch tasks run in a fresh context and return a summary, so the main conversation stays lean and responsive — local-model friendly (one inference at a time).
 - **Mobile as a first-class target.** The plugin ships with `isDesktopOnly: false`, `requestUrl` transport, and touch-target sizing — but it has not yet been smoke-tested on a real mobile device. A Capacitor install + on-device pass is scheduled for immediately after the 1.0.0 release; report mobile issues against the `1.0.x` milestone.
 
+## Network & privacy
+
+The plugin works fully offline with a local model. The following network features are **optional and off by default** unless noted:
+
+| Feature | Remote service | Why | Default |
+|---------|---------------|-----|---------|
+| **AI providers** | User-configured endpoints (Ollama, LM Studio, OpenAI-compatible servers) | Chat, feedback, embeddings, vision | On (but only reaches the endpoints you configure) |
+| **Network research tools** | Wikipedia API, Fandom API, arbitrary URLs via `fetch_url` | Check lore against external references | On (toggleable in settings; Fandom additionally gated by an allowlist) |
+| **Image tools** | Same endpoints as above | Fetch reference images for the vision pipeline | On (toggleable) |
+| **Local Fandom cache** | Fandom API (only during sync) | Cache wiki pages/images for offline use | Off |
+
+No telemetry. Vault contents are never sent anywhere you didn't explicitly configure. The plugin does not access files outside of Obsidian vaults.
+
 ## Sponsors
 
 Eventide Quill is MIT-licensed and free for everyone — the same feature-complete plugin for all, no paywalls. If it's part of your writing practice, consider [sponsoring on GitHub](https://github.com/sponsors/EventideMiles). Sponsorships keep the tool free, local-first, and open-source forever — no vendor lock-in.
