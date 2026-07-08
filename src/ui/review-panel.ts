@@ -1284,6 +1284,11 @@ export class ReviewPanel extends AbstractChatPanel {
         const minDisplay = new Promise<void>((resolve) => window.setTimeout(resolve, 650));
         try {
             await Promise.all([Promise.resolve(action()), minDisplay]);
+        } catch (err) {
+            // All call sites fire-and-forget (void this.runQueuedSubmit(...)),
+            // so a rejected enqueue would surface as an unhandled rejection.
+            // Surface it locally instead. Button state is restored in finally.
+            new Notice(`Quill: Could not add to queue — ${err instanceof Error ? err.message : String(err)}`);
         } finally {
             if (swapText && originalText !== null) btn.textContent = originalText;
             btn.removeAttribute('disabled');

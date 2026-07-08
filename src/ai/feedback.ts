@@ -280,7 +280,11 @@ export async function* getChunkedFeedback(
     }
 
     if (sectionFeedback.length === 0) {
-        yield { text: 'No feedback could be generated from the manuscript sections.', done: true };
+        // Emit the message as a normal chunk, then a separate terminal chunk.
+        // Consumers ignore `.text` on a `done: true` chunk (it's a signal, not
+        // content), so a combined chunk would silently drop the message.
+        yield { text: 'No feedback could be generated from the manuscript sections.', done: false };
+        yield { text: '', done: true };
         return;
     }
 

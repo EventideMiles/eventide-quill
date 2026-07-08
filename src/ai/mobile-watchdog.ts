@@ -23,6 +23,7 @@ export class MobileStreamWatchdog {
     private suspendedDuringStream = false;
     private attached = false;
     private boundHandler: (() => void) | null = null;
+    private attachedDoc: Document | null = null;
 
     /**
      * @param isInFlight - Returns true when any AI generation is actively in
@@ -37,23 +38,33 @@ export class MobileStreamWatchdog {
     attach(): void {
         if (this.attached) return;
         this.boundHandler = () => this.handleVisibilityChange();
-        // activeDocument (not the bare `document`) so popout windows behave.
+        // Store the document so detach() removes the listener from the SAME
+        // document even if activeDocument has changed by unload time (e.g. a
+        // popout closing), which would otherwise leave the handler dangling.
+        // Added directly with addEventListener rather than registerDomEvent
+        // because the watchdog is owned at the plugin root, outside any
+        // Component lifecycle, and must bind to activeDocument specifically so
+        // popout windows behave; cleanup is handled explicitly in detach().
+        this.attachedDoc = activeDocument;
         activeDocument.addEventListener('visibilitychange', this.boundHandler);
         this.attached = true;
     }
 
     /** Stop listening and reset. Idempotent — safe to call from `onunload`. */
     detach(): void {
-        if (this.attached && this.boundHandler) {
-            activeDocument.removeEventListener('visibilitychange', this.boundHandler);
+        if (this.attached && this.boundHandler && this.attachedDoc) {
+            this.attachedDoc.removeEventListener('visibilitychange', this.boundHandler);
         }
+        this.attachedDoc = null;
         this.boundHandler = null;
         this.attached = false;
         this.suspendedDuringStream = false;
     }
 
     private handleVisibilityChange(): void {
-        if (activeDocument.hidden) {
+        // Read .hidden from the same document the listener was bound to, not
+        // a possibly-stale activeDocument reference.
+        if (this.attachedDoc?.hidden ?? activeDocument.hidden) {
             // App backgrounded. If a generation is in flight, flag it — the OS
             // will most likely kill the request before the app resumes (mobile
             // `requestUrl` provides no abort hook and no suspension notice).

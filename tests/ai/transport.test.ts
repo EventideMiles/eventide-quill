@@ -3,11 +3,12 @@ import { Platform } from 'obsidian';
 import {
     HttpError,
     StreamingUnavailableError,
+    MobileNetworkError,
     isStreamingSupported,
     throwOnNonOk,
     httpErrorResponse,
     catchErrorResponse,
-    looksLikeMobileNetworkDrop,
+    isMobileNetworkDrop,
     withMobileNetworkHint
 } from '../../src/ai/transport';
 import { ProviderError } from '../../src/ai/provider';
@@ -35,6 +36,17 @@ describe('StreamingUnavailableError', () => {
 
     it('is an Error instance', () => {
         expect(new StreamingUnavailableError()).toBeInstanceOf(Error);
+    });
+});
+
+describe('MobileNetworkError', () => {
+    it('is an Error instance with the typed name', () => {
+        const original = new Error('Failed to fetch');
+        const err = new MobileNetworkError('wrapped message', original);
+        expect(err).toBeInstanceOf(Error);
+        expect(err.name).toBe('MobileNetworkError');
+        expect(err.message).toBe('wrapped message');
+        expect(err.cause).toBe(original);
     });
 });
 
@@ -119,7 +131,7 @@ describe('catchErrorResponse', () => {
     });
 });
 
-describe('looksLikeMobileNetworkDrop', () => {
+describe('isMobileNetworkDrop', () => {
     // The mock's Platform is a shared mutable object; toggling isMobile here
     // is visible to transport.ts (same reference). Restore desktop default
     // after each test so other suites aren't affected.
@@ -129,35 +141,32 @@ describe('looksLikeMobileNetworkDrop', () => {
 
     it('returns false on desktop regardless of the error', () => {
         Platform.isMobile = false;
-        expect(looksLikeMobileNetworkDrop(new Error('Failed to fetch'))).toBe(false);
+        expect(isMobileNetworkDrop(new Error('Failed to fetch'))).toBe(false);
     });
 
-    it('matches common mobile network-drop signatures', () => {
+    it.each([
+        'Failed to fetch',
+        'Network request failed',
+        'websocket closed',
+        'ERR_INTERNET_DISCONNECTED',
+        'ERR_CONNECTION_RESET',
+        'Load failed',
+        'The Internet connection appears to be offline.'
+    ])('matches the mobile network-drop signature %j', (msg) => {
         Platform.isMobile = true;
-        const signatures = [
-            'Failed to fetch',
-            'Network request failed',
-            'websocket closed',
-            'ERR_INTERNET_DISCONNECTED',
-            'ERR_CONNECTION_RESET',
-            'Load failed',
-            'The Internet connection appears to be offline.'
-        ];
-        for (const msg of signatures) {
-            expect(looksLikeMobileNetworkDrop(new Error(msg))).toBe(true);
-        }
+        expect(isMobileNetworkDrop(new Error(msg))).toBe(true);
     });
 
     it('returns false on mobile for an unrelated error (e.g. a JSON parse error)', () => {
         Platform.isMobile = true;
-        expect(looksLikeMobileNetworkDrop(new Error('Unexpected token < in JSON'))).toBe(false);
+        expect(isMobileNetworkDrop(new Error('Unexpected token < in JSON'))).toBe(false);
     });
 
     it('handles non-Error throws and empty messages', () => {
         Platform.isMobile = true;
-        expect(looksLikeMobileNetworkDrop('a network error occurred')).toBe(true);
-        expect(looksLikeMobileNetworkDrop('')).toBe(false);
-        expect(looksLikeMobileNetworkDrop(undefined)).toBe(false);
+        expect(isMobileNetworkDrop('a network error occurred')).toBe(true);
+        expect(isMobileNetworkDrop('')).toBe(false);
+        expect(isMobileNetworkDrop(undefined)).toBe(false);
     });
 });
 
@@ -178,6 +187,15 @@ describe('withMobileNetworkHint', () => {
         const result = withMobileNetworkHint(new Error('Failed to fetch'));
         expect(result.message).toContain('Failed to fetch');
         expect(result.message).toContain('backgrounded');
+    });
+
+    it('wraps a drop as a MobileNetworkError that preserves the original on cause', () => {
+        Platform.isMobile = true;
+        const original = new Error('Failed to fetch');
+        const result = withMobileNetworkHint(original);
+        expect(result).toBeInstanceOf(MobileNetworkError);
+        expect(result.name).toBe('MobileNetworkError');
+        expect((result as MobileNetworkError).cause).toBe(original);
     });
 
     it('returns the original error (same reference) on mobile when it is not a network drop', () => {
