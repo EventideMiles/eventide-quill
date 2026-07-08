@@ -1,4 +1,4 @@
-import { ChatChunk, type ToolCallFragment } from './provider';
+import { ChatChunk, ProviderError, type AnthropicThinkingBlockKind, type ToolCallFragment } from './provider';
 
 /** Sentinel value emitted by OpenAI as the final SSE data line. */
 const SSE_DONE_SENTINEL = '[DONE]';
@@ -590,12 +590,10 @@ export async function* processChunksWithThoughts(
  * Carried on the assistant {@link ChatMessage} so subsequent turns can replay
  * the thinking blocks alongside their tool_use blocks — required by the
  * Messages API when extended thinking is enabled with tool use. Other
- * providers ignore the field.
+ * providers ignore the field. The canonical type lives in {@link ./provider};
+ * re-exported here for back-compat with existing imports.
  */
-export interface AnthropicThinkingBlock {
-    thinking: string;
-    signature: string;
-}
+export type { AnthropicThinkingBlock, AnthropicRedactedThinkingBlock } from './provider';
 
 /** Discriminator for the in-flight content block the aggregator is tracking. */
 type AnthropicBlockType = 'text' | 'thinking' | 'tool_use' | 'redacted_thinking';
@@ -636,16 +634,34 @@ export class AnthropicStreamAggregator {
     private currentThinkingText = '';
     /** Accumulated signature for the current thinking block, if any. */
     private currentThinkingSignature = '';
+    /** Opaque `data` blob for the current redacted_thinking block, if any. */
+    private currentRedactedData: string | undefined;
     /** Completed thinking blocks for this assistant turn, in order. */
-    private readonly thinkingBlocks: AnthropicThinkingBlock[] = [];
+    private readonly thinkingBlocks: AnthropicThinkingBlockKind[] = [];
 
     /**
      * Read-only access to the thinking blocks captured during this stream.
-     * Consumers (the Anthropic provider) stamp these onto the assistant
-     * {@link ChatMessage} so subsequent turns replay them with tool_use blocks.
+     * Tool-loop consumers stamp these onto the assistant {@link ChatMessage}
+     * so subsequent turns replay them with tool_use blocks.
      */
-    get finishedThinking(): readonly AnthropicThinkingBlock[] {
+    get finishedThinking(): readonly AnthropicThinkingBlockKind[] {
         return this.thinkingBlocks;
+    }
+
+    /**
+     * Attach captured thinking blocks to a terminal chunk so tool-loop
+     * consumers can stamp them onto the assistant message they append. Called
+     * on both `message_delta` (the first `done` chunk most consumers break on)
+     * and `message_stop` (the absolute terminal) so every consumer sees them
+     * regardless of which done chunk it breaks on. Thinking blocks are always
+     * complete by the time either event arrives (all `content_block_stop`
+     * events precede `message_delta`).
+     */
+    private withThinkingBlocks(chunk: ChatChunk): ChatChunk {
+        if (this.thinkingBlocks.length > 0) {
+            chunk.thinkingBlocks = this.thinkingBlocks.map((b) => ({ ...b }));
+        }
+        return chunk;
     }
 
     /**
@@ -689,13 +705,14 @@ export class AnthropicStreamAggregator {
             case 'content_block_start': {
                 const idx = parsed.index as number;
                 const block = parsed.content_block as
-                    | { type?: string; id?: string; name?: string; text?: string }
+                    | { type?: string; id?: string; name?: string; text?: string; data?: string }
                     | undefined;
                 this.blockIndex = idx;
                 this.currentToolCallId = undefined;
                 this.currentToolCallName = undefined;
                 this.currentThinkingText = '';
                 this.currentThinkingSignature = '';
+                this.currentRedactedData = undefined;
                 if (block?.type === 'text') {
                     this.blockType = 'text';
                     // Anthropic seeds the first delta inside content_block_start.text;
@@ -710,7 +727,11 @@ export class AnthropicStreamAggregator {
                     return [];
                 }
                 if (block?.type === 'redacted_thinking') {
+                    // Redacted blocks carry an opaque `data` blob (no deltas
+                    // follow). Capture it here so content_block_stop can queue
+                    // the block for replay verbatim on subsequent turns.
                     this.blockType = 'redacted_thinking';
+                    this.currentRedactedData = typeof block.data === 'string' ? block.data : '';
                     return [];
                 }
                 if (block?.type === 'tool_use') {
@@ -777,16 +798,21 @@ export class AnthropicStreamAggregator {
                 }
             }
             case 'content_block_stop': {
-                // Close the current block. Thinking blocks are queued with
-                // their accumulated signature for the consumer to persist.
+                // Close the current block. Thinking AND redacted_thinking
+                // blocks are queued for the consumer to persist — Anthropic
+                // requires both to be replayed verbatim alongside their
+                // sibling tool_use blocks on subsequent turns.
                 if (this.blockType === 'thinking' && this.currentThinkingText) {
                     this.thinkingBlocks.push({
                         thinking: this.currentThinkingText,
                         signature: this.currentThinkingSignature
                     });
+                } else if (this.blockType === 'redacted_thinking' && this.currentRedactedData !== undefined) {
+                    this.thinkingBlocks.push({ data: this.currentRedactedData });
                 }
                 this.blockType = null;
                 this.blockIndex = -1;
+                this.currentRedactedData = undefined;
                 return [];
             }
             case 'message_delta': {
@@ -806,16 +832,22 @@ export class AnthropicStreamAggregator {
                         totalTokens: usage.output_tokens
                     };
                 }
-                return [chunk];
+                // Stamp thinking blocks onto the terminal chunk so tool-loop
+                // consumers (which typically break on this first `done` chunk)
+                // capture them and replay them on the next round.
+                return [this.withThinkingBlocks(chunk)];
             }
             case 'message_stop':
-                return [{ text: '', done: true }];
+                return [this.withThinkingBlocks({ text: '', done: true })];
             case 'ping':
                 return [];
             case 'error': {
                 const err = parsed.error as { message?: string; type?: string } | undefined;
                 const msg = err?.message ?? 'Anthropic stream error';
-                throw new Error(msg);
+                // Throw the same typed error class the Gemini path uses so
+                // downstream `instanceof ProviderError` checks work uniformly.
+                // The raw payload is preserved on `body` for diagnostics.
+                throw new ProviderError(msg, 0, event.data);
             }
             default:
                 return [];

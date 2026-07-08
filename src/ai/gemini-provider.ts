@@ -10,7 +10,8 @@ import {
     ModelInfo,
     ProviderConfig,
     ProviderError,
-    resolveModel
+    resolveModel,
+    roleSatisfies
 } from './provider';
 import {
     extractThoughtContent,
@@ -466,9 +467,7 @@ export class GeminiProvider implements AiProvider {
 
     /** {@inheritDoc AiProvider.testConnection} */
     async testConnection(): Promise<{ ok: boolean; error?: string }> {
-        const chatModel = this.config.models.find(
-            (m) => m.role === 'chat' || m.role === 'both' || m.role === 'chat-image'
-        );
+        const chatModel = this.config.models.find((m) => roleSatisfies(m.role, 'chat'));
         const modelName = chatModel?.model ?? 'gemini-2.0-flash';
         const url = buildUrl(this.config.endpoint, `/models/${encodeURIComponent(modelName)}:generateContent`);
         const headers = this.buildHeaders();

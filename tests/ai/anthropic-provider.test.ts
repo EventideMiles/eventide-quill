@@ -23,13 +23,7 @@ const baseConfig: Pick<ProviderConfig, 'models' | 'maxOutputTokens' | 'thinkingB
 };
 
 function build(messages: ChatMessage[], options: Partial<ChatOptions> = {}): Record<string, unknown> {
-    const { body } = buildAnthropicRequestBody(
-        messages,
-        { messages, ...options },
-        baseConfig,
-        'test'
-    );
-    return body;
+    return buildAnthropicRequestBody(messages, { messages, ...options }, baseConfig, 'test');
 }
 
 /** Type helper for assertions: index into the built body's messages array. */
@@ -156,6 +150,29 @@ describe('buildAnthropicRequestBody — message conversion', () => {
         expect(types).toEqual(['thinking', 'text', 'tool_use']);
     });
 
+    it('replays redacted_thinking blocks verbatim alongside signed thinking', () => {
+        const body = build([
+            { role: 'user', content: 'q' },
+            {
+                role: 'assistant',
+                content: '',
+                thinkingBlocks: [
+                    { thinking: 'signed reasoning', signature: 'sig' },
+                    { data: 'REDACTED_BLOB' }
+                ],
+                toolCalls: [{ id: 'toolu_1', name: 't', arguments: '{}' }]
+            }
+        ]);
+        const assistant = messageAt(body, 1);
+        const blocks = assistant.content as Array<Record<string, unknown>>;
+        expect(blocks).toContainEqual({ type: 'thinking', thinking: 'signed reasoning', signature: 'sig' });
+        // Redacted blocks replay as opaque { type: 'redacted_thinking', data } —
+        // Anthropic requires them verbatim or it rejects the follow-up turn.
+        expect(blocks).toContainEqual({ type: 'redacted_thinking', data: 'REDACTED_BLOB' });
+        const types = blocks.map((b) => b.type);
+        expect(types).toEqual(['thinking', 'redacted_thinking', 'tool_use']);
+    });
+
     it('serializes images as base64 source blocks (no data: prefix)', () => {
         const body = build([{ role: 'user', content: 'describe this', images: ['BASE64BYTES=='] }]);
         const user = messageAt(body, 0);
@@ -179,7 +196,7 @@ describe('buildAnthropicRequestBody — temperature + thinking', () => {
     });
 
     it('forces temperature=1 when thinkingBudgetTokens is set', () => {
-        const { body } = buildAnthropicRequestBody(
+        const body = buildAnthropicRequestBody(
             [{ role: 'user', content: 'hi' }],
             { messages: [{ role: 'user', content: 'hi' }], temperature: 0.3 },
             { models: [chatModel], maxOutputTokens: 4096, thinkingBudgetTokens: 2048 },
@@ -190,7 +207,7 @@ describe('buildAnthropicRequestBody — temperature + thinking', () => {
     });
 
     it('clamps max_tokens to budget+1 when default would leave no room for output', () => {
-        const { body } = buildAnthropicRequestBody(
+        const body = buildAnthropicRequestBody(
             [{ role: 'user', content: 'hi' }],
             { messages: [{ role: 'user', content: 'hi' }] },
             { models: [chatModel], maxOutputTokens: 1024, thinkingBudgetTokens: 4096 },
@@ -202,7 +219,7 @@ describe('buildAnthropicRequestBody — temperature + thinking', () => {
     });
 
     it('keeps max_tokens when it already exceeds budget+1', () => {
-        const { body } = buildAnthropicRequestBody(
+        const body = buildAnthropicRequestBody(
             [{ role: 'user', content: 'hi' }],
             { messages: [{ role: 'user', content: 'hi' }] },
             { models: [chatModel], maxOutputTokens: 8192, thinkingBudgetTokens: 1024 },

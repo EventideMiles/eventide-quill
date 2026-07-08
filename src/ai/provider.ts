@@ -90,6 +90,29 @@ export interface ModelInfo {
     contextLength?: number;
 }
 
+/**
+ * A signed Anthropic extended-thinking block: the model's reasoning text plus
+ * its signature. The signature cryptographically binds the reasoning to the
+ * turn so Anthropic can verify it wasn't tampered with when replayed.
+ */
+export interface AnthropicThinkingBlock {
+    thinking: string;
+    signature: string;
+}
+
+/**
+ * An opaque Anthropic redacted-thinking block. Anthropic returns these in place
+ * of a normal thinking block when its safety review filtered the reasoning; the
+ * raw `data` blob must be replayed verbatim on subsequent turns (alongside any
+ * sibling `tool_use` blocks), exactly like a signed thinking block.
+ */
+export interface AnthropicRedactedThinkingBlock {
+    data: string;
+}
+
+/** Union of the two Anthropic thinking-block shapes carried on assistant turns. */
+export type AnthropicThinkingBlockKind = AnthropicThinkingBlock | AnthropicRedactedThinkingBlock;
+
 /** A single message in a chat conversation. */
 export interface ChatMessage {
     role: 'system' | 'user' | 'assistant' | 'tool';
@@ -135,13 +158,15 @@ export interface ChatMessage {
     /**
      * Anthropic-only: thinking blocks captured from a prior assistant turn.
      * Required when extended thinking is enabled alongside tool use — Anthropic
-     * signs each thinking block and the signed reasoning must be replayed
-     * alongside its sibling `tool_use` blocks on subsequent turns or the API
-     * will reject the request. Populated by the Anthropic provider when
-     * streaming completes; serialized back into `content` blocks in the order
-     * `[thinking..., tool_use...]`. Other providers ignore the field entirely.
+     * signs each thinking block (or redacts it) and the signed/redacted
+     * reasoning must be replayed alongside its sibling `tool_use` blocks on
+     * subsequent turns or the API will reject the request. Carried on the
+     * terminal `done` chunk by the Anthropic stream aggregator and stamped onto
+     * the assistant message by the tool-loop consumers; serialized back into
+     * `content` blocks in the order `[thinking..., tool_use...]`. Other
+     * providers ignore the field entirely.
      */
-    thinkingBlocks?: { thinking: string; signature: string }[];
+    thinkingBlocks?: AnthropicThinkingBlockKind[];
 }
 
 /**
@@ -258,6 +283,14 @@ export interface ChatChunk {
     done: boolean;
     model?: string;
     usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
+    /**
+     * Anthropic-only: carried on the terminal `done` chunk so tool-loop
+     * consumers can stamp the captured thinking blocks onto the assistant
+     * message they append after streaming. Required for extended-thinking +
+     * tool-use continuity across rounds (see {@link ChatMessage.thinkingBlocks}).
+     * Undefined for non-Anthropic providers and for non-terminal chunks.
+     */
+    thinkingBlocks?: AnthropicThinkingBlockKind[];
 }
 
 /** Error thrown by provider implementations on HTTP or API errors. */

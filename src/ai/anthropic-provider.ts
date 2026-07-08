@@ -121,13 +121,12 @@ export function buildAnthropicRequestBody(
     options: ChatOptions,
     config: Pick<ProviderConfig, 'models' | 'maxOutputTokens' | 'thinkingBudgetTokens'>,
     providerName: string
-): { body: Record<string, unknown>; lastAssistant?: ChatMessage } {
+): Record<string, unknown> {
     const modelConfig = resolveModel(config.models, 'chat', options.model, providerName);
 
     const systemBlocks: AnthropicSystemBlock[] = [];
     const requestMessages: AnthropicRequestMessage[] = [];
     let inLeadingSystem = true;
-    let lastAssistant: ChatMessage | undefined;
 
     for (const m of messages) {
         // Hoist a contiguous prefix of system messages into the top-level
@@ -173,14 +172,19 @@ export function buildAnthropicRequestBody(
 
         // user or assistant
         const isAssistant = m.role === 'assistant';
-        if (isAssistant) lastAssistant = m;
 
         const blocks: AnthropicContentBlock[] = [];
 
         // Thinking blocks come first (Anthropic's content-ordering rule).
+        // Both signed thinking and opaque redacted_thinking blocks must be
+        // replayed verbatim alongside their sibling tool_use blocks.
         if (isAssistant && m.thinkingBlocks) {
             for (const tb of m.thinkingBlocks) {
-                blocks.push({ type: 'thinking', thinking: tb.thinking, signature: tb.signature });
+                if ('data' in tb) {
+                    blocks.push({ type: 'redacted_thinking', data: tb.data });
+                } else {
+                    blocks.push({ type: 'thinking', thinking: tb.thinking, signature: tb.signature });
+                }
             }
         }
 
@@ -267,7 +271,7 @@ export function buildAnthropicRequestBody(
         body.thinking = { type: 'enabled', budget_tokens: budget };
     }
 
-    return { body, lastAssistant };
+    return body;
 }
 
 /**
@@ -330,12 +334,7 @@ export class AnthropicProvider implements AiProvider {
      * identical.
      */
     async *chatCompletion(options: ChatOptions): AsyncGenerator<ChatChunk> {
-        const { body: bodyObj, lastAssistant } = buildAnthropicRequestBody(
-            options.messages,
-            options,
-            this.config,
-            this.name
-        );
+        const bodyObj = buildAnthropicRequestBody(options.messages, options, this.config, this.name);
         const url = buildUrl(this.config.endpoint, '/messages');
         const headers = this.buildHeaders();
         const body = JSON.stringify(bodyObj);
@@ -348,17 +347,16 @@ export class AnthropicProvider implements AiProvider {
                 signal: options.signal
             });
 
+            // The aggregator stamps captured thinking blocks onto the terminal
+            // done chunk (message_delta / message_stop); tool-loop consumers
+            // read chunk.thinkingBlocks and attach them to the NEW assistant
+            // message they append after streaming. The provider no longer
+            // mutates the input messages array.
             const aggregator = new AnthropicStreamAggregator();
             for await (const event of parseSseStream(reader, options.signal)) {
                 for (const chunk of aggregator.processEvent(event)) {
                     yield chunk;
                 }
-            }
-
-            // Stamp captured thinking blocks back onto the source assistant
-            // message so subsequent turns replay them with tool_use blocks.
-            if (lastAssistant && aggregator.finishedThinking.length > 0) {
-                lastAssistant.thinkingBlocks = [...aggregator.finishedThinking];
             }
 
             return;
@@ -376,10 +374,6 @@ export class AnthropicProvider implements AiProvider {
         const chunks = events.flatMap((e) => aggregator.processEvent(e));
         if (chunks.length === 0 || !chunks[chunks.length - 1]!.done) {
             chunks.push({ text: '', done: true });
-        }
-
-        if (lastAssistant && aggregator.finishedThinking.length > 0) {
-            lastAssistant.thinkingBlocks = [...aggregator.finishedThinking];
         }
 
         for (const chunk of chunks) {

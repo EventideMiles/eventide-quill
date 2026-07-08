@@ -14,6 +14,7 @@ import {
     geminiResponseBlocked,
     type SseEvent
 } from '../../src/ai/streaming';
+import { ProviderError } from '../../src/ai/provider';
 import type { OpenAiSseData } from '../../src/ai/streaming';
 
 /** Build a ReadableStream from string chunks for async-generator tests. */
@@ -367,6 +368,60 @@ describe('AnthropicStreamAggregator', () => {
         expect(agg.finishedThinking).toEqual([{ thinking: 'Let me consider.', signature: 'WaUjz...' }]);
     });
 
+    it('preserves redacted_thinking blocks verbatim for replay', () => {
+        const agg = new AnthropicStreamAggregator();
+        agg.processEvent(
+            sse('content_block_start', {
+                type: 'content_block_start',
+                index: 0,
+                content_block: { type: 'redacted_thinking', data: 'OPAQUE_BLOB==' }
+            })
+        );
+        // Redacted blocks emit no deltas — close immediately.
+        agg.processEvent(sse('content_block_stop', { type: 'content_block_stop', index: 0 }));
+        expect(agg.finishedThinking).toEqual([{ data: 'OPAQUE_BLOB==' }]);
+    });
+
+    it('stamps captured thinking blocks onto the terminal done chunks', () => {
+        const agg = new AnthropicStreamAggregator();
+        agg.processEvent(
+            sse('content_block_start', {
+                type: 'content_block_start',
+                index: 0,
+                content_block: { type: 'thinking', thinking: '' }
+            })
+        );
+        agg.processEvent(
+            sse('content_block_delta', {
+                type: 'content_block_delta',
+                index: 0,
+                delta: { type: 'thinking_delta', thinking: 'hmm' }
+            })
+        );
+        agg.processEvent(
+            sse('content_block_delta', {
+                type: 'content_block_delta',
+                index: 0,
+                delta: { type: 'signature_delta', signature: 'sig' }
+            })
+        );
+        agg.processEvent(sse('content_block_stop', { type: 'content_block_stop', index: 0 }));
+
+        // message_delta is the first done chunk most consumers break on; it
+        // must carry the thinking blocks so tool-loop consumers capture them.
+        const deltaChunks = agg.processEvent(
+            sse('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn' } })
+        );
+        expect(deltaChunks[0]!.done).toBe(true);
+        expect(deltaChunks[0]!.thinkingBlocks).toEqual([{ thinking: 'hmm', signature: 'sig' }]);
+
+        // message_stop (absolute terminal) carries them too so consumers that
+        // process the full stream still see them.
+        const stopChunks = agg.processEvent(sse('message_stop', { type: 'message_stop' }));
+        expect(stopChunks[0]!.done).toBe(true);
+        expect(stopChunks[0]!.thinkingBlocks).toEqual([{ thinking: 'hmm', signature: 'sig' }]);
+    });
+
     it('emits a leading tool_use fragment with id and name on content_block_start', () => {
         const agg = new AnthropicStreamAggregator();
         const start = agg.processEvent(
@@ -449,11 +504,19 @@ describe('AnthropicStreamAggregator', () => {
 
     it('throws on error events', () => {
         const agg = new AnthropicStreamAggregator();
-        expect(() =>
+        let thrown: unknown;
+        try {
             agg.processEvent(
                 sse('error', { type: 'error', error: { message: 'rate limited', type: 'overloaded_error' } })
-            )
-        ).toThrow('rate limited');
+            );
+        } catch (err) {
+            thrown = err;
+        }
+        expect(thrown).toBeInstanceOf(ProviderError);
+        expect((thrown as ProviderError).message).toBe('rate limited');
+        // The raw payload is preserved on `body` for diagnostics.
+        expect((thrown as ProviderError).body).toContain('overloaded_error');
+        expect((thrown as ProviderError).status).toBe(0);
     });
 
     it('ignores ping events', () => {

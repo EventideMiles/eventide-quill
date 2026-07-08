@@ -552,17 +552,31 @@ class AnthropicBanRiskModal extends Modal {
 
         const btnRow = container.createDiv({ cls: 'quill-confirm-modal__btn-row' });
         const cancelBtn = btnRow.createEl('button', { text: 'Cancel' });
+        // Modal does not extend Component (no registerDomEvent); raw listener
+        // is the established pattern for modals in this codebase.
         cancelBtn.addEventListener('click', () => this.close());
 
         const confirmBtn = btnRow.createEl('button', {
             text: 'I understand the risk — continue',
             cls: 'mod-warning'
         });
+        // Lock out re-entry while the async onConfirm() is in flight so a
+        // double-click can't fire the action twice. Both buttons disable on
+        // confirmation start; on rejection they re-enable so the writer can
+        // retry, on success the modal closes.
+        let confirming = false;
         confirmBtn.addEventListener('click', () => {
+            if (confirming) return;
+            confirming = true;
+            confirmBtn.disabled = true;
+            cancelBtn.disabled = true;
             Promise.resolve(this.onConfirm())
                 .then(() => this.close())
                 .catch((err: unknown) => {
                     console.error('Quill: Anthropic warning confirmation failed.', err);
+                    confirming = false;
+                    confirmBtn.disabled = false;
+                    cancelBtn.disabled = false;
                 });
         });
     }
@@ -2521,13 +2535,15 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     : provider.type === 'gemini'
                       ? 'Google AI Studio API key (AIza...). Required. Free tier available from ai.google.dev.'
                       : 'Optional. Leave blank for local providers.';
+            const apiKeyPlaceholder =
+                provider.type === 'anthropic' ? 'sk-ant-...' : provider.type === 'gemini' ? 'AIza...' : 'E.g., sk-...';
             new Setting(card)
                 .setName('API key')
                 .setDesc(apiKeyDesc)
                 .addText((text) =>
                     text
                         .setValue(provider.apiKey)
-                        .setPlaceholder('E.g., sk-...')
+                        .setPlaceholder(apiKeyPlaceholder)
                         .onChange(async (value) => {
                             provider.apiKey = value;
                             await this.plugin.saveSettings();

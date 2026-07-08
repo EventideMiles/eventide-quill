@@ -1,4 +1,5 @@
 import type { AiProvider, ChatChunk, ChatMessage, ToolCallRequest } from '../provider';
+import type { AnthropicThinkingBlockKind } from '../provider';
 import { executeToolCall, type ToolContext, type ToolRegistry } from './tool';
 import { injectImagesIntoMessages } from '../vision';
 
@@ -69,6 +70,7 @@ export async function* streamWithTools(
     const messages: ChatMessage[] = [...options.messages];
     let lastUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
     let lastModel: string | undefined;
+    let lastThinkingBlocks: AnthropicThinkingBlockKind[] | undefined;
 
     for (let round = 0; round <= maxRounds; round++) {
         // After the last allowed tool round, run one forced final pass
@@ -77,6 +79,7 @@ export async function* streamWithTools(
         const forceFinal = round === maxRounds;
         const fragmentBuffer = new Map<number, { id?: string; name?: string; arguments: string }>();
         let assistantText = '';
+        lastThinkingBlocks = undefined;
 
         const stream = provider.chatCompletion({
             ...options,
@@ -88,6 +91,9 @@ export async function* streamWithTools(
         for await (const chunk of stream) {
             if (chunk.usage) lastUsage = chunk.usage;
             if (chunk.model) lastModel = chunk.model;
+            // Anthropic thinking blocks ride on the terminal chunk; capture
+            // them so the assistant message below can replay them next round.
+            if (chunk.thinkingBlocks) lastThinkingBlocks = chunk.thinkingBlocks;
 
             if (chunk.text) {
                 assistantText += chunk.text;
@@ -148,11 +154,14 @@ export async function* streamWithTools(
 
         // Append the assistant's turn (text + tool_calls) so the model sees
         // its own prior tool invocations in conversation history on the next
-        // round. OpenAI requires this; Ollama accepts it.
+        // round. OpenAI requires this; Ollama accepts it. Thinking blocks
+        // (Anthropic extended thinking) are carried so the next round can
+        // replay them alongside the tool_use blocks.
         const assistantMessage: ChatMessage = {
             role: 'assistant',
             content: assistantText,
-            toolCalls
+            toolCalls,
+            thinkingBlocks: lastThinkingBlocks
         };
         messages.push(assistantMessage);
 
