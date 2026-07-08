@@ -79,6 +79,14 @@ export interface EventideQuillSettings {
     aiDefaultEmbedProvider: string;
     /** Composite "providerId/modelId" for the default image (vision) model. Empty = none. */
     aiDefaultImageProvider: string;
+    /**
+     * One-time acknowledgment that the writer has read the Anthropic content-
+     * policy warning. Set true when the writer confirms the modal that appears
+     * the first time they select the Anthropic provider type in AddProviderModal
+     * or in the type dropdown. Permanent — once acknowledged, the modal does
+     * not reappear in this vault.
+     */
+    anthropicBanRiskAcknowledged: boolean;
     transformTemperature: number;
     transformVaultContext: boolean;
     transformMaxOutputTokens: number;
@@ -291,6 +299,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     aiDefaultChatProvider: 'local-default/local-chat',
     aiDefaultEmbedProvider: 'local-default/local-embed',
     aiDefaultImageProvider: '',
+    anthropicBanRiskAcknowledged: false,
     transformTemperature: 1.0,
     transformVaultContext: true,
     transformMaxOutputTokens: 4096,
@@ -459,7 +468,17 @@ class ModelFetchModal extends SuggestModal<ModelInfo> {
 class AddProviderModal extends SuggestModal<{ type: ProviderType; label: string; defaultEndpoint: string }> {
     private options: { type: ProviderType; label: string; defaultEndpoint: string }[] = [
         { type: 'openai-compatible', label: 'OpenAI-compatible', defaultEndpoint: 'http://localhost:1234/v1' },
-        { type: 'ollama', label: 'Ollama', defaultEndpoint: 'http://localhost:11434' }
+        { type: 'ollama', label: 'Ollama', defaultEndpoint: 'http://localhost:11434' },
+        {
+            type: 'anthropic',
+            label: 'Anthropic Claude (native Messages API)',
+            defaultEndpoint: 'https://api.anthropic.com/v1'
+        },
+        {
+            type: 'gemini',
+            label: 'Google Gemini (native GenerateContent API)',
+            defaultEndpoint: 'https://generativelanguage.googleapis.com/v1beta'
+        }
     ];
 
     constructor(
@@ -484,6 +503,82 @@ class AddProviderModal extends SuggestModal<{ type: ProviderType; label: string;
     /** When user selects a type, invoke the callback. */
     onChooseSuggestion(option: { type: ProviderType; label: string; defaultEndpoint: string }): void {
         this.onChoose(option.type, option.defaultEndpoint);
+    }
+}
+
+/**
+ * Confirmation modal that fires once before the writer configures an Anthropic
+ * provider. See `EventideQuillSettingTab.openAnthropicBanRiskWarning` for the
+ * policy background. Multi-paragraph body so the writer can't glance-and-click
+ * through it; the primary button is intentionally worded as "I understand the
+ * risk — continue" rather than a generic "OK" so the acknowledgment is
+ * unambiguous.
+ */
+class AnthropicBanRiskModal extends Modal {
+    private readonly onConfirm: () => void | Promise<void>;
+
+    constructor(app: App, onConfirm: () => void | Promise<void>) {
+        super(app);
+        this.titleEl.setText('Before you add Anthropic Claude');
+        this.onConfirm = onConfirm;
+    }
+
+    onOpen(): void {
+        const container = this.contentEl.createDiv({ cls: 'quill-anthropic-warning' });
+
+        container.createEl('p', {
+            text:
+                'Anthropic prohibits sexually explicit content and graphic or gratuitous violence ' +
+                'for ALL access — including the API, including content you submit for critique or analysis. ' +
+                'Their filter is automated and account-level. Repeated violations, even from prose you ' +
+                'have already written and are asking Claude to evaluate, can get your account terminated ' +
+                'and forfeit any remaining API credits. Appeals are not always successful.'
+        });
+
+        container.createEl('p', {
+            text:
+                'If you write romance, erotica, horror, thrillers, dark fantasy, or any prose that ' +
+                'includes on-page sexual content, sexual violence, or graphic gore, Anthropic is the ' +
+                'wrong provider for your work. Gemini and local providers (Ollama, LM Studio) do not ' +
+                'have this content-policy risk at the account level.'
+        });
+
+        container.createEl('p', {
+            text:
+                'There is no free tier for the Anthropic API — new accounts get a one-time $5 credit, ' +
+                'then pay-as-you-go per token. Consumer Claude Pro/Max subscriptions do NOT grant API access.',
+            cls: 'quill-anthropic-warning__muted'
+        });
+
+        const btnRow = container.createDiv({ cls: 'quill-confirm-modal__btn-row' });
+        const cancelBtn = btnRow.createEl('button', { text: 'Cancel' });
+        // Modal does not extend Component (no registerDomEvent); raw listener
+        // is the established pattern for modals in this codebase.
+        cancelBtn.addEventListener('click', () => this.close());
+
+        const confirmBtn = btnRow.createEl('button', {
+            text: 'I understand the risk — continue',
+            cls: 'mod-warning'
+        });
+        // Lock out re-entry while the async onConfirm() is in flight so a
+        // double-click can't fire the action twice. Both buttons disable on
+        // confirmation start; on rejection they re-enable so the writer can
+        // retry, on success the modal closes.
+        let confirming = false;
+        confirmBtn.addEventListener('click', () => {
+            if (confirming) return;
+            confirming = true;
+            confirmBtn.disabled = true;
+            cancelBtn.disabled = true;
+            Promise.resolve(this.onConfirm())
+                .then(() => this.close())
+                .catch((err: unknown) => {
+                    console.error('Quill: Anthropic warning confirmation failed.', err);
+                    confirming = false;
+                    confirmBtn.disabled = false;
+                    cancelBtn.disabled = false;
+                });
+        });
     }
 }
 
@@ -2382,13 +2477,35 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 dropdown
                     .addOption('openai-compatible', 'OpenAI-compatible')
                     .addOption('ollama', 'Ollama')
+                    .addOption('anthropic', 'Anthropic Claude (native)')
+                    .addOption('gemini', 'Google Gemini (native)')
                     .setValue(provider.type)
                     .onChange(async (value) => {
                         const newType = value as ProviderType;
+                        // The Anthropic ban-risk warning fires before the type
+                        // change is committed. Selecting Anthropic without prior
+                        // acknowledgment triggers a confirmation modal; the type
+                        // only flips if the writer confirms (or has already
+                        // acknowledged in a prior session).
+                        if (newType === 'anthropic' && !this.plugin.settings.anthropicBanRiskAcknowledged) {
+                            this.openAnthropicBanRiskWarning(() => {
+                                provider.type = newType;
+                                provider.endpoint = 'https://api.anthropic.com/v1';
+                                void this.plugin.saveSettings().then(() => this.display());
+                            });
+                            // Revert the dropdown visually so a dismissed warning
+                            // doesn't leave the type half-changed.
+                            dropdown.setValue(provider.type);
+                            return;
+                        }
                         provider.type = newType;
                         if (newType === 'ollama') {
                             provider.endpoint = 'http://localhost:11434';
                             provider.apiKey = '';
+                        } else if (newType === 'anthropic') {
+                            provider.endpoint = 'https://api.anthropic.com/v1';
+                        } else if (newType === 'gemini') {
+                            provider.endpoint = 'https://generativelanguage.googleapis.com/v1beta';
                         }
                         await this.plugin.saveSettings();
                         this.display();
@@ -2409,15 +2526,24 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     })
             );
 
-        // API Key — only show for OpenAI-compatible
-        if (provider.type === 'openai-compatible') {
+        // API Key — shown for OpenAI-compatible, Anthropic, and Gemini
+        // (Ollama is local-only and hides the field entirely).
+        if (provider.type !== 'ollama') {
+            const apiKeyDesc =
+                provider.type === 'anthropic'
+                    ? 'Anthropic Console API key (sk-ant-...). Required.'
+                    : provider.type === 'gemini'
+                      ? 'Google AI Studio API key (AIza...). Required. Free tier available from ai.google.dev.'
+                      : 'Optional. Leave blank for local providers.';
+            const apiKeyPlaceholder =
+                provider.type === 'anthropic' ? 'sk-ant-...' : provider.type === 'gemini' ? 'AIza...' : 'E.g., sk-...';
             new Setting(card)
                 .setName('API key')
-                .setDesc('Optional. Leave blank for local providers.')
+                .setDesc(apiKeyDesc)
                 .addText((text) =>
                     text
                         .setValue(provider.apiKey)
-                        .setPlaceholder('E.g., sk-...')
+                        .setPlaceholder(apiKeyPlaceholder)
                         .onChange(async (value) => {
                             provider.apiKey = value;
                             await this.plugin.saveSettings();
@@ -3530,7 +3656,27 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Add a new provider with the given type and default endpoint. */
     private addProvider(type: ProviderType, defaultEndpoint: string): void {
-        const name = type === 'ollama' ? 'Ollama local' : 'New OpenAI-compatible';
+        // Anthropic's content-policy warning fires before the provider is
+        // created. If the writer hasn't acknowledged it yet, route through the
+        // confirmation modal; the provider only lands if they confirm.
+        if (type === 'anthropic' && !this.plugin.settings.anthropicBanRiskAcknowledged) {
+            this.openAnthropicBanRiskWarning(() => this.createProviderOfType(type, defaultEndpoint));
+            return;
+        }
+        this.createProviderOfType(type, defaultEndpoint);
+    }
+
+    /** Build and persist a new provider of the given type. Split out so the
+     *  Anthropic warning modal can call it after the writer confirms. */
+    private createProviderOfType(type: ProviderType, defaultEndpoint: string): void {
+        const name =
+            type === 'ollama'
+                ? 'Ollama local'
+                : type === 'anthropic'
+                  ? 'New Anthropic provider'
+                  : type === 'gemini'
+                    ? 'New Gemini provider'
+                    : 'New OpenAI-compatible';
         const newProvider: ProviderConfig = {
             id: generateProviderId(name),
             name,
@@ -3543,6 +3689,28 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         };
         this.plugin.settings.aiProviders.push(newProvider);
         void this.plugin.saveSettings().then(() => this.display());
+    }
+
+    /**
+     * One-time confirmation modal that fires when the writer first selects the
+     * Anthropic provider type. Anthropic's Usage Policy prohibits sexually
+     * explicit content and graphic violence — including for API access and
+     * including content submitted *for analysis*. Repeated violations lead to
+     * account-level bans (forfeiting any remaining API credit). This modal
+     * makes the risk explicit before the writer commits.
+     *
+     * On confirmation the `anthropicBanRiskAcknowledged` setting flips true
+     * permanently so the modal does not reappear on subsequent Anthropic
+     * selections in this vault. There is intentionally no UI to revoke the
+     * acknowledgment — once a writer has read and accepted the risk, repeating
+     * the modal on every Anthropic add would be hostile.
+     */
+    private openAnthropicBanRiskWarning(onConfirm: () => void): void {
+        new AnthropicBanRiskModal(this.app, async () => {
+            this.plugin.settings.anthropicBanRiskAcknowledged = true;
+            await this.plugin.saveSettings();
+            onConfirm();
+        }).open();
     }
 }
 

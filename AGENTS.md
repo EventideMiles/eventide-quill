@@ -20,7 +20,7 @@ MIT license. Built from scratch. Mobile-ready. Local-model first.
 - **Formatter: Prettier** (`prettier.config.mjs`: `singleQuote`, `tabWidth: 4`, `printWidth: 120`, `trailingComma: 'none'`, `semi: true`)
 - **Linting: ESLint** with `eslint-plugin-obsidianmd` (configured in `eslint.config.mts`)
 - **Style linting: stylelint** + `stylelint-scss` on `styles/**/*.scss` (configured in `.stylelintrc.json`). Lenient, color-focused: enforces `color-no-hex` (use Obsidian CSS vars / `rgba(var(--color-*-rgb), …)` instead) and a few safety nets. `scss/comment-no-empty` is deliberately disabled — the bare `//` dividers inside block comments are intentional.
-- **Duplication: jscpd v5** (Rust engine; dev-only, never bundled into `main.js`) — copy-paste detector gated in CI via `npm run lint:dup`. Configured in `.jscpd.json`: `minLines` 6, `minTokens` 70, `mode: weak` (skip comment tokens so JSDoc doesn't inflate the count), `threshold: 5` over duplicated **lines** (baseline 2.49%; **ratchet down** as duplication is extracted — the number should only ever decrease). `src/ui/slash-command-suggest.ts` is excluded via `ignore` as a known transitional mirror of `FileMentionSuggest`; a shared `SuggestBase` extraction is tracked in `.planning/road-to-1.1.0.md` PR 6 — remove the ignore entry when the base lands. The v5 Rust engine dropped v4's inline `jscpd:ignore-file` directive, so file-level exclusion lives in `.jscpd.json`, not at the code site.
+- **Duplication: jscpd v5** (Rust engine; dev-only, never bundled into `main.js`) — copy-paste detector gated in CI via `npm run lint:dup`. Configured in `.jscpd.json`: `minLines` 6, `minTokens` 70, `mode: weak` (skip comment tokens so JSDoc doesn't inflate the count), `threshold: 5` over duplicated **lines** (baseline 2.49%; **ratchet down** as duplication is extracted — the number should only ever decrease). `src/ui/slash-command-suggest.ts` is excluded via `ignore` as a known transitional mirror of `FileMentionSuggest`; a shared `SuggestBase` extraction is tracked in `.planning/road-to-1.2.0.md` PR 6 — remove the ignore entry when the base lands. The v5 Rust engine dropped v4's inline `jscpd:ignore-file` directive, so file-level exclusion lives in `.jscpd.json`, not at the code site.
 - **Types: `obsidian`** type definitions (configured in `tsconfig.json`)
 - **Editor config: `.editorconfig`** (also declares `quote_type = single`)
 
@@ -74,15 +74,16 @@ Tests run on **Vitest** (native ESM, esbuild-based transform matching the projec
 
 ### What's covered vs. deferred
 
-**Covered:** `src/utils/text-analysis`, `src/core/linter/rules`, `src/core/dashboard/readability`, `src/core/change-set`, `src/ai/provider` (role/capability resolution), `src/ai/tools/http-retry` (429 / Retry-After parsing), `src/core/linter/linter` (orchestrator + enableX toggles), `src/core/dashboard/metrics` (word/sentence counts), `src/ai/streaming` (SSE/NDJSON parsing, thought extraction), `src/utils/tokens`, `src/utils/directives`, `src/core/dashboard/lorebook-scanner` (pure subset: type/alias parsing, gallery stripping), `src/ai/conversation-store` (sidecar persistence + LRU), `src/ai/feedback-queue` (sidecar persistence + running→queued restore). Most are pure-logic — zero mocks; the two sidecar stores use an in-memory `Vault` adapter stub. Additional coverage: `src/core/context-engine/voice-analyzer` (POV/tense/dialogue detection), `src/core/context-engine/entity-extractor` (character/location/plot-thread extraction), `src/ai/provider-registry` (parseProviderKey, generateModelId), `src/ai/transport` (HttpError, throwOnNonOk, error formatting, isMobileNetworkDrop/withMobileNetworkHint/MobileNetworkError/requestUrlMobile), `src/ai/tools/tool` (ToolRegistry, executeToolCall), `src/ai/embedding-cache` (hashString), `src/ai/compaction` (compactConversation with mock provider), `src/ai/feedback` (personas, buildFeedbackMessages), `src/ai/tools/fandom-cache` (URL/date helpers, fandomReachability), `src/types` (NARRATIVE_VOICE_PRESETS), `src/ai/modes` (AI_MODE_CONFIGS), `src/core/dashboard/presets` (MANUSCRIPT_PRESETS), `src/core/dashboard/manuscript-file` (manuscriptDataPath), `src/core/linter/fixes` (FIXABLE_RULES coverage).
+**Covered:** `src/utils/text-analysis`, `src/core/linter/rules`, `src/core/dashboard/readability`, `src/core/change-set`, `src/ai/provider` (role/capability resolution), `src/ai/tools/http-retry` (429 / Retry-After parsing), `src/core/linter/linter` (orchestrator + enableX toggles), `src/core/dashboard/metrics` (word/sentence counts), `src/ai/streaming` (SSE/NDJSON parsing, thought extraction, Anthropic event-typed SSE, Gemini safety-filter detection), `src/utils/tokens`, `src/utils/directives`, `src/core/dashboard/lorebook-scanner` (pure subset: type/alias parsing, gallery stripping), `src/ai/conversation-store` (sidecar persistence + LRU), `src/ai/feedback-queue` (sidecar persistence + running→queued restore). Most are pure-logic — zero mocks; the two sidecar stores use an in-memory `Vault` adapter stub. Additional coverage: `src/core/context-engine/voice-analyzer` (POV/tense/dialogue detection), `src/core/context-engine/entity-extractor` (character/location/plot-thread extraction), `src/ai/provider-registry` (parseProviderKey, generateModelId, createProvider exhaustive dispatch incl. anthropic + gemini), `src/ai/anthropic-provider` (wire-format fixtures: system hoisting + caching, tool_use/tool_result blocks, thinking-block ordering incl. redacted_thinking replay, temperature clamping, thinking-budget max_tokens clamp, tool_choice serialization; `chatCompletion` integration via the mock-http layer: desktop SSE + mobile fallback, ProviderError on non-2xx, thinking-blocks-on-done-chunk incl. redacted, input-array not mutated), `src/ai/openai-compatible-provider` (`chatCompletion` integration: desktop SSE + mobile fallback, `[DONE]` termination, ProviderError on non-2xx), `src/ai/ollama-provider` (`chatCompletion` integration: desktop NDJSON + mobile fallback, `/api/chat` body shape, ProviderError on non-2xx), `src/ai/gemini-provider` (wire-format fixtures: systemInstruction, model/user role conversion, functionCall/functionResponse parts, consecutive-tool consolidation, image inlineData parts; `chatCompletion` integration: desktop SSE + mobile fallback, model-in-URL + `x-goog-api-key`, safety-filter → ProviderError), `src/ai/transport` (HttpError, throwOnNonOk, error formatting, isMobileNetworkDrop/withMobileNetworkHint/MobileNetworkError/requestUrlMobile), `src/ai/tools/tool` (ToolRegistry, executeToolCall), `src/ai/embedding-cache` (hashString), `src/ai/compaction` (compactConversation with mock provider), `src/ai/feedback` (personas, buildFeedbackMessages), `src/ai/tools/fandom-cache` (URL/date helpers, fandomReachability), `src/ai/tools/mediawiki` (MediaWikiError contract — instanceof/status discrimination from RateLimitError), `src/types` (NARRATIVE_VOICE_PRESETS), `src/ai/modes` (AI_MODE_CONFIGS), `src/core/dashboard/presets` (MANUSCRIPT_PRESETS), `src/core/dashboard/manuscript-file` (manuscriptDataPath), `src/core/linter/fixes` (FIXABLE_RULES coverage).
 
-**Deferred (post-1.1.0):** UI tests (`src/ui/*`, `main.ts`, `settings.ts`), CodeMirror decoration tests, provider integration tests (`openai-provider.ts` / `ollama-provider.ts` end-to-end), and the heavy AI pipelines (`co-writer.ts`, `runFeedbackJob`). These need jsdom + lifecycle simulation or real HTTP fixtures — a separate, larger effort.
+**Deferred (post-1.2.0):** UI tests (`src/ui/*`, `main.ts`, `settings.ts`), CodeMirror decoration tests, and the heavy AI pipelines (`co-writer.ts`, `runFeedbackJob`). These need jsdom + lifecycle simulation — a separate, larger effort. (Provider integration tests are no longer deferred — see the `chatCompletion` suites below, driven by the `tests/helpers/mock-http.ts` window.fetch + requestUrl mock layer.)
 
 ### Conventions
 
 - Test files mirror the source path: `src/utils/text-analysis.ts` → `tests/utils/text-analysis.test.ts`.
 - Use `import { describe, it, expect } from 'vitest'` (explicit imports — `globals: false` in the vitest config).
 - Prefer table-style tests for multi-case functions (e.g., `roleSatisfies` over all role/capability pairs).
+- `tests/helpers/mock-http.ts` is the shared HTTP-mock layer for provider `chatCompletion` integration tests: `streamingResponse`/`errorResponse` (desktop `window.fetch` SSE/NDJSON body via `mockWindowFetch`/`restoreWindow`) and `bufferedResponse` (mobile `requestUrl` fallback). Plus wire-format builders: `sseEvent` (Anthropic `event:`+`data:`), `sseDataLine`/`sseDoneSentinel` (OpenAI/Gemini `data:`), `ndjsonLine` (Ollama). Provider suites wrap `requestUrl` in a `vi.fn` via `vi.mock('obsidian', ...)` (see `transport.test.ts` for the pattern) and toggle `Platform.isMobile` to switch paths.
 - For modules that import from `'obsidian'` at runtime, the `__mocks__/obsidian.ts` stub resolves automatically. Override per-test with `vi.mock('obsidian', ...)` when you need controlled `requestUrl` or `Vault.adapter` behavior.
 
 ## `__DEV__` compile-time constant
@@ -155,7 +156,7 @@ Partials that consume design tokens must `@use 'base' as *;` (the `as *` brings 
 
 1. **Deterministic first, AI second.** Prose linter, character extraction, and metrics run locally without AI cost.
 2. **Async by default.** No operation blocks the editor.
-3. **Pluggable providers.** Ollama and OpenAI-compatible are both first-class. LM Studio (OpenAI-compatible) is the primary local test target.
+3. **Pluggable providers.** OpenAI-compatible, Ollama, Anthropic, and Gemini are all first-class. LM Studio (OpenAI-compatible) is the primary local test target. Anthropic and Gemini ship native provider implementations (not OpenAI-compat shims) so they can use prompt caching (Anthropic), extended thinking (Anthropic), and proper safety-filter reporting (Gemini). Both also accept official OpenAI-compat endpoints if a writer prefers that path. Anthropic is gated behind a one-time content-policy warning modal because Anthropic prohibits sexually explicit and graphic-violence content for API access too — including content submitted *for analysis*.
 4. **Mobile as a first-class target.** Test on phone before shipping desktop.
 5. **Capability-based model roles.** Models declare a `ModelRole` (`chat`/`embed`/`both`/`chat-image`/`image`); callers request a `ModelCapability` and `roleSatisfies()` resolves. No model-name sniffing — a non-vision model never receives pixels.
 6. **Tools on by default for discoverability.** Internal vault tools, network research tools (`fetch_url`, `fandom_*`, `wikipedia_*`), and image tools (`fetch_image_url`) are enabled by default so writers don't have to hunt for them; each can be turned off in settings to restrict outbound requests. Fandom additionally requires a non-empty allowlist (`lorebookFandomWikis`) — or the `lorebookFandomAllowAllWikis` "danger" toggle to allow any wiki.
@@ -183,10 +184,16 @@ src/
       apply-fix.ts, decorations.ts (CodeMirror decorations + debounced timers),
       fixes.ts, linter.ts, rules.ts, types.ts, word-lists.json (data asset)
   ai/                  # Provider architecture, streaming, prompts, tools, vision
-    provider.ts (ModelRole, ModelCapability, roleSatisfies, resolveModel, ProviderError),
+    provider.ts (ModelRole, ModelCapability, roleSatisfies, resolveModel, ProviderError,
+                ProviderType now: 'openai-compatible' | 'ollama' | 'anthropic' | 'gemini';
+                ChatMessage.thinkingBlocks + ProviderConfig.thinkingBudgetTokens are
+                Anthropic-extended-thinking fields, ignored by other providers),
     provider-registry.ts (createProvider, getProvider, parseProviderKey, generateModelId),
-    openai-provider.ts, ollama-provider.ts,
-    streaming.ts, transport.ts (HttpError, StreamingUnavailableError, MobileNetworkError, the one `window.fetch` exception, isMobileNetworkDrop/withMobileNetworkHint/requestUrlMobile),
+    openai-provider.ts, ollama-provider.ts, anthropic-provider.ts, gemini-provider.ts,
+    streaming.ts (openAiSseDataToChunk + ollamaNdjsonLineToChunk for the OpenAI-compat
+                  providers; AnthropicStreamAggregator stateful reducer for Anthropic's
+                  event-typed SSE; geminiSseDataToChunk + geminiResponseBlocked for Gemini),
+    transport.ts (HttpError, StreamingUnavailableError, MobileNetworkError, the one `window.fetch` exception, isMobileNetworkDrop/withMobileNetworkHint/requestUrlMobile),
     mobile-watchdog.ts (MobileStreamWatchdog + notifyMobileStreamRisk — detects mobile app suspension mid AI-stream; see "Mobile streaming & app focus"),
     compaction.ts, embedding-cache.ts, conversation-store.ts (saved co-writer sessions sidecar),
     feedback.ts (personas, buildFeedbackMessages, getChunkedFeedback — map-reduce for oversized manuscripts), feedback-queue.ts (async feedback queue — job model + runner + sidecar persistence; see "Async feedback queue"), feedback-archive.ts (shared report archive helper),
@@ -336,6 +343,8 @@ Provider serialization:
 
 - **OpenAI-compatible** (LM Studio, primary): `ChatMessage.images` → content array of `{type:'text'}` + `{type:'image_url', image_url:{url}}` parts.
 - **Ollama:** sibling `images: [base64]` field on the message.
+- **Anthropic:** content block `{type:'image', source:{type:'base64', media_type:'image/jpeg', data}}` alongside the text block (user or assistant).
+- **Gemini:** content part `{inlineData:{mimeType:'image/jpeg', data}}` alongside the text part.
 
 Images are base64 strings with no `data:` prefix, normalized to JPEG and downscaled (≤ `lorebookImageMaxDimension`, default 512) by `image-utils.ts` before they reach a provider, to protect local-model context budgets. The proxy prompt is customizable (`lorebookImageProxyPrompt`). When `lorebookImageTwoPassDescription` is on (default off) and a Regime-B batch has more than one image, the proxy runs two calls: a cheap count pass (label each visible character across the batch) then the descriptive pass with that list folded in as grounding — helps weak vision models keep per-character descriptions coherent across a group.
 
@@ -364,13 +373,14 @@ Default-provider resolution (`main.ts`): `getDefaultChatProvider()` / `getDefaul
 
 ### Error handling
 
-- Use typed error classes (extend `Error`) rather than throwing raw strings or generic `Error`. Six are exported:
+- Use typed error classes (extend `Error`) rather than throwing raw strings or generic `Error`. Seven are exported:
     - `ProviderError` — `src/ai/provider.ts`
     - `HttpError` — `src/ai/transport.ts`
     - `StreamingUnavailableError` — `src/ai/transport.ts`
     - `MobileNetworkError` — `src/ai/transport.ts` (mobile network-drop wrap produced by `withMobileNetworkHint`/`requestUrlMobile`; preserves the original error on `cause`)
     - `DuplicateToolError` — `src/ai/tools/tool.ts`
     - `RateLimitError` — `src/ai/tools/http-retry.ts` (HTTP 429 from a network tool; carries the parsed `Retry-After` in seconds so the tool surfaces an actionable "wait N seconds" message to the model rather than a bare status code)
+    - `MediaWikiError` — `src/ai/tools/mediawiki.ts` (non-2xx MediaWiki API response; carries the HTTP `status` so callers distinguish an API failure from a `requestUrl` transport error or a `RateLimitError`, which `assertNotRateLimited` surfaces first — so a `MediaWikiError` never carries status 429)
     - Two additional internal (non-exported) classes follow the same pattern: `InvalidJobIdError` (`src/ai/feedback-queue.ts`) and `InvalidSessionIdError` (`src/ai/conversation-store.ts`) — thrown by their respective sidecar persistence layers on malformed ids.
 - Propagate errors with `throw` rather than returning error objects, unless the function signature explicitly supports `Result<T, E>` or similar patterns.
 
@@ -447,12 +457,13 @@ Each row = one JSDoc + two `setDesc(...)` copies to keep aligned. The authoritat
 12. **Vision / Image Support** — images (character art, maps, reference photos) reach a vision-capable chat model directly, or are translated to text by a separate image model when chat is text-only. See "Vision & image support".
 13. **Writer Guidance Layers** — inline directives (`<!-- quill: -->`) + plot map.
 14. **AI Generation Style Constraints** — 18 rules + 6 narrative perspective presets (`NARRATIVE_VOICE_PRESETS`).
+15. **Native Anthropic & Gemini providers** — Claude and Gemini ship native provider implementations (not OpenAI-compat shims) so they can use prompt caching and extended thinking (Anthropic) and proper safety-filter reporting (Gemini). Anthropic is gated behind a one-time content-policy warning modal because Anthropic prohibits sexually explicit and graphic-violence content for API access too — including content submitted *for analysis*. See "Pluggable providers" in Architecture principles.
 
 ## Version management
 
 Before pushing a feature branch to origin for the first time, bump the version in `package.json`, `manifest.json`, and `versions.json` according to these rules:
 
-- **Major** (x.0.0): Only after the 1.1.0 release. For any event requiring a `minAppVersion` update in `manifest.json` (e.g., adopting a new Obsidian API that drops older versions). _Before 1.1.0, major bumps are NOT used — breaking changes use minor instead._
+- **Major** (x.0.0): Only after the 1.2.0 release. For any event requiring a `minAppVersion` update in `manifest.json` (e.g., adopting a new Obsidian API that drops older versions). _Before 1.2.0, major bumps are NOT used — breaking changes use minor instead._
 - **Minor** (0.x.0): New features or feature-complete milestones (e.g., 0.2.0, 0.5.0).
 - **Patch** (0.0.x): Bugfixes when neither major nor minor applies.
 

@@ -1,4 +1,4 @@
-import { type AiProvider, type ChatMessage } from './provider';
+import { type AiProvider, type AnthropicThinkingBlockKind, type ChatMessage } from './provider';
 import type EventideQuillPlugin from '../main';
 import { compactConversation } from './compaction';
 import { estimateTokens } from '../utils/tokens';
@@ -182,9 +182,13 @@ export class SubagentSession {
 
                 let response = '';
                 let thought = '';
+                let thinkingBlocks: AnthropicThinkingBlockKind[] | undefined;
                 const fragmentBuffer = new Map<number, { id?: string; name?: string; arguments: string }>();
                 for await (const chunk of stream) {
-                    if (chunk.done) break;
+                    if (chunk.done) {
+                        if (chunk.thinkingBlocks) thinkingBlocks = chunk.thinkingBlocks;
+                        break;
+                    }
                     if (chunk.thought) thought += chunk.thought;
                     if (chunk.text) response += chunk.text;
                     if (chunk.toolCalls) {
@@ -217,7 +221,8 @@ export class SubagentSession {
                 this.messages.push({
                     role: 'assistant',
                     content: response,
-                    toolCalls: toolCalls.length > 0 ? toolCalls : undefined
+                    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+                    thinkingBlocks
                 });
                 this.chatHistory.push({
                     role: 'assistant',

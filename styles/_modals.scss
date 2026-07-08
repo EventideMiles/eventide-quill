@@ -1,11 +1,12 @@
 // Modal chrome — small prompt-style modals used across the plugin.
 //
-// Four BEM blocks:
+// Five BEM blocks:
 //
-//   quill-input-modal    — text input modal (used by settings: add provider)
-//   quill-save-modal     — filename prompt (FilenameModal, used by chat panels)
-//   quill-confirm-modal  — confirmation prompt (ConfirmModal, used by chat panels)
-//   quill-session-list   — saved co-writer conversation history (SessionListModal)
+//   quill-input-modal        — text input modal (used by settings: add provider)
+//   quill-save-modal         — filename prompt (FilenameModal, used by chat panels)
+//   quill-confirm-modal      — confirmation prompt (ConfirmModal, used by chat panels)
+//   quill-session-list       — saved co-writer conversation history (SessionListModal)
+//   quill-anthropic-warning  — one-time Anthropic content-policy acknowledgment
 
 @use 'base' as *;
 
@@ -73,6 +74,33 @@
         justify-content: flex-end;
         gap: $space-md;
         margin-top: $space-xl;
+    }
+}
+
+// =========================================================================
+// Anthropic warning — one-time content-policy acknowledgment
+// =========================================================================
+//
+// Surfaced before the writer adds an Anthropic provider. The body paragraphs
+// are dense on purpose (glance-and-click is the failure mode); the muted
+// paragraph distinguishes the cost / free-tier note from the policy risk so
+// the risk reads as primary.
+
+.quill-anthropic-warning {
+    max-width: 540px;
+
+    p {
+        margin-bottom: $space-md;
+        line-height: 1.5;
+    }
+
+    &__muted {
+        color: var(--text-muted);
+        font-size: var(--font-ui-small);
+    }
+
+    .quill-confirm-modal__btn-row {
+        justify-content: flex-end;
     }
 }
 

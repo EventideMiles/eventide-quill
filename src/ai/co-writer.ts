@@ -4,7 +4,13 @@ import type EventideQuillPlugin from '../main';
 import { notifyMobileStreamRisk } from './mobile-watchdog';
 import { type VoiceProfile } from '../types';
 import { findEditorView } from '../utils/find-editor';
-import { type AiProvider, type ChatMessage, type ToolCallRequest, type ToolDefinition } from './provider';
+import {
+    type AiProvider,
+    type AnthropicThinkingBlockKind,
+    type ChatMessage,
+    type ToolCallRequest,
+    type ToolDefinition
+} from './provider';
 import type { TokenBreakdown } from '../ui/token-indicator';
 import { buildRequestBreakdown } from '../ui/token-indicator';
 import {
@@ -1456,10 +1462,16 @@ export class CoWriterSession {
             onThoughtChange: (thought: string) => void;
             onClear: () => void;
         }
-    ): Promise<{ response: string; thought: string; toolCalls: ToolCallRequest[] }> {
+    ): Promise<{
+        response: string;
+        thought: string;
+        toolCalls: ToolCallRequest[];
+        thinkingBlocks?: AnthropicThinkingBlockKind[];
+    }> {
         let response = '';
         let thought = '';
         let sawReasoning = false;
+        let thinkingBlocks: AnthropicThinkingBlockKind[] | undefined;
         const fragmentBuffer = new Map<number, { id?: string; name?: string; arguments: string }>();
 
         const stream = provider.chatCompletion({
@@ -1468,7 +1480,13 @@ export class CoWriterSession {
         });
 
         for await (const chunk of stream) {
-            if (chunk.done) break;
+            if (chunk.done) {
+                // Capture Anthropic thinking blocks carried on the terminal
+                // chunk so the caller can stamp them onto the assistant message
+                // (required for extended-thinking + tool-use replay).
+                if (chunk.thinkingBlocks) thinkingBlocks = chunk.thinkingBlocks;
+                break;
+            }
 
             if (chunk.thought) {
                 if (!sawReasoning) {
@@ -1512,7 +1530,7 @@ export class CoWriterSession {
                 arguments: acc.arguments
             }));
 
-        return { response, thought, toolCalls };
+        return { response, thought, toolCalls, thinkingBlocks };
     }
 
     /**
@@ -1856,6 +1874,7 @@ export class CoWriterSession {
                     role: 'assistant',
                     content: result.response,
                     toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
+                    thinkingBlocks: result.thinkingBlocks,
                     quillAnchorId: this.currentAnchorMessageId() ?? undefined
                 });
 
@@ -2256,6 +2275,7 @@ export class CoWriterSession {
                     role: 'assistant',
                     content: result.response,
                     toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
+                    thinkingBlocks: result.thinkingBlocks,
                     quillAnchorId: this.currentAnchorMessageId() ?? undefined
                 });
 
@@ -2725,6 +2745,7 @@ export class CoWriterSession {
                 let response = '';
                 let thought = '';
                 let sawReasoning = false;
+                let thinkingBlocks: AnthropicThinkingBlockKind[] | undefined;
                 const fragmentBuffer = new Map<number, { id?: string; name?: string; arguments: string }>();
 
                 // Inject context-budget + active-file awareness fresh each
@@ -2753,7 +2774,10 @@ export class CoWriterSession {
                 });
 
                 for await (const chunk of stream) {
-                    if (chunk.done) break;
+                    if (chunk.done) {
+                        if (chunk.thinkingBlocks) thinkingBlocks = chunk.thinkingBlocks;
+                        break;
+                    }
 
                     if (chunk.thought) {
                         // Reasoning models sometimes emit a "draft" response
@@ -2840,6 +2864,7 @@ export class CoWriterSession {
                     role: 'assistant',
                     content: response,
                     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+                    thinkingBlocks,
                     quillAnchorId: this.currentAnchorMessageId() ?? undefined
                 });
 

@@ -12,7 +12,7 @@ import { assertNotRateLimited } from './http-retry';
  */
 
 /** Custom User-Agent to comply with Wikimedia's API policy (200 req/min tier). */
-export const MEDIAWIKI_UA = 'EventideQuill/1.1.0 (https://github.com/EventideMiles/eventide-quill)';
+export const MEDIAWIKI_UA = 'EventideQuill/1.2.0 (https://github.com/EventideMiles/eventide-quill)';
 
 /** Minimum interval (ms) between requests to the same host. */
 const MIN_INTERVAL_MS = 500;
@@ -31,6 +31,26 @@ const rateLimitQueue = new Map<string, Promise<void>>();
 /** Promise-based sleep. Raw setTimeout: a one-shot promise resolution can't use registerInterval (which is for recurring ticks) and must resolve exactly once after the delay. */
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+/**
+ * Error thrown by the MediaWiki client helpers when the API returns a non-2xx
+ * HTTP response (every throw site except the silent "missing page" → null
+ * fallbacks). Carries the HTTP status so callers can distinguish a MediaWiki
+ * API failure (e.g. a 5xx outage or a 404 on the endpoint) from a transport
+ * error thrown by `requestUrl`, and from a rate-limit — HTTP 429 is surfaced
+ * as {@link RateLimitError} via `assertNotRateLimited`, which runs before this
+ * check, so a `MediaWikiError` never carries status 429.
+ */
+export class MediaWikiError extends Error {
+    /** HTTP status code returned by the MediaWiki API. */
+    readonly status: number;
+
+    constructor(message: string, status: number) {
+        super(message);
+        this.name = 'MediaWikiError';
+        this.status = status;
+    }
 }
 
 /**
@@ -81,7 +101,7 @@ export async function mediawikiSearch(host: string, query: string, limit = 5): P
 
     assertNotRateLimited(response);
     if (response.status !== 200) {
-        throw new Error(`Search failed: HTTP ${response.status}`);
+        throw new MediaWikiError(`Search failed: HTTP ${response.status}`, response.status);
     }
 
     const data = response.json as {
@@ -107,7 +127,7 @@ export async function mediawikiArticleCount(host: string): Promise<number> {
     const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
     assertNotRateLimited(response);
     if (response.status !== 200) {
-        throw new Error(`siteinfo failed: HTTP ${response.status}`);
+        throw new MediaWikiError(`siteinfo failed: HTTP ${response.status}`, response.status);
     }
     const stats = (response.json as { query?: { statistics?: { articles?: number } } }).query?.statistics;
     return stats?.articles ?? 0;
@@ -137,7 +157,7 @@ export async function mediawikiAllPages(host: string, signal?: AbortSignal): Pro
         });
         assertNotRateLimited(response);
         if (response.status !== 200) {
-            throw new Error(`allpages enumeration failed: HTTP ${response.status}`);
+            throw new MediaWikiError(`allpages enumeration failed: HTTP ${response.status}`, response.status);
         }
         const data = response.json as {
             query?: { allpages?: Array<{ title: string }> };
@@ -184,7 +204,7 @@ async function mediawikiExtractByExtracts(host: string, title: string): Promise<
 
     assertNotRateLimited(response);
     if (response.status !== 200) {
-        throw new Error(`Extract failed: HTTP ${response.status}`);
+        throw new MediaWikiError(`Extract failed: HTTP ${response.status}`, response.status);
     }
 
     const data = response.json as {
@@ -350,7 +370,7 @@ export async function mediawikiPageImage(
 
     assertNotRateLimited(response);
     if (response.status !== 200) {
-        throw new Error(`Page image query failed: HTTP ${response.status}`);
+        throw new MediaWikiError(`Page image query failed: HTTP ${response.status}`, response.status);
     }
 
     const data = response.json as {
@@ -383,7 +403,7 @@ export async function mediawikiPageGallery(host: string, title: string, limit: n
 
     assertNotRateLimited(response);
     if (response.status !== 200) {
-        throw new Error(`Gallery query failed: HTTP ${response.status}`);
+        throw new MediaWikiError(`Gallery query failed: HTTP ${response.status}`, response.status);
     }
 
     const data = response.json as {
@@ -416,7 +436,7 @@ export async function mediawikiImageInfo(
 
     assertNotRateLimited(response);
     if (response.status !== 200) {
-        throw new Error(`Image info query failed: HTTP ${response.status}`);
+        throw new MediaWikiError(`Image info query failed: HTTP ${response.status}`, response.status);
     }
 
     const data = response.json as {
@@ -504,7 +524,7 @@ export async function mediawikiGalleryWithCaptions(
 
     assertNotRateLimited(response);
     if (response.status !== 200) {
-        throw new Error(`Wikitext fetch failed: HTTP ${response.status}`);
+        throw new MediaWikiError(`Wikitext fetch failed: HTTP ${response.status}`, response.status);
     }
 
     const data = response.json as { parse?: { wikitext?: { '*': string } }; error?: unknown };
@@ -581,7 +601,7 @@ export async function downloadAndDownscaleImage(
     });
     assertNotRateLimited(response);
     if (response.status !== 200) {
-        throw new Error(`HTTP ${response.status}`);
+        throw new MediaWikiError(`Image download failed: HTTP ${response.status}`, response.status);
     }
     const contentType = response.headers['content-type'] ?? '';
     if (!isImageContentType(contentType)) {

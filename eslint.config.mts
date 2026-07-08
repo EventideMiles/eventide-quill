@@ -51,6 +51,10 @@ export default tseslint.config(
 		rules: {
 			'obsidianmd/prefer-window-timers': 'off',
 			'obsidianmd/hardcoded-config-path': 'off',
+			// Test helpers install a `window.fetch` mock via globalThis since the
+			// node test environment has no real window (the rule is about popout
+			// compatibility inside Obsidian, which doesn't apply here).
+			'obsidianmd/no-global-this': 'off',
 		},
 	},
 );
