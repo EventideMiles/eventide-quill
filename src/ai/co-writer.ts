@@ -4,13 +4,7 @@ import type EventideQuillPlugin from '../main';
 import { notifyMobileStreamRisk } from './mobile-watchdog';
 import { type VoiceProfile } from '../types';
 import { findEditorView } from '../utils/find-editor';
-import {
-    type AiProvider,
-    type AnthropicThinkingBlockKind,
-    type ChatMessage,
-    type ToolCallRequest,
-    type ToolDefinition
-} from './provider';
+import { type AiProvider, type ChatMessage } from './provider';
 import type { TokenBreakdown } from '../ui/token-indicator';
 import { buildRequestBreakdown } from '../ui/token-indicator';
 import {
@@ -62,7 +56,22 @@ import {
 import { SubagentSession, type SubagentView, type SubagentConfig } from './subagent-session';
 import { resolveNoteFile } from './tools/lore-edit-helpers';
 import { CACHE_HIT_MARKER } from './tools/fandom-lookup';
-import { fandomReachability } from './tools/fandom-cache';
+import { detectTextToolCall, buildToolNudgeMessage, MAX_TEXT_TOOL_NUDGES } from './tools';
+import { buildInternalToolsMessage, buildNetworkToolsMessage } from './co-writer-tool-prompts';
+import { streamToolAwareRound } from './co-writer-streaming';
+import {
+    sanitizeProse,
+    summarizeToolArgs,
+    parseStoppingPoint,
+    respectsStoppingPoint,
+    truncateToStoppingPoint,
+    buildVaultContext,
+    mergeContextPaths,
+    stubDanglingToolCalls,
+    editorCursorOffset,
+    proseBeforeCursorOrDoc,
+    moveCursorToEndIfEarly
+} from './co-writer-utils';
 import {
     clearDiffEdits,
     diffEditsField,
@@ -71,236 +80,6 @@ import {
     syncChangeSetPositions,
     toDiffSnapshots
 } from '../ui/change-diff-extension';
-
-/** Replace em dashes (—) with a comma+space for prose that shouldn't use them.
- *  Preserves content inside wiki links ([[...]]) so linked targets are not broken. */
-function sanitizeProse(text: string): string {
-    return text.replace(/\[\[[^\]]*\]\]|\u2014/g, (match) => (match.startsWith('[[') ? match : ', '));
-}
-
-/**
- * Produce a short human-readable summary of a tool call's arguments for the
- * chat indicator ("Used manuscript_mentions("Sarah Connor")"). The raw
- * arguments are a JSON string from the model; this extracts the most
- * relevant field (varies by tool) and truncates for display.
- */
-function summarizeToolArgs(toolName: string, argumentsJson: string): string {
-    try {
-        const args = JSON.parse(argumentsJson) as Record<string, unknown>;
-        // Build a summary from the most relevant field(s) for each tool type.
-        const parts: string[] = [];
-        const wiki = typeof args.wiki === 'string' ? args.wiki : '';
-        const query = typeof args.query === 'string' ? args.query : '';
-        const url = typeof args.url === 'string' ? args.url : '';
-        const name = typeof args.name === 'string' ? args.name : '';
-        const path = typeof args.path === 'string' ? args.path : '';
-        const type = typeof args.type === 'string' ? args.type : '';
-        const title = typeof args.title === 'string' ? args.title : '';
-
-        // fandom_lookup: show "wiki: query"; fandom_page: show "wiki: title"
-        if (wiki && query) parts.push(`${wiki}: ${query}`);
-        else if (wiki && title) parts.push(`${wiki}: ${title}`);
-        else if (query) parts.push(query);
-        else if (url) parts.push(url);
-        else if (name) parts.push(name);
-        else if (path) parts.push(path);
-        else if (type) parts.push(type);
-        else if (title) parts.push(title);
-
-        if (parts.length === 0) return '';
-        const summary = parts.join(' ');
-        return summary.length > 60 ? `${summary.slice(0, 57)}...` : summary;
-    } catch {
-        return '';
-    }
-}
-
-/**
- * Parse stopping point instructions from a direction string.
- * Supports patterns like:
- *   - "stop at next period"
- *   - "stop after 2 paragraphs"
- *   - "stop at [marker]"
- *   - "continue until [condition]"
- * @param direction - The direction string from the user.
- * @returns A stopping point spec or null if none found.
- */
-function parseStoppingPoint(direction: string): { instruction: string; isExplicit: boolean } | null {
-    const lower = direction.toLowerCase();
-
-    // "stop at next period" or similar natural language (checked before the
-    // generic "stop at [marker]" pattern so it takes precedence)
-    const naturalStopMatch = lower.match(/stop\s+at\s+(?:the\s+)?(next\s+(?:period|sentence|paragraph|line))/);
-    if (naturalStopMatch?.[1]) {
-        return { instruction: `Stop at the next ${naturalStopMatch[1].replace('next ', '')}.`, isExplicit: true };
-    }
-
-    // "stop at [marker]" pattern
-    const stopAtMatch = lower.match(/stop\s+at\s+(.+?)(?:\.\s*$|$)/);
-    if (stopAtMatch?.[1]) {
-        return { instruction: `Stop exactly at: ${stopAtMatch[1].trim()}`, isExplicit: true };
-    }
-
-    // "stop after N paragraphs" pattern
-    const stopAfterMatch = lower.match(/stop\s+after\s+(\d+)\s+paragraphs?/);
-    if (stopAfterMatch?.[1]) {
-        return { instruction: `Write exactly ${stopAfterMatch[1]} paragraph(s), then stop.`, isExplicit: true };
-    }
-
-    // "continue until [condition]" pattern
-    const continueUntilMatch = lower.match(/continue\s+until\s+(.+?)(?:\.\s*$|$)/);
-    if (continueUntilMatch?.[1]) {
-        return { instruction: `Continue writing until: ${continueUntilMatch[1].trim()}`, isExplicit: true };
-    }
-
-    return null;
-}
-
-/**
- * Check if generated content respects the stopping point.
- * Returns true if content appears to have stopped at the right place.
- */
-function respectsStoppingPoint(content: string, instruction: string): boolean {
-    const lower = content.toLowerCase().trim();
-
-    // Check for paragraph count constraint
-    const paraMatch = instruction.match(/write\s+exactly\s+(\d+)\s+paragraph/);
-    if (paraMatch?.[1]) {
-        const expectedCount = parseInt(paraMatch[1], 10);
-        const actualCount = (content.match(/\n\s*\n/g) ?? []).length + 1;
-        return actualCount === expectedCount;
-    }
-
-    // Check for natural stop instructions produced by parseStoppingPoint
-    // (e.g., "Stop at the next period."). Counts the relevant boundary in the
-    // generated content; respected means no more than one boundary unit.
-    const naturalMatch = instruction.match(/Stop at the next (period|sentence|paragraph|line)\b/);
-    if (naturalMatch?.[1]) {
-        switch (naturalMatch[1]) {
-            case 'period':
-                return (content.match(/\./g) ?? []).length <= 1;
-            case 'sentence':
-                return (content.match(/[.!?]/g) ?? []).length <= 1;
-            case 'paragraph':
-                return (content.match(/\n\s*\n/g) ?? []).length === 0;
-            case 'line':
-                return (content.match(/\n/g) ?? []).length === 0;
-        }
-    }
-
-    // Check for "stop at" markers
-    if (instruction.includes('Stop exactly at')) {
-        // Content should end near the specified marker
-        const marker = instruction.replace('Stop exactly at: ', '').trim();
-        const lastPara = lower.split(/\n\s*\n/).pop() ?? lower;
-        return lastPara.includes(marker) || lower.endsWith(marker);
-    }
-
-    // Check for "continue until" conditions
-    if (instruction.includes('Continue writing until')) {
-        // Content should contain or approach the condition
-        const condition = instruction.replace('Continue writing until: ', '').trim();
-        return lower.includes(condition);
-    }
-
-    return true; // Default: assume it's fine
-}
-
-/**
- * Truncate content to respect the stopping point.
- * Returns the truncated content.
- */
-function truncateToStoppingPoint(content: string, instruction: string): string {
-    const lower = content.toLowerCase();
-
-    // Handle paragraph count constraint
-    const paraMatch = instruction.match(/write\s+exactly\s+(\d+)\s+paragraph/);
-    if (paraMatch?.[1]) {
-        const expectedCount = parseInt(paraMatch[1], 10);
-        const paragraphs = content.split(/\n\s*\n/);
-        const truncated = paragraphs.slice(0, expectedCount).join('\n\n');
-        return truncated;
-    }
-
-    // Handle natural stop instructions produced by parseStoppingPoint
-    // (e.g., "Stop at the next period."). Cut at the first matching boundary
-    // and include the boundary character(s) where it makes sense.
-    const naturalMatch = instruction.match(/Stop at the next (period|sentence|paragraph|line)\b/);
-    if (naturalMatch?.[1]) {
-        switch (naturalMatch[1]) {
-            case 'period': {
-                const idx = content.search(/\./);
-                return idx >= 0 ? content.slice(0, idx + 1) : content;
-            }
-            case 'sentence': {
-                const idx = content.search(/[.!?]/);
-                return idx >= 0 ? content.slice(0, idx + 1) : content;
-            }
-            case 'paragraph': {
-                const idx = content.search(/\n\s*\n/);
-                return idx >= 0 ? content.slice(0, idx).replace(/\s+$/, '') : content;
-            }
-            case 'line': {
-                const idx = content.search(/\n/);
-                return idx >= 0 ? content.slice(0, idx) : content;
-            }
-        }
-    }
-
-    // Handle "stop at" markers
-    if (instruction.includes('Stop exactly at')) {
-        const marker = instruction.replace('Stop exactly at: ', '').trim().toLowerCase();
-        const index = lower.indexOf(marker);
-        if (index >= 0) {
-            // Find the end of the sentence/paragraph containing the marker
-            const afterMarker = content.slice(index);
-            const sentenceEnd = afterMarker.search(/[.!?]/);
-            if (sentenceEnd >= 0) {
-                return content.slice(0, index + sentenceEnd + 1);
-            }
-            // If no sentence end found, truncate at marker
-            return content.slice(0, index);
-        }
-    }
-
-    // Handle "continue until" - truncate at the condition
-    if (instruction.includes('Continue writing until')) {
-        const condition = instruction.replace('Continue writing until: ', '').trim().toLowerCase();
-        const index = lower.indexOf(condition);
-        if (index >= 0) {
-            const afterCondition = content.slice(index);
-            const sentenceEnd = afterCondition.search(/[.!?]/);
-            if (sentenceEnd >= 0) {
-                return content.slice(0, index + sentenceEnd + 1);
-            }
-            return content.slice(0, index + condition.length);
-        }
-    }
-
-    // Default: return content as-is
-    return content;
-}
-
-/**
- * Build a user prompt for the co-writer in direct mode.
- * Includes stopping point handling if specified in the direction.
- */
-
-/**
- * Build a vault context string from context items.
- * Formats each item as `--- filePath ---\nexcerpt` and joins with double newlines.
- * @param contextItems - The context items to format.
- * @returns A formatted vault context string, or empty string if no items have excerpts.
- */
-export function buildVaultContext(contextItems: Array<{ filePath: string; excerpt?: string }>): string {
-    const contextParts: string[] = [];
-    for (const item of contextItems) {
-        if (item.excerpt) {
-            contextParts.push(`--- ${item.filePath} ---`, item.excerpt);
-        }
-    }
-    return contextParts.join('\n\n');
-}
 
 /**
  * Load additional context files from the vault and build system messages.
@@ -379,28 +158,6 @@ async function resolveEmbedPathsToMessages(
     }
 
     return { regularPaths, messages };
-}
-
-/**
- * Merge persistent context-file paths (the ±-button list) with per-message
- * @-mention paths, preserving order and de-duplicating. @-mentions are passed
- * explicitly into each send (see {@link CoWriterSession.sendDiscussion}) so the
- * referenced files are deterministically included for THAT message — without
- * relying on the fire-and-forget promotion to the persistent list landing
- * before the send reads it (which could drop files when several were referenced
- * at once).
- */
-function mergeContextPaths(persistent: string[], mentionPaths?: string[]): string[] {
-    if (!mentionPaths || mentionPaths.length === 0) return persistent;
-    const seen = new Set(persistent);
-    const out = [...persistent];
-    for (const p of mentionPaths) {
-        if (!seen.has(p)) {
-            seen.add(p);
-            out.push(p);
-        }
-    }
-    return out;
 }
 
 export async function loadAdditionalContext(
@@ -514,181 +271,10 @@ function buildContextBudgetMessage(
     };
 }
 
-/**
- * Build a system message telling the model which network/Fandom tools are
- * available. Mirrors `createToolRegistry()` so the prompt never advertises a
- * tool the model can't actually call (the two-place gating mirror). Two shapes:
- *
- * - **Network tools on** → the full live advertisement (fandom_*, wikipedia_*,
- *   fetch_url). Fandom lines appear only when the allowlist is active.
- * - **Network tools off but Fandom cache populated** (Stage 3 cache-only) → a
- *   shorter Fandom-only block warning the model that hits come from a possibly
- *   stale local cache and misses do NOT fall through to a live fetch.
- *
- * Returns null when there's nothing to advertise (tools disabled, or network
- * off with no cached Fandom).
- */
-function buildNetworkToolsMessage(plugin: EventideQuillPlugin): ChatMessage | null {
-    // Mirror createToolRegistry(): no tools at all when tools are disabled, so
-    // the prompt never advertises network tools the model can't actually call.
-    if (!plugin.settings.coWriterToolsEnabled) return null;
-
-    const networkOn = plugin.settings.lorebookNetworkTools;
-    const reachability = fandomReachability(plugin);
-    if (!networkOn && reachability === 'none') return null;
-
-    const wikis = plugin.settings.lorebookFandomWikis;
-    const allowAll = plugin.settings.lorebookFandomAllowAllWikis;
-    const lang = plugin.settings.lorebookWikipediaLang;
-
-    if (networkOn) {
-        const lines = [
-            'You have network tools available — USE THEM PROACTIVELY when the topic',
-            'involves canon, history, science, places, or real-world references:'
-        ];
-        // Mirror createToolRegistry(): advertise Fandom when reachable (allowlist
-        // non-empty OR the "allow any wiki" danger toggle is on). When allow-all
-        // is on with an empty allowlist, the model may query any Fandom wiki.
-        if (reachability !== 'none') {
-            const wikiDesc = allowAll ? 'any wiki' : wikis.join(', ');
-            lines.push(
-                `- fandom_lookup / fandom_page: search Fandom (${wikiDesc}); use fandom_page with an exact title to get content.`
-            );
-            // fandom_image is registered only when image tools are also on, since it
-            // returns an image (routed through the vision layer).
-            if (plugin.settings.lorebookImageTools) {
-                lines.push(
-                    `- fandom_image: fetch the lead image for a Fandom topic (${wikiDesc}) and list the page's other images with their captions; pass a filename via the "image" param to fetch a specific gallery image. Use it to see character appearance or artwork.`
-                );
-            }
-        }
-        lines.push(
-            `- wikipedia_lookup / wikipedia_page: search Wikipedia (${lang}); use wikipedia_page with an exact title to get content.`,
-            '- fetch_url: fetch any web page and return its text.',
-            '',
-            'Workflow: use the *_lookup tool to search, then use the *_page tool',
-            'with the exact title from the results to retrieve the full extract.',
-            '',
-            'Look things up freely — when the writer mentions a topic that a wiki or',
-            'encyclopedia would know about, go straight to the tool. You may proceed',
-            'without asking. Results count toward context — be judicious with very',
-            'large pages.'
-        );
-        // wikipedia_image is registered only when image tools are also on, since
-        // it returns an image (routed through the vision layer). Same cross-toggle
-        // gate as fandom_image above.
-        if (plugin.settings.lorebookImageTools) {
-            lines.push(
-                `- wikipedia_image: fetch the lead image for a Wikipedia topic (${lang}) — most often a portrait for biographies, cover art for works, or a photograph for places. Use it to see what a person, place, or object looks like.`
-            );
-        }
-        return { role: 'system', content: lines.join('\n') };
-    }
-
-    // Cache-only (Stage 3): network tools off, but a populated Fandom cache
-    // answers for an allowlisted wiki. Tell the model the shape — hits come
-    // from a possibly-stale local cache, and misses do NOT fall through live.
-    const wikiDesc = allowAll ? 'any cached wiki' : wikis.join(', ');
-    const lines = [
-        'Fandom is available from the LOCAL CACHE ONLY (network tools are off):',
-        `- fandom_lookup / fandom_page: answer from the cached Fandom content (${wikiDesc}). Hits return instantly with no network request; misses return "not cached" and do NOT fall through to a live fetch while network tools are off.`
-    ];
-    if (plugin.settings.lorebookImageTools) {
-        lines.push(
-            `- fandom_image: fetch a cached Fandom image by exact filename (${wikiDesc}); the query path needs the network and is unavailable, so pass a filename from a prior result.`
-        );
-    }
-    lines.push(
-        '',
-        'Cached content may be stale (it reflects the last sync). Re-enable network',
-        'tools in settings to fetch fresh pages or search live.'
-    );
-    return { role: 'system', content: lines.join('\n') };
-}
-
-/**
- * Build a system message telling the model which internal vault tools are
- * available, when enabled. Returns null when tools are disabled. Discuss and
- * coach modes inject this so the model proactively grounds its feedback in the
- * manuscript and vault rather than relying only on the open excerpt. Not used
- * by the lorebook coach, which already covers these tools in its own prompt.
- */
-function buildInternalToolsMessage(plugin: EventideQuillPlugin): ChatMessage | null {
-    // Mirror createToolRegistry(): no tools at all when tools are disabled, so
-    // the prompt never advertises tools the model can't actually call.
-    if (!plugin.settings.coWriterToolsEnabled) return null;
-    return {
-        role: 'system',
-        content: [
-            'You have internal vault tools to ground your feedback in the manuscript and notes:',
-            '- manuscript_mentions: where a character, place, or plot thread appears in the active manuscript (pass empty to list every entity the extractor found).',
-            "- vault_lookup: read a note's full text by path or name (frontmatter stripped). Reserve it for a SPECIFIC note you need in full.",
-            '- grep_notes: search for text across vault files to find where something is mentioned.',
-            "- lore_siblings: list other lore entries near a given one. Shows each entry's image labels (when present) as `(images: Default form (2), Alternate form)` — the count suffix (N) means N images share that label.",
-            '- get_lore_image: when a lore entry has images (you saw them via lore_siblings OR you saw ![[file.png]] embeds in a vault_lookup result), call this to actually SEE them. By default returns EVERY image attached to the entry — this is the recommended call so multi-image galleries are fully visible. Narrow with `label` (images under one subheading) and/or `index` (1-based position within the label-filtered set, useful when the count suffix shows multiple images under one label). Particularly important for character appearance, locations, maps, and any visual reference — do not describe art from filename or context alone when you can fetch the pixels.',
-            'To learn the cast and world (characters, locations, plot threads), reach for manuscript_mentions — it lists the entities directly, saving a vault_lookup. If it returns "no entities," the dashboard has not been scanned: call refresh_dashboard (with a manuscript file path) and retry.',
-            'Reach for these when a question of fact about the manuscript or vault would sharpen your answer. Tool results stay in context — read judiciously.'
-        ].join('\n')
-    };
-}
-
-/**
- * The cursor's document offset, read from the CodeMirror 6 selection state
- * directly. Obsidian's `Editor.getCursor()` can report `{0,0}` for a markdown
- * view that isn't the active leaf — e.g. the writer clicked into the document
- * to place the cursor, then moved focus to the sidebar to send — which made
- * the "cursor at position 0" fallback fire incorrectly and jump the cursor to
- * the end. The underlying CM6 selection persists in editor state regardless of
- * focus, so this is the reliable cursor position for an inactive document.
- * Falls back to `getCursor()` only when the CM6 view isn't accessible
- * (defensive — it's always present in Obsidian's markdown editor).
- */
-function editorCursorOffset(editor: Editor): number {
-    const cm = (editor as unknown as { cm?: EditorView } | null)?.cm;
-    if (cm) return cm.state.selection.main.head;
-    return editor.posToOffset(editor.getCursor());
-}
-
-/**
- * Prose to send to the model as context, measured from the document start to
- * the cursor. Falls back to the document's tail (pretending the cursor is at
- * the end) ONLY when the cursor sits at position 0 — the document is open but
- * the writer hasn't placed the cursor (never clicked into the prose).
- *
- * Any non-zero cursor position is treated as deliberate (the writer clicked, or
- * Obsidian restored the cursor where they left off) and respected as-is, so
- * asking for options earlier in the manuscript still works — place the cursor
- * at the point you want to continue from. Reads the cursor via
- * {@link editorCursorOffset} so a non-active document still reports its real
- * cursor. Capped to the last `tail` characters. Mirrors the options-generation
- * path's "move cursor to end" fallback.
- */
-function proseBeforeCursorOrDoc(editor: Editor, tail: number): string {
-    const full = editor.getValue();
-    const beforeCursor = full.slice(0, editorCursorOffset(editor));
-    return (beforeCursor || full).slice(-tail);
-}
-
-/**
- * Move the cursor to the end of the document ONLY when it sits at position 0
- * — the document is open but the writer hasn't placed the cursor, so an
- * upcoming INSERTION should land at the end of the written prose (the
- * "continue this chapter" intent). Any non-zero cursor position is respected
- * as the writer's intended insertion point, so a mid-manuscript cursor
- * continues from there. Returns true when the cursor was moved (so callers can
- * scroll to the new position / branch on it). Reads the cursor via
- * {@link editorCursorOffset} so a non-active document still reports its real
- * cursor. Mirrors the generateOptions/generateDirect initialize branches.
- */
-function moveCursorToEndIfEarly(editor: Editor): boolean {
-    const fullText = editor.getValue();
-    const cursorOffset = editorCursorOffset(editor);
-    if (cursorOffset === 0 && fullText.length > 0) {
-        editor.setCursor(editor.offsetToPos(fullText.length));
-        return true;
-    }
-    return false;
-}
+// Tool-guidance prompt builders (buildNetworkToolsMessage /
+// buildInternalToolsMessage) live in `./co-writer-tool-prompts` — extracted
+// from this monolith so prompt changes co-locate with the tool-discipline
+// text and don't get lost in a 4.8k-line file.
 
 /**
  * Build a system message informing the model which file the writer currently
@@ -910,29 +496,6 @@ export interface SerializedCoWriterState {
     loreCoachActive: boolean;
     currentLoreDraft: LoreDraftEntry | null;
     currentOptions: CoWriterOption[];
-}
-
-/**
- * If the conversation was saved mid-tool-round — the last message is an
- * assistant turn that emitted `tool_calls` with no following `tool` results —
- * append a synthetic "result unavailable" tool message per call so the provider
- * isn't fed a malformed history on resume (OpenAI/Ollama reject an assistant
- * tool_calls turn that isn't immediately followed by matching tool results).
- * Returns the array unchanged when the tail is well-formed.
- */
-function stubDanglingToolCalls(messages: ChatMessage[]): ChatMessage[] {
-    const last = messages[messages.length - 1];
-    if (last && last.role === 'assistant' && last.toolCalls && last.toolCalls.length > 0) {
-        const stubs: ChatMessage[] = last.toolCalls.map((c) => ({
-            role: 'tool',
-            content: 'Session was saved mid-tool-round; tool result unavailable.',
-            toolCallId: c.id,
-            name: c.name,
-            quillAnchorId: last.quillAnchorId
-        }));
-        return [...messages, ...stubs];
-    }
-    return messages;
 }
 
 /**
@@ -1437,101 +1000,9 @@ export class CoWriterSession {
     }
 
     // ── Shared tool-calling helpers (used by discuss, coach, and lorebook) ────
-
-    /**
-     * Stream one round of chat completion with tool-call fragment accumulation.
-     * Handles text + thought streaming, the reasoning-clear-on-first-thought
-     * pattern (discards draft text emitted before `<think>`), and tool-call
-     * fragment accumulation. Does NOT handle multi-round looping, chat history,
-     * or tool execution — the caller orchestrates those.
-     *
-     * @returns Accumulated response text, thought, and materialized tool calls.
-     */
-    private async streamToolAwareRound(
-        provider: AiProvider,
-        options: {
-            messages: ChatMessage[];
-            model?: string;
-            maxTokens?: number;
-            temperature?: number;
-            signal?: AbortSignal;
-            tools?: ToolDefinition[];
-        },
-        callbacks: {
-            onChunk: (text: string) => void;
-            onThoughtChange: (thought: string) => void;
-            onClear: () => void;
-        }
-    ): Promise<{
-        response: string;
-        thought: string;
-        toolCalls: ToolCallRequest[];
-        thinkingBlocks?: AnthropicThinkingBlockKind[];
-    }> {
-        let response = '';
-        let thought = '';
-        let sawReasoning = false;
-        let thinkingBlocks: AnthropicThinkingBlockKind[] | undefined;
-        const fragmentBuffer = new Map<number, { id?: string; name?: string; arguments: string }>();
-
-        const stream = provider.chatCompletion({
-            ...options,
-            toolChoice: options.tools && options.tools.length > 0 ? 'auto' : undefined
-        });
-
-        for await (const chunk of stream) {
-            if (chunk.done) {
-                // Capture Anthropic thinking blocks carried on the terminal
-                // chunk so the caller can stamp them onto the assistant message
-                // (required for extended-thinking + tool-use replay).
-                if (chunk.thinkingBlocks) thinkingBlocks = chunk.thinkingBlocks;
-                break;
-            }
-
-            if (chunk.thought) {
-                if (!sawReasoning) {
-                    sawReasoning = true;
-                    response = '';
-                    callbacks.onClear();
-                }
-                thought += chunk.thought;
-                this.thoughtBuffer = thought;
-                callbacks.onThoughtChange(thought);
-            }
-
-            if (chunk.text) {
-                response += chunk.text;
-                callbacks.onChunk(chunk.text);
-            }
-
-            if (chunk.toolCalls) {
-                for (const frag of chunk.toolCalls) {
-                    const existing = fragmentBuffer.get(frag.index);
-                    if (existing) {
-                        if (frag.id !== undefined) existing.id = frag.id;
-                        if (frag.name !== undefined) existing.name = frag.name;
-                        if (frag.arguments !== undefined) existing.arguments += frag.arguments;
-                    } else {
-                        fragmentBuffer.set(frag.index, {
-                            id: frag.id,
-                            name: frag.name,
-                            arguments: frag.arguments ?? ''
-                        });
-                    }
-                }
-            }
-        }
-
-        const toolCalls: ToolCallRequest[] = [...fragmentBuffer.entries()]
-            .sort(([a], [b]) => a - b)
-            .map(([idx, acc]) => ({
-                id: acc.id ?? `call_${idx}`,
-                name: acc.name ?? '',
-                arguments: acc.arguments
-            }));
-
-        return { response, thought, toolCalls, thinkingBlocks };
-    }
+    // streamToolAwareRound lives in `./co-writer-streaming` (extracted so all
+    // three modes share one implementation instead of lorebook inlining a
+    // duplicate). Callers pass callbacks that update session state.
 
     /**
      * Conversation token estimate including the active mode's fixed
@@ -1806,6 +1277,7 @@ export class CoWriterSession {
         // 0 = unlimited (the model calls as many rounds as it needs; use Stop
         // to cancel). A positive number caps turn consumption.
         const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
+        let nudgesUsed = 0;
 
         try {
             ctx.signal = this.abortController.signal;
@@ -1829,7 +1301,7 @@ export class CoWriterSession {
                 this.onDiscussStartStreaming?.();
                 this.onDiscussChunk?.('');
 
-                const result = await this.streamToolAwareRound(
+                const result = await streamToolAwareRound(
                     chat.provider,
                     {
                         messages: roundBaseMessages,
@@ -1841,7 +1313,10 @@ export class CoWriterSession {
                     },
                     {
                         onChunk: (text) => this.onDiscussChunk?.(text),
-                        onThoughtChange: (thought) => this.onThought?.(thought),
+                        onThoughtChange: (thought) => {
+                            this.thoughtBuffer = thought;
+                            this.onThought?.(thought);
+                        },
                         onClear: () => this.onDiscussClear?.()
                     }
                 );
@@ -1883,8 +1358,25 @@ export class CoWriterSession {
                 // getting re-sent, so the user needs to see their cost.
                 this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
 
-                // No tools called (or tools disabled) → this round is final.
-                if (result.toolCalls.length === 0 || !registry) break;
+                // No structured tool calls this round. Before giving up, check
+                // whether the model wrote a tool call as plain text (common with
+                // local models) — if so, nudge it to re-issue via the real
+                // interface and take another round instead of ending the turn.
+                if (result.toolCalls.length === 0 || !registry) {
+                    if (registry && result.response.trim() && nudgesUsed < MAX_TEXT_TOOL_NUDGES) {
+                        const leak = detectTextToolCall(
+                            result.response,
+                            registry.list().map((t) => t.id)
+                        );
+                        if (leak) {
+                            nudgesUsed++;
+                            this.discussCurrentMessages.push(buildToolNudgeMessage(leak));
+                            this.onChatUpdate?.();
+                            continue;
+                        }
+                    }
+                    break;
+                }
 
                 // Execute tools and push role:'tool' result messages.
                 const execResults: { failed: boolean; result: string }[] = [];
@@ -2213,6 +1705,7 @@ export class CoWriterSession {
             }
         };
         const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
+        let nudgesUsed = 0;
 
         let response = '';
 
@@ -2232,7 +1725,7 @@ export class CoWriterSession {
                 this.onDiscussStartStreaming?.();
                 this.onDiscussChunk?.('');
 
-                const result = await this.streamToolAwareRound(
+                const result = await streamToolAwareRound(
                     chat.provider,
                     {
                         messages: roundBaseMessages,
@@ -2244,7 +1737,10 @@ export class CoWriterSession {
                     },
                     {
                         onChunk: (text) => this.onDiscussChunk?.(text),
-                        onThoughtChange: (thought) => this.onThought?.(thought),
+                        onThoughtChange: (thought) => {
+                            this.thoughtBuffer = thought;
+                            this.onThought?.(thought);
+                        },
                         onClear: () => this.onDiscussClear?.()
                     }
                 );
@@ -2281,7 +1777,23 @@ export class CoWriterSession {
 
                 this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
 
-                if (result.toolCalls.length === 0 || !registry) break;
+                // No structured tool calls. Check for a text-form tool call and
+                // nudge the model to re-issue it properly (see discuss mode).
+                if (result.toolCalls.length === 0 || !registry) {
+                    if (registry && result.response.trim() && nudgesUsed < MAX_TEXT_TOOL_NUDGES) {
+                        const leak = detectTextToolCall(
+                            result.response,
+                            registry.list().map((t) => t.id)
+                        );
+                        if (leak) {
+                            nudgesUsed++;
+                            this.discussCurrentMessages.push(buildToolNudgeMessage(leak));
+                            this.onChatUpdate?.();
+                            continue;
+                        }
+                    }
+                    break;
+                }
 
                 const coachExecResults: { failed: boolean; result: string }[] = [];
                 const coachCollectedImages: string[] = [];
@@ -2725,6 +2237,7 @@ export class CoWriterSession {
         }
 
         const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
+        let nudgesUsed = 0;
 
         try {
             for (let round = 0; round < maxRounds; round++) {
@@ -2742,12 +2255,6 @@ export class CoWriterSession {
                 this.onDiscussStartStreaming?.();
                 this.onDiscussChunk?.('');
 
-                let response = '';
-                let thought = '';
-                let sawReasoning = false;
-                let thinkingBlocks: AnthropicThinkingBlockKind[] | undefined;
-                const fragmentBuffer = new Map<number, { id?: string; name?: string; arguments: string }>();
-
                 // Inject context-budget + active-file awareness fresh each
                 // round so the model knows how many files it can batch and
                 // which file is open.
@@ -2763,69 +2270,25 @@ export class CoWriterSession {
                         ? [this.loreCoachMessages[0]!, ...injected, ...this.loreCoachMessages.slice(1)]
                         : this.loreCoachMessages;
 
-                const stream = chat.provider.chatCompletion({
-                    messages: messagesForCall,
-                    model: chat.modelId,
-                    temperature: 0.7,
-                    maxTokens: plugin.settings.coWriterMaxOutputTokens,
-                    signal: this.abortController.signal,
-                    tools: toolDefs,
-                    toolChoice: toolDefs ? 'auto' : undefined
-                });
-
-                for await (const chunk of stream) {
-                    if (chunk.done) {
-                        if (chunk.thinkingBlocks) thinkingBlocks = chunk.thinkingBlocks;
-                        break;
+                const { response, thought, toolCalls, thinkingBlocks } = await streamToolAwareRound(
+                    chat.provider,
+                    {
+                        messages: messagesForCall,
+                        model: chat.modelId,
+                        temperature: 0.7,
+                        maxTokens: plugin.settings.coWriterMaxOutputTokens,
+                        signal: this.abortController.signal,
+                        tools: toolDefs
+                    },
+                    {
+                        onChunk: (text) => this.onDiscussChunk?.(text),
+                        onThoughtChange: (t) => {
+                            this.thoughtBuffer = t;
+                            this.onThought?.(t);
+                        },
+                        onClear: () => this.onDiscussClear?.()
                     }
-
-                    if (chunk.thought) {
-                        // Reasoning models sometimes emit a "draft" response
-                        // before their reasoning block, then repeat it verbatim
-                        // after. Discard any text accumulated before the first
-                        // reasoning chunk so the two copies don't concatenate
-                        // into a duplicated block.
-                        if (!sawReasoning) {
-                            sawReasoning = true;
-                            response = '';
-                            this.onDiscussClear?.();
-                        }
-                        thought += chunk.thought;
-                        this.thoughtBuffer = thought;
-                        this.onThought?.(thought);
-                    }
-
-                    if (chunk.text) {
-                        response += chunk.text;
-                        this.onDiscussChunk?.(chunk.text);
-                    }
-
-                    if (chunk.toolCalls) {
-                        for (const frag of chunk.toolCalls) {
-                            const existing = fragmentBuffer.get(frag.index);
-                            if (existing) {
-                                if (frag.id !== undefined) existing.id = frag.id;
-                                if (frag.name !== undefined) existing.name = frag.name;
-                                if (frag.arguments !== undefined) existing.arguments += frag.arguments;
-                            } else {
-                                fragmentBuffer.set(frag.index, {
-                                    id: frag.id,
-                                    name: frag.name,
-                                    arguments: frag.arguments ?? ''
-                                });
-                            }
-                        }
-                    }
-                }
-
-                // Materialize accumulated tool-call fragments into complete calls.
-                const toolCalls = [...fragmentBuffer.entries()]
-                    .sort(([a], [b]) => a - b)
-                    .map(([idx, acc]) => ({
-                        id: acc.id ?? `call_${idx}`,
-                        name: acc.name ?? '',
-                        arguments: acc.arguments
-                    }));
+                );
 
                 // Phase advance: discover → develop after the first response
                 // (unless propose_entry advanced to 'refine' below).
@@ -2868,8 +2331,21 @@ export class CoWriterSession {
                     quillAnchorId: this.currentAnchorMessageId() ?? undefined
                 });
 
-                // No tools called (or tools disabled) → this round is final.
+                // No structured tool calls. Check for a text-form tool call and
+                // nudge the model to re-issue it properly (see discuss mode).
                 if (toolCalls.length === 0 || !registry) {
+                    if (registry && response.trim() && nudgesUsed < MAX_TEXT_TOOL_NUDGES) {
+                        const leak = detectTextToolCall(
+                            response,
+                            registry.list().map((t) => t.id)
+                        );
+                        if (leak) {
+                            nudgesUsed++;
+                            this.loreCoachMessages.push(buildToolNudgeMessage(leak));
+                            this.onChatUpdate?.();
+                            continue;
+                        }
+                    }
                     break;
                 }
 
@@ -3133,10 +2609,21 @@ export class CoWriterSession {
                     // Skip this directive on error; already-completed edits remain reviewable.
                     continue;
                 }
+                // Empty/whitespace-only response → do NOT stage. Every sibling
+                // path (direct, transform, lint-batch, pacing) guards against
+                // staging an empty newText; fulfill was the lone holdout, and a
+                // non-zero directive range staged with '' is a destructive
+                // deletion (approve → the directive comment vanishes with no
+                // replacement). Skip the directive and tell the writer.
+                const fulfilledProse = sanitizeProse(prose).trim();
+                if (fulfilledProse.length === 0) {
+                    new Notice('Quill: Received an empty response from the AI provider for a directive; skipping it.');
+                    continue;
+                }
                 this.fulfillChanges.add({
                     from: range.start,
                     to: range.end,
-                    newText: sanitizeProse(prose).trim(),
+                    newText: fulfilledProse,
                     label: range.text
                 });
                 pushDiffEdits(cm, toDiffSnapshots(this.fulfillChanges, 'fulfill'));

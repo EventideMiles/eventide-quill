@@ -2,7 +2,14 @@ import { type AiProvider, type AnthropicThinkingBlockKind, type ChatMessage } fr
 import type EventideQuillPlugin from '../main';
 import { compactConversation } from './compaction';
 import { estimateTokens } from '../utils/tokens';
-import { executeToolCall, type ToolContext, type ToolRegistry } from './tools';
+import {
+    executeToolCall,
+    detectTextToolCall,
+    buildToolNudgeMessage,
+    MAX_TEXT_TOOL_NUDGES,
+    type ToolContext,
+    type ToolRegistry
+} from './tools';
 import { injectImagesIntoMessages } from './vision';
 
 /**
@@ -166,6 +173,7 @@ export class SubagentSession {
         };
 
         let lastResponse = '';
+        let nudgesUsed = 0;
         try {
             for (let round = 0; round < maxRounds; round++) {
                 if (this.parentSignal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -235,8 +243,26 @@ export class SubagentSession {
                 });
                 lastResponse = response;
 
-                // No tools called → this round is final.
-                if (toolCalls.length === 0) break;
+                // No tools called → this round is final, UNLESS the model
+                // wrote a tool call as plain text (common with local models):
+                // nudge it to re-issue via the real interface and take another
+                // round. Bounded by MAX_TEXT_TOOL_NUDGES so a model that keeps
+                // narrating can't spin the isolated context forever.
+                if (toolCalls.length === 0) {
+                    if (response.trim() && nudgesUsed < MAX_TEXT_TOOL_NUDGES) {
+                        const leak = detectTextToolCall(
+                            response,
+                            toolDefs.map((t) => t.name)
+                        );
+                        if (leak) {
+                            nudgesUsed++;
+                            this.messages.push(buildToolNudgeMessage(leak));
+                            this.onChatUpdate?.();
+                            continue;
+                        }
+                    }
+                    break;
+                }
 
                 // Execute tools; results land in both the API messages and the
                 // display buffer. Edits flow to the shared review queue via the
