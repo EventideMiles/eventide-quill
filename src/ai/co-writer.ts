@@ -73,10 +73,9 @@ import {
     moveCursorToEndIfEarly
 } from './co-writer-utils';
 import {
+    applyApprovedEdit,
     clearDiffEdits,
-    diffEditsField,
     pushDiffEdits,
-    setDiffEdits,
     syncChangeSetPositions,
     toDiffSnapshots
 } from '../ui/change-diff-extension';
@@ -2655,12 +2654,7 @@ export class CoWriterSession {
         syncChangeSetPositions(cm, this.fulfillChanges, 'fulfill');
         const change = this.fulfillChanges.approve(id);
         if (!change) return;
-        const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'fulfill');
-        cm.dispatch({
-            changes: change,
-            effects: setDiffEdits.of([...preserved, ...toDiffSnapshots(this.fulfillChanges, 'fulfill')]),
-            selection: { anchor: change.from + change.insert.length }
-        });
+        applyApprovedEdit(cm, change, 'fulfill', toDiffSnapshots(this.fulfillChanges, 'fulfill'));
         this.onFulfillUpdate?.();
     }
 
@@ -2715,12 +2709,7 @@ export class CoWriterSession {
         syncChangeSetPositions(cm, this.directChanges, 'direct');
         const change = this.directChanges.approve(id);
         if (!change) return;
-        const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'direct');
-        cm.dispatch({
-            changes: change,
-            effects: setDiffEdits.of(preserved),
-            selection: { anchor: change.from + change.insert.length }
-        });
+        applyApprovedEdit(cm, change, 'direct', toDiffSnapshots(this.directChanges, 'direct'));
         this.onDirectChangeUpdate?.();
         this.onDraftAccepted?.();
     }
@@ -2771,18 +2760,13 @@ export class CoWriterSession {
 
         if (cm) {
             // File is open — reconcile drift, approve this edit, and re-push the
-            // remaining pending lore edits as the diff in the same transaction
-            // (approved/rejected edits render no decoration). Later edits'
-            // offsets are remapped by ChangeSet.approve so they stay valid.
+            // remaining pending lore edits as the diff. applyApprovedEdit splits
+            // the change dispatch from the snapshot refresh so other owners'
+            // pending edits in this editor stay at correct offsets.
             syncChangeSetPositions(cm, entry.changeSet, 'lore_edit');
             const change = entry.changeSet.approve(id);
             if (!change) return;
-            const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'lore_edit');
-            cm.dispatch({
-                changes: change,
-                effects: setDiffEdits.of([...preserved, ...toDiffSnapshots(entry.changeSet, 'lore_edit', filePath)]),
-                selection: { anchor: change.from + change.insert.length }
-            });
+            applyApprovedEdit(cm, change, 'lore_edit', toDiffSnapshots(entry.changeSet, 'lore_edit', filePath));
             if (!entry.changeSet.hasPending) {
                 this.closeLoreEditTabIfOpenedByTool(filePath);
                 this.loreEdits.delete(filePath);

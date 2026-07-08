@@ -86,9 +86,8 @@ import { readVaultFileText } from './utils/vault-files';
 import { parseDirectives } from './utils/directives';
 import {
     getChangeDiffExtension,
+    applyApprovedEdit,
     clearDiffEdits,
-    diffEditsField,
-    setDiffEdits,
     syncChangeSetPositions,
     pushDiffEdits,
     toDiffSnapshots
@@ -2317,12 +2316,7 @@ export default class EventideQuillPlugin extends Plugin {
         syncChangeSetPositions(cm, this.transformChangeSet, 'transform');
         const change = this.transformChangeSet.approve(id);
         if (!change) return;
-        const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'transform');
-        cm.dispatch({
-            changes: change,
-            effects: setDiffEdits.of(preserved),
-            selection: { anchor: change.from + change.insert.length }
-        });
+        applyApprovedEdit(cm, change, 'transform', toDiffSnapshots(this.transformChangeSet, 'transform'));
     }
 
     /** Reject the pending transform edit: leave the original passage and clear the diff. */
@@ -2542,12 +2536,7 @@ export default class EventideQuillPlugin extends Plugin {
         syncChangeSetPositions(cm, this.lintBatchChangeSet, 'lint-batch');
         const change = this.lintBatchChangeSet.approve(id);
         if (!change) return;
-        const preserved = cm.state.field(diffEditsField).filter((s) => s.owner !== 'lint-batch');
-        cm.dispatch({
-            changes: change,
-            effects: setDiffEdits.of([...preserved, ...toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch')]),
-            selection: { anchor: change.from + change.insert.length }
-        });
+        applyApprovedEdit(cm, change, 'lint-batch', toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
     }
 
     /** Reject a single batch-fix edit: leave the original passage. */

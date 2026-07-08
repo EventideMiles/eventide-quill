@@ -1,6 +1,6 @@
 import { EditorState, Extension, Range, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, DecorationSet, EditorView, WidgetType } from '@codemirror/view';
-import type { ChangeSet, ProposedEdit } from '../core/change-set';
+import type { ChangeSet, ChangeSpec, ProposedEdit } from '../core/change-set';
 
 /**
  * Inline diff rendering for proposed edits, shared across every AI-insertion
@@ -306,4 +306,35 @@ export function clearDiffEdits(view: EditorView, owner?: string): void {
     const existing = view.state.field(diffEditsField);
     const preserved = existing.filter((s) => s.owner !== owner);
     view.dispatch({ effects: setDiffEdits.of(preserved) });
+}
+
+/**
+ * Apply one approved edit and refresh the owning surface's diff snapshots
+ * without stranding OTHER owners' pending edits at stale offsets.
+ *
+ * This is the correct single-approve dispatch pattern — the same split that
+ * the batch paths (`approveAllFulfill` / `approveAllLintBatch`) already use.
+ * The `changes` are dispatched FIRST with no effect, so {@link diffEditsField}'s
+ * `mapPos` remaps EVERY owner's pending snapshots (including other surfaces
+ * with edits live in this editor) to the post-change document. Then the owner's
+ * fresh post-approval snapshots are pushed via {@link pushDiffEdits}, which
+ * preserves the now-remapped other-owner snapshots from the field.
+ *
+ * Combining `changes` + `setDiffEdits` in ONE transaction (the old single-approve
+ * pattern) short-circuited the `mapPos` branch — other owners' snapshots kept
+ * their pre-change offsets, so the NEXT approve in the same editor landed at the
+ * wrong position and replaced/deleted unrelated text. Every per-edit approve
+ * site MUST go through this helper to avoid reintroducing that.
+ */
+export function applyApprovedEdit(
+    view: EditorView,
+    change: ChangeSpec,
+    owner: string,
+    ownerSnapshots: DiffEditSnapshot[]
+): void {
+    view.dispatch({
+        changes: change,
+        selection: { anchor: change.from + change.insert.length }
+    });
+    pushDiffEdits(view, ownerSnapshots, owner);
 }

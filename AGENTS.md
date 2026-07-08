@@ -232,7 +232,7 @@ src/
     dashboard-panel.ts, lorebook-panel.ts, lore-entry-review.ts,
     feedback-queue-panel.ts (encapsulated Queue sub-tab renderer),
     chat-panel.ts, chat-context-files.ts, document-header.ts,
-    change-card.ts, change-diff-extension.ts, token-indicator.ts,
+    change-card.ts, change-diff-extension.ts (inline diff decorations + the owner-aware approve dispatch — `applyApprovedEdit` splits the change from the snapshot refresh so two owners with pending edits in one editor don't strand each other at stale offsets), token-indicator.ts,
     confirm-modal.ts, transform-modal.ts, fix-with-ai-modal.ts,
     filename-modal.ts, vault-file-suggest-modal.ts (vault markdown file + embedded-folder picker for context files), report-suggest-modal.ts (saved-report picker for follow-up discussion), file-mention-suggest.ts,
     session-list-modal.ts (saved-conversation switcher), slash-command-suggest.ts
