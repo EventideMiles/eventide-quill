@@ -10,6 +10,7 @@
 		"build:release": "npm run sass && prettier --write 'src/**/*.ts' && tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"set-version": "node update-version.mjs",
+		"release": "node release.mjs",
 		"lint": "eslint . && stylelint 'styles/**/*.scss'",
 		"lint:styles": "stylelint 'styles/**/*.scss'",
 		"lint:fix": "eslint . --fix && prettier --write 'src/**/*.ts' && stylelint --fix 'styles/**/*.scss'",

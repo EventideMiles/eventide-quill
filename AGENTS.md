@@ -45,6 +45,7 @@ Scripts (see `package.json`):
 | `npm run test:coverage` | `vitest run --coverage` — test suite with V8 coverage report. |
 | `npm run version` | `node version-bump.mjs && git add manifest.json versions.json` (run via `npm version`) |
 | `npm run set-version -- <v>` | Chore: rewrite the version string everywhere it appears (release files + embedded copies like the MediaWiki User-Agent). Adds a new `versions.json` key without dropping history. Does **not** tag/commit/push. Supports `--dry-run`. |
+| `npm run release` | `node release.mjs` — cut + push an annotated release tag. Enforces: clean working tree, on `main` + pulled, manifest version differs from the latest tag, and passing `build`/`test`/`lint`/`lint:dup`. Creates the tag and pushes main + tag (which triggers `release.yml` → draft GitHub release). Supports `--dry-run` (plan only) and `--yes` (skip confirm). Does **not** bump the version (`set-version`) or finalize/publish the release. |
 
 There is **no standalone `typecheck` script** — `tsc` runs inside `build`. The test suite lives under `tests/` (see "Testing" below).
 
