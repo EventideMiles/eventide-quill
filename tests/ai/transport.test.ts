@@ -1,5 +1,13 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import { Platform } from 'obsidian';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { Platform, requestUrl } from 'obsidian';
+
+// Wrap requestUrl in a vi.fn so the requestUrlMobile suite can make it reject.
+// By default it delegates to the stub, so every other test behaves identically.
+vi.mock('obsidian', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('obsidian')>();
+    return { ...actual, requestUrl: vi.fn(actual.requestUrl) };
+});
+
 import {
     HttpError,
     StreamingUnavailableError,
@@ -9,7 +17,8 @@ import {
     httpErrorResponse,
     catchErrorResponse,
     isMobileNetworkDrop,
-    withMobileNetworkHint
+    withMobileNetworkHint,
+    requestUrlMobile
 } from '../../src/ai/transport';
 import { ProviderError } from '../../src/ai/provider';
 
@@ -209,5 +218,41 @@ describe('withMobileNetworkHint', () => {
         const result = withMobileNetworkHint('network error');
         expect(result).toBeInstanceOf(Error);
         expect(result.message).toContain('network error');
+    });
+});
+
+describe('requestUrlMobile', () => {
+    afterEach(() => {
+        Platform.isMobile = false;
+        vi.mocked(requestUrl).mockClear();
+    });
+
+    it('wraps a network-drop rejection as a MobileNetworkError with the hint (mobile)', async () => {
+        Platform.isMobile = true;
+        const original = new Error('Failed to fetch');
+        vi.mocked(requestUrl).mockRejectedValueOnce(original);
+        let caught: unknown;
+        try {
+            await requestUrlMobile({ url: 'http://x', method: 'POST', headers: {}, body: '' });
+        } catch (err) {
+            caught = err;
+        }
+        expect(caught).toBeInstanceOf(MobileNetworkError);
+        const wrapped = caught as MobileNetworkError;
+        expect(wrapped.message).toContain('Failed to fetch');
+        expect(wrapped.message).toContain('backgrounded');
+        expect(wrapped.cause).toBe(original);
+        // throw: false is applied so non-2xx responses are returned, not thrown.
+        expect(vi.mocked(requestUrl)).toHaveBeenCalledWith(expect.objectContaining({ throw: false }));
+    });
+
+    it('rethrows a non-drop rejection unchanged on desktop (no wrap)', async () => {
+        Platform.isMobile = false;
+        const original = new Error('Failed to fetch');
+        vi.mocked(requestUrl).mockRejectedValueOnce(original);
+        await expect(
+            requestUrlMobile({ url: 'http://x', method: 'POST', headers: {}, body: '' })
+        ).rejects.toBe(original);
+        expect(vi.mocked(requestUrl)).toHaveBeenCalledWith(expect.objectContaining({ throw: false }));
     });
 });
