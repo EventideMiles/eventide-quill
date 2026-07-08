@@ -1,11 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
+import { Platform } from 'obsidian';
 import {
     HttpError,
     StreamingUnavailableError,
     isStreamingSupported,
     throwOnNonOk,
     httpErrorResponse,
-    catchErrorResponse
+    catchErrorResponse,
+    looksLikeMobileNetworkDrop,
+    withMobileNetworkHint
 } from '../../src/ai/transport';
 import { ProviderError } from '../../src/ai/provider';
 
@@ -113,5 +116,80 @@ describe('catchErrorResponse', () => {
         for (const substr of expected) {
             expect(result.error).toContain(substr);
         }
+    });
+});
+
+describe('looksLikeMobileNetworkDrop', () => {
+    // The mock's Platform is a shared mutable object; toggling isMobile here
+    // is visible to transport.ts (same reference). Restore desktop default
+    // after each test so other suites aren't affected.
+    afterEach(() => {
+        Platform.isMobile = false;
+    });
+
+    it('returns false on desktop regardless of the error', () => {
+        Platform.isMobile = false;
+        expect(looksLikeMobileNetworkDrop(new Error('Failed to fetch'))).toBe(false);
+    });
+
+    it('matches common mobile network-drop signatures', () => {
+        Platform.isMobile = true;
+        const signatures = [
+            'Failed to fetch',
+            'Network request failed',
+            'websocket closed',
+            'ERR_INTERNET_DISCONNECTED',
+            'ERR_CONNECTION_RESET',
+            'Load failed',
+            'The Internet connection appears to be offline.'
+        ];
+        for (const msg of signatures) {
+            expect(looksLikeMobileNetworkDrop(new Error(msg))).toBe(true);
+        }
+    });
+
+    it('returns false on mobile for an unrelated error (e.g. a JSON parse error)', () => {
+        Platform.isMobile = true;
+        expect(looksLikeMobileNetworkDrop(new Error('Unexpected token < in JSON'))).toBe(false);
+    });
+
+    it('handles non-Error throws and empty messages', () => {
+        Platform.isMobile = true;
+        expect(looksLikeMobileNetworkDrop('a network error occurred')).toBe(true);
+        expect(looksLikeMobileNetworkDrop('')).toBe(false);
+        expect(looksLikeMobileNetworkDrop(undefined)).toBe(false);
+    });
+});
+
+describe('withMobileNetworkHint', () => {
+    afterEach(() => {
+        Platform.isMobile = false;
+    });
+
+    it('returns the original error unchanged on desktop', () => {
+        Platform.isMobile = false;
+        const original = new Error('Failed to fetch');
+        const result = withMobileNetworkHint(original);
+        expect(result).toBe(original);
+    });
+
+    it('appends the mobile hint to a network-drop error on mobile', () => {
+        Platform.isMobile = true;
+        const result = withMobileNetworkHint(new Error('Failed to fetch'));
+        expect(result.message).toContain('Failed to fetch');
+        expect(result.message).toContain('backgrounded');
+    });
+
+    it('returns the original error (same reference) on mobile when it is not a network drop', () => {
+        Platform.isMobile = true;
+        const original = new Error('some provider bug');
+        expect(withMobileNetworkHint(original)).toBe(original);
+    });
+
+    it('wraps non-Error throws into an Error', () => {
+        Platform.isMobile = true;
+        const result = withMobileNetworkHint('network error');
+        expect(result).toBeInstanceOf(Error);
+        expect(result.message).toContain('network error');
     });
 });

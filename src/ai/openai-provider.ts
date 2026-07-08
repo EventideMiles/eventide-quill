@@ -27,7 +27,8 @@ import {
     throwOnNonOk,
     catchErrorResponse,
     httpErrorResponse,
-    safeGet
+    safeGet,
+    withMobileNetworkHint
 } from './transport';
 
 /** Shape of a single item in the OpenAI models endpoint response. */
@@ -197,14 +198,22 @@ export class OpenAiCompatibleProvider implements AiProvider {
             return;
         }
 
-        // Mobile fallback: buffer the full response
-        const response: RequestUrlResponse = await requestUrl({
-            url,
-            method: 'POST',
-            headers,
-            body,
-            throw: false
-        });
+        // Mobile fallback: buffer the full response. requestUrl provides no
+        // abort hook, and the OS may kill this call mid-flight when the app is
+        // backgrounded — wrap such errors with a friendly hint (see
+        // withMobileNetworkHint) instead of surfacing the raw websocket string.
+        let response: RequestUrlResponse;
+        try {
+            response = await requestUrl({
+                url,
+                method: 'POST',
+                headers,
+                body,
+                throw: false
+            });
+        } catch (err) {
+            throw withMobileNetworkHint(err);
+        }
 
         throwOnNonOk(response, 'Chat completion');
 

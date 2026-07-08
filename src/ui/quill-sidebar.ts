@@ -338,10 +338,13 @@ export class QuillSidebarView extends ItemView {
         this.addChild(this.renderEvents);
 
         this.tabBar.empty();
-        // Tear down the co-writer panel's resize observer + keydown listener
+        // Tear down the chat panels' resize observers + keydown listeners
         // so they can't fire on — or repopulate — another tab's UI while the
-        // co-writer tab is inactive. setContainer re-establishes both on return.
+        // tab is inactive. setContainer re-establishes both on return. Both
+        // the co-writer and review panels extend AbstractChatPanel and share
+        // the same detach() (observer + keydown teardown).
         this.coWriterPanel?.detach();
+        this.reviewPanel?.detach();
         this.content.empty();
 
         this.renderTopTabBar();
@@ -608,15 +611,15 @@ export class QuillSidebarView extends ItemView {
 
             // Async feedback queue — plugin ref (for the Queue sub-tab) + handlers.
             this.reviewPanel.setPlugin(this.plugin);
-            this.reviewPanel.setEditorialQueueHandler((personaId, customInstruction) => {
-                void this.plugin.submitFeedbackJob(personaId, customInstruction);
-            });
-            this.reviewPanel.setCriticalQueueHandler((mode, scope, customInstruction) => {
-                void this.plugin.submitCriticalFeedbackJob(mode, scope, customInstruction);
-            });
-            this.reviewPanel.setManuscriptQueueHandler((mode, scope, compaction, customInstruction) => {
-                void this.plugin.submitManuscriptFeedbackJob(mode, scope, compaction, customInstruction);
-            });
+            this.reviewPanel.setEditorialQueueHandler((personaId, customInstruction) =>
+                this.plugin.submitFeedbackJob(personaId, customInstruction)
+            );
+            this.reviewPanel.setCriticalQueueHandler((mode, scope, customInstruction) =>
+                this.plugin.submitCriticalFeedbackJob(mode, scope, customInstruction)
+            );
+            this.reviewPanel.setManuscriptQueueHandler((mode, scope, compaction, customInstruction) =>
+                this.plugin.submitManuscriptFeedbackJob(mode, scope, compaction, customInstruction)
+            );
             this.reviewPanel.setQueueHandlers({
                 onCancel: (id) => void this.plugin.cancelFeedbackJob(id),
                 onDelete: (id) => void this.plugin.deleteFeedbackJob(id),

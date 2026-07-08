@@ -39,6 +39,22 @@ div[class*='quill-settings-content-'].is-hidden {
     overflow: hidden;
 }
 
+// --- Compact-mode visibility toggle ---
+// When the root carries the modifier (set by the ResizeObserver in
+// settings.ts when the pane narrows below COMPACT_TABS_THRESHOLD), hide the
+// horizontal tab bar and show the dropdown bar. The two bars are siblings
+// built on every render; only this class flips which is visible — no
+// re-render, so scroll position and form inputs survive the crossover.
+.quill-settings-root--compact-tabs {
+    .quill-settings__tab-bar {
+        display: none;
+    }
+
+    .quill-settings__compact-bar {
+        display: flex;
+    }
+}
+
 .quill-settings {
     &__scroll-area {
         flex: 1;
@@ -76,6 +92,62 @@ div[class*='quill-settings-content-'].is-hidden {
             color: var(--text-accent);
             border-bottom-color: var(--text-accent);
         }
+    }
+
+    // --- Compact dropdown bar (mobile / narrow panes) ---
+    // Hidden by default; shown when the root carries --compact-tabs (flipped
+    // by the ResizeObserver in settings.ts when the pane narrows below
+    // COMPACT_TABS_THRESHOLD). Mirrors the sidebar's compact tab strip.
+
+    &__compact-bar {
+        display: none; // overridden by .quill-settings-root--compact-tabs below
+        flex-shrink: 0;
+        padding: $space-sm $space-md;
+        border-bottom: 1px solid var(--background-modifier-border);
+        background: var(--background-primary);
+        box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.08);
+    }
+
+    &__compact-tab {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        width: 100%;
+        padding: 8px $space-md;
+        cursor: pointer;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-sm;
+        background: var(--background-primary);
+        color: var(--text-normal);
+        font-size: var(--font-ui-medium);
+        font-family: var(--font-interface);
+        text-align: left;
+        transition: border-color $transition-base, color $transition-base;
+
+        &:hover {
+            border-color: var(--interactive-accent);
+            color: var(--text-accent);
+        }
+
+        // The active tab is echoed as the button label; the accent left border
+        // echoes the active tab's bottom border in the standard bar.
+        &--active {
+            border-left: 3px solid var(--text-accent);
+        }
+    }
+
+    &__compact-tab-label {
+        flex: 1;
+    }
+
+    // Down-pointing caret drawn in CSS so the dropdown affordance is theme-
+    // aware (uses currentColor) and needs no icon import.
+    &__compact-tab-caret {
+        width: 0;
+        height: 0;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top: 5px solid var(--text-muted);
     }
 
     // --- Section grouping (wraps runs of settings under a heading) ---

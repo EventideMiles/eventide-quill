@@ -473,3 +473,27 @@
         }
     }
 }
+
+// Brief loading state applied (via runQueuedSubmit in review-panel.ts) to the
+// Generate button and persona picker options while a queue submit is in flight.
+// Applied as an ADDITIONAL class alongside the button's own (quill-form__submit
+// or quill-option-picker__option), so it's a standalone selector here, not
+// nested under a block. The disabled attribute carries the cursor + grey-out;
+// this class adds a gentle opacity pulse so the button feels alive for the
+// ~650ms hold, confirming the click registered even when the Notice toast is
+// missed.
+.quill-review-panel__submit--queuing {
+    cursor: progress;
+    opacity: 0.75;
+    animation: quill-queue-submit-pulse 1s ease-in-out infinite;
+}
+
+@keyframes quill-queue-submit-pulse {
+    0%,
+    100% {
+        opacity: 0.75;
+    }
+    50% {
+        opacity: 0.45;
+    }
+}

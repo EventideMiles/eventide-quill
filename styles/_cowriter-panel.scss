@@ -920,12 +920,23 @@
         color: var(--text-muted);
         transition: background $transition-fast, color $transition-fast;
         height: 30px;
-        width: 30px;
+        // min-width (not fixed width) so the button can widen to fit a text
+        // fallback label when the icon doesn't render (see setHeaderIcon in
+        // co-writer-panel.ts). Icon-only buttons stay at the 30px floor.
+        min-width: 30px;
         box-sizing: border-box;
         flex-shrink: 0;
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        font-size: var(--font-ui-smaller);
+
+        // Explicit SVG sizing — ensures the Lucide icon is always visible at a
+        // consistent size regardless of how Obsidian's setIcon sizes it.
+        svg {
+            width: 16px;
+            height: 16px;
+        }
 
         &:hover:not(:disabled) {
             background: var(--background-modifier-hover);
@@ -1152,6 +1163,60 @@
 
     .quill-cowriter-panel__overflow-btn {
         display: inline-flex;
+    }
+}
+
+// Compact-height responsive collapse. When the panel height drops below
+// COMPACT_HEIGHT_THRESHOLD (set in co-writer-panel.ts via ResizeObserver) —
+// typically a phone in portrait or a short desktop sidebar — the bottom area
+// sheds non-essential chrome so the chat scroll area reclaims the majority of
+// the visible space:
+//   • the textarea shrinks from ~180px (5+ lines) to ~2 lines (min-height is
+//     clamped so the writer can't drag it shorter; max-height + resize: vertical
+//     are inherited so they CAN still drag it taller),
+//   • the plot-map link row hides (a secondary control — manageable from a
+//     wider screen or settings),
+//   • the token-count indicator hides (informational metadata, not a primary
+//     concern while composing on a small screen),
+//   • inter-row padding tightens so the coach bar, button row, and textarea sit
+//     closer together without the generous desktop spacing.
+// Independent of the width-collapse above: a wide-but-short pane hits this but
+// not --compact, and vice versa.
+.quill-cowriter-panel__bottom--compact-height {
+    // Collapse the textarea to ~2 lines.
+    .quill-cowriter-panel__input {
+        height: 3.6em;
+        min-height: 3.6em;
+    }
+
+    // Hide secondary metadata rows — they compete for limited vertical space
+    // and aren't primary during mobile composing. The plot map can be linked
+    // from a wider screen; token counts are informational.
+    .quill-cowriter-panel__plotmap-row,
+    .quill-cowriter-panel__token-indicator {
+        display: none;
+    }
+
+    // Tighten inter-row spacing so the remaining rows (coach bar / button row /
+    // textarea) sit closer together.
+    .quill-cowriter-panel__coach-bar,
+    .quill-cowriter-panel__lore-bar {
+        padding-top: 1px;
+        padding-bottom: 1px;
+        margin-top: 0;
+    }
+
+    .quill-cowriter-panel__ctx-row {
+        padding-top: 1px;
+        padding-bottom: 1px;
+    }
+
+    .quill-cowriter-panel__btn-row {
+        padding-top: 1px;
+    }
+
+    .quill-cowriter-panel__ta-row {
+        padding-bottom: 0;
     }
 }
 

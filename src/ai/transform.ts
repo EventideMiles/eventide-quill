@@ -4,6 +4,7 @@ import { gatherVaultContext } from '../core/context-engine';
 import { ChatMessage } from './provider';
 import { getSystemPrompt, getWikiLinkInstruction, type WikiLinkBehavior } from './prompts';
 import { clearDiffEdits, pushDiffEdits, toDiffSnapshots } from '../ui/change-diff-extension';
+import { notifyMobileStreamRisk } from './mobile-watchdog';
 import type EventideQuillPlugin from '../main';
 
 /** Describes a single transformation action available in the editor context menu. */
@@ -128,11 +129,12 @@ export async function applyTransformation(
     }
 
     const processingMsg = Platform.isMobile
-        ? 'Quill: Transforming (mobile — this may take a moment)...'
+        ? 'Quill: Transforming (mobile \u2014 this may take a moment). Keep the app in focus...'
         : 'Quill: Transforming...';
     const notice = new Notice(processingMsg, 0);
     plugin.transformInProgress = true;
     plugin.transformAbortController = new AbortController();
+    notifyMobileStreamRisk();
     const abortController = plugin.transformAbortController;
 
     try {

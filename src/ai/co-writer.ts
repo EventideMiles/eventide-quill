@@ -1,6 +1,7 @@
 import { App, Editor, MarkdownView, Notice, Platform, TFile } from 'obsidian';
 import { EditorView } from '@codemirror/view';
 import type EventideQuillPlugin from '../main';
+import { notifyMobileStreamRisk } from './mobile-watchdog';
 import { type VoiceProfile } from '../types';
 import { findEditorView } from '../utils/find-editor';
 import { type AiProvider, type ChatMessage, type ToolCallRequest, type ToolDefinition } from './provider';
@@ -956,6 +957,15 @@ export class CoWriterSession {
     /** Abort controller for the current API call (options or generation). */
     private abortController: AbortController | null = null;
 
+    /**
+     * True when an API call (options fetch or generation) is in flight. Read by
+     * the plugin's mobile stream watchdog to detect when Obsidian's WebView was
+     * suspended mid-run (see {@link MobileStreamWatchdog}).
+     */
+    get isGenerating(): boolean {
+        return this.abortController !== null;
+    }
+
     /** Pending thought content accumulated during generation. */
     thoughtBuffer = '';
 
@@ -1581,6 +1591,7 @@ export class CoWriterSession {
             return;
         }
         plugin.warnIfQueueRunning();
+        notifyMobileStreamRisk();
 
         // Use the active file if available; fall back to stored manuscriptPath.
         // Discuss mode works without an active file — the model can gather
@@ -1957,6 +1968,7 @@ export class CoWriterSession {
             return;
         }
         plugin.warnIfQueueRunning();
+        notifyMobileStreamRisk();
 
         // Use the active file if available; fall back to stored manuscriptPath.
         // Coach mode works without an active file — same rationale as discuss.
@@ -2573,6 +2585,7 @@ export class CoWriterSession {
             return;
         }
         plugin.warnIfQueueRunning();
+        notifyMobileStreamRisk();
         if (plugin.settings.lorebookFolders.length === 0) {
             new Notice('Quill: Add at least one lorebook folder in settings → lorebook first.');
             return;
@@ -3864,7 +3877,7 @@ export class CoWriterSession {
         pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
 
         const notice = Platform.isMobile
-            ? new Notice('Quill: Continuing (mobile \u2014 this may take a moment)...', 0)
+            ? new Notice('Quill: Continuing (mobile \u2014 this may take a moment). Keep the app in focus...', 0)
             : new Notice('Quill: Continuing...', 0);
 
         try {
@@ -3946,6 +3959,7 @@ export class CoWriterSession {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
             return;
         }
+        notifyMobileStreamRisk();
 
         // Resolve manuscript file
         const activeFile = plugin.app.workspace.getActiveFile();
@@ -4112,7 +4126,7 @@ export class CoWriterSession {
         pushDiffEdits(cm, toDiffSnapshots(this.directChanges, 'direct'));
 
         const notice = Platform.isMobile
-            ? new Notice('Quill: Continuing (mobile \u2014 this may take a moment)...', 0)
+            ? new Notice('Quill: Continuing (mobile \u2014 this may take a moment). Keep the app in focus...', 0)
             : new Notice('Quill: Continuing...', 0);
 
         try {

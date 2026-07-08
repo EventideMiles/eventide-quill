@@ -60,14 +60,6 @@ const MAX_PENDING_IMAGES = 4;
  */
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 
-/**
- * Below this bottom-area width (px), the button row collapses into compact
- * mode: Add-context / Refresh / Compact / New-chat hide behind a hamburger
- * overflow button. Mode + Attach + Send stay visible (primary actions).
- * Mirrors the sidebar's ResizeObserver pattern at quill-sidebar.ts:100.
- */
-const COMPACT_WIDTH_THRESHOLD = 420;
-
 /** Extract a display name from a vault path. */
 function fileNameFromPath(path: string): string {
     const lastSlash = path.lastIndexOf('/');
@@ -261,17 +253,6 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Monotonic render counter; used to discard stale async finalizations. */
     private renderId = 0;
 
-    /**
-     * Whether the bottom area is currently in compact (narrow-sidebar)
-     * mode. Toggled by {@link resizeObserver} and read in renderBottomArea
-     * to add the `quill-cowriter-panel__bottom--compact` modifier, which
-     * hides the secondary buttons behind a hamburger overflow menu.
-     */
-    private compactWidth = false;
-
-    /** Observes the panel container width to toggle {@link compactWidth}. */
-    private resizeObserver: ResizeObserver | null = null;
-
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app);
         this.plugin = plugin;
@@ -281,43 +262,18 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (this.containerEl && this.keydownHandler) {
             this.containerEl.removeEventListener('keydown', this.keydownHandler);
         }
-        // Disconnect any prior observer before re-observing the new container.
-        this.resizeObserver?.disconnect();
         this.containerEl = containerEl;
         this.render();
         this.keydownHandler = (e: KeyboardEvent) => {
             this.handleKeydown(e);
         };
         containerEl.addEventListener('keydown', this.keydownHandler);
-        // Toggle compact mode when the sidebar narrows. Mirrors the sidebar's
-        // own ResizeObserver at quill-sidebar.ts:100 (the only other responsive
-        // pattern in the repo).
-        this.resizeObserver = new ResizeObserver((entries) => {
-            for (const entry of entries) {
-                const compact = entry.contentRect.width < COMPACT_WIDTH_THRESHOLD;
-                if (compact !== this.compactWidth) {
-                    this.compactWidth = compact;
-                    this.scheduleRender();
-                }
-            }
-        });
-        this.resizeObserver.observe(containerEl);
-    }
-
-    /**
-     * Disconnect the resize observer and remove the keydown listener so the
-     * panel cannot fire on — or repopulate — another tab's UI after the
-     * sidebar clears or reuses the shared content container. Called by the
-     * sidebar before every re-render; {@link setContainer} re-establishes
-     * both when the co-writer tab is re-activated.
-     */
-    detach(): void {
-        this.resizeObserver?.disconnect();
-        this.resizeObserver = null;
-        if (this.containerEl && this.keydownHandler) {
-            this.containerEl.removeEventListener('keydown', this.keydownHandler);
-            this.keydownHandler = null;
-        }
+        // Shared responsive observer (inherited from AbstractChatPanel) —
+        // toggles compactWidth / compactHeight on width/height changes. The
+        // co-writer overrides setContainer for its own keydown handling but
+        // reuses the shared observer so its breakpoints stay in sync with the
+        // Review tab's chat.
+        this.setupResponsiveObserver(containerEl);
     }
 
     /** Set the handler invoked when the user sends a direction in Direct mode. */
@@ -934,7 +890,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             cls: 'quill-cowriter-panel__chat-header-btn',
             title: 'New chat'
         });
-        setIcon(newChatBtn, 'square-pen');
+        this.setHeaderIcon(newChatBtn, 'edit', 'New');
         if (generating) newChatBtn.disabled = true;
         this.renderEvents.registerDomEvent(newChatBtn, 'click', () => {
             new ConfirmModal(
@@ -962,7 +918,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             cls: 'quill-cowriter-panel__chat-header-btn',
             title: 'Compact conversation'
         });
-        setIcon(compactBtn, 'fold-vertical');
+        this.setHeaderIcon(compactBtn, 'minimize-2', 'Compact');
         if (generating) compactBtn.disabled = true;
         this.renderEvents.registerDomEvent(compactBtn, 'click', () => {
             this.onCompact?.();
@@ -972,7 +928,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             cls: 'quill-cowriter-panel__chat-header-btn',
             title: 'Save snapshot'
         });
-        setIcon(saveBtn, 'save');
+        this.setHeaderIcon(saveBtn, 'save', 'Save');
         if (generating) saveBtn.disabled = true;
         this.renderEvents.registerDomEvent(saveBtn, 'click', () => {
             this.onSaveSnapshot?.();
@@ -982,12 +938,32 @@ export class CoWriterPanel extends AbstractChatPanel {
             cls: 'quill-cowriter-panel__chat-header-btn',
             title: 'History'
         });
-        setIcon(historyBtn, 'history');
+        this.setHeaderIcon(historyBtn, 'history', 'History');
         if (generating) historyBtn.disabled = true;
         this.renderEvents.registerDomEvent(historyBtn, 'click', () => {
             if (generating) return;
             this.onHistory?.();
         });
+    }
+
+    /**
+     * Set an icon on a chat-header button, falling back to a short text label
+     * when the icon doesn't render.
+     *
+     * Obsidian's bundled Lucide set is capped at v0.446.0, so some icon names
+     * silently resolve to nothing. Additionally, some environments (mobile
+     * simulators, certain themes) don't render the SVG at all even for valid
+     * names. The text fallback guarantees the button is never blank — the
+     * writer always has a visible, clickable affordance. On environments where
+     * the icon DOES render (the SVG has child path elements), the icon wins
+     * and the text is never shown.
+     */
+    private setHeaderIcon(el: HTMLElement, icon: string, fallback: string): void {
+        setIcon(el, icon);
+        const svg = el.querySelector('svg');
+        if (!svg || svg.children.length === 0) {
+            el.textContent = fallback;
+        }
     }
 
     /** Render the scrollable chat area with messages or initialize prompt. */
@@ -1814,7 +1790,13 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Render the pinned bottom area (draft status, context pills, input row). */
     private renderBottomArea(): void {
         const bottom = this.containerEl!.createEl('div', {
-            cls: `quill-cowriter-panel__bottom${this.compactWidth ? ' quill-cowriter-panel__bottom--compact' : ''}`
+            cls: [
+                'quill-cowriter-panel__bottom',
+                this.compactWidth ? 'quill-cowriter-panel__bottom--compact' : '',
+                this.compactHeight ? 'quill-cowriter-panel__bottom--compact-height' : ''
+            ]
+                .filter(Boolean)
+                .join(' ')
         });
 
         // Coach mode UI

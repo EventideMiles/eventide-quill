@@ -134,10 +134,11 @@ export class ReviewPanel extends AbstractChatPanel {
     /** Cached Queue sub-tab badge element (live-updated without a full re-render). */
     private queueBadgeEl: HTMLElement | null = null;
     /** Queued-editorial handler (mirrors onEditorialGenerate but routes to the queue). */
-    private onEditorialQueue: ((personaId: string, customInstruction?: string) => void) | null = null;
+    private onEditorialQueue: ((personaId: string, customInstruction?: string) => Promise<void> | void) | null = null;
     /** Queued-critical handler (mirrors onCriticalGenerate but routes to the queue). */
-    private onCriticalQueue: ((mode: AnalysisMode, scope: ScopeChoice, customInstruction?: string) => void) | null =
-        null;
+    private onCriticalQueue:
+        | ((mode: AnalysisMode, scope: ScopeChoice, customInstruction?: string) => Promise<void> | void)
+        | null = null;
     /** Queued-manuscript handler (mirrors onManuscriptGenerate but routes to the queue). */
     private onManuscriptQueue:
         | ((
@@ -145,7 +146,7 @@ export class ReviewPanel extends AbstractChatPanel {
               scope: ManuscriptScope,
               compaction: CompactionStrategy,
               customInstruction?: string
-          ) => void)
+          ) => Promise<void> | void)
         | null = null;
     private queueHandlers: FeedbackQueueHandlers | null = null;
 
@@ -185,13 +186,13 @@ export class ReviewPanel extends AbstractChatPanel {
     }
 
     /** Handler for editorial feedback queued (not run interactively) from the Create sub-tab. */
-    setEditorialQueueHandler(handler: (personaId: string, customInstruction?: string) => void): void {
+    setEditorialQueueHandler(handler: (personaId: string, customInstruction?: string) => Promise<void> | void): void {
         this.onEditorialQueue = handler;
     }
 
     /** Handler for critical analysis queued from the Create sub-tab. */
     setCriticalQueueHandler(
-        handler: (mode: AnalysisMode, scope: ScopeChoice, customInstruction?: string) => void
+        handler: (mode: AnalysisMode, scope: ScopeChoice, customInstruction?: string) => Promise<void> | void
     ): void {
         this.onCriticalQueue = handler;
     }
@@ -203,7 +204,7 @@ export class ReviewPanel extends AbstractChatPanel {
             scope: ManuscriptScope,
             compaction: CompactionStrategy,
             customInstruction?: string
-        ) => void
+        ) => Promise<void> | void
     ): void {
         this.onManuscriptQueue = handler;
     }
@@ -827,7 +828,7 @@ export class ReviewPanel extends AbstractChatPanel {
             cls: 'quill-form__submit mod-cta',
             text: buttonLabel
         });
-        this.renderEvents.registerDomEvent(generateBtn, 'click', () => this.triggerGenerate());
+        this.renderEvents.registerDomEvent(generateBtn, 'click', () => this.triggerGenerate(generateBtn));
 
         // Restore the preserved scroll position now that all content is laid out.
         scroll.scrollTop = this.createScrollTop;
@@ -953,7 +954,7 @@ export class ReviewPanel extends AbstractChatPanel {
             name.title = persona.description;
             btn.createEl('span', { cls: 'quill-option-picker__desc', text: persona.description });
             this.renderEvents.registerDomEvent(btn, 'click', () => {
-                this.triggerEditorial(persona.id);
+                this.triggerEditorial(persona.id, btn);
             });
         }
     }
@@ -1168,8 +1169,14 @@ export class ReviewPanel extends AbstractChatPanel {
     }
 
     // --- Generate dispatch ---
+    //
+    // Each trigger accepts the button that was clicked so a queue submit can
+    // show a brief loading state directly on it (see {@link runQueuedSubmit}).
+    // Local feedback at the click site confirms the submit registered even when
+    // the Notice toast at the top of the screen is missed — the actual enqueue
+    // is near-instant, so the loading state is mostly a deliberate UX delay.
 
-    private triggerGenerate(): void {
+    private triggerGenerate(btn: HTMLElement): void {
         if (this.engine === 'editorial') {
             // Editorial requires a manuscript. Persona buttons call triggerEditorial
             // directly; the Generate button is only for custom instructions.
@@ -1177,61 +1184,111 @@ export class ReviewPanel extends AbstractChatPanel {
                 new Notice('Quill: Enter a custom instruction to generate editorial feedback.');
                 return;
             }
-            this.triggerEditorial('custom');
+            this.triggerEditorial('custom', btn);
         } else if (this.engine === 'critical') {
-            this.triggerCritical();
+            this.triggerCritical(btn);
         } else {
-            this.triggerManuscript();
+            this.triggerManuscript(btn);
         }
     }
 
-    private triggerEditorial(personaId: string): void {
+    private triggerEditorial(personaId: string, btn: HTMLElement): void {
         // No manuscript-count check needed — the active document is always the
         // primary manuscript. The manuscripts list is for ADDITIONAL files only.
         const instruction = personaId === 'custom' ? this.customInstruction : undefined;
         if (this.queueMode) {
             // Queue and stay on Create so the writer can queue several. The Notice +
             // badge update fire from submitFeedbackJob's feedbackQueueChanged.
-            this.onEditorialQueue?.(personaId, instruction);
+            void this.runQueuedSubmit(btn, () => this.onEditorialQueue?.(personaId, instruction), {
+                loadingText: 'Adding to queue…'
+            });
             return;
         }
         this.onEditorialGenerate?.(personaId, instruction);
     }
 
-    private triggerCritical(): void {
+    private triggerCritical(btn: HTMLElement): void {
         if (!this.currentMode) {
             new Notice('Quill: Pick an analysis mode first.');
             return;
         }
+        // Capture the narrowed mode — `this.currentMode` is `'' | AnalysisMode`
+        // and the closure below would re-widen it without this local.
+        const mode = this.currentMode;
         const instruction = this.customInstruction || undefined;
         if (this.queueMode) {
-            this.onCriticalQueue?.(this.currentMode, this.currentScope, instruction);
+            void this.runQueuedSubmit(btn, () => this.onCriticalQueue?.(mode, this.currentScope, instruction), {
+                loadingText: 'Adding to queue…'
+            });
             return;
         }
-        this.onCriticalGenerate?.(this.currentMode, this.currentScope, instruction);
+        this.onCriticalGenerate?.(mode, this.currentScope, instruction);
     }
 
-    private triggerManuscript(): void {
+    private triggerManuscript(btn: HTMLElement): void {
         if (!this.currentManuscriptMode) {
             new Notice('Quill: Pick a manuscript analysis mode first.');
             return;
         }
+        // Capture the narrowed mode — see triggerCritical for why.
+        const manuscriptMode = this.currentManuscriptMode;
         const instruction = this.customInstruction || undefined;
         if (this.queueMode) {
-            this.onManuscriptQueue?.(
-                this.currentManuscriptMode,
-                this.currentManuscriptScope,
-                this.currentCompactionStrategy,
-                instruction
+            void this.runQueuedSubmit(
+                btn,
+                () =>
+                    this.onManuscriptQueue?.(
+                        manuscriptMode,
+                        this.currentManuscriptScope,
+                        this.currentCompactionStrategy,
+                        instruction
+                    ),
+                { loadingText: 'Adding to queue…' }
             );
             return;
         }
         this.onManuscriptGenerate?.(
-            this.currentManuscriptMode,
+            manuscriptMode,
             this.currentManuscriptScope,
             this.currentCompactionStrategy,
             instruction
         );
+    }
+
+    /**
+     * Show a brief loading state on the triggering button while a queue submit
+     * is in flight, so the writer gets immediate confirmation that the click
+     * registered (the Notice toast at the top of the screen is easy to miss —
+     * local feedback at the click site is clearer).
+     *
+     * Targeted DOM update only — no full re-render, so the custom-instruction
+     * textarea keeps its focus and cursor position. The loading state shows for
+     * at least ~650ms (the UX "false loading" the writer sees) or until the
+     * underlying enqueue finishes, whichever is longer. Buttons with inner
+     * elements (e.g. the persona picker's name + desc spans) skip the text swap
+     * and rely on the disabled + pulse state alone.
+     */
+    private async runQueuedSubmit(
+        btn: HTMLElement,
+        action: () => Promise<void> | void,
+        opts: { loadingText?: string } = {}
+    ): Promise<void> {
+        const swapText = opts.loadingText !== undefined && btn.childElementCount === 0;
+        const originalText = swapText ? (btn.textContent ?? '') : null;
+        btn.setAttribute('disabled', 'disabled');
+        btn.addClass('quill-review-panel__submit--queuing');
+        if (swapText && opts.loadingText) btn.textContent = opts.loadingText;
+        // One-shot UX delay. registerInterval is for recurring ticks, not a
+        // single brief loading-state hold (see AGENTS.md "No raw timers"
+        // exception list — ui/* panels are already in that set).
+        const minDisplay = new Promise<void>((resolve) => window.setTimeout(resolve, 650));
+        try {
+            await Promise.all([Promise.resolve(action()), minDisplay]);
+        } finally {
+            if (swapText && originalText !== null) btn.textContent = originalText;
+            btn.removeAttribute('disabled');
+            btn.removeClass('quill-review-panel__submit--queuing');
+        }
     }
 
     // ========================================================================
@@ -1350,7 +1407,15 @@ export class ReviewPanel extends AbstractChatPanel {
 
     private renderChatBottom(_scroll: HTMLElement, disabled = false): void {
         if (!this.containerEl) return;
-        const bottomArea = this.containerEl.createDiv({ cls: 'quill-chat-panel__bottom' });
+        const bottomArea = this.containerEl.createDiv({
+            cls: [
+                'quill-chat-panel__bottom',
+                this.compactWidth ? 'quill-chat-panel__bottom--compact' : '',
+                this.compactHeight ? 'quill-chat-panel__bottom--compact-height' : ''
+            ]
+                .filter(Boolean)
+                .join(' ')
+        });
 
         const btnRow = bottomArea.createDiv({ cls: 'quill-chat-panel__btn-row' });
         const addCtxBtn = btnRow.createEl('button', {

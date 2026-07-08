@@ -5,6 +5,23 @@ import { type ActiveDocument, getActiveDocument, renderDocumentHeader } from './
 export type { ActiveDocument };
 
 /**
+ * Below this panel width (px), chat panels collapse secondary button-row
+ * controls (e.g. the co-writer hides Add-context / Refresh behind a hamburger
+ * overflow menu). Shared by every chat panel subclass via the
+ * {@link AbstractChatPanel} ResizeObserver so the Review tab's results chat
+ * gets the same treatment as the co-writer.
+ */
+const COMPACT_WIDTH_THRESHOLD = 420;
+
+/**
+ * Below this panel height (px), the chat textarea collapses from its default
+ * ~180px (5+ lines) down to ~2 lines so it stops eating half the visible chat
+ * on phones in portrait and on short desktop sidebars. Secondary metadata rows
+ * hide too (co-writer: plot map + token indicator). Shared by all chat panels.
+ */
+const COMPACT_HEIGHT_THRESHOLD = 700;
+
+/**
  * A single message in a chat conversation within a chat panel.
  * Extended by specific panel message types (e.g., CoWriterChatMessage).
  */
@@ -55,6 +72,33 @@ export abstract class AbstractChatPanel {
     /** True while render() is mid-execution; scroll events are ignored during this window. */
     protected renderPending = false;
 
+    /**
+     * Whether the panel is currently in compact (narrow) mode. Toggled by the
+     * shared {@link resizeObserver} and read by subclass render methods to add
+     * BEM `--compact` modifiers (e.g. the co-writer's button-row hamburger
+     * overflow). Shared so every chat panel responds to width changes the same
+     * way without each subclass wiring its own observer.
+     */
+    protected compactWidth = false;
+
+    /**
+     * Whether the panel is short enough that the textarea has collapsed to
+     * ~2 lines. Toggled by {@link resizeObserver} (height axis). Independent
+     * of {@link compactWidth} — a wide-but-short pane collapses height but not
+     * width, and vice versa.
+     */
+    protected compactHeight = false;
+
+    /**
+     * Observes the panel container's width AND height to toggle
+     * {@link compactWidth} / {@link compactHeight} and schedule a re-render.
+     * Shared by all chat panel subclasses — set up in {@link setContainer},
+     * torn down in {@link detach}. Centralized here so the Review tab's
+     * results chat gets the same responsive breakpoints as the co-writer
+     * (previously the observer lived only in the co-writer subclass).
+     */
+    private resizeObserver: ResizeObserver | null = null;
+
     constructor(app: App) {
         this.app = app;
     }
@@ -78,6 +122,53 @@ export abstract class AbstractChatPanel {
             }
         };
         containerEl.addEventListener('keydown', this.keydownHandler);
+        this.setupResponsiveObserver(containerEl);
+    }
+
+    /**
+     * Begin observing the container for width/height changes, toggling
+     * {@link compactWidth} / {@link compactHeight} and scheduling a re-render
+     * when either crosses its threshold. Idempotent — disconnects any prior
+     * observer first. Called from {@link setContainer}; subclasses that
+     * override `setContainer` should call this rather than wiring their own
+     * observer so every chat panel shares the same breakpoints.
+     */
+    protected setupResponsiveObserver(containerEl: HTMLElement): void {
+        this.resizeObserver?.disconnect();
+        this.resizeObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const { width, height } = entry.contentRect;
+                const compactW = width < COMPACT_WIDTH_THRESHOLD;
+                const compactH = height < COMPACT_HEIGHT_THRESHOLD && height > 0;
+                if (compactW !== this.compactWidth || compactH !== this.compactHeight) {
+                    this.compactWidth = compactW;
+                    this.compactHeight = compactH;
+                    this.scheduleRender();
+                }
+            }
+        });
+        this.resizeObserver.observe(containerEl);
+    }
+
+    /** Stop the responsive observer. Safe to call when no observer is active. */
+    protected teardownResponsiveObserver(): void {
+        this.resizeObserver?.disconnect();
+        this.resizeObserver = null;
+    }
+
+    /**
+     * Tear down the responsive observer and remove the keydown listener so the
+     * panel cannot fire on — or repopulate — another tab's UI after the sidebar
+     * clears or reuses the shared content container. Called by the sidebar
+     * before every tab switch; {@link setContainer} re-establishes everything
+     * when the panel's tab is re-activated.
+     */
+    detach(): void {
+        this.teardownResponsiveObserver();
+        if (this.containerEl && this.keydownHandler) {
+            this.containerEl.removeEventListener('keydown', this.keydownHandler);
+            this.keydownHandler = null;
+        }
     }
 
     /** Each subclass defines its own render logic. */

@@ -207,3 +207,64 @@ export async function safeGet(url: string, headers: Record<string, string> = {})
         return null;
     }
 }
+
+/**
+ * Substrings (lowercased) that characterize the raw network/websocket errors
+ * the mobile WebView throws when the OS suspends the app mid-`requestUrl`.
+ * The exact string varies by platform (Capacitor bridge, Android WebView,
+ * iOS WebView), so we match a broad set of common signatures.
+ */
+const MOBILE_NETWORK_DROP_SIGNATURES = [
+    'failed to fetch',
+    'load failed',
+    'network error',
+    'networkerror',
+    'network request failed',
+    'websocket',
+    'err_internet_disconnected',
+    'err_network_changed',
+    'err_connection_reset',
+    'err_connection_closed',
+    'err_connection_refused',
+    'the internet connection appears to be offline',
+    'request failed'
+];
+
+/**
+ * Heuristic: does this error look like a network/connection drop of the kind
+ * the mobile WebView produces when the OS suspends the app (screen lock, app
+ * switch) mid-`requestUrl`? Returns false on desktop or when the error
+ * doesn't match a known network-drop signature. Used by the providers to add
+ * a friendlier hint pointing at the likely cause instead of surfacing the raw
+ * Capacitor/websocket exception string.
+ */
+export function looksLikeMobileNetworkDrop(err: unknown): boolean {
+    if (!Platform.isMobile) return false;
+    const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+    if (!msg) return false;
+    return MOBILE_NETWORK_DROP_SIGNATURES.some((sig) => msg.includes(sig));
+}
+
+/**
+ * Hint appended to a network-drop error message on mobile, explaining the
+ * likely cause (app backgrounding) so the writer knows it wasn't a provider
+ * bug and how to avoid it. Empty on desktop / non-drop errors.
+ */
+const MOBILE_DROP_HINT =
+    ' (This often happens on mobile when Obsidian is backgrounded or the screen locks — keep the app in focus during AI flows.)';
+
+/**
+ * Wrap an error with a mobile-aware hint if it looks like a network drop that
+ * occurred while the app was suspended. Returns the original error unchanged
+ * on desktop or for non-drop errors (so non-mobile callers see no behavioral
+ * change). Mobile callers rethrow the result.
+ */
+export function withMobileNetworkHint(err: unknown): Error {
+    if (!looksLikeMobileNetworkDrop(err)) {
+        return err instanceof Error ? err : new Error(String(err));
+    }
+    const base = err instanceof Error ? err.message : String(err);
+    const wrapped = new Error(`${base}${MOBILE_DROP_HINT}`);
+    wrapped.name = err instanceof Error ? err.name : 'NetworkError';
+    return wrapped;
+}

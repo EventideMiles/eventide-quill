@@ -24,7 +24,8 @@ import {
     throwOnNonOk,
     catchErrorResponse,
     httpErrorResponse,
-    safeGet
+    safeGet,
+    withMobileNetworkHint
 } from './transport';
 
 /** Shape of a single model in the Ollama /api/tags response. */
@@ -158,14 +159,21 @@ export class OllamaProvider implements AiProvider {
             return;
         }
 
-        // Mobile fallback: buffer the full response
-        const response: RequestUrlResponse = await requestUrl({
-            url,
-            method: 'POST',
-            headers,
-            body,
-            throw: false
-        });
+        // Mobile fallback: buffer the full response. See openai-provider for
+        // the withMobileNetworkHint rationale (requestUrl has no abort hook and
+        // the OS kills this call on background).
+        let response: RequestUrlResponse;
+        try {
+            response = await requestUrl({
+                url,
+                method: 'POST',
+                headers,
+                body,
+                throw: false
+            });
+        } catch (err) {
+            throw withMobileNetworkHint(err);
+        }
 
         throwOnNonOk(response, 'Chat completion');
 
