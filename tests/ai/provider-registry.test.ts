@@ -3,9 +3,14 @@ import {
     parseProviderKey,
     generateModelId,
     generateProviderId,
-    getModel
+    getModel,
+    createProvider
 } from '../../src/ai/provider-registry';
 import type { ProviderConfig } from '../../src/ai/provider';
+import { OpenAiCompatibleProvider } from '../../src/ai/openai-provider';
+import { OllamaProvider } from '../../src/ai/ollama-provider';
+import { AnthropicProvider } from '../../src/ai/anthropic-provider';
+import { GeminiProvider } from '../../src/ai/gemini-provider';
 
 function makeProviders(): ProviderConfig[] {
     return [
@@ -31,6 +36,29 @@ function makeProviders(): ProviderConfig[] {
             models: [{ id: 'mistral-chat', role: 'chat', model: 'mistral' }],
             maxContextTokens: 32768,
             maxOutputTokens: 4096
+        },
+        {
+            id: 'anthropic-cloud',
+            name: 'Anthropic',
+            type: 'anthropic',
+            endpoint: 'https://api.anthropic.com/v1',
+            apiKey: 'sk-ant-test',
+            models: [{ id: 'sonnet-chat', role: 'chat', model: 'claude-sonnet-4-5' }],
+            maxContextTokens: 200000,
+            maxOutputTokens: 4096
+        },
+        {
+            id: 'gemini-cloud',
+            name: 'Gemini',
+            type: 'gemini',
+            endpoint: 'https://generativelanguage.googleapis.com/v1beta',
+            apiKey: 'AIzaSy-test',
+            models: [
+                { id: 'flash-chat', role: 'chat', model: 'gemini-2.0-flash' },
+                { id: 'text-embed', role: 'embed', model: 'text-embedding-004' }
+            ],
+            maxContextTokens: 1000000,
+            maxOutputTokens: 8192
         }
     ];
 }
@@ -111,5 +139,36 @@ describe('getModel', () => {
 
     it('returns null for a non-existent model', () => {
         expect(getModel(makeProviders(), 'lm-studio', 'nonexistent')).toBeNull();
+    });
+});
+
+describe('createProvider — exhaustive dispatch on type', () => {
+    // The exhaustive `switch (config.type)` in createProvider means a future
+    // addition to the ProviderType union without a matching case breaks
+    // compilation. These tests assert the runtime mapping for each type,
+    // including the new anthropic + gemini native providers.
+
+    it('instantiates OpenAiCompatibleProvider for "openai-compatible"', () => {
+        const provider = createProvider(makeProviders()[0]!);
+        expect(provider).toBeInstanceOf(OpenAiCompatibleProvider);
+    });
+
+    it('instantiates OllamaProvider for "ollama"', () => {
+        const provider = createProvider(makeProviders()[1]!);
+        expect(provider).toBeInstanceOf(OllamaProvider);
+    });
+
+    it('instantiates AnthropicProvider for "anthropic"', () => {
+        const provider = createProvider(makeProviders()[2]!);
+        expect(provider).toBeInstanceOf(AnthropicProvider);
+        expect(provider.id).toBe('anthropic-cloud');
+        expect(provider.name).toBe('Anthropic');
+    });
+
+    it('instantiates GeminiProvider for "gemini"', () => {
+        const provider = createProvider(makeProviders()[3]!);
+        expect(provider).toBeInstanceOf(GeminiProvider);
+        expect(provider.id).toBe('gemini-cloud');
+        expect(provider.name).toBe('Gemini');
     });
 });

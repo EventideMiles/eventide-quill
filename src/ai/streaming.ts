@@ -563,3 +563,434 @@ export async function* processChunksWithThoughts(
         yield chunk;
     }
 }
+
+// ----------------------------------------------------------------------------
+// Anthropic Messages API streaming
+// ----------------------------------------------------------------------------
+//
+// Anthropic's SSE stream is event-typed: each SSE block carries both an
+// `event:` line (`message_start`, `content_block_start`, `content_block_delta`,
+// `content_block_stop`, `message_delta`, `message_stop`, `ping`, `error`) and
+// a `data:` JSON payload whose `type` field mirrors the event name. A single
+// assistant turn produces one or more content blocks — text, thinking, or
+// tool_use — each opened with `content_block_start`, streamed via one or more
+// `content_block_delta`s, and closed with `content_block_stop`. Thinking blocks
+// also carry a `signature_delta` that must be preserved across turns when
+// thinking is enabled (the model signs its reasoning so the next turn can
+// verify it was not tampered with).
+//
+// Because the stream is stateful (each delta is prefixed by its block's
+// `content_block_start`), Anthropic parsing cannot be a pure per-event
+// function like {@link openAiSseDataToChunk}. The {@link AnthropicStreamAggregator}
+// below is the stateful reducer that maps the event sequence onto Quill's
+// stateless {@link ChatChunk} stream.
+
+/**
+ * A captured Anthropic thinking block (reasoning text + the model's signature).
+ * Carried on the assistant {@link ChatMessage} so subsequent turns can replay
+ * the thinking blocks alongside their tool_use blocks — required by the
+ * Messages API when extended thinking is enabled with tool use. Other
+ * providers ignore the field.
+ */
+export interface AnthropicThinkingBlock {
+    thinking: string;
+    signature: string;
+}
+
+/** Discriminator for the in-flight content block the aggregator is tracking. */
+type AnthropicBlockType = 'text' | 'thinking' | 'tool_use' | 'redacted_thinking';
+
+/**
+ * Stateful reducer that converts an Anthropic SSE event sequence into a stream
+ * of provider-agnostic {@link ChatChunk}s. Create one per response stream and
+ * feed it each parsed SSE event via {@link processEvent}; the same instance
+ * works for both desktop streaming and the buffered mobile fallback.
+ *
+ * Mapping:
+ * - `text_delta`           → `chunk.text`
+ * - `thinking_delta`       → `chunk.thought`
+ * - `signature_delta`      → captured into the current thinking block's signature buffer (no chunk emitted)
+ * - `input_json_delta`     → appended to the current tool_use's arguments buffer; emitted as a `ToolCallFragment`
+ * - `message_start`        → emits nothing (input usage is exposed via `usage` if present)
+ * - `content_block_start`  → records the next block's type and (for tool_use) its id + name; for tool_use, emits the leading ToolCallFragment carrying id + name
+ * - `content_block_stop`   → closes the current block; if it was a thinking block, the captured thinking + signature are queued on {@link finishedThinking} for the consumer to stamp on the assistant message
+ * - `message_delta`        → emits a chunk with `done:true` and any usage figures carried by the delta
+ * - `message_stop`         → emits the terminal chunk (no body)
+ * - `error`                → throws a synthetic Error carrying Anthropic's error message
+ */
+export class AnthropicStreamAggregator {
+    /** The type of the block currently being streamed (null between blocks). */
+    private blockType: AnthropicBlockType | null = null;
+    /** The Anthropic content-block index of the current block. */
+    private blockIndex = -1;
+    /**
+     * The Quill tool-call index (only incremented for `tool_use` blocks).
+     * Text/thinking blocks do not consume a tool-call slot.
+     */
+    private toolCallIndex = -1;
+    /** Pending id for the current tool_use block, if any. */
+    private currentToolCallId: string | undefined;
+    /** Pending name for the current tool_use block, if any. */
+    private currentToolCallName: string | undefined;
+    /** Accumulated thinking text for the current thinking block, if any. */
+    private currentThinkingText = '';
+    /** Accumulated signature for the current thinking block, if any. */
+    private currentThinkingSignature = '';
+    /** Completed thinking blocks for this assistant turn, in order. */
+    private readonly thinkingBlocks: AnthropicThinkingBlock[] = [];
+
+    /**
+     * Read-only access to the thinking blocks captured during this stream.
+     * Consumers (the Anthropic provider) stamp these onto the assistant
+     * {@link ChatMessage} so subsequent turns replay them with tool_use blocks.
+     */
+    get finishedThinking(): readonly AnthropicThinkingBlock[] {
+        return this.thinkingBlocks;
+    }
+
+    /**
+     * Process one SSE event and return zero or more ChatChunks to forward
+     * downstream. Throws if the event is an Anthropic error event.
+     */
+    processEvent(event: SseEvent): ChatChunk[] {
+        // Anthropic events always carry JSON data; ignore anything that doesn't.
+        if (!event.data) return [];
+        let parsed: Record<string, unknown>;
+        try {
+            parsed = JSON.parse(event.data) as Record<string, unknown>;
+        } catch {
+            return [];
+        }
+
+        const type = (parsed.type as string | undefined) ?? event.event;
+        switch (type) {
+            case 'message_start': {
+                // Carry input usage if Anthropic included it (lets the token
+                // indicator reflect input cost even on stream cancellation).
+                const message = parsed.message as
+                    | { usage?: { input_tokens?: number; output_tokens?: number } }
+                    | undefined;
+                const usage = message?.usage;
+                if (usage && typeof usage.input_tokens === 'number') {
+                    return [
+                        {
+                            text: '',
+                            done: false,
+                            usage: {
+                                promptTokens: usage.input_tokens,
+                                completionTokens: usage.output_tokens ?? 0,
+                                totalTokens: usage.input_tokens + (usage.output_tokens ?? 0)
+                            }
+                        }
+                    ];
+                }
+                return [];
+            }
+            case 'content_block_start': {
+                const idx = parsed.index as number;
+                const block = parsed.content_block as
+                    | { type?: string; id?: string; name?: string; text?: string }
+                    | undefined;
+                this.blockIndex = idx;
+                this.currentToolCallId = undefined;
+                this.currentToolCallName = undefined;
+                this.currentThinkingText = '';
+                this.currentThinkingSignature = '';
+                if (block?.type === 'text') {
+                    this.blockType = 'text';
+                    // Anthropic seeds the first delta inside content_block_start.text;
+                    // emit it immediately if non-empty so streaming feels instant.
+                    if (typeof block.text === 'string' && block.text.length > 0) {
+                        return [{ text: block.text, done: false }];
+                    }
+                    return [];
+                }
+                if (block?.type === 'thinking') {
+                    this.blockType = 'thinking';
+                    return [];
+                }
+                if (block?.type === 'redacted_thinking') {
+                    this.blockType = 'redacted_thinking';
+                    return [];
+                }
+                if (block?.type === 'tool_use') {
+                    this.blockType = 'tool_use';
+                    this.toolCallIndex += 1;
+                    this.currentToolCallId = block.id;
+                    this.currentToolCallName = block.name;
+                    // Emit the leading fragment carrying id + name so the
+                    // accumulator can register the call before any argument
+                    // deltas arrive. Initial arguments string is empty.
+                    return [
+                        {
+                            text: '',
+                            done: false,
+                            toolCalls: [
+                                {
+                                    index: this.toolCallIndex,
+                                    id: block.id,
+                                    name: block.name,
+                                    arguments: ''
+                                }
+                            ]
+                        }
+                    ];
+                }
+                return [];
+            }
+            case 'content_block_delta': {
+                const delta = parsed.delta as
+                    | {
+                          type?: string;
+                          text?: string;
+                          thinking?: string;
+                          signature?: string;
+                          partial_json?: string;
+                      }
+                    | undefined;
+                if (!delta) return [];
+                switch (delta.type) {
+                    case 'text_delta':
+                        return [{ text: delta.text ?? '', done: false }];
+                    case 'thinking_delta':
+                        this.currentThinkingText += delta.thinking ?? '';
+                        return [{ text: '', done: false, thought: delta.thinking ?? '' }];
+                    case 'signature_delta':
+                        // Signatures stream incrementally too — accumulate, no chunk.
+                        this.currentThinkingSignature += delta.signature ?? '';
+                        return [];
+                    case 'input_json_delta':
+                        return [
+                            {
+                                text: '',
+                                done: false,
+                                toolCalls: [
+                                    {
+                                        index: this.toolCallIndex,
+                                        arguments: delta.partial_json ?? ''
+                                    }
+                                ]
+                            }
+                        ];
+                    default:
+                        return [];
+                }
+            }
+            case 'content_block_stop': {
+                // Close the current block. Thinking blocks are queued with
+                // their accumulated signature for the consumer to persist.
+                if (this.blockType === 'thinking' && this.currentThinkingText) {
+                    this.thinkingBlocks.push({
+                        thinking: this.currentThinkingText,
+                        signature: this.currentThinkingSignature
+                    });
+                }
+                this.blockType = null;
+                this.blockIndex = -1;
+                return [];
+            }
+            case 'message_delta': {
+                const delta = parsed.delta as { stop_reason?: string | null } | undefined;
+                const usage = parsed.usage as { output_tokens?: number } | undefined;
+                const stopReason = delta?.stop_reason;
+                const chunk: ChatChunk = {
+                    text: '',
+                    done: stopReason !== null && stopReason !== undefined
+                };
+                if (usage && typeof usage.output_tokens === 'number') {
+                    chunk.usage = {
+                        // completionTokens alone — input_tokens was emitted in message_start.
+                        // totalTokens is recomposed downstream if message_start was seen.
+                        promptTokens: 0,
+                        completionTokens: usage.output_tokens,
+                        totalTokens: usage.output_tokens
+                    };
+                }
+                return [chunk];
+            }
+            case 'message_stop':
+                return [{ text: '', done: true }];
+            case 'ping':
+                return [];
+            case 'error': {
+                const err = parsed.error as { message?: string; type?: string } | undefined;
+                const msg = err?.message ?? 'Anthropic stream error';
+                throw new Error(msg);
+            }
+            default:
+                return [];
+        }
+    }
+}
+
+/**
+ * Convenience wrapper: feed an array of parsed SSE events through a fresh
+ * {@link AnthropicStreamAggregator} and return the flattened ChatChunk list.
+ * Mirrors {@link openAiEventsToChunks} for the buffered mobile path.
+ */
+export function anthropicEventsToChunks(events: SseEvent[]): ChatChunk[] {
+    const agg = new AnthropicStreamAggregator();
+    const out: ChatChunk[] = [];
+    for (const event of events) {
+        out.push(...agg.processEvent(event));
+    }
+    if (out.length === 0 || !out[out.length - 1]!.done) {
+        out.push({ text: '', done: true });
+    }
+    return out;
+}
+
+// ----------------------------------------------------------------------------
+// Gemini GenerateContent API streaming
+// ----------------------------------------------------------------------------
+//
+// Gemini's `streamGenerateContent?alt=sse` endpoint emits SSE blocks with
+// `data: {...}` lines (no `event:` field), each carrying a full or partial
+// `GenerateContentResponse`:
+//
+//   { "candidates": [ { "content": { "role": "model", "parts": [
+//                        { "text": "..." } | { "functionCall": {...} } |
+//                        { "inlineData": {...} }
+//                      ] }, "finishReason": "STOP", "safetyRatings": [...] } ],
+//     "usageMetadata": { "promptTokenCount": N, "candidatesTokenCount": N,
+//                        "totalTokenCount": N } }
+//
+// Unlike Anthropic/OpenAI, Gemini emits fully-formed function calls (not
+// streamed fragments) — we synthesize one ToolCallFragment per call. The
+// `finishReason` field surfaces safety-filter blocks; the Gemini provider
+// detects `SAFETY`/`RECITATION`/`BLOCKLIST` and throws a clear ProviderError.
+
+/** Shape of a single Gemini `candidates[].content.parts[]` entry. */
+interface GeminiPart {
+    text?: string;
+    functionCall?: { name: string; args?: Record<string, unknown> };
+    functionResponse?: { name: string; response?: Record<string, unknown> };
+    inlineData?: { mimeType?: string; data?: string };
+}
+
+/** Shape of a single Gemini `candidates[]` entry. */
+interface GeminiCandidate {
+    content?: { role?: string; parts?: GeminiPart[] };
+    finishReason?: string | null;
+    safetyRatings?: Array<{ category?: string; probability?: string }>;
+}
+
+/** Top-level shape of a Gemini `streamGenerateContent` SSE data line. */
+export interface GeminiSseData {
+    candidates?: GeminiCandidate[];
+    promptFeedback?: { blockReason?: string };
+    usageMetadata?: {
+        promptTokenCount?: number;
+        candidatesTokenCount?: number;
+        totalTokenCount?: number;
+    };
+}
+
+/** Finish-reason values that indicate Gemini refused to produce output. */
+const GEMINI_BLOCKING_FINISH_REASONS = new Set(['SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII']);
+
+/** promptFeedback.blockReason values that mean the prompt was refused. */
+const GEMINI_BLOCKING_PROMPT_REASONS = new Set(['SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII']);
+
+/**
+ * Convert a single Gemini SSE data payload into a ChatChunk.
+ *
+ * Returns `null` when the payload carries no usable content (a bare ping,
+ * an empty candidates array, or a candidates entry with no parts). The
+ * Gemini provider is responsible for surfacing safety-filter blocks as a
+ * ProviderError — this helper sets `done:true` on any non-empty finishReason
+ * but does not throw, so the caller can decide how to frame the failure.
+ */
+export function geminiSseDataToChunk(parsed: GeminiSseData): ChatChunk | null {
+    // Prompt-level block — no candidates were ever produced.
+    if (parsed.promptFeedback?.blockReason && GEMINI_BLOCKING_PROMPT_REASONS.has(parsed.promptFeedback.blockReason)) {
+        return {
+            text: '',
+            done: true
+        };
+    }
+
+    if (!parsed.candidates || parsed.candidates.length === 0) return null;
+    const candidate = parsed.candidates[0];
+    if (!candidate) return null;
+
+    const parts = candidate.content?.parts ?? [];
+    const chunk: ChatChunk = {
+        text: '',
+        done: candidate.finishReason !== null && candidate.finishReason !== undefined
+    };
+
+    const toolCalls: ToolCallFragment[] = [];
+    let thought = '';
+    for (const part of parts) {
+        if (typeof part.text === 'string' && part.text.length > 0) {
+            chunk.text += part.text;
+        }
+        if (part.functionCall) {
+            // Gemini emits the args as a parsed object; re-serialize to match
+            // Quill's arguments-are-a-JSON-string contract. Stable key order
+            // makes the resulting id deterministic across stream replays.
+            const argsString = JSON.stringify(part.functionCall.args ?? {});
+            toolCalls.push({
+                index: toolCalls.length,
+                name: part.functionCall.name,
+                arguments: argsString
+            });
+        }
+        // Gemini does not surface a separate thinking field today; if future
+        // models emit a "thought" part we accumulate it here for forward-compat.
+        const maybeThought = (part as unknown as { thought?: string; thoughtText?: string }).thought;
+        if (typeof maybeThought === 'string') thought += maybeThought;
+    }
+
+    if (toolCalls.length > 0) chunk.toolCalls = toolCalls;
+    if (thought) chunk.thought = thought;
+
+    if (parsed.usageMetadata) {
+        const promptTokens = parsed.usageMetadata.promptTokenCount ?? 0;
+        const completionTokens = parsed.usageMetadata.candidatesTokenCount ?? 0;
+        chunk.usage = {
+            promptTokens,
+            completionTokens,
+            totalTokens: parsed.usageMetadata.totalTokenCount ?? promptTokens + completionTokens
+        };
+    }
+
+    return chunk;
+}
+
+/**
+ * Returns true when a Gemini SSE payload indicates the response was blocked
+ * by a safety filter (either at the prompt or candidate stage). The provider
+ * uses this to throw a clear ProviderError rather than emitting empty text.
+ */
+export function geminiResponseBlocked(parsed: GeminiSseData): boolean {
+    if (parsed.promptFeedback?.blockReason && GEMINI_BLOCKING_PROMPT_REASONS.has(parsed.promptFeedback.blockReason)) {
+        return true;
+    }
+    const candidate = parsed.candidates?.[0];
+    if (candidate?.finishReason && GEMINI_BLOCKING_FINISH_REASONS.has(candidate.finishReason)) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Convert an array of Gemini SSE data payloads into ChatChunks. Mirrors
+ * {@link openAiEventsToChunks} for the buffered mobile path. The Gemini
+ * stream has no `[DONE]` sentinel — termination is signalled by `finishReason`
+ * on the final data line, so we always append a final done chunk defensively
+ * if the last payload didn't set one.
+ */
+export function geminiEventsToChunks(payloads: GeminiSseData[]): ChatChunk[] {
+    const chunks: ChatChunk[] = [];
+    for (const payload of payloads) {
+        const chunk = geminiSseDataToChunk(payload);
+        if (chunk) chunks.push(chunk);
+    }
+    const last = chunks[chunks.length - 1];
+    if (!last || !last.done) {
+        chunks.push({ text: '', done: true });
+    }
+    return chunks;
+}

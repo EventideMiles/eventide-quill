@@ -1,5 +1,5 @@
 /** Provider type identifier — determines which concrete provider class is instantiated. */
-export type ProviderType = 'openai-compatible' | 'ollama';
+export type ProviderType = 'openai-compatible' | 'ollama' | 'anthropic' | 'gemini';
 
 /** Configuration for a single provider endpoint. Stored in settings as part of an array. */
 export interface ProviderConfig {
@@ -19,6 +19,16 @@ export interface ProviderConfig {
     maxContextTokens: number;
     /** Maximum output tokens per response for all models on this endpoint. Default: 4096. */
     maxOutputTokens: number;
+    /**
+     * Optional extended-thinking budget in tokens. When set to a positive
+     * number on a provider that supports it (Anthropic native today), the
+     * provider enables the model's chain-of-thought and routes it through
+     * {@link ChatChunk.thought}. Ignored by providers that don't support
+     * thinking. Requires `maxOutputTokens` to be at least
+     * `thinkingBudgetTokens + 1` — the provider clamps if necessary.
+     * Currently Anthropic-only; reserved for future OpenAI reasoning models.
+     */
+    thinkingBudgetTokens?: number;
 }
 
 /**
@@ -122,6 +132,16 @@ export interface ChatMessage {
      * have none and are always retained.
      */
     quillAnchorId?: string;
+    /**
+     * Anthropic-only: thinking blocks captured from a prior assistant turn.
+     * Required when extended thinking is enabled alongside tool use — Anthropic
+     * signs each thinking block and the signed reasoning must be replayed
+     * alongside its sibling `tool_use` blocks on subsequent turns or the API
+     * will reject the request. Populated by the Anthropic provider when
+     * streaming completes; serialized back into `content` blocks in the order
+     * `[thinking..., tool_use...]`. Other providers ignore the field entirely.
+     */
+    thinkingBlocks?: { thinking: string; signature: string }[];
 }
 
 /**

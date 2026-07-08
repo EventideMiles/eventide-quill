@@ -1,6 +1,8 @@
 import { AiProvider, ModelConfig, ModelRole, ProviderConfig } from './provider';
 import { OpenAiCompatibleProvider } from './openai-provider';
 import { OllamaProvider } from './ollama-provider';
+import { AnthropicProvider } from './anthropic-provider';
+import { GeminiProvider } from './gemini-provider';
 
 /**
  * Create an AiProvider instance from a ProviderConfig.
@@ -12,6 +14,10 @@ export function createProvider(config: ProviderConfig): AiProvider {
             return new OpenAiCompatibleProvider(config);
         case 'ollama':
             return new OllamaProvider(config);
+        case 'anthropic':
+            return new AnthropicProvider(config);
+        case 'gemini':
+            return new GeminiProvider(config);
         default: {
             // Exhaustive check — if a new type is added without updating this switch,
             // TypeScript will error here.
