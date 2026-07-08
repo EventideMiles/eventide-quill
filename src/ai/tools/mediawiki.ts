@@ -12,7 +12,7 @@ import { assertNotRateLimited } from './http-retry';
  */
 
 /** Custom User-Agent to comply with Wikimedia's API policy (200 req/min tier). */
-export const MEDIAWIKI_UA = 'EventideQuill/1.0.1 (https://github.com/EventideMiles/eventide-quill)';
+export const MEDIAWIKI_UA = 'EventideQuill/1.1.0 (https://github.com/EventideMiles/eventide-quill)';
 
 /** Minimum interval (ms) between requests to the same host. */
 const MIN_INTERVAL_MS = 500;
