@@ -115,6 +115,32 @@ describe('buildAnthropicRequestBody — message conversion', () => {
         });
     });
 
+    it('merges a non-leading system message into the prior string user message', () => {
+        const body = build([
+            { role: 'user', content: 'q' },
+            { role: 'system', content: 'extra guidance' }
+        ]);
+        expect(body.messages).toEqual([{ role: 'user', content: 'q\n\nextra guidance' }]);
+    });
+
+    it('appends a non-leading system message as a text block when the prior user message has array content', () => {
+        // Regression: a user message carrying an image expands to array content;
+        // a following system message must not be silently dropped.
+        const body = build([
+            { role: 'user', content: 'describe this', images: ['BASE64=='] },
+            { role: 'system', content: 'extra guidance' }
+        ]);
+        const user = messageAt(body, 0);
+        const blocks = user.content as Array<Record<string, unknown>>;
+        // Original image block preserved...
+        expect(blocks).toContainEqual({
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/jpeg', data: 'BASE64==' }
+        });
+        // ...and the system text survives as an appended text block.
+        expect(blocks).toContainEqual({ type: 'text', text: 'extra guidance' });
+    });
+
     it('expands assistant tool_calls into tool_use content blocks with parsed input', () => {
         const body = build([
             { role: 'user', content: 'q' },

@@ -7,13 +7,14 @@ vi.mock('obsidian', async (importOriginal) => {
 });
 
 import { OllamaProvider } from '../../src/ai/ollama-provider';
-import { ProviderError, type ChatChunk, type ProviderConfig } from '../../src/ai/provider';
+import { ProviderError, type ProviderConfig } from '../../src/ai/provider';
 import {
     streamingResponse,
     errorResponse,
     bufferedResponse,
     mockWindowFetch,
     restoreWindow,
+    drain,
     ndjsonLine,
     type MockFetchResponse
 } from '../helpers/mock-http';
@@ -31,12 +32,6 @@ const config: ProviderConfig = {
 
 function makeProvider(): OllamaProvider {
     return new OllamaProvider(config);
-}
-
-async function drain(stream: AsyncGenerator<ChatChunk>): Promise<ChatChunk[]> {
-    const out: ChatChunk[] = [];
-    for await (const chunk of stream) out.push(chunk);
-    return out;
 }
 
 /** Ollama `/api/chat` NDJSON line. `done` is true only on the terminal line. */

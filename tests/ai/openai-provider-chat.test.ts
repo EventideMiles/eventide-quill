@@ -9,13 +9,14 @@ vi.mock('obsidian', async (importOriginal) => {
 });
 
 import { OpenAiCompatibleProvider } from '../../src/ai/openai-provider';
-import { ProviderError, type ChatChunk, type ProviderConfig } from '../../src/ai/provider';
+import { ProviderError, type ProviderConfig } from '../../src/ai/provider';
 import {
     streamingResponse,
     errorResponse,
     bufferedResponse,
     mockWindowFetch,
     restoreWindow,
+    drain,
     sseDataLine,
     sseDoneSentinel,
     type MockFetchResponse
@@ -34,12 +35,6 @@ const config: ProviderConfig = {
 
 function makeProvider(): OpenAiCompatibleProvider {
     return new OpenAiCompatibleProvider(config);
-}
-
-async function drain(stream: AsyncGenerator<ChatChunk>): Promise<ChatChunk[]> {
-    const out: ChatChunk[] = [];
-    for await (const chunk of stream) out.push(chunk);
-    return out;
 }
 
 /** OpenAI `choices[].delta` SSE payload. */

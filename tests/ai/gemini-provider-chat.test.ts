@@ -7,13 +7,14 @@ vi.mock('obsidian', async (importOriginal) => {
 });
 
 import { GeminiProvider } from '../../src/ai/gemini-provider';
-import { ProviderError, type ChatChunk, type ProviderConfig } from '../../src/ai/provider';
+import { ProviderError, type ProviderConfig } from '../../src/ai/provider';
 import {
     streamingResponse,
     errorResponse,
     bufferedResponse,
     mockWindowFetch,
     restoreWindow,
+    drain,
     sseDataLine,
     type MockFetchResponse
 } from '../helpers/mock-http';
@@ -31,12 +32,6 @@ const config: ProviderConfig = {
 
 function makeProvider(): GeminiProvider {
     return new GeminiProvider(config);
-}
-
-async function drain(stream: AsyncGenerator<ChatChunk>): Promise<ChatChunk[]> {
-    const out: ChatChunk[] = [];
-    for await (const chunk of stream) out.push(chunk);
-    return out;
 }
 
 /** A Gemini `streamGenerateContent` SSE data payload carrying text. */

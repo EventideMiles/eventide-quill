@@ -10,13 +10,14 @@ vi.mock('obsidian', async (importOriginal) => {
 });
 
 import { AnthropicProvider } from '../../src/ai/anthropic-provider';
-import { ProviderError, type ChatChunk, type ChatMessage, type ProviderConfig } from '../../src/ai/provider';
+import { ProviderError, type ChatMessage, type ProviderConfig } from '../../src/ai/provider';
 import {
     streamingResponse,
     errorResponse,
     bufferedResponse,
     mockWindowFetch,
     restoreWindow,
+    drain,
     sseEvent,
     type MockFetchResponse
 } from '../helpers/mock-http';
@@ -34,13 +35,6 @@ const config: ProviderConfig = {
 
 function makeProvider(): AnthropicProvider {
     return new AnthropicProvider(config);
-}
-
-/** Drain a provider stream into an array of chunks. */
-async function drain(stream: AsyncGenerator<ChatChunk>): Promise<ChatChunk[]> {
-    const out: ChatChunk[] = [];
-    for await (const chunk of stream) out.push(chunk);
-    return out;
 }
 
 describe('AnthropicProvider.chatCompletion', () => {

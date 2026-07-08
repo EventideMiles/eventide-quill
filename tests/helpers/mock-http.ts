@@ -10,6 +10,18 @@
  * `transport.ts` consumes) — they do NOT model a real HTTP server.
  */
 
+import type { ChatChunk } from '../../src/ai/provider';
+
+/**
+ * Drain a provider's `AsyncGenerator<ChatChunk>` into an array. Shared so every
+ * provider chatCompletion suite asserts against the same accumulated shape.
+ */
+export async function drain(stream: AsyncGenerator<ChatChunk>): Promise<ChatChunk[]> {
+    const out: ChatChunk[] = [];
+    for await (const chunk of stream) out.push(chunk);
+    return out;
+}
+
 /** Build a `ReadableStream<Uint8Array>` from string chunks (SSE / NDJSON bytes). */
 export function byteStreamFromChunks(chunks: string[]): ReadableStream<Uint8Array> {
     const enc = new TextEncoder();

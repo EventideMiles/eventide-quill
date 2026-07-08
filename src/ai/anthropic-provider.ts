@@ -148,6 +148,11 @@ export function buildAnthropicRequestBody(
                 const last = requestMessages[requestMessages.length - 1]!;
                 if (typeof last.content === 'string') {
                     last.content = last.content + '\n\n' + m.content;
+                } else {
+                    // Array content (e.g. a user message carrying image blocks)
+                    // — append the system text as a new text block rather than
+                    // silently dropping it.
+                    last.content.push({ type: 'text', text: m.content });
                 }
             } else {
                 requestMessages.push({ role: 'user', content: m.content });
@@ -431,7 +436,11 @@ export class AnthropicProvider implements AiProvider {
         const headers = this.buildHeaders();
 
         const chatModel = this.config.models.find((m) => roleSatisfies(m.role, 'chat'));
-        const modelName = chatModel?.model ?? 'claude-3-5-haiku-latest';
+        // Fallback for configs without an explicit chat model: probe with the
+        // cheapest active model so the connectivity check succeeds. Claude 3.5
+        // Haiku (the previous fallback) was retired Feb 2026 — see
+        // https://docs.anthropic.com/en/docs/about-claude/model-deprecations.
+        const modelName = chatModel?.model ?? 'claude-haiku-4-5-20251001';
 
         const body = JSON.stringify({
             model: modelName,
