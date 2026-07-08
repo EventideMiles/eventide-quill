@@ -200,7 +200,14 @@ const head = shCapture('git rev-parse HEAD');
 const existingTarget = tagCommit(version);
 if (existingTarget) {
     if (existingTarget === head) {
-        console.log(`\nrelease: tag ${version} already at HEAD — skipping creation (resume).`);
+        const tagType = shCapture(`git cat-file -t refs/tags/${version}`);
+        if (tagType === 'tag') {
+            console.log(`\nrelease: tag ${version} already at HEAD (annotated) — skipping creation (resume).`);
+        } else {
+            console.log(`\nrelease: replacing lightweight tag ${version} with annotated tag.`);
+            sh(`git tag -d ${version}`);
+            sh(`git tag -a ${version} -m ${version}`);
+        }
     } else {
         fail(`tag ${version} exists at ${existingTarget.slice(0, 8)}, not HEAD (${head.slice(0, 8)}). Resolve manually.`);
     }
