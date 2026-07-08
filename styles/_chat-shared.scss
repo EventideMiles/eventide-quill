@@ -243,3 +243,38 @@
         color: var(--text-normal);
     }
 }
+
+// =========================================================================
+// Responsive collapse — shared breakpoints from AbstractChatPanel
+// =========================================================================
+// The ResizeObserver in AbstractChatPanel (chat-panel.ts) toggles compactWidth
+// and compactHeight, and each chat panel's bottom-area render applies these BEM
+// modifiers. Mirrors the co-writer's own --compact / --compact-height rules
+// (see _cowriter-panel.scss) so the Review tab's results chat behaves the same
+// on mobile / narrow sidebars. The thresholds (COMPACT_WIDTH_THRESHOLD = 420,
+// COMPACT_HEIGHT_THRESHOLD = 700) live in chat-panel.ts — change them once and
+// both panels update.
+
+// Compact-height: collapse the textarea from ~180px to ~2 lines and hide the
+// token indicator (informational metadata) so the chat scroll area reclaims
+// the majority of the visible space on a phone in portrait or a short sidebar.
+.quill-chat-panel__bottom--compact-height {
+    .quill-chat-panel__input {
+        height: 3.6em;
+        min-height: 3.6em;
+    }
+
+    .quill-chat-panel__indicator {
+        display: none;
+    }
+}
+
+// Compact-width: tighten the button-row gap so the symbol buttons sit a little
+// closer on a narrow sidebar. The review panel's buttons are already single
+// symbols (no labels to hide), so this is lighter-touch than the co-writer's
+// hamburger-overflow collapse.
+.quill-chat-panel__bottom--compact {
+    .quill-chat-panel__btn-row {
+        gap: 2px;
+    }
+}

@@ -1,6 +1,8 @@
 import { type AiProvider, type ChatChunk, type ChatMessage } from './provider';
 import { getSystemPrompt } from './prompts';
 import { AI_MODE_CONFIGS } from './modes';
+import { chunkManuscript } from './manuscript-compaction';
+import { estimateTokens } from '../utils/tokens';
 import type { NarrativeVoicePreset } from '../types';
 
 /** A feedback persona definition. */
@@ -150,6 +152,171 @@ export async function* getFeedback(
 
     for await (const chunk of stream) {
         yield chunk;
+    }
+}
+
+/**
+ * Run editorial feedback on a manuscript too large for a single context window,
+ * using chunked map-reduce.
+ *
+ * The manuscript is split into paragraph-aware chunks (via {@link chunkManuscript}),
+ * each chunk gets its own feedback pass (buffered, reported via `onProgress`),
+ * then a final synthesis call combines the per-section notes into a cohesive
+ * report. Only the synthesis step streams — the per-chunk calls run silently
+ * with progress callbacks.
+ *
+ * This preserves full coverage (every section of the manuscript is read by the
+ * model in its original prose form) without overflowing the context window —
+ * unlike compression/summarization which would have the beta reader review a
+ * summary instead of the actual text.
+ *
+ * @param provider       The chat provider (same model used for chunks + synthesis).
+ * @param persona        The feedback persona (focus + instructions).
+ * @param manuscriptText The full manuscript text (will be chunked).
+ * @param maxContextTokens The model's context window, from `provider.config`.
+ * @param maxOutputTokens  The writer's configured output budget (used for the
+ *   synthesis step; per-chunk calls use a smaller cap to keep section notes concise).
+ * @param onProgress     Called before each chunk so the caller can show progress.
+ */
+export async function* getChunkedFeedback(
+    provider: AiProvider,
+    persona: FeedbackPersona | undefined,
+    options: {
+        manuscriptText: string;
+        maxContextTokens: number;
+        maxOutputTokens: number;
+        model?: string;
+        temperature?: number;
+        signal?: AbortSignal;
+        customInstruction?: string;
+        vaultContext?: string;
+        narrativePreset?: NarrativeVoicePreset;
+        onProgress?: (current: number, total: number) => void;
+    }
+): AsyncGenerator<ChatChunk> {
+    const config = AI_MODE_CONFIGS.analysis;
+    const temperature = options.temperature ?? config.defaultTemperature;
+    const model = options.model;
+
+    // Build the persona system prompt once — reused for every per-chunk call so
+    // each section gets the same editorial lens.
+    const baseMessages = buildFeedbackMessages(persona, {
+        vaultContext: options.vaultContext,
+        narrativePreset: options.narrativePreset,
+        customInstruction: options.customInstruction
+    });
+    const systemPrompt = baseMessages[0]!.content;
+    const systemTokens = estimateTokens(systemPrompt);
+
+    // Calculate the per-chunk token budget. Each chunk needs room for the
+    // system prompt + the chunk text + a section-wrapper instruction + the
+    // per-chunk output. A safety margin (80%) guards against estimation
+    // variance across tokenizers.
+    const PER_CHUNK_OUTPUT = Math.min(options.maxOutputTokens, 2000);
+    const WRAPPER_TOKENS = 300;
+    const availableForChunk = options.maxContextTokens - systemTokens - PER_CHUNK_OUTPUT - WRAPPER_TOKENS;
+    const chunkTarget = Math.max(500, Math.floor(availableForChunk * 0.8));
+
+    const chunks = chunkManuscript(options.manuscriptText, { targetTokenSize: chunkTarget });
+
+    // Edge case: if chunking produced only 1 chunk, the manuscript just barely
+    // crossed the threshold. Do a single normal-style call — no synthesis needed.
+    if (chunks.length <= 1) {
+        const singleStream = provider.chatCompletion({
+            messages: [
+                { role: 'system', content: systemPrompt },
+                {
+                    role: 'user',
+                    content: `${options.manuscriptText}\n\n${buildUserMessage(options.customInstruction)}`
+                }
+            ],
+            model,
+            temperature,
+            maxTokens: options.maxOutputTokens,
+            signal: options.signal
+        });
+        for await (const c of singleStream) yield c;
+        return;
+    }
+
+    // --- Map: per-chunk feedback (buffered, not streamed) ---
+    const sectionFeedback: string[] = [];
+    for (let i = 0; i < chunks.length; i++) {
+        options.onProgress?.(i + 1, chunks.length);
+
+        const chunk = chunks[i]!;
+        const chunkMessages: ChatMessage[] = [
+            { role: 'system', content: systemPrompt },
+            {
+                role: 'user',
+                content:
+                    `This is section ${i + 1} of ${chunks.length} of the manuscript. ` +
+                    `Provide your feedback focused on this section.\n\n---\n\n${chunk.text}`
+            }
+        ];
+
+        try {
+            let sectionResponse = '';
+            const chunkStream = provider.chatCompletion({
+                messages: chunkMessages,
+                model,
+                temperature,
+                maxTokens: PER_CHUNK_OUTPUT,
+                signal: options.signal
+            });
+            for await (const c of chunkStream) {
+                if (c.done) break;
+                sectionResponse += c.text;
+            }
+            if (sectionResponse.trim()) {
+                sectionFeedback.push(`### Section ${i + 1} of ${chunks.length}\n\n${sectionResponse.trim()}`);
+            }
+        } catch (err) {
+            // Abort propagates immediately — stop the whole run.
+            if (err instanceof Error && err.name === 'AbortError') throw err;
+            // A single failed chunk (transient network error, etc.) shouldn't
+            // kill the whole report — skip it and continue to the next.
+        }
+    }
+
+    if (sectionFeedback.length === 0) {
+        // Emit the message as a normal chunk, then a separate terminal chunk.
+        // Consumers ignore `.text` on a `done: true` chunk (it's a signal, not
+        // content), so a combined chunk would silently drop the message.
+        yield { text: 'No feedback could be generated from the manuscript sections.', done: false };
+        yield { text: '', done: true };
+        return;
+    }
+
+    // --- Reduce: synthesis (streamed to the caller) ---
+    // The synthesis prompt re-establishes the persona lens and instructs the
+    // model to organize by theme (not section-by-section) to produce a cohesive
+    // editorial report from the per-section notes.
+    const personaContext = persona
+        ? `You are ${persona.name}. ${persona.instructions}`
+        : 'You are an editorial feedback reader.';
+    const synthesisSystem =
+        `${personaContext}\n\n` +
+        `The manuscript was reviewed in ${chunks.length} sections due to length constraints. ` +
+        `Below are the per-section feedback notes. Synthesize them into a cohesive, well-organized ` +
+        `editorial report. Organize by theme and priority, NOT section-by-section. ` +
+        `Preserve specific observations, text quotes, and actionable suggestions from the notes. ` +
+        `Where multiple sections raised the same issue, consolidate it.` +
+        (options.customInstruction ? `\n\nAdditional instructions from the writer: ${options.customInstruction}` : '');
+
+    const synthesisStream = provider.chatCompletion({
+        messages: [
+            { role: 'system', content: synthesisSystem },
+            { role: 'user', content: sectionFeedback.join('\n\n---\n\n') }
+        ],
+        model,
+        temperature,
+        maxTokens: options.maxOutputTokens,
+        signal: options.signal
+    });
+
+    for await (const c of synthesisStream) {
+        yield c;
     }
 }
 

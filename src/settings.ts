@@ -1,4 +1,4 @@
-import { App, Modal, Notice, PluginSettingTab, Setting, SuggestModal } from 'obsidian';
+import { App, Menu, Modal, Notice, PluginSettingTab, Setting, SuggestModal } from 'obsidian';
 import EventideQuillPlugin from './main';
 import { ModelCapability, ModelInfo, ModelRole, ProviderConfig, ProviderType, roleSatisfies } from './ai/provider';
 import { createProvider, generateModelId, generateProviderId } from './ai/provider-registry';
@@ -17,6 +17,16 @@ export type LinterMode = 'all' | 'prose' | 'ai';
 export type SettingsTab = 'welcome' | 'general' | 'lorebook' | 'linter' | 'ai-providers' | 'model-behaviors';
 /** Which sidebar tab opens by default. Mirrors the dropdown options in the General settings. */
 export type DefaultTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard' | 'lorebook';
+
+/**
+ * Below this settings-pane width (px), the six top-level tab buttons collapse
+ * into a single "active tab" button that opens a native Obsidian {@link Menu}
+ * listing all tabs. Six text-only tabs (the longest label is "Model behaviors")
+ * need ~520px to sit comfortably without truncation; phones in portrait (~360
+ * dp) and narrow tablets fall under this threshold. Mirrors the ResizeObserver
+ * hamburger pattern in the sidebar (`quill-sidebar.ts`) and co-writer panel.
+ */
+const COMPACT_TABS_THRESHOLD = 520;
 
 /**
  * A user-defined slash command for the co-writer chat input. Typing `/`
@@ -499,9 +509,51 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     plugin: EventideQuillPlugin;
     private activeTab: SettingsTab = 'welcome';
 
+    /**
+     * Single source of truth for the six top-level tabs and their labels.
+     * Consumed by {@link renderTabBar} (button text + compact menu items),
+     * {@link showActiveTab} (compact-mode label sync), and the ResizeObserver
+     * compact-mode toggle. Add a tab here and it propagates everywhere.
+     */
+    private static readonly TABS: { id: SettingsTab; label: string }[] = [
+        { id: 'welcome', label: 'Welcome' },
+        { id: 'general', label: 'General' },
+        { id: 'lorebook', label: 'Lorebook' },
+        { id: 'linter', label: 'Linter' },
+        { id: 'ai-providers', label: 'AI providers' },
+        { id: 'model-behaviors', label: 'Model behaviors' }
+    ];
+
+    /**
+     * Whether the settings pane is narrow enough that the tab bar has
+     * collapsed into the compact dropdown. Toggled by {@link resizeObserver}
+     * and read by CSS via the `quill-settings-root--compact-tabs` modifier
+     * on the root element (no full re-render — avoids scroll disruption).
+     */
+    private compactTabs = false;
+
+    /** Observes the settings pane width to toggle {@link compactTabs}. */
+    private resizeObserver: ResizeObserver | null = null;
+
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app, plugin);
         this.plugin = plugin;
+    }
+
+    /**
+     * Clean up the {@link resizeObserver} when the settings tab is hidden.
+     *
+     * `SettingTab` is not a `Component`, so the observer can't be registered
+     * via `register()`. Obsidian calls `hide()` when the writer navigates away
+     * from the plugin's settings (closes settings, switches to another plugin's
+     * tab, etc.), making it the right teardown point. `display()` also
+     * disconnects defensively at the top of each redraw in case Obsidian
+     * re-renders without first calling `hide()`.
+     */
+    hide(): void {
+        this.resizeObserver?.disconnect();
+        this.resizeObserver = null;
+        super.hide();
     }
 
     /**
@@ -519,6 +571,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     display(): void {
         const { containerEl } = this;
 
+        // Disconnect any prior observer before re-observing. Obsidian may call
+        // display() multiple times (provider add/remove, toggle redraws) without
+        // first calling hide(); without this, stale observers would pile up.
+        this.resizeObserver?.disconnect();
+
         // Capture scroll position before teardown so we can restore it after
         // a redraw triggered by an in-tab action (toggle, add/remove row,
         // card field edit). Without this, `showActiveTab()` resets to 0 on
@@ -529,6 +586,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
         containerEl.empty();
         containerEl.addClass('quill-settings-root');
+        // Re-apply the compact modifier if a prior observer measurement set it
+        // (containerEl.empty() preserves classes on the root itself, but this
+        // is defensive in case a future change clears them).
+        containerEl.toggleClass('quill-settings-root--compact-tabs', this.compactTabs);
 
         this.renderTabBar(containerEl);
 
@@ -550,21 +611,38 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         this.renderFooter(containerEl);
 
         this.showActiveTab(savedScrollTop);
+
+        // Toggle compact mode when the settings pane narrows. Below the
+        // threshold the horizontal tab bar hides and a single "active tab"
+        // dropdown button takes its place. Mirrors the sidebar's own
+        // ResizeObserver at quill-sidebar.ts:101 (the only other responsive
+        // tab pattern in the repo).
+        this.resizeObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const compact = entry.contentRect.width < COMPACT_TABS_THRESHOLD;
+                if (compact !== this.compactTabs) {
+                    this.compactTabs = compact;
+                    containerEl.toggleClass('quill-settings-root--compact-tabs', compact);
+                }
+            }
+        });
+        this.resizeObserver.observe(containerEl);
     }
 
-    /** Render the tab bar at the top of the settings panel. */
+    /**
+     * Render the tab bar at the top of the settings panel.
+     *
+     * Two sibling bars are built on every render; CSS toggles which one is
+     * visible based on the `quill-settings-root--compact-tabs` modifier
+     * (flipped by {@link resizeObserver}). Building both up front avoids a
+     * full re-render when crossing the width threshold mid-session — only a
+     * class flips, so the writer's scroll position and form inputs survive.
+     */
     private renderTabBar(containerEl: HTMLElement): void {
+        const tabs = EventideQuillSettingTab.TABS;
+
+        // --- Standard horizontal tab bar (hidden under compact mode) ---
         const tabBar = containerEl.createEl('div', { cls: 'quill-settings__tab-bar' });
-
-        const tabs: { id: SettingsTab; label: string }[] = [
-            { id: 'welcome', label: 'Welcome' },
-            { id: 'general', label: 'General' },
-            { id: 'lorebook', label: 'Lorebook' },
-            { id: 'linter', label: 'Linter' },
-            { id: 'ai-providers', label: 'AI providers' },
-            { id: 'model-behaviors', label: 'Model behaviors' }
-        ];
-
         for (const tab of tabs) {
             const btn = tabBar.createEl('button', {
                 cls: `quill-settings__tab${this.activeTab === tab.id ? ' quill-settings__tab--active' : ''}`,
@@ -576,6 +654,35 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 this.showActiveTab();
             });
         }
+
+        // --- Compact dropdown bar (shown under compact mode) ---
+        // A single button echoes the active tab's label with a caret; clicking
+        // opens a native Obsidian Menu listing all tabs with a checkmark on the
+        // active one. Same pattern as the co-writer panel's overflow hamburger
+        // (co-writer-panel.ts:2127).
+        const compactBar = containerEl.createEl('div', { cls: 'quill-settings__compact-bar' });
+        const compactBtn = compactBar.createEl('button', {
+            cls: `quill-settings__compact-tab${' quill-settings__compact-tab--active'}`,
+            attr: { type: 'button', 'aria-label': 'Switch settings tab' }
+        });
+        const compactLabel = compactBtn.createEl('span', { cls: 'quill-settings__compact-tab-label' });
+        compactLabel.textContent = tabs.find((t) => t.id === this.activeTab)?.label ?? '';
+        compactBtn.createEl('span', { cls: 'quill-settings__compact-tab-caret' });
+        compactBtn.addEventListener('click', (e: MouseEvent) => {
+            const menu = new Menu();
+            for (const tab of tabs) {
+                menu.addItem((item) =>
+                    item
+                        .setTitle(tab.label)
+                        .setChecked(this.activeTab === tab.id)
+                        .onClick(() => {
+                            this.activeTab = tab.id;
+                            this.showActiveTab();
+                        })
+                );
+            }
+            menu.showAtMouseEvent(e);
+        });
     }
 
     /**
@@ -590,7 +697,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
      *                   previous scroll area and also falls back to 0.
      */
     private showActiveTab(scrollTop = 0): void {
-        const tabIds: SettingsTab[] = ['welcome', 'general', 'lorebook', 'linter', 'ai-providers', 'model-behaviors'];
+        const tabIds = EventideQuillSettingTab.TABS.map((t) => t.id);
         const tabs = this.containerEl.querySelectorAll('.quill-settings__tab');
 
         for (const id of tabIds) {
@@ -608,6 +715,15 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 el.removeClass('quill-settings__tab--active');
             }
         });
+
+        // Reflect the new active tab in the compact-mode dropdown button label.
+        // The compact bar is rebuilt on every display(), so a querySelector is
+        // sufficient — no cached reference to invalidate across redraws.
+        const compactLabel = this.containerEl.querySelector('.quill-settings__compact-tab-label');
+        if (compactLabel instanceof HTMLElement) {
+            const match = EventideQuillSettingTab.TABS.find((t) => t.id === this.activeTab);
+            if (match) compactLabel.textContent = match.label;
+        }
 
         const scrollArea = this.containerEl.querySelector('.quill-settings__scroll-area');
         if (scrollArea instanceof HTMLElement) {

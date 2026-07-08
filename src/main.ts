@@ -37,7 +37,7 @@ import {
     setPlotMap,
     entityFromId
 } from './utils/frontmatter';
-import { buildFeedbackMessages, getPersonaById, getFeedback } from './ai/feedback';
+import { buildFeedbackMessages, getChunkedFeedback, getPersonaById, getFeedback } from './ai/feedback';
 import {
     type FeedbackJob,
     mintJobId,
@@ -65,6 +65,7 @@ import type { ChatMessage } from './ai/provider';
 
 import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
 import type { LoreDraftEntry } from './ai/co-writer';
+import { MobileStreamWatchdog, notifyMobileStreamRisk } from './ai/mobile-watchdog';
 import { resolveSessionsDir, listSessions, saveSession, loadSession, deleteSession } from './ai/conversation-store';
 import { SessionListModal } from './ui/session-list-modal';
 import { ConfirmModal } from './ui/confirm-modal';
@@ -313,6 +314,31 @@ export default class EventideQuillPlugin extends Plugin {
      * the co-writer, Review, or transform surfaces.
      */
     private feedbackQueueAbort: AbortController | null = null;
+
+    /**
+     * Detects when Obsidian's mobile WebView is suspended mid AI-stream (screen
+     * lock, app switch) and warns the writer on resume. Attached in
+     * {@link onload}, detached in {@link onunload}. No-op in practice on
+     * desktop. See {@link MobileStreamWatchdog} for why this is needed.
+     */
+    private mobileWatchdog: MobileStreamWatchdog = new MobileStreamWatchdog(() => this.hasInFlightGeneration());
+
+    /**
+     * True when any AI generation is actively in flight (an HTTP stream /
+     * `requestUrl` call is open). Polled by {@link mobileWatchdog} on each
+     * visibility change to decide whether a backgrounding likely killed a run.
+     * Covers every abort controller the plugin owns plus the co-writer session.
+     */
+    hasInFlightGeneration(): boolean {
+        return (
+            this.transformAbortController !== null ||
+            this.feedbackAbort !== null ||
+            this.analysisAbort !== null ||
+            this.manuscriptAnalysisAbort !== null ||
+            this.feedbackQueueAbort !== null ||
+            this.coWriterSession.isGenerating
+        );
+    }
     /**
      * Trailing-debounce timer for `coWriterAutoSavePerTurn`. A turn that
      * immediately fires auto-options (common in coach mode) would otherwise
@@ -442,6 +468,12 @@ export default class EventideQuillPlugin extends Plugin {
         // the resume path after a vault reopen and a safety net — submit plus FIFO
         // chaining handle the steady state without waiting for it.
         this.registerInterval(window.setInterval(() => void this.runNextQueuedFeedbackJob(), 5000));
+
+        // Mobile stream watchdog: detects when the app is backgrounded mid
+        // AI-flow and warns the writer on resume (mobile requestUrl has no
+        // abort hook and the OS kills the in-flight call on suspend). No-op on
+        // desktop; detached in onunload.
+        this.mobileWatchdog.attach();
 
         this.registerEditorExtension(
             getLintExtension(
@@ -1088,6 +1120,9 @@ export default class EventideQuillPlugin extends Plugin {
     /** Clean up resources when the plugin is unloaded. */
     onunload() {
         this.clearEmbeddingWarmingTimers();
+        // Stop the mobile visibility listener so a stale handler doesn't fire
+        // after teardown (and so re-load re-attaches cleanly).
+        this.mobileWatchdog.detach();
         // Best-effort snapshot of the active conversation so it survives a
         // quit/crash. onunload is synchronous, so the async write is
         // fire-and-forget (the vault adapter remains briefly available). With
@@ -1409,6 +1444,21 @@ export default class EventideQuillPlugin extends Plugin {
     /** Fire-and-forget wrapper around `openLintPanel`. */
     private openLintPanelNoAsync() {
         void this.openLintPanel();
+    }
+
+    /**
+     * Re-reveal the Quill sidebar leaf after an action that dismisses it on
+     * mobile. On mobile the sidebar is a temporary overlay — opening a file in
+     * the editor (as the Discuss flows do to put the manuscript in context)
+     * dismisses the overlay. Calling this right after restores it so the writer
+     * lands on the results chat instead of the bare editor. No-op on desktop
+     * where the leaf is docked and already visible.
+     */
+    private revealQuillSidebar(): void {
+        const quillLeaf = this.app.workspace.getLeavesOfType(QUILL_VIEW_TYPE)[0];
+        if (quillLeaf) {
+            void this.app.workspace.revealLeaf(quillLeaf);
+        }
     }
 
     /** Extract entities and voice markers from the active document and cache the results. */
@@ -3133,6 +3183,7 @@ export default class EventideQuillPlugin extends Plugin {
         // Cancel any in-flight request.
         this.manuscriptAnalysisAbort?.abort();
         this.manuscriptAnalysisAbort = new AbortController();
+        notifyMobileStreamRisk();
         const myAbort = this.manuscriptAnalysisAbort;
 
         const modeMeta = getManuscriptAnalysisModeById(mode);
@@ -3646,6 +3697,7 @@ export default class EventideQuillPlugin extends Plugin {
 
         this.manuscriptAnalysisAbort?.abort();
         this.manuscriptAnalysisAbort = new AbortController();
+        notifyMobileStreamRisk();
         const myAbort = this.manuscriptAnalysisAbort;
 
         this.lintPanel?.reviewChatStartLoading();
@@ -3877,6 +3929,7 @@ export default class EventideQuillPlugin extends Plugin {
         // Cancel any in-flight analysis request.
         this.analysisAbort?.abort();
         this.analysisAbort = new AbortController();
+        notifyMobileStreamRisk();
         const myAnalysisAbort = this.analysisAbort;
 
         const modeMeta = ANALYSIS_MODES.find((m) => m.id === mode);
@@ -4002,6 +4055,7 @@ export default class EventideQuillPlugin extends Plugin {
 
         this.analysisAbort?.abort();
         this.analysisAbort = new AbortController();
+        notifyMobileStreamRisk();
         const myAnalysisAbort = this.analysisAbort;
 
         this.lintPanel?.reviewChatStartLoading();
@@ -4845,6 +4899,7 @@ export default class EventideQuillPlugin extends Plugin {
         // Cancel any in-flight feedback request
         this.feedbackAbort?.abort();
         this.feedbackAbort = new AbortController();
+        notifyMobileStreamRisk();
 
         // Start loading state in the Review tab
         this.lintPanel?.reviewStartLoading('editorial', persona?.name ?? 'Custom');
@@ -4941,17 +4996,51 @@ export default class EventideQuillPlugin extends Plugin {
             console.warn('Quill: Feedback API payload', JSON.stringify(apiMessages, null, 2));
         }
 
+        // Pre-flight context-window check. If the full payload (manuscript +
+        // system prompt + overhead) won't leave room for the output budget,
+        // route through chunked map-reduce (getChunkedFeedback) instead of
+        // sending one oversized request that the model will reject. Each chunk
+        // gets its own feedback pass, then a synthesis call combines the
+        // per-section notes into a cohesive report that streams to the UI.
+        const maxContext = chat.provider.config.maxContextTokens;
+        const outputBudget = this.settings.analysisMaxOutputTokens;
+        const totalInputTokens = estimateTokens(apiMessages);
+        const needsChunking = totalInputTokens + outputBudget > maxContext;
+
         try {
-            const stream = getFeedback(chat.provider, persona, {
-                vaultContext,
-                narrativePreset: this.settings.narrativeVoicePreset,
-                model: chat.modelId,
-                temperature: this.settings.analysisTemperature,
-                maxTokens: this.settings.analysisMaxOutputTokens,
-                signal: this.feedbackAbort.signal,
-                customInstruction,
-                existingMessages: apiMessages
-            });
+            const stream = needsChunking
+                ? (() => {
+                      const manuscriptText = manuscriptMessages.map((m) => m.content).join('\n\n');
+                      new Notice(
+                          `Quill: Manuscript exceeds the model's context window ` +
+                              `(${totalInputTokens.toLocaleString()} / ${maxContext.toLocaleString()} tokens). ` +
+                              `Processing in sections — this will take longer...`
+                      );
+                      return getChunkedFeedback(chat.provider, persona, {
+                          manuscriptText,
+                          maxContextTokens: maxContext,
+                          maxOutputTokens: outputBudget,
+                          model: chat.modelId,
+                          temperature: this.settings.analysisTemperature,
+                          signal: this.feedbackAbort.signal,
+                          customInstruction,
+                          vaultContext,
+                          narrativePreset: this.settings.narrativeVoicePreset,
+                          onProgress: (current, total) => {
+                              new Notice(`Quill: Processing section ${current} of ${total}...`);
+                          }
+                      });
+                  })()
+                : getFeedback(chat.provider, persona, {
+                      vaultContext,
+                      narrativePreset: this.settings.narrativeVoicePreset,
+                      model: chat.modelId,
+                      temperature: this.settings.analysisTemperature,
+                      maxTokens: this.settings.analysisMaxOutputTokens,
+                      signal: this.feedbackAbort.signal,
+                      customInstruction,
+                      existingMessages: apiMessages
+                  });
 
             let fullResponse = '';
             for await (const chunk of stream) {
@@ -5330,6 +5419,7 @@ export default class EventideQuillPlugin extends Plugin {
     private async executeFeedbackJob(job: FeedbackJob): Promise<void> {
         const controller = new AbortController();
         this.feedbackQueueAbort = controller;
+        notifyMobileStreamRisk();
 
         job.status = 'running';
         job.startedAt = Date.now();
@@ -5500,6 +5590,11 @@ export default class EventideQuillPlugin extends Plugin {
         // Open the current file so the follow-up paths see the living document.
         await this.app.workspace.getLeaf().openFile(file);
 
+        // On mobile, opening a file in the editor dismisses the sidebar
+        // overlay — re-reveal it so the writer lands on the results chat
+        // (switched to just below), not the bare editor. No-op on desktop.
+        this.revealQuillSidebar();
+
         const snapshot = job.contextSnapshot;
         if (snapshot.kind === 'editorial') {
             const persona = job.personaId === 'custom' ? undefined : getPersonaById(job.personaId ?? '');
@@ -5603,6 +5698,9 @@ export default class EventideQuillPlugin extends Plugin {
         // Open the current source so the follow-up path sees the living document.
         await this.app.workspace.getLeaf().openFile(sourceFile);
 
+        // Re-reveal the sidebar (dismissed on mobile by the openFile above).
+        this.revealQuillSidebar();
+
         if (engine === 'editorial') {
             const persona = personaId === 'custom' ? undefined : getPersonaById(personaId ?? '');
             const systemMsg = buildFeedbackMessages(persona, {
@@ -5689,6 +5787,7 @@ export default class EventideQuillPlugin extends Plugin {
         this.lintPanel?.reviewStartLoading('manuscript', headerLabel, 'follow-up discussion');
         this.manuscriptAnalysisAbort?.abort();
         this.manuscriptAnalysisAbort = new AbortController();
+        notifyMobileStreamRisk();
         const myAbort = this.manuscriptAnalysisAbort;
 
         let prepared: PreparedManuscript;
@@ -5852,7 +5951,34 @@ export default class EventideQuillPlugin extends Plugin {
         );
         const referenceMessages = [...refEmbedMessages, ...refMessages];
 
-        const injectedContext: ChatMessage[] = [...manuscriptMessages, ...referenceMessages];
+        // Pre-flight overflow check. If the manuscript won't fit alongside the
+        // conversation + reference files + output budget (common after a
+        // chunked initial report on a very large manuscript), drop it from the
+        // injection — the model still has the report it generated in
+        // conversation history and can answer follow-up questions based on it.
+        // You can't map-reduce a conversational follow-up the way the initial
+        // request does; skipping the raw manuscript is the graceful fallback.
+        // Reference files are already capped (contextMaxCharsPerFile), so they
+        // stay unless they alone overflow.
+        const convOnlyTokens = estimateTokens(this.feedbackCurrentMessages);
+        const manuscriptTokens = estimateTokens(manuscriptMessages);
+        const refFileTokens = estimateTokens(referenceMessages);
+        const outputBudget = this.settings.analysisMaxOutputTokens;
+        const fitsWithManuscript =
+            convOnlyTokens + manuscriptTokens + refFileTokens + outputBudget <= chat.provider.config.maxContextTokens;
+
+        if (!fitsWithManuscript) {
+            const fitsWithoutManuscript =
+                convOnlyTokens + refFileTokens + outputBudget <= chat.provider.config.maxContextTokens;
+            new Notice(
+                fitsWithoutManuscript
+                    ? 'Quill: Manuscript is too large to include in follow-up chat. The AI will answer based on the report it generated.'
+                    : 'Quill: Context too large for follow-up chat — sending conversation only.'
+            );
+        }
+
+        const effectiveManuscript = fitsWithManuscript ? manuscriptMessages : [];
+        const injectedContext: ChatMessage[] = [...effectiveManuscript, ...referenceMessages];
 
         const injectedTokens = estimateTokens(injectedContext);
         const maxTokens = chat.provider.config.maxContextTokens;

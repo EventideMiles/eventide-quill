@@ -1,4 +1,4 @@
-import { Platform, requestUrl } from 'obsidian';
+import { Platform, requestUrl, type RequestUrlResponse } from 'obsidian';
 import { ProviderError } from './provider';
 
 /**
@@ -23,6 +23,24 @@ export class StreamingUnavailableError extends Error {
     constructor() {
         super('Response body is missing or unavailable; streaming is not possible.');
         this.name = 'StreamingUnavailableError';
+    }
+}
+
+/**
+ * Error thrown when a mobile network-drop signature is detected — the mobile
+ * WebView killed the in-flight `requestUrl` when the OS suspended the app
+ * (screen lock, app switch). The original error is preserved on `cause` so the
+ * underlying Capacitor/websocket exception remains available for debugging.
+ * Produced by {@link withMobileNetworkHint} and {@link requestUrlMobile}.
+ */
+export class MobileNetworkError extends Error {
+    /** The original error that triggered the mobile-drop wrap. */
+    cause: unknown;
+
+    constructor(message: string, cause: unknown) {
+        super(message);
+        this.name = 'MobileNetworkError';
+        this.cause = cause;
     }
 }
 
@@ -205,5 +223,87 @@ export async function safeGet(url: string, headers: Record<string, string> = {})
         return await bufferResponse(url, { method: 'GET', headers, body: '' });
     } catch {
         return null;
+    }
+}
+
+/**
+ * Substrings (lowercased) that characterize the raw network/websocket errors
+ * the mobile WebView throws when the OS suspends the app mid-`requestUrl`.
+ * The exact string varies by platform (Capacitor bridge, Android WebView,
+ * iOS WebView), so we match a broad set of common signatures.
+ */
+const MOBILE_NETWORK_DROP_SIGNATURES = [
+    'failed to fetch',
+    'load failed',
+    'network error',
+    'networkerror',
+    'network request failed',
+    'websocket',
+    'err_internet_disconnected',
+    'err_network_changed',
+    'err_connection_reset',
+    'err_connection_closed',
+    'err_connection_refused',
+    'the internet connection appears to be offline',
+    'request failed'
+];
+
+/**
+ * Heuristic: is this error a network/connection drop of the kind the mobile
+ * WebView produces when the OS suspends the app (screen lock, app switch)
+ * mid-`requestUrl`? Returns false on desktop or when the error doesn't match a
+ * known network-drop signature. Used by the providers to add a friendlier hint
+ * pointing at the likely cause instead of surfacing the raw Capacitor/websocket
+ * exception string.
+ */
+export function isMobileNetworkDrop(err: unknown): boolean {
+    if (!Platform.isMobile) return false;
+    const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+    if (!msg) return false;
+    return MOBILE_NETWORK_DROP_SIGNATURES.some((sig) => msg.includes(sig));
+}
+
+/**
+ * Hint appended to a network-drop error message on mobile, explaining the
+ * likely cause (app backgrounding) so the writer knows it wasn't a provider
+ * bug and how to avoid it. Empty on desktop / non-drop errors.
+ */
+const MOBILE_DROP_HINT =
+    ' (This often happens on mobile when Obsidian is backgrounded or the screen locks — keep the app in focus during AI flows.)';
+
+/**
+ * Wrap an error with a mobile-aware hint if it is a network drop that occurred
+ * while the app was suspended. Returns the original error unchanged on desktop
+ * or for non-drop errors (so non-mobile callers see no behavioral change).
+ * Mobile drop cases are wrapped in a {@link MobileNetworkError} that preserves
+ * the original on `cause`; mobile callers rethrow the result.
+ */
+export function withMobileNetworkHint(err: unknown): Error {
+    if (!isMobileNetworkDrop(err)) {
+        return err instanceof Error ? err : new Error(String(err));
+    }
+    const base = err instanceof Error ? err.message : String(err);
+    return new MobileNetworkError(`${base}${MOBILE_DROP_HINT}`, err);
+}
+
+/**
+ * Buffered `requestUrl` call used as the mobile fallback for streaming
+ * endpoints (see {@link isStreamingSupported}). Applies `throw: false` so
+ * non-2xx responses are returned for the caller to inspect via
+ * {@link throwOnNonOk}, and wraps connection errors with a mobile-aware hint
+ * (see {@link withMobileNetworkHint}) since `requestUrl` has no abort hook and
+ * the OS may kill the call mid-flight when the app is backgrounded. Shared by
+ * both providers so the fallback stays identical across OpenAI and Ollama.
+ */
+export async function requestUrlMobile(options: {
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    body: string;
+}): Promise<RequestUrlResponse> {
+    try {
+        return await requestUrl({ ...options, throw: false });
+    } catch (err) {
+        throw withMobileNetworkHint(err);
     }
 }
