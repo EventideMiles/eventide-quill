@@ -11,8 +11,9 @@
  * Preconditions (enforced, in order):
  *   1. Working tree is clean (on any branch).
  *   2. On `main`, fast-forwarded from origin.
- *   3. manifest.json version differs from the latest git tag — i.e. you
- *      already ran `npm run set-version -- <v>` and merged it to main.
+ *   3. manifest.json version differs from the latest tag on origin — i.e.
+ *      you already ran `npm run set-version -- <v>` and merged it to main.
+ *      (A local-only tag from a prior failed push is detected and resumed.)
  *   4. build + test + lint + lint:dup all pass.
  *
  * Then: create an annotated tag `<version>` and push main + tag. The tag
@@ -60,11 +61,32 @@ function readManifestVersion() {
     return JSON.parse(readFileSync('manifest.json', 'utf8')).version;
 }
 
-function latestVersionTag() {
-    return shCapture('git tag --list --sort=-v:refname')
+/** Latest version-like tag on origin (authoritative — bypasses stale local refs). */
+function latestRemoteTag() {
+    return shCapture('git ls-remote --tags origin')
         .split('\n')
-        .map((t) => t.trim())
-        .filter((t) => VERSION_RE.test(t))[0];
+        .map((line) => line.replace(/^.*refs\/tags\//, '').replace(/\^\{\}$/, '').trim())
+        .filter((t) => VERSION_RE.test(t))
+        .sort((a, b) => {
+            const [a1, a2, a3] = a.split('.').map(Number);
+            const [b1, b2, b3] = b.split('.').map(Number);
+            return a1 - b1 || a2 - b2 || a3 - b3;
+        })
+        .pop();
+}
+
+/** True if the tag exists on origin (not just locally). Uses ls-remote so a local-only tag from a failed push is distinguishable. */
+function tagOnOrigin(tag) {
+    return Boolean(shCapture(`git ls-remote origin refs/tags/${tag}`));
+}
+
+/** Get the commit a tag points to, or '' if the tag doesn't exist. */
+function tagCommit(tag) {
+    try {
+        return execSync(`git rev-list -n 1 ${tag}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    } catch {
+        return '';
+    }
 }
 
 async function confirm(prompt) {
@@ -94,23 +116,28 @@ if (!VERSION_RE.test(version)) {
     fail(`manifest.json version "${version}" is not X.Y.Z.`);
 }
 
-const latestTag = latestVersionTag();
+// Query origin directly for authoritative tag state (avoids stale local refs
+// and the fetch-tag-clobber problem). Local tags are checked separately for
+// the resume case in phase 4.
+console.log('\nrelease: checking tags against origin');
+const latestTag = latestRemoteTag();
 if (!latestTag) {
-    fail('no version tags found — looks like the first release. Tag manually.');
+    fail('no version tags found on origin — looks like the first release. Tag manually.');
 }
-if (version === latestTag) {
+if (tagOnOrigin(version)) {
     fail(
-        `manifest.json version (${version}) matches the latest tag (${latestTag}).\n` +
+        `tag ${version} is already on origin — this version was already released.\n` +
             '  Bump the version first: `npm run set-version -- <new-version>`, then merge to main.'
     );
 }
-if (shCapture(`git tag -l ${version}`)) {
-    fail(`tag ${version} already exists (but is not the latest). Looks like a downgrade — check manifest.json.`);
-}
-console.log(`  latest tag: ${latestTag}`);
-console.log(`  manifest:   ${version}  (disparity ok)`);
+const hasLocalTag = Boolean(tagCommit(version));
+console.log(`  latest on origin: ${latestTag}`);
+console.log(`  manifest:         ${version}${hasLocalTag ? '  (local tag found — will resume)' : ''}`);
 
 if (DRY_RUN) {
+    const tagStep = hasLocalTag
+        ? `  7. (skip — tag ${version} already exists locally, will resume)`
+        : `  7. git tag -a ${version} -m ${version}`;
     console.log(`
 release: DRY RUN — would:
   1. git checkout main
@@ -119,11 +146,11 @@ release: DRY RUN — would:
   4. npm test
   5. npm run lint
   6. npm run lint:dup
-  7. git tag -a ${version} -m ${version}
+${tagStep}
   8. git push origin main
   9. git push origin ${version}   (triggers release.yml -> draft GitHub release)
 
-(dry run — nothing was changed. Version checked against the current branch;
+(dry run — working tree unchanged. Version checked against the current branch;
  the real run re-checks on main after pull.)`);
     process.exit(0);
 }
@@ -169,8 +196,18 @@ if (!ok) {
     process.exit(0);
 }
 
-console.log(`\nrelease: creating annotated tag ${version}`);
-sh(`git tag -a ${version} -m ${version}`);
+const head = shCapture('git rev-parse HEAD');
+const existingTarget = tagCommit(version);
+if (existingTarget) {
+    if (existingTarget === head) {
+        console.log(`\nrelease: tag ${version} already at HEAD — skipping creation (resume).`);
+    } else {
+        fail(`tag ${version} exists at ${existingTarget.slice(0, 8)}, not HEAD (${head.slice(0, 8)}). Resolve manually.`);
+    }
+} else {
+    console.log(`\nrelease: creating annotated tag ${version}`);
+    sh(`git tag -a ${version} -m ${version}`);
+}
 
 console.log('\nrelease: pushing main');
 sh('git push origin main');
