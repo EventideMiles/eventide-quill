@@ -56,7 +56,7 @@ import {
 import { SubagentSession, type SubagentView, type SubagentConfig } from './subagent-session';
 import { resolveNoteFile } from './tools/lore-edit-helpers';
 import { CACHE_HIT_MARKER } from './tools/fandom-lookup';
-import { detectTextToolCall, buildToolNudgeMessage, MAX_TEXT_TOOL_NUDGES } from './tools';
+import { tryNudgeTextToolLeak } from './tools';
 import { buildInternalToolsMessage, buildNetworkToolsMessage } from './co-writer-tool-prompts';
 import { streamToolAwareRound } from './co-writer-streaming';
 import {
@@ -1362,17 +1362,16 @@ export class CoWriterSession {
                 // local models) — if so, nudge it to re-issue via the real
                 // interface and take another round instead of ending the turn.
                 if (result.toolCalls.length === 0 || !registry) {
-                    if (registry && result.response.trim() && nudgesUsed < MAX_TEXT_TOOL_NUDGES) {
-                        const leak = detectTextToolCall(
-                            result.response,
-                            registry.list().map((t) => t.id)
-                        );
-                        if (leak) {
-                            nudgesUsed++;
-                            this.discussCurrentMessages.push(buildToolNudgeMessage(leak));
-                            this.onChatUpdate?.();
-                            continue;
-                        }
+                    const nudge = tryNudgeTextToolLeak({
+                        response: result.response,
+                        toolNames: registry ? registry.list().map((t) => t.id) : [],
+                        messages: this.discussCurrentMessages,
+                        nudgesUsed,
+                        onChatUpdate: () => this.onChatUpdate?.()
+                    });
+                    if (nudge.nudged) {
+                        nudgesUsed = nudge.nudgesUsed;
+                        continue;
                     }
                     break;
                 }
@@ -1779,17 +1778,16 @@ export class CoWriterSession {
                 // No structured tool calls. Check for a text-form tool call and
                 // nudge the model to re-issue it properly (see discuss mode).
                 if (result.toolCalls.length === 0 || !registry) {
-                    if (registry && result.response.trim() && nudgesUsed < MAX_TEXT_TOOL_NUDGES) {
-                        const leak = detectTextToolCall(
-                            result.response,
-                            registry.list().map((t) => t.id)
-                        );
-                        if (leak) {
-                            nudgesUsed++;
-                            this.discussCurrentMessages.push(buildToolNudgeMessage(leak));
-                            this.onChatUpdate?.();
-                            continue;
-                        }
+                    const nudge = tryNudgeTextToolLeak({
+                        response: result.response,
+                        toolNames: registry ? registry.list().map((t) => t.id) : [],
+                        messages: this.discussCurrentMessages,
+                        nudgesUsed,
+                        onChatUpdate: () => this.onChatUpdate?.()
+                    });
+                    if (nudge.nudged) {
+                        nudgesUsed = nudge.nudgesUsed;
+                        continue;
                     }
                     break;
                 }
@@ -2333,17 +2331,16 @@ export class CoWriterSession {
                 // No structured tool calls. Check for a text-form tool call and
                 // nudge the model to re-issue it properly (see discuss mode).
                 if (toolCalls.length === 0 || !registry) {
-                    if (registry && response.trim() && nudgesUsed < MAX_TEXT_TOOL_NUDGES) {
-                        const leak = detectTextToolCall(
-                            response,
-                            registry.list().map((t) => t.id)
-                        );
-                        if (leak) {
-                            nudgesUsed++;
-                            this.loreCoachMessages.push(buildToolNudgeMessage(leak));
-                            this.onChatUpdate?.();
-                            continue;
-                        }
+                    const nudge = tryNudgeTextToolLeak({
+                        response,
+                        toolNames: registry ? registry.list().map((t) => t.id) : [],
+                        messages: this.loreCoachMessages,
+                        nudgesUsed,
+                        onChatUpdate: () => this.onChatUpdate?.()
+                    });
+                    if (nudge.nudged) {
+                        nudgesUsed = nudge.nudgesUsed;
+                        continue;
                     }
                     break;
                 }
