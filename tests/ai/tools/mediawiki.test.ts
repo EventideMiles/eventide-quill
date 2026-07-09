@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MediaWikiError } from '../../../src/ai/tools/mediawiki';
+import { MediaWikiError, apiEndpoint } from '../../../src/ai/tools/mediawiki';
 import { RateLimitError, toolErrorMessage } from '../../../src/ai/tools/http-retry';
 
 /**
@@ -37,5 +37,33 @@ describe('MediaWikiError', () => {
         const msg = toolErrorMessage(new MediaWikiError('Search failed: HTTP 503', 503), 'looking up "cats"');
         expect(msg).toContain('HTTP 503');
         expect(msg).toContain('looking up "cats"');
+    });
+});
+
+/**
+ * `api.php` path resolution. Wikimedia projects serve it under `/w/`; Fandom
+ * and standalone installs serve it at the root. Getting this wrong 404s — this
+ * is the regression guard for the bug where every Wikipedia call 404'd because
+ * the client built `https://en.wikipedia.org/api.php` (root) instead of
+ * `https://en.wikipedia.org/w/api.php`.
+ */
+describe('apiEndpoint', () => {
+    it('routes Wikipedia (all language subdomains) to /w/api.php', () => {
+        expect(apiEndpoint('en.wikipedia.org')).toBe('https://en.wikipedia.org/w/api.php');
+        expect(apiEndpoint('fr.wikipedia.org')).toBe('https://fr.wikipedia.org/w/api.php');
+        expect(apiEndpoint('simple.wikipedia.org')).toBe('https://simple.wikipedia.org/w/api.php');
+        expect(apiEndpoint('zh-yue.wikipedia.org')).toBe('https://zh-yue.wikipedia.org/w/api.php');
+    });
+
+    it('routes sibling Wikimedia projects to /w/api.php', () => {
+        expect(apiEndpoint('en.wiktionary.org')).toBe('https://en.wiktionary.org/w/api.php');
+        expect(apiEndpoint('en.wikisource.org')).toBe('https://en.wikisource.org/w/api.php');
+        expect(apiEndpoint('meta.wikimedia.org')).toBe('https://meta.wikimedia.org/w/api.php');
+    });
+
+    it('routes Fandom and standalone installs to the root /api.php', () => {
+        expect(apiEndpoint('starwars.fandom.com')).toBe('https://starwars.fandom.com/api.php');
+        expect(apiEndpoint('memory-alpha.fandom.com')).toBe('https://memory-alpha.fandom.com/api.php');
+        expect(apiEndpoint('my-wiki.example.com')).toBe('https://my-wiki.example.com/api.php');
     });
 });

@@ -14,6 +14,29 @@ import { assertNotRateLimited } from './http-retry';
 /** Custom User-Agent to comply with Wikimedia's API policy (200 req/min tier). */
 export const MEDIAWIKI_UA = 'EventideQuill/1.2.1 (https://github.com/EventideMiles/eventide-quill)';
 
+/**
+ * Wikimedia Foundation hosts whose `api.php` lives under `/w/` rather than the
+ * root. Fandom and most standalone MediaWiki installs serve `api.php` at the
+ * root; using the wrong path 404s. Wikipedia (the only Wikimedia host this
+ * plugin constructs today, via `${lang}.wikipedia.org`) is the motivating case
+ * — the sibling projects are covered for safety.
+ */
+const WIKIMEDIA_HOST_RE =
+    /\.(?:wikipedia|wiktionary|wikiquote|wikibooks|wikisource|wikinews|wikiversity|wikivoyage|wikimedia)\.org$/;
+
+function isWikimediaHost(host: string): boolean {
+    return WIKIMEDIA_HOST_RE.test(host);
+}
+
+/**
+ * Full `api.php` endpoint URL for a host, including the correct path:
+ * `https://<host>/w/api.php` for Wikimedia projects, `https://<host>/api.php`
+ * for Fandom / standalone installs. Callers append `?action=...` query params.
+ */
+export function apiEndpoint(host: string): string {
+    return isWikimediaHost(host) ? `https://${host}/w/api.php` : `https://${host}/api.php`;
+}
+
 /** Minimum interval (ms) between requests to the same host. */
 const MIN_INTERVAL_MS = 500;
 
@@ -94,7 +117,7 @@ interface MediaWikiExtract {
  * @returns Array of `{ title, snippet }` results.
  */
 export async function mediawikiSearch(host: string, query: string, limit = 5): Promise<MediaWikiSearchResult[]> {
-    const url = `https://${host}/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=${limit}&format=json&origin=*`;
+    const url = `${apiEndpoint(host)}?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=${limit}&format=json&origin=*`;
 
     await rateLimit(host);
     const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
@@ -122,7 +145,7 @@ export async function mediawikiSearch(host: string, query: string, limit = 5): P
  * sync. Returns 0 if the field is missing.
  */
 export async function mediawikiArticleCount(host: string): Promise<number> {
-    const url = `https://${host}/api.php?action=query&meta=siteinfo&siprop=statistics&format=json&origin=*`;
+    const url = `${apiEndpoint(host)}?action=query&meta=siteinfo&siprop=statistics&format=json&origin=*`;
     await rateLimit(host);
     const response = await requestUrl({ url, method: 'GET', headers: { 'User-Agent': MEDIAWIKI_UA }, throw: false });
     assertNotRateLimited(response);
@@ -146,8 +169,7 @@ export async function mediawikiAllPages(host: string, signal?: AbortSignal): Pro
     for (;;) {
         if (signal?.aborted) break;
         await rateLimit(host);
-        let url =
-            `https://${host}/api.php?action=query&list=allpages` + `&apnamespace=0&aplimit=500&format=json&origin=*`;
+        let url = `${apiEndpoint(host)}?action=query&list=allpages` + `&apnamespace=0&aplimit=500&format=json&origin=*`;
         if (apcontinue) url += `&apcontinue=${encodeURIComponent(apcontinue)}`;
         const response = await requestUrl({
             url,
@@ -196,7 +218,7 @@ async function mediawikiExtractByTitle(host: string, title: string): Promise<Med
  */
 async function mediawikiExtractByExtracts(host: string, title: string): Promise<MediaWikiExtract | null> {
     const url =
-        `https://${host}/api.php?action=query&prop=extracts&exintro=1&explaintext=1` +
+        `${apiEndpoint(host)}?action=query&prop=extracts&exintro=1&explaintext=1` +
         `&redirects=1&titles=${encodeURIComponent(title)}&format=json&origin=*`;
 
     await rateLimit(host);
@@ -230,7 +252,7 @@ async function mediawikiExtractByExtracts(host: string, title: string): Promise<
  */
 async function mediawikiExtractByParse(host: string, title: string): Promise<MediaWikiExtract | null> {
     const url =
-        `https://${host}/api.php?action=parse&page=${encodeURIComponent(title)}` +
+        `${apiEndpoint(host)}?action=parse&page=${encodeURIComponent(title)}` +
         `&redirects=1&prop=text&section=0&format=json&origin=*`;
 
     await rateLimit(host);
@@ -362,7 +384,7 @@ export async function mediawikiPageImage(
     thumbSize: number
 ): Promise<{ title: string; imageUrl: string } | null> {
     const url =
-        `https://${host}/api.php?action=query&prop=pageimages&piprop=thumbnail` +
+        `${apiEndpoint(host)}?action=query&prop=pageimages&piprop=thumbnail` +
         `&pithumbsize=${thumbSize}&redirects=1&titles=${encodeURIComponent(title)}&format=json&origin=*`;
 
     await rateLimit(host);
@@ -395,7 +417,7 @@ export async function mediawikiPageImage(
  */
 export async function mediawikiPageGallery(host: string, title: string, limit: number): Promise<string[]> {
     const url =
-        `https://${host}/api.php?action=query&prop=images&imlimit=${limit}` +
+        `${apiEndpoint(host)}?action=query&prop=images&imlimit=${limit}` +
         `&redirects=1&titles=${encodeURIComponent(title)}&format=json&origin=*`;
 
     await rateLimit(host);
@@ -428,7 +450,7 @@ export async function mediawikiImageInfo(
 ): Promise<{ imageUrl: string; mime: string } | null> {
     const fileTitle = normalizeFileTitle(filename);
     const url =
-        `https://${host}/api.php?action=query&prop=imageinfo&iiprop=url%7Cmime&iiurlwidth=${thumbSize}` +
+        `${apiEndpoint(host)}?action=query&prop=imageinfo&iiprop=url%7Cmime&iiurlwidth=${thumbSize}` +
         `&titles=${encodeURIComponent(fileTitle)}&format=json&origin=*`;
 
     await rateLimit(host);
@@ -515,7 +537,7 @@ export async function mediawikiGalleryWithCaptions(
     title: string,
     limit: number
 ): Promise<Array<{ file: string; caption?: string }>> {
-    const url = `https://${host}/api.php?action=parse&prop=wikitext&redirects=1&page=${encodeURIComponent(
+    const url = `${apiEndpoint(host)}?action=parse&prop=wikitext&redirects=1&page=${encodeURIComponent(
         title
     )}&format=json&origin=*`;
 
