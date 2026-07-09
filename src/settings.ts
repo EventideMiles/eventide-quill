@@ -237,6 +237,15 @@ export interface EventideQuillSettings {
      * `normalizePath()`-wrapped before any vault write.
      */
     loreEntryImageAttachmentFolder: string;
+    /**
+     * When on (default), `propose_entry` refuses to draft a new entry whose
+     * exact name already matches an existing note anywhere in the vault, and
+     * returns a length-aware message routing the model to `edit_note` /
+     * `insert_note` / `append_to_note` instead. Prevents duplicate notes that
+     * strand [[wikilinks]] pointing at the original. Off = unconditional
+     * create (the pre-1.2.1 behavior) — escape hatch.
+     */
+    lorePreferEditOverCreate: boolean;
     /** Master toggle for the async feedback queue. Off hides the Queue tab and the Review handoff. Default: on. */
     enableFeedbackQueue: boolean;
     /** Max queue jobs retained on disk (sidecar blobs). Older completed jobs are LRU-evicted; the vault report note is never touched by LRU. Default 20. */
@@ -367,6 +376,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     loreEntryImageMaxPerEntry: 4,
     loreEntryImageAttachments: true,
     loreEntryImageAttachmentFolder: '',
+    lorePreferEditOverCreate: true,
     enableFeedbackQueue: true,
     feedbackQueueLimit: 20,
     feedbackQueueAutoRun: true,
@@ -2064,6 +2074,21 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     })
             );
 
+        new Setting(content)
+            .setName('Prefer editing existing lore')
+            .setDesc(
+                'When the lorebook coach drafts a new entry whose exact name already matches a note in ' +
+                    'your vault, refuse the draft and point it at edit_note / insert_note / append_to_note ' +
+                    'instead. Avoids duplicate notes that strand [[wikilinks]] pointing at the original. ' +
+                    'Off = allow unconditional creation. Default: on.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.lorePreferEditOverCreate).onChange(async (value) => {
+                    this.plugin.settings.lorePreferEditOverCreate = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
         // --- Slash commands (co-writer input shortcuts) ---
         new Setting(content)
             .setName('Slash commands')
@@ -3536,6 +3561,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.loreEntryImageAttachments = DEFAULT_SETTINGS.loreEntryImageAttachments;
                     this.plugin.settings.loreEntryImageAttachmentFolder =
                         DEFAULT_SETTINGS.loreEntryImageAttachmentFolder;
+                    this.plugin.settings.lorePreferEditOverCreate = DEFAULT_SETTINGS.lorePreferEditOverCreate;
                     this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                     this.plugin.settings.slashCommands = [...DEFAULT_SETTINGS.slashCommands];
                     this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;

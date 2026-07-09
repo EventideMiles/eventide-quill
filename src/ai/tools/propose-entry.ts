@@ -1,5 +1,6 @@
 import { parseLoreType } from '../../core/dashboard/lorebook-scanner';
 import type { ProposedImage } from '../../core/dashboard/lorebook-types';
+import { resolveNoteFile } from './lore-edit-helpers';
 import type { Tool, ToolContext } from './tool';
 
 /**
@@ -141,6 +142,40 @@ export function createProposeEntryTool(allowImages: boolean): Tool {
             }
             if (!content) {
                 return 'Error: "content" is required.';
+            }
+
+            // Prefer editing an existing note over creating a duplicate. If a
+            // note with this exact name already exists anywhere in the vault,
+            // refuse the draft and point the model at the editing tools.
+            // Creating over an existing note strands any [[wikilinks]] pointing
+            // at the original (de-dup at save time only suffixes the filename).
+            // The message is length-aware so an empty stub routes to
+            // insert_note/append_to_note and a populated note routes to
+            // edit_note. Gated by `lorePreferEditOverCreate` (escape hatch).
+            if (ctx.plugin.settings.lorePreferEditOverCreate) {
+                const existing = resolveNoteFile(ctx.plugin, name);
+                if (existing) {
+                    let body = '';
+                    try {
+                        body = await ctx.plugin.app.vault.cachedRead(existing);
+                    } catch {
+                        body = '';
+                    }
+                    const trimmed = body.trim();
+                    const isEmpty = trimmed.length === 0;
+                    const lengthDesc = isEmpty
+                        ? 'it is currently empty'
+                        : `it has ${trimmed.length.toLocaleString()} characters`;
+                    const toolHint = isEmpty
+                        ? 'use `insert_note` or `append_to_note` to fill it'
+                        : 'use `edit_note` to revise its existing wording (or `insert_note` to add a section)';
+                    return (
+                        `A note named "${name}" already exists at ${existing.path} (${lengthDesc}). ` +
+                        `To avoid creating a duplicate that strands cross-links, ${toolHint}. ` +
+                        `Call \`vault_lookup\` on "${name}" first if you need its current text. ` +
+                        `Only call \`propose_entry\` again for a genuinely new entry under a different name.`
+                    );
+                }
             }
 
             const parsed = parseLoreType(typeRaw);
