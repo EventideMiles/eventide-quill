@@ -2,7 +2,7 @@ import { type AiProvider, type AnthropicThinkingBlockKind, type ChatMessage } fr
 import type EventideQuillPlugin from '../main';
 import { compactConversation } from './compaction';
 import { estimateTokens } from '../utils/tokens';
-import { executeToolCall, type ToolContext, type ToolRegistry } from './tools';
+import { executeToolCall, tryNudgeTextToolLeak, type ToolContext, type ToolRegistry } from './tools';
 import { injectImagesIntoMessages } from './vision';
 
 /**
@@ -166,6 +166,7 @@ export class SubagentSession {
         };
 
         let lastResponse = '';
+        let nudgesUsed = 0;
         try {
             for (let round = 0; round < maxRounds; round++) {
                 if (this.parentSignal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -235,8 +236,25 @@ export class SubagentSession {
                 });
                 lastResponse = response;
 
-                // No tools called → this round is final.
-                if (toolCalls.length === 0) break;
+                // No tools called → this round is final, UNLESS the model
+                // wrote a tool call as plain text (common with local models):
+                // nudge it to re-issue via the real interface and take another
+                // round. tryNudgeTextToolLeak centralizes the bound, detection,
+                // and nudge push shared with the co-writer tool-loop sites.
+                if (toolCalls.length === 0) {
+                    const nudge = tryNudgeTextToolLeak({
+                        response,
+                        toolNames: toolDefs.map((t) => t.name),
+                        messages: this.messages,
+                        nudgesUsed,
+                        onChatUpdate: () => this.onChatUpdate?.()
+                    });
+                    if (nudge.nudged) {
+                        nudgesUsed = nudge.nudgesUsed;
+                        continue;
+                    }
+                    break;
+                }
 
                 // Execute tools; results land in both the API messages and the
                 // display buffer. Edits flow to the shared review queue via the

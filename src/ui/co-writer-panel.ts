@@ -429,6 +429,15 @@ export class CoWriterPanel extends AbstractChatPanel {
     private subagents: SubagentView[] = [];
     /** When set, the panel shows this subagent's drill-down view instead of the parent chat. */
     private activeSubagentId: string | null = null;
+    /**
+     * Signature of the last-rendered subagent view. While the parent
+     * conversation streams, {@link scheduleRender} fires on every animation
+     * frame (via onChatUpdate). Without this guard the subagent DOM is torn
+     * down and rebuilt ~60fps — destroying the Back button's click handler and
+     * resetting scroll. We skip the rebuild when the viewed subagent's data is
+     * unchanged (see {@link subagentRenderSignature}).
+     */
+    private lastRenderedSubagentSig = '';
     private onNavigateToSubagent: ((id: string) => void) | null = null;
     private onNavigateToParent: (() => void) | null = null;
 
@@ -446,7 +455,24 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Set which subagent is drilled-in (null = parent view). */
     setActiveSubagent(id: string | null): void {
         this.activeSubagentId = id && this.subagents.some((s) => s.id === id) ? id : null;
+        // A drill-in/out switch must always paint — clear the signature so the
+        // render() guard doesn't short-circuit the new view.
+        this.lastRenderedSubagentSig = '';
         this.scheduleRender();
+    }
+
+    /**
+     * A compact digest of everything the active subagent's drill-down view
+     * displays. When this string is unchanged across a scheduled render, the
+     * view's content is identical and the destructive rebuild can be skipped —
+     * keeping scroll position and click handlers intact while the parent chat
+     * streams in the background.
+     */
+    private subagentRenderSignature(): string {
+        const sub = this.subagents.find((s) => s.id === this.activeSubagentId);
+        if (!sub) return '';
+        const last = sub.chatHistory.length > 0 ? sub.chatHistory[sub.chatHistory.length - 1] : null;
+        return `${this.activeSubagentId ?? ''}|${sub.status}|${sub.error ?? ''}|${sub.summary ?? ''}|${sub.chatHistory.length}|${last?.content.length ?? 0}`;
     }
 
     /** Set the handler invoked when the writer drills into a subagent. */
@@ -759,6 +785,24 @@ export class CoWriterPanel extends AbstractChatPanel {
     render(): void {
         if (!this.containerEl) return;
 
+        // Subagent view short-circuit: while the parent chat streams,
+        // onChatUpdate fires on every animation frame and would otherwise tear
+        // this view down and rebuild it ~60fps — destroying the Back button's
+        // click handler and resetting scroll. When the viewed subagent's data
+        // is unchanged (identical signature) and the DOM is already present,
+        // skip the rebuild entirely.
+        if (this.activeSubagentId) {
+            const sig = this.subagentRenderSignature();
+            if (
+                sig !== '' &&
+                sig === this.lastRenderedSubagentSig &&
+                this.containerEl.querySelector('.quill-cowriter-panel__subagent-bar')
+            ) {
+                return;
+            }
+            this.lastRenderedSubagentSig = sig;
+        }
+
         // Save scroll state and textarea focus before destroying DOM
         const previousScroll = this.getScrollContainer();
         const savedScrollTop = previousScroll?.scrollTop ?? 0;
@@ -781,7 +825,18 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (this.activeSubagentId) {
             this.renderSubagentView();
             this.renderPending = false;
-            this.scrollToBottom();
+            // Respect the writer's scroll position instead of always snapping to
+            // the bottom (mirrors the parent-chat wasAtBottom/savedScrollTop
+            // logic). New subagent content (signature change) still auto-scrolls
+            // when the writer was already at the bottom.
+            if (wasAtBottom) {
+                this.scrollToBottom();
+            } else if (savedScrollTop > 0) {
+                const c = this.getScrollContainer();
+                if (c) {
+                    c.scrollTop = Math.min(savedScrollTop, Math.max(0, c.scrollHeight - c.clientHeight));
+                }
+            }
             return;
         }
 

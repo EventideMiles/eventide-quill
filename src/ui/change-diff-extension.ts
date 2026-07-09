@@ -1,6 +1,6 @@
 import { EditorState, Extension, Range, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, DecorationSet, EditorView, WidgetType } from '@codemirror/view';
-import type { ChangeSet, ProposedEdit } from '../core/change-set';
+import type { ChangeSet, ChangeSpec, ProposedEdit } from '../core/change-set';
 
 /**
  * Inline diff rendering for proposed edits, shared across every AI-insertion
@@ -222,7 +222,11 @@ class ChangePreviewWidget extends WidgetType {
  * widgets.
  */
 function buildDiffDecorations(state: EditorState, handlers: ChangeDiffHandlers): DecorationSet {
-    const edits = state.field(diffEditsField);
+    // `require: false` — diffEditsField can be transiently absent from the
+    // state during Obsidian editor reconfigurations (mode switches, plugin
+    // enable/disable, split-view creation). Without this, .field() throws
+    // "Field is not present in this state" and crashes the editor.
+    const edits = state.field(diffEditsField, false) ?? [];
     if (edits.length === 0) return Decoration.none;
     const doc = state.doc;
     const ranges: Range<Decoration>[] = [];
@@ -260,8 +264,15 @@ export function getChangeDiffExtension(handlers: ChangeDiffHandlers): Extension[
     const decorationsField = StateField.define<DecorationSet>({
         create: (state) => buildDiffDecorations(state, handlers),
         update: (value, tr) => {
-            const prev = tr.startState.field(diffEditsField);
-            const next = tr.state.field(diffEditsField);
+            // `require: false` on both reads: diffEditsField can be transiently
+            // absent during Obsidian editor reconfigurations (mode switches,
+            // plugin enable/disable timing, split-view creation). With the
+            // default require:true this throws "Field is not present in this
+            // state" from inside a StateField update, which crashes the editor.
+            // When absent, both read as undefined (=== each other) and we keep
+            // the current decorations unchanged.
+            const prev = tr.startState.field(diffEditsField, false);
+            const next = tr.state.field(diffEditsField, false);
             // Rebuild only when the diff-edits snapshots actually changed
             // (setDiffEdits effect or docChanged remapping). When identity is
             // the same, the decorations are unchanged.
@@ -306,4 +317,35 @@ export function clearDiffEdits(view: EditorView, owner?: string): void {
     const existing = view.state.field(diffEditsField);
     const preserved = existing.filter((s) => s.owner !== owner);
     view.dispatch({ effects: setDiffEdits.of(preserved) });
+}
+
+/**
+ * Apply one approved edit and refresh the owning surface's diff snapshots
+ * without stranding OTHER owners' pending edits at stale offsets.
+ *
+ * This is the correct single-approve dispatch pattern — the same split that
+ * the batch paths (`approveAllFulfill` / `approveAllLintBatch`) already use.
+ * The `changes` are dispatched FIRST with no effect, so {@link diffEditsField}'s
+ * `mapPos` remaps EVERY owner's pending snapshots (including other surfaces
+ * with edits live in this editor) to the post-change document. Then the owner's
+ * fresh post-approval snapshots are pushed via {@link pushDiffEdits}, which
+ * preserves the now-remapped other-owner snapshots from the field.
+ *
+ * Combining `changes` + `setDiffEdits` in ONE transaction (the old single-approve
+ * pattern) short-circuited the `mapPos` branch — other owners' snapshots kept
+ * their pre-change offsets, so the NEXT approve in the same editor landed at the
+ * wrong position and replaced/deleted unrelated text. Every per-edit approve
+ * site MUST go through this helper to avoid reintroducing that.
+ */
+export function applyApprovedEdit(
+    view: EditorView,
+    change: ChangeSpec,
+    owner: string,
+    ownerSnapshots: DiffEditSnapshot[]
+): void {
+    view.dispatch({
+        changes: change,
+        selection: { anchor: change.from + change.insert.length }
+    });
+    pushDiffEdits(view, ownerSnapshots, owner);
 }

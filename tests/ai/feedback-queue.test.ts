@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
     resolveQueueDir,
     mintJobId,
@@ -40,11 +40,20 @@ describe('mintJobId', () => {
         expect(mintJobId()).toMatch(/^fq_/);
     });
 
-    it('produces unique ids (small batch — the random suffix has 46656 possible values)', () => {
-        // Birthday paradox: with a 46656-value random space, 100 samples have a
-        // ~10.7% collision rate. Keep the batch small (20 → <0.5% collision).
+    it('produces unique ids', () => {
+        // The full id is `fq_<base36-ts>_<base36-rand>`. All 20 calls land in
+        // the same millisecond, so the timestamp prefix is identical and
+        // uniqueness rests entirely on the random suffix (a 46656-value space).
+        // The real RNG can collide there (birthday paradox), which made a naive
+        // `size === 20` assertion flaky in CI. Stub Math.random to a strictly-
+        // increasing sequence so the suffixes are guaranteed distinct — this
+        // still verifies the suffix actually varies with the RNG (a constant or
+        // broken random would collapse to one id).
+        let i = 0;
+        const spy = vi.spyOn(Math, 'random').mockImplementation(() => i++ / 20);
         const ids = new Set<string>();
-        for (let i = 0; i < 20; i++) ids.add(mintJobId());
+        for (let j = 0; j < 20; j++) ids.add(mintJobId());
+        spy.mockRestore();
         expect(ids.size).toBe(20);
     });
 });

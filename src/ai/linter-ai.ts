@@ -124,7 +124,7 @@ export async function suggestLintFix(
  *    to extract only what changed within the flagged span.
  * 3. The model wraps its response in markdown or quotes — we strip those first.
  */
-function extractReplacement(raw: string, originalLine: string, result: LintResult): string {
+export function extractReplacement(raw: string, originalLine: string, result: LintResult): string {
     let cleaned = raw;
 
     // Strip multi-line markdown code blocks first: ```\n...\n```: extract inner content instead of deleting.
@@ -175,9 +175,17 @@ function extractReplacement(raw: string, originalLine: string, result: LintResul
     // CASE 1: Model returned the DELETE sentinel or an empty string after cleanup
     if (cleaned === 'DELETE' || cleaned === '') return '';
 
+    // CASE 1.5: The model returned the line with the flagged span excised — it
+    // reproduced the surrounding context but omitted the flagged text (often
+    // collapsing the leftover whitespace). This is the canonical "remove the
+    // qualifier" response and, unhandled, causes word duplication. Treat as DELETE.
+    if (normalizeForCompare(cleaned) === normalizeForCompare(beforeFlagged + afterFlagged)) {
+        return '';
+    }
+
     // CASE 2: The response is plausibly just the replacement — short enough
     // that it's unlikely to be a full rewritten line.
-    if (cleaned.length <= flaggedText.length * 3 + 5) {
+    if (cleaned.length <= flaggedText.length * 2 + 4) {
         return sanitizeReplacement(cleaned, beforeFlagged, afterFlagged);
     }
 
@@ -226,33 +234,104 @@ function extractReplacement(raw: string, originalLine: string, result: LintResul
 }
 
 /**
+ * Collapse runs of whitespace to a single space and trim. Used only for
+ * equality comparison — never for the actual replacement text.
+ */
+function normalizeForCompare(s: string): string {
+    return s.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Longest overlap where the START of `candidate` matches a SUFFIX of `prefix`
+ * (candidate begins by echoing the tail of the preceding context).
+ * Returns the number of leading characters that duplicate `prefix`'s tail.
+ */
+function longestLeadingOverlap(candidate: string, prefix: string): number {
+    const max = Math.min(candidate.length, prefix.length);
+    for (let len = max; len > 0; len--) {
+        if (candidate.startsWith(prefix.slice(prefix.length - len))) {
+            return len;
+        }
+    }
+    return 0;
+}
+
+/**
+ * Longest overlap where the END of `candidate` matches a PREFIX of `suffix`
+ * (candidate ends by echoing the head of the following context).
+ * Returns the number of trailing characters that duplicate `suffix`'s head.
+ */
+function longestTrailingOverlap(candidate: string, suffix: string): number {
+    const max = Math.min(candidate.length, suffix.length);
+    for (let len = max; len > 0; len--) {
+        if (candidate.endsWith(suffix.slice(0, len))) {
+            return len;
+        }
+    }
+    return 0;
+}
+
+/** A letter or digit — used for word-boundary checks in overlap trimming. */
+function isWordChar(ch: string | undefined): boolean {
+    return ch !== undefined && /[A-Za-z0-9]/.test(ch);
+}
+
+/**
  * Sanitize a replacement text to ensure it fits cleanly into the flagged span.
  *
  * - Strips leading content that duplicates the text immediately before the
- *   flagged span (the model sometimes includes surrounding context).
+ *   flagged span (the model sometimes echoes the preceding context).
  * - Strips trailing content that duplicates the text immediately after the
  *   flagged span.
- * - When replacing with an empty string (deletion), preserves spacing by
- *   collapsing double spaces that would result from removing the flagged text.
+ *
+ * Whitespace-tolerant: boundary spaces are normalized before comparison so a
+ * model that collapsed a single space (e.g. when deleting the flagged word) is
+ * still recognized. Overlap detection runs against the FULL surrounding context
+ * (no fixed-length cap), finding the longest contiguous echo. Word-boundary
+ * gated: an overlap is only stripped when it sits on a token boundary in BOTH
+ * the replacement and the context, so a coincidental intra-word char match
+ * (e.g. replacement "magical" ending in "cal" that prefixes "calendar") is
+ * preserved rather than corrupting "magical" into "magi". If the entire
+ * replacement is a word-boundary-aligned prefix of what already follows the
+ * span, the model echoed forward context rather than offering a real fragment —
+ * splicing it in would duplicate that context, so the intent is treated as
+ * "nothing to add".
  */
-function sanitizeReplacement(replacement: string, beforeFlagged: string, afterFlagged: string): string {
+export function sanitizeReplacement(replacement: string, beforeFlagged: string, afterFlagged: string): string {
     let result = replacement;
 
-    // If the replacement starts with text that matches what's already on the
-    // line right before the flagged span, strip it — it would be duplicated.
-    if (beforeFlagged.length > 0 && result.startsWith(beforeFlagged.slice(-Math.min(beforeFlagged.length, 20)))) {
-        const overlap = beforeFlagged.slice(-Math.min(beforeFlagged.length, 20));
-        // Only strip if the overlap is non-trivial (more than a couple chars)
-        if (overlap.length > 2) {
-            result = result.slice(overlap.length);
+    const beforeTrim = beforeFlagged.trimEnd();
+    const afterTrim = afterFlagged.trimStart();
+
+    if (beforeTrim.length > 2) {
+        const overlap = longestLeadingOverlap(result, beforeTrim);
+        // Only strip a non-trivial, word-boundary-aligned overlap that leaves
+        // real content behind. Full leading coverage is handled by the trailing
+        // pass (forward-context echo).
+        if (overlap > 2 && overlap < result.length) {
+            const afterInResult = result[overlap];
+            const beforeInPrefix = beforeTrim[beforeTrim.length - overlap - 1];
+            if (!isWordChar(afterInResult) && !isWordChar(beforeInPrefix)) {
+                result = result.slice(overlap);
+            }
         }
     }
 
-    // Similarly strip trailing overlap with what follows the flagged span.
-    if (afterFlagged.length > 0) {
-        const afterPrefix = afterFlagged.slice(0, Math.min(afterFlagged.length, 20));
-        if (afterPrefix.length > 2 && result.endsWith(afterPrefix)) {
-            result = result.slice(0, result.length - afterPrefix.length);
+    if (afterTrim.length > 2) {
+        const overlap = longestTrailingOverlap(result, afterTrim);
+        if (overlap > 2) {
+            const beforeInResult = result[result.length - overlap - 1];
+            const afterInSuffix = afterTrim[overlap];
+            // Word-boundary gate: strip only a discrete token echo, not a
+            // coincidental intra-word char match.
+            if (!isWordChar(beforeInResult) && !isWordChar(afterInSuffix)) {
+                if (overlap >= result.length) {
+                    // The entire replacement is a prefix of what already follows
+                    // the flagged span — splicing it in would duplicate that context.
+                    return '';
+                }
+                result = result.slice(0, result.length - overlap);
+            }
         }
     }
 

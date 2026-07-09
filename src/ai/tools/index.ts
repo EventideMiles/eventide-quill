@@ -45,6 +45,13 @@ export { reviseEditTool } from './revise-edit';
 export { runLorebookBatchTool } from './run-lorebook-batch';
 export { runResearchTool } from './research';
 export { vaultLookupTool } from './vault-lookup';
+export {
+    detectTextToolCall,
+    buildToolNudgeMessage,
+    tryNudgeTextToolLeak,
+    MAX_TEXT_TOOL_NUDGES
+} from './text-tool-detect';
+export type { TextToolLeak, NudgeTextToolLeakOptions, NudgeTextToolLeakResult } from './text-tool-detect';
 
 /**
  * Options for {@link createInternalToolRegistry}. Each flag defaults to true,
