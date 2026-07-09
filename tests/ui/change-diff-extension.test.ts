@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { EditorState } from '@codemirror/state';
-import { diffEditsField, setDiffEdits, type DiffEditSnapshot } from '../../src/ui/change-diff-extension';
+import { EditorState, type StateField } from '@codemirror/state';
+import type { DecorationSet } from '@codemirror/view';
+import {
+    diffEditsField,
+    getChangeDiffExtension,
+    setDiffEdits,
+    type DiffEditSnapshot
+} from '../../src/ui/change-diff-extension';
 
 /** Build a snapshot for owner `own` at [from, to). */
 function snap(id: number, from: number, to: number, own: string): DiffEditSnapshot {
@@ -77,5 +83,52 @@ describe('diffEditsField remap semantics', () => {
         const direct = state.field(diffEditsField).find((s) => s.owner === 'direct')!;
         expect(direct.from).toBe(98);
         expect(direct.to).toBe(103);
+    });
+});
+
+describe('decorationsField robustness across plugin enable/disable', () => {
+    // The decorations StateField derives from diffEditsField via state.field().
+    // During plugin enable/disable, Obsidian reconfigures the editor's extension
+    // set, and decorationsField's update/create can run against a state where
+    // diffEditsField is (transiently) absent. Pre-fix this threw
+    // "Field is not present in this state" and crashed the editor for the user.
+
+    /** The decorations field from the bundle (the one that reads diffEditsField). */
+    function decorationsOnly(): StateField<DecorationSet> {
+        const bundle = getChangeDiffExtension({});
+        return bundle.find((e) => e !== diffEditsField) as StateField<DecorationSet>;
+    }
+
+    it('does not throw when diffEditsField is absent during an update', () => {
+        // Simulate the transient reconfiguration state: decorationsField present,
+        // diffEditsField NOT. A doc-change transaction triggers decorationsField.update,
+        // which must read diffEditsField via require:false and skip the rebuild.
+        const decorationsField = decorationsOnly();
+        let state = EditorState.create({ doc: 'hello world', extensions: [decorationsField] });
+        expect(() => {
+            state = state.update({ changes: { from: 0, to: 0, insert: 'x' } }).state;
+        }).not.toThrow();
+        // Decorations gracefully resolve (no diff to show -> none), not a crash.
+        expect(state.field(decorationsField).size).toBe(0);
+    });
+
+    it('does not throw when diffEditsField is absent at create time', () => {
+        // The create() path also calls buildDiffDecorations -> state.field().
+        // Registering decorationsField alone exercises create with the field absent.
+        const decorationsField = decorationsOnly();
+        expect(() => {
+            EditorState.create({ doc: 'hello', extensions: [decorationsField] });
+        }).not.toThrow();
+    });
+
+    it('still rebuilds correctly when diffEditsField IS present (no regression)', () => {
+        // Sanity: the normal bundled case still produces decorations from snapshots.
+        const bundle = getChangeDiffExtension({});
+        let state = EditorState.create({ doc: '_'.repeat(50), extensions: bundle });
+        state = state.update({
+            effects: setDiffEdits.of([snap(1, 10, 14, 'fulfill')])
+        }).state;
+        // A pending edit with a non-empty range produces a replace decoration.
+        expect(state.field(diffEditsField).length).toBe(1);
     });
 });

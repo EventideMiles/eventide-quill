@@ -222,7 +222,11 @@ class ChangePreviewWidget extends WidgetType {
  * widgets.
  */
 function buildDiffDecorations(state: EditorState, handlers: ChangeDiffHandlers): DecorationSet {
-    const edits = state.field(diffEditsField);
+    // `require: false` — diffEditsField can be transiently absent from the
+    // state during Obsidian editor reconfigurations (mode switches, plugin
+    // enable/disable, split-view creation). Without this, .field() throws
+    // "Field is not present in this state" and crashes the editor.
+    const edits = state.field(diffEditsField, false) ?? [];
     if (edits.length === 0) return Decoration.none;
     const doc = state.doc;
     const ranges: Range<Decoration>[] = [];
@@ -260,8 +264,15 @@ export function getChangeDiffExtension(handlers: ChangeDiffHandlers): Extension[
     const decorationsField = StateField.define<DecorationSet>({
         create: (state) => buildDiffDecorations(state, handlers),
         update: (value, tr) => {
-            const prev = tr.startState.field(diffEditsField);
-            const next = tr.state.field(diffEditsField);
+            // `require: false` on both reads: diffEditsField can be transiently
+            // absent during Obsidian editor reconfigurations (mode switches,
+            // plugin enable/disable timing, split-view creation). With the
+            // default require:true this throws "Field is not present in this
+            // state" from inside a StateField update, which crashes the editor.
+            // When absent, both read as undefined (=== each other) and we keep
+            // the current decorations unchanged.
+            const prev = tr.startState.field(diffEditsField, false);
+            const next = tr.state.field(diffEditsField, false);
             // Rebuild only when the diff-edits snapshots actually changed
             // (setDiffEdits effect or docChanged remapping). When identity is
             // the same, the decorations are unchanged.
