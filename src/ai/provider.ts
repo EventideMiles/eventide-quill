@@ -156,6 +156,18 @@ export interface ChatMessage {
      */
     quillAnchorId?: string;
     /**
+     * Quill-internal flag: this message's `content` (and/or `toolCalls`
+     * arguments) has been compressed by the context-refinement engine so the
+     * turn is retained as a compact outcome marker rather than its original
+     * verbatim text. NOT serialized to the provider (dropped on the wire like
+     * {@link quillAnchorId}). Marks a message as already-refined so the engine
+     * is idempotent across repeated passes (event-driven + budget-driven). The
+     * anchor id is preserved, so a refined turn still rewinds atomically —
+     * refinement is non-destructive to the display↔API coupling (unlike
+     * compaction, which folds turns into a summary and drops their anchors).
+     */
+    quillRefined?: boolean;
+    /**
      * Anthropic-only: thinking blocks captured from a prior assistant turn.
      * Required when extended thinking is enabled alongside tool use — Anthropic
      * signs each thinking block (or redacts it) and the signed/redacted
