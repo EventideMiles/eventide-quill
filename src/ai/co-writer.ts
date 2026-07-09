@@ -22,6 +22,7 @@ import {
     type ActiveSteering
 } from './prompts';
 import { compactConversation } from './compaction';
+import { refineProposeEntryOutcome, refineLoreEditOutcome, refineStaleVaultLookups } from './context-refinement';
 import { estimateTokens } from '../utils/tokens';
 import { readVaultFiles, readVaultFileText } from '../utils/vault-files';
 import { parseDirectives, parseAllDirectives } from '../utils/directives';
@@ -2854,6 +2855,48 @@ export class CoWriterSession {
             this.loreEdits.delete(filePath);
         }
         this.onLoreEditUpdate?.();
+    }
+
+    /**
+     * Event-driven context refinement: after a lore edit (edit_note /
+     * insert_note / append_to_note) is resolved, compress the affected API
+     * turns so the model learns the outcome and sheds verbatim now-stale
+     * content. Runs over BOTH API arrays (an edit approved in one mode still
+     * benefits the other's history if it overlaps). Gated by
+     * `contextRefinementEnabled`. Idempotent. See `src/ai/context-refinement.ts`.
+     */
+    refineOnLoreEditResolved(
+        plugin: EventideQuillPlugin,
+        filePath: string,
+        editId: number,
+        outcome: 'approved' | 'rejected'
+    ): void {
+        if (!plugin.settings.contextRefinementEnabled) return;
+        refineLoreEditOutcome(this.discussCurrentMessages, editId, outcome);
+        refineLoreEditOutcome(this.loreCoachMessages, editId, outcome);
+        if (outcome === 'approved') {
+            // The file changed — prior vault_lookups of it are now stale.
+            refineStaleVaultLookups(this.discussCurrentMessages, filePath);
+            refineStaleVaultLookups(this.loreCoachMessages, filePath);
+        }
+    }
+
+    /**
+     * Event-driven context refinement: after a lore draft (propose_entry) is
+     * accepted (saved) or discarded, compress the proposing turn so the verbatim
+     * entry markdown leaves the model's context (the regurgitation source for
+     * long-context models) and a compact outcome marker takes its place — the
+     * durable "move-on" signal. Gated by `contextRefinementEnabled`. Idempotent.
+     */
+    refineOnLoreDraftResolved(
+        plugin: EventideQuillPlugin,
+        name: string,
+        outcome: 'accepted' | 'discarded',
+        savedPath?: string
+    ): void {
+        if (!plugin.settings.contextRefinementEnabled) return;
+        refineProposeEntryOutcome(this.discussCurrentMessages, name, outcome, savedPath);
+        refineProposeEntryOutcome(this.loreCoachMessages, name, outcome, savedPath);
     }
 
     /** Clear all pending lore edits (e.g., on reset / new chat). */

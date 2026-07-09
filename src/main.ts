@@ -2245,18 +2245,23 @@ export default class EventideQuillPlugin extends Plugin {
      * session's `currentLoreDraft` is cleared so the review card's actions
      * no longer fire.
      */
-    discardLoreDraft(_draft: LoreDraftEntry): void {
+    discardLoreDraft(draft: LoreDraftEntry): void {
         this.coWriterSession.currentLoreDraft = null;
+        // Refine the proposing turn so the verbatim draft leaves the model's
+        // context (a discarded draft shouldn't linger as regurgitation fuel).
+        this.coWriterSession.refineOnLoreDraftResolved(this, draft.name, 'discarded');
     }
 
     /** Approve a pending lore edit for a specific file. */
     approveLoreEdit(filePath: string, id: number): void {
         this.coWriterSession.approveLoreEdit(filePath, id);
+        this.coWriterSession.refineOnLoreEditResolved(this, filePath, id, 'approved');
     }
 
     /** Reject a pending lore edit for a specific file by id. */
     rejectLoreEdit(filePath: string, id: number): void {
         this.coWriterSession.rejectLoreEdit(filePath, id);
+        this.coWriterSession.refineOnLoreEditResolved(this, filePath, id, 'rejected');
     }
 
     /**
