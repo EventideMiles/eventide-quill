@@ -104,7 +104,10 @@ export function toDiffSnapshots(changeSet: ChangeSet, owner: string, filePath?: 
  * pre-edit offset and mangle surrounding text.
  */
 export function syncChangeSetPositions(view: EditorView, changeSet: ChangeSet, owner: string): void {
-    const snapshots = view.state.field(diffEditsField);
+    // require:false — diffEditsField can be transiently absent during Obsidian
+    // editor reconfigurations (the same enable/disable timing that crashed
+    // decorationsField). Absent → nothing to sync → return.
+    const snapshots = view.state.field(diffEditsField, false);
     if (!snapshots || snapshots.length === 0) return;
     for (const snap of snapshots) {
         if (snap.owner !== owner) continue;
@@ -299,7 +302,8 @@ export function pushDiffEdits(view: EditorView, snapshots: DiffEditSnapshot[], o
         view.dispatch({ effects: setDiffEdits.of(snapshots) });
         return;
     }
-    const existing = view.state.field(diffEditsField);
+    // require:false → absent field treated as no existing snapshots to preserve.
+    const existing = view.state.field(diffEditsField, false) ?? [];
     const preserved = existing.filter((s) => s.owner !== targetOwner);
     view.dispatch({ effects: setDiffEdits.of([...preserved, ...snapshots]) });
 }
@@ -314,7 +318,7 @@ export function clearDiffEdits(view: EditorView, owner?: string): void {
         view.dispatch({ effects: setDiffEdits.of([]) });
         return;
     }
-    const existing = view.state.field(diffEditsField);
+    const existing = view.state.field(diffEditsField, false) ?? [];
     const preserved = existing.filter((s) => s.owner !== owner);
     view.dispatch({ effects: setDiffEdits.of(preserved) });
 }
