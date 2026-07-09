@@ -22,7 +22,12 @@ import {
     type ActiveSteering
 } from './prompts';
 import { compactConversation } from './compaction';
-import { refineProposeEntryOutcome, refineLoreEditOutcome, refineStaleVaultLookups } from './context-refinement';
+import {
+    refineProposeEntryOutcome,
+    refineLoreEditOutcome,
+    refineStaleVaultLookups,
+    refineForBudget
+} from './context-refinement';
 import { estimateTokens } from '../utils/tokens';
 import { readVaultFiles, readVaultFileText } from '../utils/vault-files';
 import { parseDirectives, parseAllDirectives } from '../utils/directives';
@@ -1188,8 +1193,35 @@ export class CoWriterSession {
         // The panel adds vault context item tokens on top to get the total.
         this.onTokenEstimate?.(this.estimateRequestBreakdown(hypotheticalConversation), maxTokens);
 
-        // --- AI-powered compaction ---
-        if (totalTokens / maxTokens >= compactPct) {
+        // --- Compaction: refine first (deterministic, free), then AI-summarize if still over ---
+        let needsCompaction = totalTokens / maxTokens >= compactPct;
+        if (needsCompaction) {
+            // Compress bulky/stale tool content before falling back to AI
+            // summarization. Target the threshold minus the non-message token
+            // volume (injected context + this pending user message). Re-measure
+            // afterward — it may free enough to skip the AI call entirely.
+            this.refineForBudgetIfEnabled(
+                plugin,
+                this.discussCurrentMessages,
+                Math.max(0, Math.ceil(compactPct * maxTokens) - injectedTokens - Math.ceil(prompt.length / 4))
+            );
+            const refinedTokens =
+                this.estimateRequestTokens([
+                    ...this.discussCurrentMessages,
+                    { role: 'user' as const, content: prompt }
+                ]) + injectedTokens;
+            if (refinedTokens / maxTokens < compactPct) {
+                needsCompaction = false;
+                this.onTokenEstimate?.(
+                    this.estimateRequestBreakdown([
+                        ...this.discussCurrentMessages,
+                        { role: 'user' as const, content: prompt }
+                    ]),
+                    maxTokens
+                );
+            }
+        }
+        if (needsCompaction) {
             const sentenceCount = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
             try {
                 const result = await compactConversation(chat.provider, this.discussCurrentMessages, sentenceCount, {
@@ -1403,11 +1435,21 @@ export class CoWriterSession {
                 // Re-estimate after tool results were appended.
                 this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
 
-                // Mid-loop compaction: if tool results have filled the context
-                // past the compaction threshold, summarize older turns to free
-                // room for the next batch. Keeps batch sizes high instead of
-                // degrading as the conversation grows.
-                if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens >= compactPct) {
+                // Mid-loop compaction: refine first (deterministic, free), then
+                // AI-summarize older turns if still over the threshold. Keeps
+                // batch sizes high instead of degrading as the conversation grows.
+                let needsCompaction = this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens >= compactPct;
+                if (needsCompaction) {
+                    this.refineForBudgetIfEnabled(
+                        plugin,
+                        this.discussCurrentMessages,
+                        Math.ceil(compactPct * maxTokens)
+                    );
+                    if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens < compactPct) {
+                        needsCompaction = false;
+                    }
+                }
+                if (needsCompaction) {
                     const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
                     try {
                         const cResult = await compactConversation(chat.provider, this.discussCurrentMessages, sc, {
@@ -1649,8 +1691,21 @@ export class CoWriterSession {
 
         this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
 
-        // Compaction (same as discuss mode)
-        if (totalTokens / maxTokens >= compactPct) {
+        // Compaction: refine first (deterministic, free), then AI-summarize if still over
+        let needsCompaction = totalTokens / maxTokens >= compactPct;
+        if (needsCompaction) {
+            this.refineForBudgetIfEnabled(
+                plugin,
+                this.discussCurrentMessages,
+                Math.max(0, Math.ceil(compactPct * maxTokens) - injectedTokens)
+            );
+            const refinedTokens = this.estimateRequestTokens(this.discussCurrentMessages) + injectedTokens;
+            if (refinedTokens / maxTokens < compactPct) {
+                needsCompaction = false;
+                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+            }
+        }
+        if (needsCompaction) {
             const sentenceCount = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
             try {
                 const result = await compactConversation(chat.provider, this.discussCurrentMessages, sentenceCount, {
@@ -1814,8 +1869,19 @@ export class CoWriterSession {
                 this.annotateToolUseErrors(coachExecResults);
                 this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
 
-                // Mid-loop compaction (same as discuss).
-                if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens >= compactPct) {
+                // Mid-loop compaction: refine first (deterministic, free), then AI-summarize if still over.
+                let needsCompaction = this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens >= compactPct;
+                if (needsCompaction) {
+                    this.refineForBudgetIfEnabled(
+                        plugin,
+                        this.discussCurrentMessages,
+                        Math.ceil(compactPct * maxTokens)
+                    );
+                    if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens < compactPct) {
+                        needsCompaction = false;
+                    }
+                }
+                if (needsCompaction) {
                     const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
                     try {
                         const cResult = await compactConversation(chat.provider, this.discussCurrentMessages, sc, {
@@ -2205,7 +2271,16 @@ export class CoWriterSession {
         const conversationTokens = this.estimateRequestTokens(this.loreCoachMessages);
         this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
 
-        if (conversationTokens / maxTokens >= compactPct) {
+        // Compaction: refine first (deterministic, free), then AI-summarize if still over.
+        let needsCompaction = conversationTokens / maxTokens >= compactPct;
+        if (needsCompaction) {
+            this.refineForBudgetIfEnabled(plugin, this.loreCoachMessages, Math.ceil(compactPct * maxTokens));
+            if (this.estimateRequestTokens(this.loreCoachMessages) / maxTokens < compactPct) {
+                needsCompaction = false;
+                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+            }
+        }
+        if (needsCompaction) {
             const sentenceCount = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
             try {
                 const result = await compactConversation(chat.provider, this.loreCoachMessages, sentenceCount);
@@ -2392,9 +2467,16 @@ export class CoWriterSession {
                 // growth, then sync the chat so the user sees progress.
                 this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
 
-                // Mid-loop compaction: if tool results have filled the context,
-                // summarize older turns to free room for the next batch.
-                if (this.estimateRequestTokens(this.loreCoachMessages) / maxTokens >= compactPct) {
+                // Mid-loop compaction: refine first (deterministic, free), then
+                // AI-summarize older turns if still over the threshold.
+                let needsCompaction = this.estimateRequestTokens(this.loreCoachMessages) / maxTokens >= compactPct;
+                if (needsCompaction) {
+                    this.refineForBudgetIfEnabled(plugin, this.loreCoachMessages, Math.ceil(compactPct * maxTokens));
+                    if (this.estimateRequestTokens(this.loreCoachMessages) / maxTokens < compactPct) {
+                        needsCompaction = false;
+                    }
+                }
+                if (needsCompaction) {
                     const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
                     try {
                         const cResult = await compactConversation(chat.provider, this.loreCoachMessages, sc, {
@@ -2897,6 +2979,20 @@ export class CoWriterSession {
         if (!plugin.settings.contextRefinementEnabled) return;
         refineProposeEntryOutcome(this.discussCurrentMessages, name, outcome, savedPath);
         refineProposeEntryOutcome(this.loreCoachMessages, name, outcome, savedPath);
+    }
+
+    /**
+     * Budget-driven refinement pre-stage: when the setting is on, run
+     * `refineForBudget` over `messages` targeting the compaction threshold
+     * (`targetTokens` = threshold minus `extraTokens` — the token volume not
+     * stored in `messages` but counted toward the threshold, e.g. injected
+     * context heads + the pending user message at pre-send sites). The caller
+     * re-measures afterward and may skip AI compaction entirely. Mutates the
+     * array in place; idempotent. No-op when the setting is off.
+     */
+    refineForBudgetIfEnabled(plugin: EventideQuillPlugin, messages: ChatMessage[], targetTokens: number): void {
+        if (!plugin.settings.contextRefinementEnabled) return;
+        refineForBudget(messages, (msgs) => this.estimateRequestTokens(msgs), targetTokens);
     }
 
     /** Clear all pending lore edits (e.g., on reset / new chat). */
