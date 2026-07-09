@@ -158,8 +158,10 @@ describe('extractReplacement', () => {
     for (const c of cases) {
         it(c.name, () => {
             const got = extractReplacement(c.response, c.line, result(1, c.column, c.length));
-            // Trim to normalize boundary whitespace the apply-fix cleanup layer collapses.
-            expect(got.trim()).toBe(c.expected);
+            // Exact assertion — boundary whitespace is the apply-fix cleanup
+            // layer's job, not extractReplacement's. Trimming here would hide
+            // whitespace regressions in the extraction cascade.
+            expect(got).toBe(c.expected);
         });
     }
 });
@@ -193,6 +195,13 @@ describe('sanitizeReplacement', () => {
         // 'a dog' + ' dog today' would duplicate 'dog' — strip the echo.
         const out = sanitizeReplacement('a dog', 'I saw ', ' dog today');
         expect(out.trim()).toBe('a');
+    });
+
+    it('does not strip an intra-word char overlap (preserves a valid replacement)', () => {
+        // 'magical' ends in 'cal', which prefixes 'calendar' — a coincidental
+        // mid-word char match, not a context echo. Stripping would corrupt
+        // 'magical' into 'magi'. The word-boundary gate must skip it.
+        expect(sanitizeReplacement('magical', 'the ', 'calendar')).toBe('magical');
     });
 });
 

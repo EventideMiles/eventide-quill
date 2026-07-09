@@ -2,14 +2,7 @@ import { type AiProvider, type AnthropicThinkingBlockKind, type ChatMessage } fr
 import type EventideQuillPlugin from '../main';
 import { compactConversation } from './compaction';
 import { estimateTokens } from '../utils/tokens';
-import {
-    executeToolCall,
-    detectTextToolCall,
-    buildToolNudgeMessage,
-    MAX_TEXT_TOOL_NUDGES,
-    type ToolContext,
-    type ToolRegistry
-} from './tools';
+import { executeToolCall, tryNudgeTextToolLeak, type ToolContext, type ToolRegistry } from './tools';
 import { injectImagesIntoMessages } from './vision';
 
 /**
@@ -246,20 +239,19 @@ export class SubagentSession {
                 // No tools called → this round is final, UNLESS the model
                 // wrote a tool call as plain text (common with local models):
                 // nudge it to re-issue via the real interface and take another
-                // round. Bounded by MAX_TEXT_TOOL_NUDGES so a model that keeps
-                // narrating can't spin the isolated context forever.
+                // round. tryNudgeTextToolLeak centralizes the bound, detection,
+                // and nudge push shared with the co-writer tool-loop sites.
                 if (toolCalls.length === 0) {
-                    if (response.trim() && nudgesUsed < MAX_TEXT_TOOL_NUDGES) {
-                        const leak = detectTextToolCall(
-                            response,
-                            toolDefs.map((t) => t.name)
-                        );
-                        if (leak) {
-                            nudgesUsed++;
-                            this.messages.push(buildToolNudgeMessage(leak));
-                            this.onChatUpdate?.();
-                            continue;
-                        }
+                    const nudge = tryNudgeTextToolLeak({
+                        response,
+                        toolNames: toolDefs.map((t) => t.name),
+                        messages: this.messages,
+                        nudgesUsed,
+                        onChatUpdate: () => this.onChatUpdate?.()
+                    });
+                    if (nudge.nudged) {
+                        nudgesUsed = nudge.nudgesUsed;
+                        continue;
                     }
                     break;
                 }

@@ -98,3 +98,52 @@ export function buildToolNudgeMessage(leak: TextToolLeak): ChatMessage {
         ].join(' ')
     };
 }
+
+/** Options for {@link tryNudgeTextToolLeak}. */
+export interface NudgeTextToolLeakOptions {
+    /** The model's accumulated text response for the round. */
+    response: string;
+    /** Registered tool ids the model had access to this round. */
+    toolNames: string[];
+    /** API message array to append the nudge to (mutated in place when nudging). */
+    messages: ChatMessage[];
+    /** Nudges already consumed this turn (bounds the retry). */
+    nudgesUsed: number;
+    /** Optional UI refresh callback fired after the nudge is pushed. */
+    onChatUpdate?: () => void;
+}
+
+/** Result of {@link tryNudgeTextToolLeak}. */
+export interface NudgeTextToolLeakResult {
+    /** True when a leak was detected and a nudge round was scheduled. */
+    nudged: boolean;
+    /** The updated nudge count (incremented when `nudged`). */
+    nudgesUsed: number;
+}
+
+/**
+ * Centralized text-form tool-call recovery for a tool-loop round that produced
+ * NO structured tool calls: if the model wrote a tool invocation as plain text,
+ * push {@link buildToolNudgeMessage} into the conversation and signal that the
+ * caller should take another round.
+ *
+ * Encapsulates the bound ({@link MAX_TEXT_TOOL_NUDGES}), detection, nudge
+ * append, and the chat refresh so every tool-loop site stays consistent. The
+ * caller owns loop control: on `nudged: true`, increment its counter from the
+ * result and `continue`; otherwise end the turn.
+ *
+ * Currently used by {@link SubagentSession}; the co-writer discuss/coach/
+ * lorebook guards are an intended follow-up (same shape — pass the mode's API
+ * message array and `registry.list().map((t) => t.id)` as `toolNames`).
+ */
+export function tryNudgeTextToolLeak(opts: NudgeTextToolLeakOptions): NudgeTextToolLeakResult {
+    if (opts.response.trim() && opts.nudgesUsed < MAX_TEXT_TOOL_NUDGES) {
+        const leak = detectTextToolCall(opts.response, opts.toolNames);
+        if (leak) {
+            opts.messages.push(buildToolNudgeMessage(leak));
+            opts.onChatUpdate?.();
+            return { nudged: true, nudgesUsed: opts.nudgesUsed + 1 };
+        }
+    }
+    return { nudged: false, nudgesUsed: opts.nudgesUsed };
+}

@@ -271,6 +271,11 @@ function longestTrailingOverlap(candidate: string, suffix: string): number {
     return 0;
 }
 
+/** A letter or digit — used for word-boundary checks in overlap trimming. */
+function isWordChar(ch: string | undefined): boolean {
+    return ch !== undefined && /[A-Za-z0-9]/.test(ch);
+}
+
 /**
  * Sanitize a replacement text to ensure it fits cleanly into the flagged span.
  *
@@ -282,10 +287,15 @@ function longestTrailingOverlap(candidate: string, suffix: string): number {
  * Whitespace-tolerant: boundary spaces are normalized before comparison so a
  * model that collapsed a single space (e.g. when deleting the flagged word) is
  * still recognized. Overlap detection runs against the FULL surrounding context
- * (no fixed-length cap), finding the longest contiguous echo. If the entire
- * replacement is a prefix of what already follows the span, the model echoed
- * forward context rather than offering a real fragment — splicing it in would
- * duplicate that context, so the intent is treated as "nothing to add".
+ * (no fixed-length cap), finding the longest contiguous echo. Word-boundary
+ * gated: an overlap is only stripped when it sits on a token boundary in BOTH
+ * the replacement and the context, so a coincidental intra-word char match
+ * (e.g. replacement "magical" ending in "cal" that prefixes "calendar") is
+ * preserved rather than corrupting "magical" into "magi". If the entire
+ * replacement is a word-boundary-aligned prefix of what already follows the
+ * span, the model echoed forward context rather than offering a real fragment —
+ * splicing it in would duplicate that context, so the intent is treated as
+ * "nothing to add".
  */
 export function sanitizeReplacement(replacement: string, beforeFlagged: string, afterFlagged: string): string {
     let result = replacement;
@@ -295,23 +305,33 @@ export function sanitizeReplacement(replacement: string, beforeFlagged: string, 
 
     if (beforeTrim.length > 2) {
         const overlap = longestLeadingOverlap(result, beforeTrim);
-        // Only strip a non-trivial overlap that leaves real content behind —
-        // full coverage means the model echoed the entire preceding context,
-        // which is the forward-context-echo case handled by the trailing pass.
+        // Only strip a non-trivial, word-boundary-aligned overlap that leaves
+        // real content behind. Full leading coverage is handled by the trailing
+        // pass (forward-context echo).
         if (overlap > 2 && overlap < result.length) {
-            result = result.slice(overlap);
+            const afterInResult = result[overlap];
+            const beforeInPrefix = beforeTrim[beforeTrim.length - overlap - 1];
+            if (!isWordChar(afterInResult) && !isWordChar(beforeInPrefix)) {
+                result = result.slice(overlap);
+            }
         }
     }
 
     if (afterTrim.length > 2) {
         const overlap = longestTrailingOverlap(result, afterTrim);
         if (overlap > 2) {
-            if (overlap >= result.length) {
-                // The entire replacement is a prefix of what already follows the
-                // flagged span — splicing it in would duplicate that context.
-                return '';
+            const beforeInResult = result[result.length - overlap - 1];
+            const afterInSuffix = afterTrim[overlap];
+            // Word-boundary gate: strip only a discrete token echo, not a
+            // coincidental intra-word char match.
+            if (!isWordChar(beforeInResult) && !isWordChar(afterInSuffix)) {
+                if (overlap >= result.length) {
+                    // The entire replacement is a prefix of what already follows
+                    // the flagged span — splicing it in would duplicate that context.
+                    return '';
+                }
+                result = result.slice(0, result.length - overlap);
             }
-            result = result.slice(0, result.length - overlap);
         }
     }
 

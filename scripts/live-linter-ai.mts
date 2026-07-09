@@ -20,6 +20,9 @@ import type { LintResult } from '../src/core/linter/types';
 
 const ENDPOINT = process.env.LM_ENDPOINT ?? 'http://127.0.0.1:1234';
 const MODEL = process.env.MODEL ?? 'google_gemma-4-26b-a4b-it@q4_k_l';
+/** Per-request cap so a hung local LM Studio endpoint fails fast instead of
+ *  blocking main() indefinitely. The error surfaces in each case's STATUS. */
+const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS ?? 120_000);
 
 interface Case {
     name: string;
@@ -102,7 +105,8 @@ function makeProvider(): { provider: AiProvider; state: { lastRaw: string } } {
             const res = await fetch(`${ENDPOINT}/v1/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
+                body: JSON.stringify(body),
+                signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
             });
             if (!res.ok) {
                 throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => res.statusText)}`);
@@ -114,27 +118,33 @@ function makeProvider(): { provider: AiProvider; state: { lastRaw: string } } {
             const decoder = new TextDecoder();
             let buffer = '';
             let text = '';
-            for (;;) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() ?? '';
-                for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (!trimmed.startsWith('data:')) continue;
-                    const payload = trimmed.slice(5).trim();
-                    if (payload === '[DONE]') continue;
-                    try {
-                        const json = JSON.parse(payload) as {
-                            choices?: Array<{ delta?: { content?: string } }>;
-                        };
-                        const piece = json.choices?.[0]?.delta?.content ?? '';
-                        if (piece) text += piece;
-                    } catch {
-                        // ignore malformed keepalive/partial lines
+            try {
+                for (;;) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() ?? '';
+                    for (const line of lines) {
+                        const trimmed = line.trim();
+                        if (!trimmed.startsWith('data:')) continue;
+                        const payload = trimmed.slice(5).trim();
+                        if (payload === '[DONE]') continue;
+                        try {
+                            const json = JSON.parse(payload) as {
+                                choices?: Array<{ delta?: { content?: string } }>;
+                            };
+                            const piece = json.choices?.[0]?.delta?.content ?? '';
+                            if (piece) text += piece;
+                        } catch {
+                            // ignore malformed keepalive/partial lines
+                        }
                     }
                 }
+            } finally {
+                // Always release the stream lock so the response body isn't left
+                // held if the read loop threw (e.g. on the timeout abort above).
+                reader.releaseLock();
             }
             state.lastRaw = text;
             yield { text, done: true };

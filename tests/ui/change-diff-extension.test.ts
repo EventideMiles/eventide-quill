@@ -121,14 +121,20 @@ describe('decorationsField robustness across plugin enable/disable', () => {
         }).not.toThrow();
     });
 
-    it('still rebuilds correctly when diffEditsField IS present (no regression)', () => {
-        // Sanity: the normal bundled case still produces decorations from snapshots.
+    it('still rebuilds decorations when diffEditsField IS present (no regression)', () => {
+        // Sanity: the normal bundled case turns a pushed snapshot into a real
+        // decoration via buildDiffDecorations. Asserting the decoration output
+        // (not just the snapshot list) exercises the rebuild path the
+        // enable/disable fix guards.
         const bundle = getChangeDiffExtension({});
+        const decorationsField = bundle.find((e) => e !== diffEditsField) as StateField<DecorationSet>;
         let state = EditorState.create({ doc: '_'.repeat(50), extensions: bundle });
         state = state.update({
             effects: setDiffEdits.of([snap(1, 10, 14, 'fulfill')])
         }).state;
-        // A pending edit with a non-empty range produces a replace decoration.
+        // The snapshot landed...
         expect(state.field(diffEditsField).length).toBe(1);
+        // ...and produced exactly one replace decoration (pending edit, non-empty range).
+        expect(state.field(decorationsField).size).toBe(1);
     });
 });
