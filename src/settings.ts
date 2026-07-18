@@ -113,6 +113,16 @@ export interface EventideQuillSettings {
     contextTokenBudget: number;
     contextCompactAtPercent: number;
     compactSummarySentences: number;
+    /**
+     * Context refinement — the deterministic, surgical complement to AI
+     * compaction. When on (default), accepted/discarded lore drafts and stale
+     * vault reads are compressed in the model's API history to compact outcome
+     * markers (keeping `quillAnchorId` so rewind still works), and a free
+     * refinement pass runs before the AI compaction fallback when a
+     * conversation approaches the threshold. Off = pure AI compaction only
+     * (the pre-1.3.0 behavior). See `src/ai/context-refinement.ts`.
+     */
+    contextRefinementEnabled: boolean;
     contextIncludeVaultContext: boolean;
     contextMaxVaultFiles: number;
     contextMaxCharsPerFile: number;
@@ -237,6 +247,15 @@ export interface EventideQuillSettings {
      * `normalizePath()`-wrapped before any vault write.
      */
     loreEntryImageAttachmentFolder: string;
+    /**
+     * When on (default), `propose_entry` refuses to draft a new entry whose
+     * exact name already matches an existing note anywhere in the vault, and
+     * returns a length-aware message routing the model to `edit_note` /
+     * `insert_note` / `append_to_note` instead. Prevents duplicate notes that
+     * strand [[wikilinks]] pointing at the original. Off = unconditional
+     * create (the pre-1.3.0 behavior) — escape hatch.
+     */
+    lorePreferEditOverCreate: boolean;
     /** Master toggle for the async feedback queue. Off hides the Queue tab and the Review handoff. Default: on. */
     enableFeedbackQueue: boolean;
     /** Max queue jobs retained on disk (sidecar blobs). Older completed jobs are LRU-evicted; the vault report note is never touched by LRU. Default 20. */
@@ -326,6 +345,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     contextTokenBudget: 8192,
     contextCompactAtPercent: 80,
     compactSummarySentences: 3,
+    contextRefinementEnabled: true,
     contextIncludeVaultContext: true,
     contextMaxVaultFiles: 20,
     contextMaxCharsPerFile: 2000,
@@ -367,6 +387,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     loreEntryImageMaxPerEntry: 4,
     loreEntryImageAttachments: true,
     loreEntryImageAttachmentFolder: '',
+    lorePreferEditOverCreate: true,
     enableFeedbackQueue: true,
     feedbackQueueLimit: 20,
     feedbackQueueAutoRun: true,
@@ -2064,6 +2085,21 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     })
             );
 
+        new Setting(content)
+            .setName('Prefer editing existing lore')
+            .setDesc(
+                'When the lorebook coach drafts a new entry whose exact name already matches a note in ' +
+                    'your vault, refuse the draft and point it at edit_note / insert_note / append_to_note ' +
+                    'instead. Avoids duplicate notes that strand [[wikilinks]] pointing at the original. ' +
+                    'Off = allow unconditional creation. Default: on.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.lorePreferEditOverCreate).onChange(async (value) => {
+                    this.plugin.settings.lorePreferEditOverCreate = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
         // --- Slash commands (co-writer input shortcuts) ---
         new Setting(content)
             .setName('Slash commands')
@@ -3307,6 +3343,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.contextTokenBudget = DEFAULT_SETTINGS.contextTokenBudget;
                         this.plugin.settings.contextCompactAtPercent = DEFAULT_SETTINGS.contextCompactAtPercent;
                         this.plugin.settings.compactSummarySentences = DEFAULT_SETTINGS.compactSummarySentences;
+                        this.plugin.settings.contextRefinementEnabled = DEFAULT_SETTINGS.contextRefinementEnabled;
                         this.plugin.settings.contextIncludeVaultContext = DEFAULT_SETTINGS.contextIncludeVaultContext;
                         this.plugin.settings.contextMaxVaultFiles = DEFAULT_SETTINGS.contextMaxVaultFiles;
                         this.plugin.settings.contextMaxCharsPerFile = DEFAULT_SETTINGS.contextMaxCharsPerFile;
@@ -3368,6 +3405,23 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }
                 );
             });
+
+        new Setting(containerEl)
+            .setName('Refine accepted edits out of context')
+            .setDesc(
+                'Before AI-compacting, surgically compress bulky or now-stale tool content in the ' +
+                    'model\u2019s history: accepted/discarded lore drafts become compact outcome markers, ' +
+                    'stale vault reads are marked for re-lookup, and big reads are trimmed oldest-first ' +
+                    'when nearing the threshold. Cheaper and more faithful than a full AI summary (the ' +
+                    'model can always re-look-up current text), and stops a long-context model from ' +
+                    're-outputting an entry it already drafted. Rewind still works. Default: on.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.contextRefinementEnabled).onChange(async (value) => {
+                    this.plugin.settings.contextRefinementEnabled = value;
+                    await this.plugin.saveSettings();
+                })
+            );
 
         new Setting(containerEl)
             .setName('Include vault context')
@@ -3504,6 +3558,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
                     this.plugin.settings.contextTokenBudget = DEFAULT_SETTINGS.contextTokenBudget;
                     this.plugin.settings.contextCompactAtPercent = DEFAULT_SETTINGS.contextCompactAtPercent;
+                    this.plugin.settings.contextRefinementEnabled = DEFAULT_SETTINGS.contextRefinementEnabled;
                     this.plugin.settings.compactSummarySentences = DEFAULT_SETTINGS.compactSummarySentences;
                     this.plugin.settings.contextIncludeVaultContext = DEFAULT_SETTINGS.contextIncludeVaultContext;
                     this.plugin.settings.contextMaxVaultFiles = DEFAULT_SETTINGS.contextMaxVaultFiles;
@@ -3536,6 +3591,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.loreEntryImageAttachments = DEFAULT_SETTINGS.loreEntryImageAttachments;
                     this.plugin.settings.loreEntryImageAttachmentFolder =
                         DEFAULT_SETTINGS.loreEntryImageAttachmentFolder;
+                    this.plugin.settings.lorePreferEditOverCreate = DEFAULT_SETTINGS.lorePreferEditOverCreate;
                     this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
                     this.plugin.settings.slashCommands = [...DEFAULT_SETTINGS.slashCommands];
                     this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;

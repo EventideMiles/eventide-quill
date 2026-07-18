@@ -22,6 +22,12 @@ import {
     type ActiveSteering
 } from './prompts';
 import { compactConversation } from './compaction';
+import {
+    refineProposeEntryOutcome,
+    refineLoreEditOutcome,
+    refineStaleVaultLookups,
+    refineForBudget
+} from './context-refinement';
 import { estimateTokens } from '../utils/tokens';
 import { readVaultFiles, readVaultFileText } from '../utils/vault-files';
 import { parseDirectives, parseAllDirectives } from '../utils/directives';
@@ -1187,8 +1193,35 @@ export class CoWriterSession {
         // The panel adds vault context item tokens on top to get the total.
         this.onTokenEstimate?.(this.estimateRequestBreakdown(hypotheticalConversation), maxTokens);
 
-        // --- AI-powered compaction ---
-        if (totalTokens / maxTokens >= compactPct) {
+        // --- Compaction: refine first (deterministic, free), then AI-summarize if still over ---
+        let needsCompaction = totalTokens / maxTokens >= compactPct;
+        if (needsCompaction) {
+            // Compress bulky/stale tool content before falling back to AI
+            // summarization. Target the threshold minus the non-message token
+            // volume (injected context + this pending user message). Re-measure
+            // afterward — it may free enough to skip the AI call entirely.
+            this.refineForBudgetIfEnabled(
+                plugin,
+                this.discussCurrentMessages,
+                Math.max(0, Math.ceil(compactPct * maxTokens) - injectedTokens - Math.ceil(prompt.length / 4))
+            );
+            const refinedTokens =
+                this.estimateRequestTokens([
+                    ...this.discussCurrentMessages,
+                    { role: 'user' as const, content: prompt }
+                ]) + injectedTokens;
+            if (refinedTokens / maxTokens <= compactPct) {
+                needsCompaction = false;
+                this.onTokenEstimate?.(
+                    this.estimateRequestBreakdown([
+                        ...this.discussCurrentMessages,
+                        { role: 'user' as const, content: prompt }
+                    ]),
+                    maxTokens
+                );
+            }
+        }
+        if (needsCompaction) {
             const sentenceCount = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
             try {
                 const result = await compactConversation(chat.provider, this.discussCurrentMessages, sentenceCount, {
@@ -1402,11 +1435,22 @@ export class CoWriterSession {
                 // Re-estimate after tool results were appended.
                 this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
 
-                // Mid-loop compaction: if tool results have filled the context
-                // past the compaction threshold, summarize older turns to free
-                // room for the next batch. Keeps batch sizes high instead of
-                // degrading as the conversation grows.
-                if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens >= compactPct) {
+                // Mid-loop compaction: refine first (deterministic, free), then
+                // AI-summarize older turns if still over the threshold. Keeps
+                // batch sizes high instead of degrading as the conversation grows.
+                let needsCompaction = this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens >= compactPct;
+                if (needsCompaction) {
+                    this.refineForBudgetIfEnabled(
+                        plugin,
+                        this.discussCurrentMessages,
+                        Math.ceil(compactPct * maxTokens)
+                    );
+                    if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens <= compactPct) {
+                        needsCompaction = false;
+                        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                    }
+                }
+                if (needsCompaction) {
                     const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
                     try {
                         const cResult = await compactConversation(chat.provider, this.discussCurrentMessages, sc, {
@@ -1648,8 +1692,21 @@ export class CoWriterSession {
 
         this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
 
-        // Compaction (same as discuss mode)
-        if (totalTokens / maxTokens >= compactPct) {
+        // Compaction: refine first (deterministic, free), then AI-summarize if still over
+        let needsCompaction = totalTokens / maxTokens >= compactPct;
+        if (needsCompaction) {
+            this.refineForBudgetIfEnabled(
+                plugin,
+                this.discussCurrentMessages,
+                Math.max(0, Math.ceil(compactPct * maxTokens) - injectedTokens)
+            );
+            const refinedTokens = this.estimateRequestTokens(this.discussCurrentMessages) + injectedTokens;
+            if (refinedTokens / maxTokens <= compactPct) {
+                needsCompaction = false;
+                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+            }
+        }
+        if (needsCompaction) {
             const sentenceCount = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
             try {
                 const result = await compactConversation(chat.provider, this.discussCurrentMessages, sentenceCount, {
@@ -1813,8 +1870,20 @@ export class CoWriterSession {
                 this.annotateToolUseErrors(coachExecResults);
                 this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
 
-                // Mid-loop compaction (same as discuss).
-                if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens >= compactPct) {
+                // Mid-loop compaction: refine first (deterministic, free), then AI-summarize if still over.
+                let needsCompaction = this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens >= compactPct;
+                if (needsCompaction) {
+                    this.refineForBudgetIfEnabled(
+                        plugin,
+                        this.discussCurrentMessages,
+                        Math.ceil(compactPct * maxTokens)
+                    );
+                    if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens <= compactPct) {
+                        needsCompaction = false;
+                        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                    }
+                }
+                if (needsCompaction) {
                     const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
                     try {
                         const cResult = await compactConversation(chat.provider, this.discussCurrentMessages, sc, {
@@ -2204,7 +2273,16 @@ export class CoWriterSession {
         const conversationTokens = this.estimateRequestTokens(this.loreCoachMessages);
         this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
 
-        if (conversationTokens / maxTokens >= compactPct) {
+        // Compaction: refine first (deterministic, free), then AI-summarize if still over.
+        let needsCompaction = conversationTokens / maxTokens >= compactPct;
+        if (needsCompaction) {
+            this.refineForBudgetIfEnabled(plugin, this.loreCoachMessages, Math.ceil(compactPct * maxTokens));
+            if (this.estimateRequestTokens(this.loreCoachMessages) / maxTokens <= compactPct) {
+                needsCompaction = false;
+                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+            }
+        }
+        if (needsCompaction) {
             const sentenceCount = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
             try {
                 const result = await compactConversation(chat.provider, this.loreCoachMessages, sentenceCount);
@@ -2391,9 +2469,17 @@ export class CoWriterSession {
                 // growth, then sync the chat so the user sees progress.
                 this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
 
-                // Mid-loop compaction: if tool results have filled the context,
-                // summarize older turns to free room for the next batch.
-                if (this.estimateRequestTokens(this.loreCoachMessages) / maxTokens >= compactPct) {
+                // Mid-loop compaction: refine first (deterministic, free), then
+                // AI-summarize older turns if still over the threshold.
+                let needsCompaction = this.estimateRequestTokens(this.loreCoachMessages) / maxTokens >= compactPct;
+                if (needsCompaction) {
+                    this.refineForBudgetIfEnabled(plugin, this.loreCoachMessages, Math.ceil(compactPct * maxTokens));
+                    if (this.estimateRequestTokens(this.loreCoachMessages) / maxTokens <= compactPct) {
+                        needsCompaction = false;
+                        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+                    }
+                }
+                if (needsCompaction) {
                     const sc = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
                     try {
                         const cResult = await compactConversation(chat.provider, this.loreCoachMessages, sc, {
@@ -2748,9 +2834,9 @@ export class CoWriterSession {
      * an edit_note on one character). The entry — and the tab the tool opened —
      * are torn down only when the last pending edit is resolved.
      */
-    approveLoreEdit(filePath: string, id: number): void {
+    approveLoreEdit(filePath: string, id: number): Promise<void> {
         const entry = this.loreEdits.get(filePath);
-        if (!entry) return;
+        if (!entry) return Promise.resolve();
 
         const view = this.app ? findEditorView(this.app, filePath) : null;
         const cm = view ? (view.editor as unknown as { cm: EditorView }).cm : null;
@@ -2762,14 +2848,14 @@ export class CoWriterSession {
             // pending edits in this editor stay at correct offsets.
             syncChangeSetPositions(cm, entry.changeSet, 'lore_edit');
             const change = entry.changeSet.approve(id);
-            if (!change) return;
+            if (!change) return Promise.resolve();
             applyApprovedEdit(cm, change, 'lore_edit', toDiffSnapshots(entry.changeSet, 'lore_edit', filePath));
             if (!entry.changeSet.hasPending) {
                 this.closeLoreEditTabIfOpenedByTool(filePath);
                 this.loreEdits.delete(filePath);
             }
             this.onLoreEditUpdate?.();
-            return;
+            return Promise.resolve();
         }
 
         // File isn't open — apply the single edit directly via the vault.
@@ -2802,7 +2888,8 @@ export class CoWriterSession {
                     this.onLoreEditUpdate?.();
                 };
                 const prev = this.loreEditWriteQueue.get(filePath) ?? Promise.resolve();
-                const next = prev.then(run).catch((err: unknown) => {
+                const writeResult = prev.then(run);
+                const next = writeResult.catch((err: unknown) => {
                     console.warn('Quill: Lore edit write failed; keeping the edit pending.', err);
                     this.onLoreEditUpdate?.();
                 });
@@ -2812,7 +2899,7 @@ export class CoWriterSession {
                         this.loreEditWriteQueue.delete(filePath);
                     }
                 });
-                return;
+                return writeResult;
             }
         }
 
@@ -2823,6 +2910,7 @@ export class CoWriterSession {
             this.loreEdits.delete(filePath);
         }
         this.onLoreEditUpdate?.();
+        return Promise.resolve();
     }
 
     /**
@@ -2854,6 +2942,62 @@ export class CoWriterSession {
             this.loreEdits.delete(filePath);
         }
         this.onLoreEditUpdate?.();
+    }
+
+    /**
+     * Event-driven context refinement: after a lore edit (edit_note /
+     * insert_note / append_to_note) is resolved, compress the affected API
+     * turns so the model learns the outcome and sheds verbatim now-stale
+     * content. Runs over BOTH API arrays (an edit approved in one mode still
+     * benefits the other's history if it overlaps). Gated by
+     * `contextRefinementEnabled`. Idempotent. See `src/ai/context-refinement.ts`.
+     */
+    refineOnLoreEditResolved(
+        plugin: EventideQuillPlugin,
+        filePath: string,
+        editId: number,
+        outcome: 'approved' | 'rejected'
+    ): void {
+        if (!plugin.settings.contextRefinementEnabled) return;
+        refineLoreEditOutcome(this.discussCurrentMessages, editId, outcome);
+        refineLoreEditOutcome(this.loreCoachMessages, editId, outcome);
+        if (outcome === 'approved') {
+            // The file changed — prior vault_lookups of it are now stale.
+            refineStaleVaultLookups(this.discussCurrentMessages, filePath);
+            refineStaleVaultLookups(this.loreCoachMessages, filePath);
+        }
+    }
+
+    /**
+     * Event-driven context refinement: after a lore draft (propose_entry) is
+     * accepted (saved) or discarded, compress the proposing turn so the verbatim
+     * entry markdown leaves the model's context (the regurgitation source for
+     * long-context models) and a compact outcome marker takes its place — the
+     * durable "move-on" signal. Gated by `contextRefinementEnabled`. Idempotent.
+     */
+    refineOnLoreDraftResolved(
+        plugin: EventideQuillPlugin,
+        name: string,
+        outcome: 'accepted' | 'discarded',
+        savedPath?: string
+    ): void {
+        if (!plugin.settings.contextRefinementEnabled) return;
+        refineProposeEntryOutcome(this.discussCurrentMessages, name, outcome, savedPath);
+        refineProposeEntryOutcome(this.loreCoachMessages, name, outcome, savedPath);
+    }
+
+    /**
+     * Budget-driven refinement pre-stage: when the setting is on, run
+     * `refineForBudget` over `messages` targeting the compaction threshold
+     * (`targetTokens` = threshold minus `extraTokens` — the token volume not
+     * stored in `messages` but counted toward the threshold, e.g. injected
+     * context heads + the pending user message at pre-send sites). The caller
+     * re-measures afterward and may skip AI compaction entirely. Mutates the
+     * array in place; idempotent. No-op when the setting is off.
+     */
+    refineForBudgetIfEnabled(plugin: EventideQuillPlugin, messages: ChatMessage[], targetTokens: number): void {
+        if (!plugin.settings.contextRefinementEnabled) return;
+        refineForBudget(messages, (msgs) => this.estimateRequestTokens(msgs), targetTokens);
     }
 
     /** Clear all pending lore edits (e.g., on reset / new chat). */

@@ -24,7 +24,7 @@ export function renderLoreDraftCard(
     plugin: EventideQuillPlugin,
     component: Component,
     callbacks: {
-        onSave?: (draft: LoreDraftEntry) => void;
+        onSave?: (draft: LoreDraftEntry, savedPath: string) => void;
         onDiscard?: (draft: LoreDraftEntry) => void;
     }
 ): void {
@@ -72,9 +72,9 @@ export function renderLoreDraftCard(
     });
 
     component.registerDomEvent(saveBtn, 'click', () => {
-        void saveDraftToVault(draft, plugin).then((saved) => {
-            if (saved) {
-                callbacks.onSave?.(draft);
+        void saveDraftToVault(draft, plugin).then((savedPath) => {
+            if (savedPath) {
+                callbacks.onSave?.(draft, savedPath);
             }
         });
     });
@@ -91,18 +91,19 @@ export function renderLoreDraftCard(
  * Generates a filesystem-safe filename from the draft name. If a file with
  * the same path already exists, appends " (2)", " (3)", etc. until unique.
  *
- * @returns true on success, false on failure (error surfaced via Notice).
+ * @returns The vault path the draft was saved to on success, or `null` on
+ * failure (error surfaced via Notice).
  */
-async function saveDraftToVault(draft: LoreDraftEntry, plugin: EventideQuillPlugin): Promise<boolean> {
+async function saveDraftToVault(draft: LoreDraftEntry, plugin: EventideQuillPlugin): Promise<string | null> {
     if (plugin.settings.lorebookFolders.length === 0) {
         new Notice('Quill: No lorebook folders configured.');
-        return false;
+        return null;
     }
 
     const folder = pickTargetFolder(draft.entryType, plugin);
     if (!folder) {
         new Notice('Quill: Could not resolve a target lorebook folder.');
-        return false;
+        return null;
     }
 
     const fileName = `${sanitizeFileName(draft.name)}.md`;
@@ -151,7 +152,7 @@ async function saveDraftToVault(draft: LoreDraftEntry, plugin: EventideQuillPlug
             new Notice(`Quill: Failed to save one or more proposed images — ${message}`);
             // Clean up any files that were written before the failure.
             await cleanupResolvedImages(resolved, plugin);
-            return false;
+            return null;
         }
     }
 
@@ -165,7 +166,7 @@ async function saveDraftToVault(draft: LoreDraftEntry, plugin: EventideQuillPlug
             // Should not happen due to resolveUniquePath, but guard defensively.
             await cleanupResolvedImages(resolved, plugin);
             new Notice(`Quill: "${targetPath}" already exists. Rename and try again.`);
-            return false;
+            return null;
         }
         await plugin.app.vault.create(targetPath, content);
     } catch (err) {
@@ -174,7 +175,7 @@ async function saveDraftToVault(draft: LoreDraftEntry, plugin: EventideQuillPlug
         // don't produce (2), (3) copies of every attachment.
         await cleanupResolvedImages(resolved, plugin);
         new Notice(`Quill: Failed to save entry — ${message}`);
-        return false;
+        return null;
     }
 
     new Notice(`Quill: Saved "${draft.name}" to ${folder || '(vault root)'}.`);
@@ -193,7 +194,7 @@ async function saveDraftToVault(draft: LoreDraftEntry, plugin: EventideQuillPlug
         // Non-fatal: the note was created; coverage refresh is best-effort.
     }
 
-    return true;
+    return targetPath;
 }
 
 /**

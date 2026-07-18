@@ -1224,8 +1224,22 @@ export class CoWriterPanel extends AbstractChatPanel {
                     // their actionable Save/Discard (no stale live actions).
                     if (msg.loreDraft) {
                         renderLoreDraftCard(bubble, msg.loreDraft, this.app, this.plugin, this.renderEvents, {
-                            onSave: () => {
+                            onSave: (draft, savedPath) => {
                                 msg.loreDraft = undefined;
+                                // Refine the proposing turn so the verbatim draft
+                                // leaves the model's context and a compact
+                                // ACCEPTED marker takes its place — the durable
+                                // "move-on" signal that stops a long-context model
+                                // from re-outputting an entry it already saved.
+                                // Include savedPath so the marker names the
+                                // canonical vault location for follow-up
+                                // vault_lookup calls.
+                                this.plugin.coWriterSession.refineOnLoreDraftResolved(
+                                    this.plugin,
+                                    draft.name,
+                                    'accepted',
+                                    savedPath
+                                );
                                 this.render();
                             },
                             onDiscard: (draft) => {
