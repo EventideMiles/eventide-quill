@@ -2254,9 +2254,14 @@ export default class EventideQuillPlugin extends Plugin {
 
     /** Approve a pending lore edit for a specific file. */
     approveLoreEdit(filePath: string, id: number): void {
-        void this.coWriterSession.approveLoreEdit(filePath, id).then(() => {
-            this.coWriterSession.refineOnLoreEditResolved(this, filePath, id, 'approved');
-        });
+        void this.coWriterSession
+            .approveLoreEdit(filePath, id)
+            .then(() => {
+                this.coWriterSession.refineOnLoreEditResolved(this, filePath, id, 'approved');
+            })
+            .catch((err: unknown) => {
+                console.warn('Quill: Lore edit write failed; skipping context refinement.', err);
+            });
     }
 
     /** Reject a pending lore edit for a specific file by id. */

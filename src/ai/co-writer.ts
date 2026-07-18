@@ -1210,7 +1210,7 @@ export class CoWriterSession {
                     ...this.discussCurrentMessages,
                     { role: 'user' as const, content: prompt }
                 ]) + injectedTokens;
-            if (refinedTokens / maxTokens < compactPct) {
+            if (refinedTokens / maxTokens <= compactPct) {
                 needsCompaction = false;
                 this.onTokenEstimate?.(
                     this.estimateRequestBreakdown([
@@ -1445,8 +1445,9 @@ export class CoWriterSession {
                         this.discussCurrentMessages,
                         Math.ceil(compactPct * maxTokens)
                     );
-                    if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens < compactPct) {
+                    if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens <= compactPct) {
                         needsCompaction = false;
+                        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
                     }
                 }
                 if (needsCompaction) {
@@ -1700,7 +1701,7 @@ export class CoWriterSession {
                 Math.max(0, Math.ceil(compactPct * maxTokens) - injectedTokens)
             );
             const refinedTokens = this.estimateRequestTokens(this.discussCurrentMessages) + injectedTokens;
-            if (refinedTokens / maxTokens < compactPct) {
+            if (refinedTokens / maxTokens <= compactPct) {
                 needsCompaction = false;
                 this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
             }
@@ -1877,8 +1878,9 @@ export class CoWriterSession {
                         this.discussCurrentMessages,
                         Math.ceil(compactPct * maxTokens)
                     );
-                    if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens < compactPct) {
+                    if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens <= compactPct) {
                         needsCompaction = false;
+                        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
                     }
                 }
                 if (needsCompaction) {
@@ -2275,7 +2277,7 @@ export class CoWriterSession {
         let needsCompaction = conversationTokens / maxTokens >= compactPct;
         if (needsCompaction) {
             this.refineForBudgetIfEnabled(plugin, this.loreCoachMessages, Math.ceil(compactPct * maxTokens));
-            if (this.estimateRequestTokens(this.loreCoachMessages) / maxTokens < compactPct) {
+            if (this.estimateRequestTokens(this.loreCoachMessages) / maxTokens <= compactPct) {
                 needsCompaction = false;
                 this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
             }
@@ -2472,8 +2474,9 @@ export class CoWriterSession {
                 let needsCompaction = this.estimateRequestTokens(this.loreCoachMessages) / maxTokens >= compactPct;
                 if (needsCompaction) {
                     this.refineForBudgetIfEnabled(plugin, this.loreCoachMessages, Math.ceil(compactPct * maxTokens));
-                    if (this.estimateRequestTokens(this.loreCoachMessages) / maxTokens < compactPct) {
+                    if (this.estimateRequestTokens(this.loreCoachMessages) / maxTokens <= compactPct) {
                         needsCompaction = false;
+                        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
                     }
                 }
                 if (needsCompaction) {
