@@ -123,6 +123,17 @@ describe('refineProposeEntryOutcome', () => {
         expect(msgs[1]!.content).not.toContain('ACCEPTED');
     });
 
+    it('omits the saved-path pointer when savedPath is absent (panel pre-fix shape)', () => {
+        // Regression guard for the savedPath thread-through: the marker must
+        // still be an ACCEPTED move-on signal even when the caller forgets the
+        // path, but it must NOT claim a location it doesn't have.
+        const msgs: ChatMessage[] = proposeTurn({ name: 'Sam', content: BIG });
+        refineProposeEntryOutcome(msgs, 'Sam', 'accepted');
+        expect(msgs[1]!.content).toContain('ACCEPTED');
+        expect(msgs[1]!.content).toContain('do not re-propose');
+        expect(msgs[1]!.content).not.toContain('saved it to');
+    });
+
     it('is idempotent — a second call does not re-refine', () => {
         const msgs: ChatMessage[] = proposeTurn({ name: 'Sam', content: BIG });
         expect(refineProposeEntryOutcome(msgs, 'Sam', 'accepted', 'p.md')).toBe(true);
@@ -286,16 +297,22 @@ describe('refineForBudget', () => {
         expect(realEstimate(msgs)).toBeLessThan(baseline * 0.2);
     });
 
-    it('skips small payloads (below the refinement floor) and drafts with thinking blocks', () => {
+    it('skips small payloads below the refinement floor', () => {
         const smallRead: ChatMessage[] = vaultLookupTurn({ path: 'small.md', body: 'tiny body' });
+        // No eligible candidates at all (read below MIN_REFINABLE_CHARS, no drafts).
+        expect(refineForBudget(smallRead, realEstimate, 50)).toBe(false);
+        expect(smallRead.every((m) => !m.quillRefined)).toBe(true);
+    });
+
+    it('skips assistant turns carrying Anthropic thinking blocks (even when bulky)', () => {
         const thinkingDraft: ChatMessage[] = proposeTurn({
             name: 'T',
             content: BIG,
             thinkingBlocks: [{ thinking: 'r', signature: 's' }]
         });
-        const msgs: ChatMessage[] = [...smallRead, ...thinkingDraft];
-        expect(refineForBudget(msgs, realEstimate, 50)).toBe(false);
-        // Nothing eligible → nothing refined.
-        expect(msgs.every((m) => !m.quillRefined)).toBe(true);
+        // The draft is bulky enough to qualify, but its assistant turn carries
+        // thinking blocks that must replay verbatim — skipped, so nothing refin.
+        expect(refineForBudget(thinkingDraft, realEstimate, 50)).toBe(false);
+        expect(thinkingDraft.every((m) => !m.quillRefined)).toBe(true);
     });
 });
