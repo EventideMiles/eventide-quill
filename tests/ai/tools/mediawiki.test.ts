@@ -61,6 +61,11 @@ describe('apiEndpoint', () => {
         expect(apiEndpoint('meta.wikimedia.org')).toBe('https://meta.wikimedia.org/w/api.php');
     });
 
+    it('routes Wikidata to /w/api.php', () => {
+        expect(apiEndpoint('www.wikidata.org')).toBe('https://www.wikidata.org/w/api.php');
+        expect(apiEndpoint('wikidata.org')).toBe('https://wikidata.org/w/api.php');
+    });
+
     it('routes Fandom and standalone installs to the root /api.php', () => {
         expect(apiEndpoint('starwars.fandom.com')).toBe('https://starwars.fandom.com/api.php');
         expect(apiEndpoint('memory-alpha.fandom.com')).toBe('https://memory-alpha.fandom.com/api.php');

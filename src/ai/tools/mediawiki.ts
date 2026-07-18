@@ -19,10 +19,10 @@ export const MEDIAWIKI_UA = 'EventideQuill/1.3.0 (https://github.com/EventideMil
  * root. Fandom and most standalone MediaWiki installs serve `api.php` at the
  * root; using the wrong path 404s. Wikipedia (the only Wikimedia host this
  * plugin constructs today, via `${lang}.wikipedia.org`) is the motivating case
- * — the sibling projects are covered for safety.
+ * — the sibling projects including Wikidata are covered for safety.
  */
 const WIKIMEDIA_HOST_RE =
-    /\.(?:wikipedia|wiktionary|wikiquote|wikibooks|wikisource|wikinews|wikiversity|wikivoyage|wikimedia)\.org$/;
+    /\.(?:wikipedia|wiktionary|wikiquote|wikibooks|wikisource|wikinews|wikiversity|wikivoyage|wikimedia|wikidata)\.org$|^wikidata\.org$/;
 
 function isWikimediaHost(host: string): boolean {
     return WIKIMEDIA_HOST_RE.test(host);

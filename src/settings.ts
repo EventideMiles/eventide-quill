@@ -3558,6 +3558,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
                     this.plugin.settings.contextTokenBudget = DEFAULT_SETTINGS.contextTokenBudget;
                     this.plugin.settings.contextCompactAtPercent = DEFAULT_SETTINGS.contextCompactAtPercent;
+                    this.plugin.settings.contextRefinementEnabled = DEFAULT_SETTINGS.contextRefinementEnabled;
                     this.plugin.settings.compactSummarySentences = DEFAULT_SETTINGS.compactSummarySentences;
                     this.plugin.settings.contextIncludeVaultContext = DEFAULT_SETTINGS.contextIncludeVaultContext;
                     this.plugin.settings.contextMaxVaultFiles = DEFAULT_SETTINGS.contextMaxVaultFiles;

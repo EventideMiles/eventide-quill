@@ -170,10 +170,9 @@ export function createProposeEntryTool(allowImages: boolean): Tool {
                         ? 'use `insert_note` or `append_to_note` to fill it'
                         : 'use `edit_note` to revise its existing wording (or `insert_note` to add a section)';
                     return (
-                        `A note named "${name}" already exists at ${existing.path} (${lengthDesc}). ` +
-                        `To avoid creating a duplicate that strands cross-links, ${toolHint}. ` +
-                        `Call \`vault_lookup\` on "${name}" first if you need its current text. ` +
-                        `Only call \`propose_entry\` again for a genuinely new entry under a different name.`
+                        `"${name}" already exists at ${existing.path} (${lengthDesc}). ` +
+                        `${toolHint} Call \`vault_lookup\` first if needed. ` +
+                        `Only retry \`propose_entry\` with a different name.`
                     );
                 }
             }

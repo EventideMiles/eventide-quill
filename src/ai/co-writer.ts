@@ -2831,9 +2831,9 @@ export class CoWriterSession {
      * an edit_note on one character). The entry — and the tab the tool opened —
      * are torn down only when the last pending edit is resolved.
      */
-    approveLoreEdit(filePath: string, id: number): void {
+    approveLoreEdit(filePath: string, id: number): Promise<void> {
         const entry = this.loreEdits.get(filePath);
-        if (!entry) return;
+        if (!entry) return Promise.resolve();
 
         const view = this.app ? findEditorView(this.app, filePath) : null;
         const cm = view ? (view.editor as unknown as { cm: EditorView }).cm : null;
@@ -2845,14 +2845,14 @@ export class CoWriterSession {
             // pending edits in this editor stay at correct offsets.
             syncChangeSetPositions(cm, entry.changeSet, 'lore_edit');
             const change = entry.changeSet.approve(id);
-            if (!change) return;
+            if (!change) return Promise.resolve();
             applyApprovedEdit(cm, change, 'lore_edit', toDiffSnapshots(entry.changeSet, 'lore_edit', filePath));
             if (!entry.changeSet.hasPending) {
                 this.closeLoreEditTabIfOpenedByTool(filePath);
                 this.loreEdits.delete(filePath);
             }
             this.onLoreEditUpdate?.();
-            return;
+            return Promise.resolve();
         }
 
         // File isn't open — apply the single edit directly via the vault.
@@ -2885,7 +2885,8 @@ export class CoWriterSession {
                     this.onLoreEditUpdate?.();
                 };
                 const prev = this.loreEditWriteQueue.get(filePath) ?? Promise.resolve();
-                const next = prev.then(run).catch((err: unknown) => {
+                const writeResult = prev.then(run);
+                const next = writeResult.catch((err: unknown) => {
                     console.warn('Quill: Lore edit write failed; keeping the edit pending.', err);
                     this.onLoreEditUpdate?.();
                 });
@@ -2895,7 +2896,7 @@ export class CoWriterSession {
                         this.loreEditWriteQueue.delete(filePath);
                     }
                 });
-                return;
+                return writeResult;
             }
         }
 
@@ -2906,6 +2907,7 @@ export class CoWriterSession {
             this.loreEdits.delete(filePath);
         }
         this.onLoreEditUpdate?.();
+        return Promise.resolve();
     }
 
     /**
