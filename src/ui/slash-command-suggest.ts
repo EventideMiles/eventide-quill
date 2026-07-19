@@ -7,7 +7,7 @@ import { SLASH_COMMAND_NAME_PATTERN } from '../settings';
 // lifecycle/keydown/render pattern. It is excluded from jscpd duplication
 // detection via .jscpd.json (the v5 Rust engine dropped the inline
 // jscpd:ignore-file directive v4 honored). A shared SuggestBase extraction
-// is tracked as road-to-1.3.0.md PR 6 (the DRY-last sweep); remove the
+// is tracked as road-to-1.3.1.md PR 6 (the DRY-last sweep); remove the
 // ignore entry there when the base lands and this file thins out.
 
 interface RankedCommand extends SlashCommand {

@@ -12,7 +12,7 @@ import { assertNotRateLimited } from './http-retry';
  */
 
 /** Custom User-Agent to comply with Wikimedia's API policy (200 req/min tier). */
-export const MEDIAWIKI_UA = 'EventideQuill/1.3.0 (https://github.com/EventideMiles/eventide-quill)';
+export const MEDIAWIKI_UA = 'EventideQuill/1.3.1 (https://github.com/EventideMiles/eventide-quill)';
 
 /**
  * Wikimedia Foundation hosts whose `api.php` lives under `/w/` rather than the

@@ -120,7 +120,7 @@ export interface EventideQuillSettings {
      * markers (keeping `quillAnchorId` so rewind still works), and a free
      * refinement pass runs before the AI compaction fallback when a
      * conversation approaches the threshold. Off = pure AI compaction only
-     * (the pre-1.3.0 behavior). See `src/ai/context-refinement.ts`.
+     * (the pre-1.3.1 behavior). See `src/ai/context-refinement.ts`.
      */
     contextRefinementEnabled: boolean;
     contextIncludeVaultContext: boolean;
@@ -253,7 +253,7 @@ export interface EventideQuillSettings {
      * returns a length-aware message routing the model to `edit_note` /
      * `insert_note` / `append_to_note` instead. Prevents duplicate notes that
      * strand [[wikilinks]] pointing at the original. Off = unconditional
-     * create (the pre-1.3.0 behavior) — escape hatch.
+     * create (the pre-1.3.1 behavior) — escape hatch.
      */
     lorePreferEditOverCreate: boolean;
     /** Master toggle for the async feedback queue. Off hides the Queue tab and the Review handoff. Default: on. */
