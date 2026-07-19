@@ -174,6 +174,10 @@ class ChangePreviewWidget extends WidgetType {
         if (this.edit.state === 'pending') {
             const controls = added.createDiv();
             controls.className = 'quill-change-diff__controls';
+            // Raw addEventListener is intentional here: WidgetType is not an
+            // Obsidian Component, so registerDomEvent() has no lifecycle to
+            // attach to. The buttons live only as long as the widget DOM,
+            // which CodeMirror replaces atomically on re-render.
             const approve = controls.createEl('button');
             approve.className = 'mod-cta quill-change-diff__btn';
             approve.textContent = 'Approve';

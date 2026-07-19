@@ -716,11 +716,13 @@ function renderTrends(container: HTMLElement, snapshots: ManuscriptSnapshot[] | 
     const height = 40;
     const stepX = width / (points.length - 1);
 
-    const svg = createSvg('svg');
-    svg.classList.add('quill-dashboard-panel__trend-chart');
-    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-    svg.setAttribute('preserveAspectRatio', 'none');
-    section.appendChild(svg);
+    const svg = section.createSvg('svg', {
+        cls: 'quill-dashboard-panel__trend-chart',
+        attr: {
+            viewBox: `0 0 ${width} ${height}`,
+            preserveAspectRatio: 'none'
+        }
+    });
 
     const polylinePoints = points
         .map((s, i) => {
@@ -730,12 +732,14 @@ function renderTrends(container: HTMLElement, snapshots: ManuscriptSnapshot[] | 
         })
         .join(' ');
 
-    const polyline = createSvg('polyline');
-    polyline.setAttribute('points', polylinePoints);
-    polyline.setAttribute('fill', 'none');
-    polyline.setAttribute('stroke', 'currentColor');
-    polyline.setAttribute('stroke-width', '1.5');
-    svg.appendChild(polyline);
+    svg.createSvg('polyline', {
+        attr: {
+            points: polylinePoints,
+            fill: 'none',
+            stroke: 'currentColor',
+            'stroke-width': '1.5'
+        }
+    });
 
     // Velocity: words per day between first and last snapshot.
     const first = points[0]!;

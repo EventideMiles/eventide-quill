@@ -2139,20 +2139,27 @@ export class CoWriterPanel extends AbstractChatPanel {
                 if (generating) return;
                 // Transient off-DOM file input. Not registered on renderEvents:
                 // the input must survive re-renders until the picker closes,
-                // then is removed explicitly in the change handler. Created
-                // via Node.createEl on activeDocument.body so it lands in the
-                // active document and types cleanly as HTMLInputElement.
+                // then is removed explicitly in the change/cancel handler.
+                // Created via Node.createEl on activeDocument.body so it lands
+                // in the active document and types cleanly as HTMLInputElement.
                 const fileInput = activeDocument.body.createEl('input');
                 fileInput.type = 'file';
                 fileInput.accept = 'image/*';
                 fileInput.multiple = true;
                 fileInput.hidden = true;
+                // Shared cleanup so the input is removed whether the writer
+                // chose files (change) or dismissed the picker (cancel) —
+                // otherwise the hidden input would accumulate in the DOM.
+                const cleanup = (): void => {
+                    fileInput.remove();
+                };
                 fileInput.addEventListener('change', () => {
                     if (fileInput.files && fileInput.files.length > 0) {
                         void this.addImageFiles(Array.from(fileInput.files));
                     }
-                    fileInput.remove();
+                    cleanup();
                 });
+                fileInput.addEventListener('cancel', cleanup);
                 fileInput.click();
             });
         }
