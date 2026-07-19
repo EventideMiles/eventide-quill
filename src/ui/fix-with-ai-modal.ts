@@ -124,10 +124,10 @@ export class FixWithAiModal extends Modal {
         const removeLabel = contentEl.createEl('p', { cls: 'quill-fix-ai__label' });
         removeLabel.setText('Remove');
 
-        const removeBlock = contentEl.createEl('div', {
+        const removeBlock = contentEl.createDiv({
             cls: 'quill-fix-ai__block quill-fix-ai__removed'
         });
-        removeBlock.createEl('span', {
+        removeBlock.createSpan({
             cls: 'quill-fix-ai__highlight-removed',
             text: flaggedText
         });
@@ -136,17 +136,17 @@ export class FixWithAiModal extends Modal {
         const insertLabel = contentEl.createEl('p', { cls: 'quill-fix-ai__label' });
         insertLabel.setText('Replace with');
 
-        const insertBlock = contentEl.createEl('div', {
+        const insertBlock = contentEl.createDiv({
             cls: 'quill-fix-ai__block quill-fix-ai__inserted'
         });
 
         if (this.suggestion) {
-            insertBlock.createEl('span', {
+            insertBlock.createSpan({
                 cls: 'quill-fix-ai__highlight-added',
                 text: this.suggestion
             });
         } else {
-            insertBlock.createEl('span', {
+            insertBlock.createSpan({
                 cls: 'quill-fix-ai__highlight-added',
                 text: '(Removed)'
             });
@@ -157,7 +157,7 @@ export class FixWithAiModal extends Modal {
             const contextLabel = contentEl.createEl('p', { cls: 'quill-fix-ai__label' });
             contextLabel.setText('In context');
 
-            const contextBlock = contentEl.createEl('div', {
+            const contextBlock = contentEl.createDiv({
                 cls: 'quill-fix-ai__block quill-fix-ai__context'
             });
 
@@ -166,11 +166,11 @@ export class FixWithAiModal extends Modal {
                 this.suggestion +
                 this.lineText.slice(this.result.column + this.result.length);
 
-            contextBlock.createEl('span', { text: revised });
+            contextBlock.createSpan({ text: revised });
         }
 
         // Buttons
-        const buttonRow = contentEl.createEl('div', { cls: 'quill-fix-ai__actions' });
+        const buttonRow = contentEl.createDiv({ cls: 'quill-fix-ai__actions' });
 
         const customBtn = buttonRow.createEl('button', {
             cls: 'quill-fix-ai__custom-btn',
@@ -228,7 +228,7 @@ export class FixWithAiModal extends Modal {
         });
         textarea.value = this.customInstruction;
 
-        const buttonRow = contentEl.createEl('div', { cls: 'quill-fix-ai__actions' });
+        const buttonRow = contentEl.createDiv({ cls: 'quill-fix-ai__actions' });
 
         const backBtn = buttonRow.createEl('button', {
             cls: 'quill-fix-ai__back-btn',

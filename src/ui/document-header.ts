@@ -45,11 +45,11 @@ export function getActiveDocument(app: App): ActiveDocument | null {
 export function renderDocumentHeader(container: HTMLElement, doc: ActiveDocument | null): void {
     if (!doc) return;
     const header = container.createDiv({ cls: 'quill-document' });
-    header.createEl('span', {
+    header.createSpan({
         cls: 'quill-document__name',
         text: doc.file.basename
     });
-    header.createEl('span', {
+    header.createSpan({
         cls: 'quill-document__meta',
         text: `${doc.wordCount.toLocaleString()} words`
     });

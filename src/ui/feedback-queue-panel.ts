@@ -137,11 +137,11 @@ function renderJobCard(
     const card = container.createDiv({ cls: `quill-feedback-queue__card quill-feedback-queue__card--${job.status}` });
 
     const head = card.createDiv({ cls: 'quill-feedback-queue__card-head' });
-    head.createEl('span', {
+    head.createSpan({
         cls: `quill-feedback-queue__status quill-feedback-queue__status--${job.status}`,
         text: STATUS_LABEL[job.status]
     });
-    head.createEl('span', {
+    head.createSpan({
         cls: 'quill-feedback-queue__time',
         text: relativeTime(job.completedAt ?? job.createdAt)
     });

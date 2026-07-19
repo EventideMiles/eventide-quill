@@ -36,20 +36,20 @@ export class SessionListModal extends Modal {
             return;
         }
 
-        const list = this.contentEl.createEl('div', { cls: 'quill-session-list' });
+        const list = this.contentEl.createDiv({ cls: 'quill-session-list' });
         for (const entry of this.entries) {
-            const row = list.createEl('div', { cls: 'quill-session-list__row' });
+            const row = list.createDiv({ cls: 'quill-session-list__row' });
 
-            const meta = row.createEl('div', { cls: 'quill-session-list__meta' });
-            meta.createEl('div', { cls: 'quill-session-list__title', text: entry.title });
-            const sub = meta.createEl('div', { cls: 'quill-session-list__sub' });
-            sub.createEl('span', { cls: 'quill-session-list__mode', text: entry.mode });
-            sub.createEl('span', { text: '\u00b7' });
-            sub.createEl('span', { text: `${entry.messageCount} message${entry.messageCount === 1 ? '' : 's'}` });
-            sub.createEl('span', { text: '\u00b7' });
-            sub.createEl('span', { cls: 'quill-session-list__time', text: new Date(entry.updatedAt).toLocaleString() });
+            const meta = row.createDiv({ cls: 'quill-session-list__meta' });
+            meta.createDiv({ cls: 'quill-session-list__title', text: entry.title });
+            const sub = meta.createDiv({ cls: 'quill-session-list__sub' });
+            sub.createSpan({ cls: 'quill-session-list__mode', text: entry.mode });
+            sub.createSpan({ text: '\u00b7' });
+            sub.createSpan({ text: `${entry.messageCount} message${entry.messageCount === 1 ? '' : 's'}` });
+            sub.createSpan({ text: '\u00b7' });
+            sub.createSpan({ cls: 'quill-session-list__time', text: new Date(entry.updatedAt).toLocaleString() });
 
-            const actions = row.createEl('div', { cls: 'quill-session-list__actions' });
+            const actions = row.createDiv({ cls: 'quill-session-list__actions' });
             const openBtn = actions.createEl('button', { text: 'Open', cls: 'quill-session-list__open' });
             openBtn.addEventListener('click', (e) => {
                 e.preventDefault();

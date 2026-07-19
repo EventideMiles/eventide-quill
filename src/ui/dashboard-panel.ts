@@ -84,7 +84,7 @@ export function renderDashboardTab(container: HTMLElement, plugin: EventideQuill
     }
 
     // Refresh button row.
-    const actionBar = container.createEl('div', { cls: 'quill-dashboard-panel__actions' });
+    const actionBar = container.createDiv({ cls: 'quill-dashboard-panel__actions' });
     const refreshBtn = actionBar.createEl('button', {
         cls: 'quill-dashboard-panel__refresh-btn',
         text: 'Refresh dashboard'
@@ -107,7 +107,7 @@ export function renderDashboardTab(container: HTMLElement, plugin: EventideQuill
     // path calls renderDashboardTab with the same component, so registerInterval alone
     // would accumulate duplicates). The interval is also registered on the component so
     // full unload (tab switch, view detach) cleans up properly.
-    const tsEl = actionBar.createEl('span', {
+    const tsEl = actionBar.createSpan({
         cls: 'quill-dashboard-panel__timestamp',
         text: `Updated ${formatRelativeTime(metrics.generatedAt)}`
     });
@@ -133,8 +133,8 @@ export function renderDashboardTab(container: HTMLElement, plugin: EventideQuill
 
 /** Render the top-level manuscript summary grid. */
 function renderSummary(container: HTMLElement, metrics: ManuscriptMetrics, plugin: EventideQuillPlugin): void {
-    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
-    section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Manuscript' });
+    const section = container.createDiv({ cls: 'quill-dashboard-panel__section' });
+    section.createDiv({ cls: 'quill-dashboard-panel__section-heading', text: 'Manuscript' });
 
     const target = plugin.currentManuscriptFileData?.manuscriptTarget ?? DEFAULT_MANUSCRIPT_TARGET;
     const ratio = target > 0 ? metrics.totalWords / target : 0;
@@ -142,20 +142,20 @@ function renderSummary(container: HTMLElement, metrics: ManuscriptMetrics, plugi
     const { status: pStatus, label: pLabel } = progressStatus(ratio);
 
     // Progress bar.
-    const bar = section.createEl('div', { cls: 'quill-dashboard-panel__progress-bar' });
-    bar.createEl('div', {
+    const bar = section.createDiv({ cls: 'quill-dashboard-panel__progress-bar' });
+    bar.createDiv({
         cls: `quill-dashboard-panel__progress-fill quill-dashboard-panel__progress-fill--${pStatus}`,
         attr: { style: `width: ${progressPct}%` }
     });
 
     // Status text below the bar — a sibling, not a child, so the bar's
     // `overflow: hidden` + 6px height can't clip it.
-    section.createEl('div', {
+    section.createDiv({
         cls: `quill-dashboard-panel__progress-label quill-dashboard-panel__target-status--${pStatus}`,
         text: `${metrics.totalWords.toLocaleString()} / ${target.toLocaleString()} words \u00B7 ${pLabel}`
     });
 
-    const grid = section.createEl('div', { cls: 'quill-dashboard-panel__summary-grid' });
+    const grid = section.createDiv({ cls: 'quill-dashboard-panel__summary-grid' });
 
     const stats: { label: string; value: string }[] = [
         { label: 'Chapters', value: String(metrics.chapterCount) },
@@ -166,9 +166,9 @@ function renderSummary(container: HTMLElement, metrics: ManuscriptMetrics, plugi
     ];
 
     for (const stat of stats) {
-        const cell = grid.createEl('div', { cls: 'quill-dashboard-panel__summary-stat' });
-        cell.createEl('div', { cls: 'quill-dashboard-panel__summary-stat-value', text: stat.value });
-        cell.createEl('div', { cls: 'quill-dashboard-panel__summary-stat-label', text: stat.label });
+        const cell = grid.createDiv({ cls: 'quill-dashboard-panel__summary-stat' });
+        cell.createDiv({ cls: 'quill-dashboard-panel__summary-stat-value', text: stat.value });
+        cell.createDiv({ cls: 'quill-dashboard-panel__summary-stat-label', text: stat.label });
     }
 }
 
@@ -180,10 +180,10 @@ function renderSummary(container: HTMLElement, metrics: ManuscriptMetrics, plugi
  * styles it for free.
  */
 function renderFlowScore(container: HTMLElement, metrics: ManuscriptMetrics): void {
-    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
-    const headingRow = section.createEl('div', { cls: 'quill-dashboard-panel__heading-row' });
-    headingRow.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Narrative flow' });
-    headingRow.createEl('span', {
+    const section = container.createDiv({ cls: 'quill-dashboard-panel__section' });
+    const headingRow = section.createDiv({ cls: 'quill-dashboard-panel__heading-row' });
+    headingRow.createDiv({ cls: 'quill-dashboard-panel__section-heading', text: 'Narrative flow' });
+    headingRow.createSpan({
         cls: 'quill-dashboard-panel__readability-info',
         attr: {
             title:
@@ -198,21 +198,21 @@ function renderFlowScore(container: HTMLElement, metrics: ManuscriptMetrics): vo
     const status = flowStatus(score);
     const label = flowLabel(score);
 
-    const bar = section.createEl('div', { cls: 'quill-dashboard-panel__progress-bar' });
-    bar.createEl('div', {
+    const bar = section.createDiv({ cls: 'quill-dashboard-panel__progress-bar' });
+    bar.createDiv({
         cls: `quill-dashboard-panel__progress-fill quill-dashboard-panel__progress-fill--${status}`,
         attr: { style: `width: ${clamp(score, 0, 100)}%` }
     });
-    section.createEl('div', {
+    section.createDiv({
         cls: `quill-dashboard-panel__progress-label quill-dashboard-panel__target-status--${status}`,
         text: `${score} \u00B7 ${label}`
     });
 
-    const grid = section.createEl('div', { cls: 'quill-dashboard-panel__readability-grid' });
-    grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
+    const grid = section.createDiv({ cls: 'quill-dashboard-panel__readability-grid' });
+    grid.createDiv({ cls: 'quill-dashboard-panel__readability-score' }).setText(
         `Sentence variety: \u03C3 = ${metrics.sentenceLengthStddev} words`
     );
-    grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
+    grid.createDiv({ cls: 'quill-dashboard-panel__readability-score' }).setText(
         `Paragraph rhythm: \u03C3 = ${metrics.paragraphLengthStddev} words`
     );
 }
@@ -224,8 +224,8 @@ function renderChapterList(
     plugin: EventideQuillPlugin,
     component: Component
 ): void {
-    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
-    section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Chapters' });
+    const section = container.createDiv({ cls: 'quill-dashboard-panel__section' });
+    section.createDiv({ cls: 'quill-dashboard-panel__section-heading', text: 'Chapters' });
 
     const target = plugin.currentManuscriptFileData?.wordCountTarget ?? DEFAULT_WORD_COUNT_TARGET;
 
@@ -234,12 +234,12 @@ function renderChapterList(
         const id = `${chapter.filePath}:${chapter.lineStart}`;
         const expanded = expandedChapters.has(id);
 
-        const row = section.createEl('div', {
+        const row = section.createDiv({
             cls: `quill-dashboard-panel__chapter${expanded ? ' quill-dashboard-panel__chapter--expanded' : ''}`
         });
 
         // Clickable header row.
-        const head = row.createEl('div', {
+        const head = row.createDiv({
             cls: 'quill-dashboard-panel__chapter-head',
             attr: { role: 'button', tabindex: '0' }
         });
@@ -259,15 +259,15 @@ function renderChapterList(
         });
 
         // Chevron.
-        head.createEl('span', {
+        head.createSpan({
             cls: `quill-dashboard-panel__chevron${expanded ? ' quill-dashboard-panel__chevron--open' : ''}`,
             text: '\u25B8'
         });
 
         // Chapter name + line range.
-        const nameWrap = head.createEl('div', { cls: 'quill-dashboard-panel__chapter-name-wrap' });
-        nameWrap.createEl('span', { cls: 'quill-dashboard-panel__chapter-name', text: chapter.title });
-        nameWrap.createEl('span', {
+        const nameWrap = head.createDiv({ cls: 'quill-dashboard-panel__chapter-name-wrap' });
+        nameWrap.createSpan({ cls: 'quill-dashboard-panel__chapter-name', text: chapter.title });
+        nameWrap.createSpan({
             cls: 'quill-dashboard-panel__chapter-meta',
             text: `${chapter.wordCount.toLocaleString()}w \u00B7 ${pct(chapter.dialogueRatio)} dialogue`
         });
@@ -276,15 +276,15 @@ function renderChapterList(
         const chapterRatio = target > 0 ? chapter.wordCount / target : 0;
         const barWidth = clamp(chapterRatio * 100, 0, 100);
         const { status: cStatus } = progressStatus(chapterRatio);
-        const bar = head.createEl('div', { cls: 'quill-dashboard-panel__chapter-bar' });
-        bar.createEl('div', {
+        const bar = head.createDiv({ cls: 'quill-dashboard-panel__chapter-bar' });
+        bar.createDiv({
             cls: `quill-dashboard-panel__chapter-bar-fill quill-dashboard-panel__chapter-bar-fill--${cStatus}`,
             attr: { style: `width: ${barWidth}%` }
         });
 
         // Expanded section rows.
         if (expanded && chapter.sections.length > 0) {
-            const sectionList = row.createEl('div', { cls: 'quill-dashboard-panel__section-list' });
+            const sectionList = row.createDiv({ cls: 'quill-dashboard-panel__section-list' });
             for (const sm of chapter.sections) {
                 renderSectionRow(sectionList, sm, chapter, plugin, component);
             }
@@ -299,13 +299,13 @@ function renderSectionRow(
     plugin: EventideQuillPlugin,
     component: Component
 ): void {
-    const wrapper = container.createEl('div', { cls: 'quill-dashboard-panel__section-wrapper' });
+    const wrapper = container.createDiv({ cls: 'quill-dashboard-panel__section-wrapper' });
 
     // First line: title + meta.
-    const row = wrapper.createEl('div', { cls: 'quill-dashboard-panel__section-row' });
+    const row = wrapper.createDiv({ cls: 'quill-dashboard-panel__section-row' });
     const title = section.title ?? 'Scene';
-    row.createEl('span', { cls: 'quill-dashboard-panel__section-title', text: title });
-    row.createEl('span', {
+    row.createSpan({ cls: 'quill-dashboard-panel__section-title', text: title });
+    row.createSpan({
         cls: 'quill-dashboard-panel__section-meta',
         text: `${section.wordCount.toLocaleString()}w \u00B7 ${section.avgSentenceLength}w/sentence \u00B7 ${pct(section.dialogueRatio)} dialogue`
     });
@@ -320,13 +320,13 @@ function renderSectionRow(
         // Flags are already in file-absolute coordinates (normalized by computeSectionMetrics).
         const absLine = flag.lineStart;
         const absEnd = flag.lineEnd;
-        const chip = wrapper.createEl('div', {
+        const chip = wrapper.createDiv({
             cls: `quill-dashboard-panel__pacing-chip quill-dashboard-panel__pacing-chip--${flag.kind}`,
             attr: { role: 'button', tabindex: '0', title: 'Click to jump to this passage' }
         });
-        chip.createEl('div', { cls: 'quill-dashboard-panel__pacing-chip-label', text: label });
-        chip.createEl('div', { cls: 'quill-dashboard-panel__pacing-chip-detail', text: detail });
-        chip.createEl('div', {
+        chip.createDiv({ cls: 'quill-dashboard-panel__pacing-chip-label', text: label });
+        chip.createDiv({ cls: 'quill-dashboard-panel__pacing-chip-detail', text: detail });
+        chip.createDiv({
             cls: 'quill-dashboard-panel__pacing-chip-line',
             text: `Avg ${flag.avgSentenceLength} words/sentence \u00B7 lines ${absLine}\u2013${absEnd}`
         });
@@ -365,11 +365,11 @@ function renderPacingHeatmap(
     const allFlags = metrics.pacingFlags;
     if (allFlags.length === 0 && metrics.chapters.length === 0) return;
 
-    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
+    const section = container.createDiv({ cls: 'quill-dashboard-panel__section' });
 
     // Heading row with optional "Fix all" button.
-    const headingRow = section.createEl('div', { cls: 'quill-dashboard-panel__heading-row' });
-    headingRow.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Pacing' });
+    const headingRow = section.createDiv({ cls: 'quill-dashboard-panel__heading-row' });
+    headingRow.createDiv({ cls: 'quill-dashboard-panel__section-heading', text: 'Pacing' });
     if (hasChatProvider(plugin) && allFlags.length > 0) {
         const fixAllBtn = headingRow.createEl('button', {
             cls: 'quill-dashboard-panel__fix-all-btn',
@@ -380,33 +380,33 @@ function renderPacingHeatmap(
         });
     }
 
-    const heatmap = section.createEl('div', { cls: 'quill-dashboard-panel__heatmap' });
+    const heatmap = section.createDiv({ cls: 'quill-dashboard-panel__heatmap' });
 
     for (const chapter of metrics.chapters) {
         const flagCount = chapter.pacingFlags.length;
         const severity = flagCount === 0 ? 'none' : flagCount <= 2 ? 'low' : 'high';
-        const cell = heatmap.createEl('div', {
+        const cell = heatmap.createDiv({
             cls: `quill-dashboard-panel__heatmap-cell quill-dashboard-panel__heatmap-cell--${severity}`,
             attr: { title: `${chapter.title}: ${flagCount} pacing flag${flagCount !== 1 ? 's' : ''}` }
         });
-        cell.createEl('span', { cls: 'quill-dashboard-panel__heatmap-label', text: chapter.title });
+        cell.createSpan({ cls: 'quill-dashboard-panel__heatmap-label', text: chapter.title });
     }
 
     if (allFlags.length > 0) {
-        const legend = section.createEl('div', { cls: 'quill-dashboard-panel__heatmap-legend' });
+        const legend = section.createDiv({ cls: 'quill-dashboard-panel__heatmap-legend' });
         for (const flag of allFlags.slice(0, 10)) {
             const isShort = flag.kind === 'uniform-short';
             const label = isShort ? 'Uniformly short sentences' : 'Uniformly long sentences';
             const detail = isShort
                 ? 'Staccato rhythm — consider varying sentence length.'
                 : 'Dense passage — consider breaking up.';
-            const item = legend.createEl('div', {
+            const item = legend.createDiv({
                 cls: `quill-dashboard-panel__pacing-chip quill-dashboard-panel__heatmap-flag quill-dashboard-panel__pacing-chip--${flag.kind}`,
                 attr: { role: 'button', tabindex: '0', title: 'Click to jump to this passage' }
             });
-            item.createEl('div', { cls: 'quill-dashboard-panel__pacing-chip-label', text: label });
-            item.createEl('div', { cls: 'quill-dashboard-panel__pacing-chip-detail', text: detail });
-            item.createEl('div', {
+            item.createDiv({ cls: 'quill-dashboard-panel__pacing-chip-label', text: label });
+            item.createDiv({ cls: 'quill-dashboard-panel__pacing-chip-detail', text: detail });
+            item.createDiv({
                 cls: 'quill-dashboard-panel__pacing-chip-line',
                 text: `Avg ${flag.avgSentenceLength} words/sentence \u00B7 line ${flag.lineStart}`
             });
@@ -435,7 +435,7 @@ function renderPacingHeatmap(
             }
         }
         if (allFlags.length > 10) {
-            legend.createEl('div', {
+            legend.createDiv({
                 cls: 'quill-dashboard-panel__heatmap-flag',
                 text: `\u2026and ${allFlags.length - 10} more`
             });
@@ -445,10 +445,10 @@ function renderPacingHeatmap(
 
 /** Render the manuscript-wide readability scores. */
 function renderReadability(container: HTMLElement, metrics: ManuscriptMetrics, plugin: EventideQuillPlugin): void {
-    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
-    const headingRow = section.createEl('div', { cls: 'quill-dashboard-panel__heading-row' });
-    headingRow.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Readability' });
-    headingRow.createEl('span', {
+    const section = container.createDiv({ cls: 'quill-dashboard-panel__section' });
+    const headingRow = section.createDiv({ cls: 'quill-dashboard-panel__heading-row' });
+    headingRow.createDiv({ cls: 'quill-dashboard-panel__section-heading', text: 'Readability' });
+    headingRow.createSpan({
         cls: 'quill-dashboard-panel__readability-info',
         attr: {
             title: 'Readability scores are rough guides \u2014 they help aim toward your target audience, not pin down an exact grade.'
@@ -458,14 +458,14 @@ function renderReadability(container: HTMLElement, metrics: ManuscriptMetrics, p
 
     const formula = plugin.settings.readabilityFormula;
 
-    const grid = section.createEl('div', { cls: 'quill-dashboard-panel__readability-grid' });
+    const grid = section.createDiv({ cls: 'quill-dashboard-panel__readability-grid' });
 
     const targetGrade = plugin.currentManuscriptFileData?.targetGradeLevel;
 
     switch (formula) {
         case 'dale-chall': {
             const label = daleChallLabel(metrics.daleChallRawScore);
-            grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
+            grid.createDiv({ cls: 'quill-dashboard-panel__readability-score' }).setText(
                 `Dale-Chall: ${metrics.daleChallRawScore} (${label})`
             );
             renderGradeTarget(grid, metrics.daleChallGradeLevel, targetGrade);
@@ -473,14 +473,14 @@ function renderReadability(container: HTMLElement, metrics: ManuscriptMetrics, p
         }
         case 'flesch-kincaid': {
             const easeLabel = readabilityEaseLabel(metrics.fleschReadingEase);
-            grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
+            grid.createDiv({ cls: 'quill-dashboard-panel__readability-score' }).setText(
                 `Reading ease: ${metrics.fleschReadingEase} (${easeLabel})`
             );
             renderGradeTarget(grid, metrics.fleschKincaidGrade, targetGrade);
             break;
         }
         case 'ari': {
-            grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
+            grid.createDiv({ cls: 'quill-dashboard-panel__readability-score' }).setText(
                 `ARI: ${metrics.ariScore} (${ariLabel(metrics.ariScore)})`
             );
             renderGradeTarget(grid, metrics.ariScore, targetGrade);
@@ -488,14 +488,14 @@ function renderReadability(container: HTMLElement, metrics: ManuscriptMetrics, p
         }
         case 'reweighted-flesch': {
             const label = readabilityEaseLabel(metrics.reweightedFleschReadingEase);
-            grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
+            grid.createDiv({ cls: 'quill-dashboard-panel__readability-score' }).setText(
                 `Reweighted Flesch: ${metrics.reweightedFleschReadingEase} (${label})`
             );
             renderGradeTarget(grid, metrics.reweightedFleschGradeLevel, targetGrade);
             break;
         }
         case 'custom-composite': {
-            grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' }).setText(
+            grid.createDiv({ cls: 'quill-dashboard-panel__readability-score' }).setText(
                 `Custom composite: ${metrics.customCompositeScore} (${compositeLabel(metrics.customCompositeScore)})`
             );
             break;
@@ -506,7 +506,7 @@ function renderReadability(container: HTMLElement, metrics: ManuscriptMetrics, p
 /** Render grade-level target comparison line.
  *  If targetGrade is undefined, just shows the grade level. */
 function renderGradeTarget(grid: HTMLElement, actualGrade: number, targetGrade: number | undefined): void {
-    const gradeEl = grid.createEl('div', { cls: 'quill-dashboard-panel__readability-score' });
+    const gradeEl = grid.createDiv({ cls: 'quill-dashboard-panel__readability-score' });
     if (targetGrade === undefined) {
         gradeEl.setText(`Grade level: ${actualGrade}`);
         return;
@@ -514,8 +514,8 @@ function renderGradeTarget(grid: HTMLElement, actualGrade: number, targetGrade: 
     const { status, label } = gradeLevelStatus(actualGrade, targetGrade);
     const dir = actualGrade > targetGrade ? 'simplify' : 'add complexity';
     const hint = status === 'good' ? '' : ` \u2014 consider ${dir}`;
-    gradeEl.createEl('span').setText(`Grade level: ${actualGrade} (target: ${targetGrade}) `);
-    gradeEl.createEl('span', {
+    gradeEl.createSpan().setText(`Grade level: ${actualGrade} (target: ${targetGrade}) `);
+    gradeEl.createSpan({
         cls: `quill-dashboard-panel__target-status quill-dashboard-panel__target-status--${status}`,
         text: `${label}${hint}`
     });
@@ -574,14 +574,14 @@ function renderCharacterList(
 ): void {
     if (metrics.characters.length === 0) return;
 
-    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
-    section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Characters' });
+    const section = container.createDiv({ cls: 'quill-dashboard-panel__section' });
+    section.createDiv({ cls: 'quill-dashboard-panel__section-heading', text: 'Characters' });
 
     for (const character of metrics.characters) {
-        const row = section.createEl('div', { cls: 'quill-dashboard-panel__character-row' });
-        row.createEl('span', { cls: 'quill-dashboard-panel__character-name', text: character.name });
+        const row = section.createDiv({ cls: 'quill-dashboard-panel__character-row' });
+        row.createSpan({ cls: 'quill-dashboard-panel__character-name', text: character.name });
 
-        const meta = row.createEl('span', { cls: 'quill-dashboard-panel__character-meta' });
+        const meta = row.createSpan({ cls: 'quill-dashboard-panel__character-meta' });
         if (character.chaptersSinceLastSeen < 0) {
             meta.setText(`${character.occurrences} mentions · absent from all chapters`);
         } else if (character.chaptersSinceLastSeen === 0) {
@@ -620,18 +620,18 @@ function renderReclassifiedList(
 ): void {
     if (metrics.reclassified.length === 0) return;
 
-    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
-    section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Other entities' });
+    const section = container.createDiv({ cls: 'quill-dashboard-panel__section' });
+    section.createDiv({ cls: 'quill-dashboard-panel__section-heading', text: 'Other entities' });
 
     for (const entity of metrics.reclassified) {
-        const row = section.createEl('div', { cls: 'quill-dashboard-panel__reclassified-row' });
-        row.createEl('span', { cls: 'quill-dashboard-panel__character-name', text: entity.name });
+        const row = section.createDiv({ cls: 'quill-dashboard-panel__reclassified-row' });
+        row.createSpan({ cls: 'quill-dashboard-panel__character-name', text: entity.name });
 
-        const meta = row.createEl('span', { cls: 'quill-dashboard-panel__character-meta' });
+        const meta = row.createSpan({ cls: 'quill-dashboard-panel__character-meta' });
         meta.setText(`${entity.occurrences} mentions · was ${entity.originalType}, now ${entity.currentType}`);
 
         // Type selector buttons.
-        const btnGroup = row.createEl('div', { cls: 'quill-dashboard-panel__type-btns' });
+        const btnGroup = row.createDiv({ cls: 'quill-dashboard-panel__type-btns' });
 
         for (const type of ['location', 'plot-thread', 'theme', 'item'] as const) {
             const isActive = entity.currentType === type;
@@ -678,14 +678,14 @@ function renderDismissedList(
 ): void {
     if (metrics.dismissed.length === 0) return;
 
-    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
-    section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Dismissed' });
+    const section = container.createDiv({ cls: 'quill-dashboard-panel__section' });
+    section.createDiv({ cls: 'quill-dashboard-panel__section-heading', text: 'Dismissed' });
 
     for (const entity of metrics.dismissed) {
-        const row = section.createEl('div', { cls: 'quill-dashboard-panel__dismissed-row' });
-        row.createEl('span', { cls: 'quill-dashboard-panel__character-name', text: entity.name });
+        const row = section.createDiv({ cls: 'quill-dashboard-panel__dismissed-row' });
+        row.createSpan({ cls: 'quill-dashboard-panel__character-name', text: entity.name });
 
-        const meta = row.createEl('span', { cls: 'quill-dashboard-panel__character-meta' });
+        const meta = row.createSpan({ cls: 'quill-dashboard-panel__character-meta' });
         meta.setText(`${entity.occurrences} mentions · was ${entity.originalType}`);
 
         const restoreBtn = row.createEl('button', {
@@ -703,8 +703,8 @@ function renderDismissedList(
 function renderTrends(container: HTMLElement, snapshots: ManuscriptSnapshot[] | null): void {
     if (!snapshots || snapshots.length < 2) return;
 
-    const section = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
-    section.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Word count trend' });
+    const section = container.createDiv({ cls: 'quill-dashboard-panel__section' });
+    section.createDiv({ cls: 'quill-dashboard-panel__section-heading', text: 'Word count trend' });
 
     const points = snapshots;
     const wordCounts = points.map((s) => s.totalWords);
@@ -716,12 +716,13 @@ function renderTrends(container: HTMLElement, snapshots: ManuscriptSnapshot[] | 
     const height = 40;
     const stepX = width / (points.length - 1);
 
-    const SVG_NS = 'http://www.w3.org/2000/svg';
-    const svg = activeDocument.createElementNS(SVG_NS, 'svg');
-    svg.classList.add('quill-dashboard-panel__trend-chart');
-    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-    svg.setAttribute('preserveAspectRatio', 'none');
-    section.appendChild(svg);
+    const svg = section.createSvg('svg', {
+        cls: 'quill-dashboard-panel__trend-chart',
+        attr: {
+            viewBox: `0 0 ${width} ${height}`,
+            preserveAspectRatio: 'none'
+        }
+    });
 
     const polylinePoints = points
         .map((s, i) => {
@@ -731,12 +732,14 @@ function renderTrends(container: HTMLElement, snapshots: ManuscriptSnapshot[] | 
         })
         .join(' ');
 
-    const polyline = activeDocument.createElementNS(SVG_NS, 'polyline');
-    polyline.setAttribute('points', polylinePoints);
-    polyline.setAttribute('fill', 'none');
-    polyline.setAttribute('stroke', 'currentColor');
-    polyline.setAttribute('stroke-width', '1.5');
-    svg.appendChild(polyline);
+    svg.createSvg('polyline', {
+        attr: {
+            points: polylinePoints,
+            fill: 'none',
+            stroke: 'currentColor',
+            'stroke-width': '1.5'
+        }
+    });
 
     // Velocity: words per day between first and last snapshot.
     const first = points[0]!;
@@ -744,7 +747,7 @@ function renderTrends(container: HTMLElement, snapshots: ManuscriptSnapshot[] | 
     const daysElapsed = (last.takenAt - first.takenAt) / 86_400_000;
     if (daysElapsed > 0) {
         const velocity = Math.round((last.totalWords - first.totalWords) / daysElapsed);
-        section.createEl('div', {
+        section.createDiv({
             cls: 'quill-dashboard-panel__trend-velocity',
             text: `${velocity.toLocaleString()} words/day over ${points.length} snapshots`
         });
@@ -779,27 +782,27 @@ export function renderDashboardSettingsTab(
 
     // --- Manuscript type presets ---
 
-    const presetSection = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
-    presetSection.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Manuscript type' });
+    const presetSection = container.createDiv({ cls: 'quill-dashboard-panel__section' });
+    presetSection.createDiv({ cls: 'quill-dashboard-panel__section-heading', text: 'Manuscript type' });
     presetSection.createEl('p', {
         cls: 'quill-dashboard-panel__settings-hint',
         text: 'Click a preset to load typical defaults, then fine-tune below.'
     });
 
-    const presetGrid = presetSection.createEl('div', { cls: 'quill-dashboard-panel__preset-grid' });
+    const presetGrid = presetSection.createDiv({ cls: 'quill-dashboard-panel__preset-grid' });
     for (const preset of MANUSCRIPT_PRESETS) {
         const isActive =
             wordCountTarget === preset.wordCountTarget &&
             manuscriptTarget === preset.manuscriptTarget &&
             (targetGradeLevel ?? DEFAULT_TARGET_GRADE_LEVEL) === preset.targetGradeLevel;
 
-        const card = presetGrid.createEl('div', {
+        const card = presetGrid.createDiv({
             cls: `quill-dashboard-panel__preset-card${isActive ? ' quill-dashboard-panel__preset-card--active' : ''}`,
             attr: { role: 'button', tabindex: '0' }
         });
-        card.createEl('div', { cls: 'quill-dashboard-panel__preset-label', text: preset.label });
-        card.createEl('div', { cls: 'quill-dashboard-panel__preset-desc', text: preset.description });
-        card.createEl('div', {
+        card.createDiv({ cls: 'quill-dashboard-panel__preset-label', text: preset.label });
+        card.createDiv({ cls: 'quill-dashboard-panel__preset-desc', text: preset.description });
+        card.createDiv({
             cls: 'quill-dashboard-panel__preset-detail',
             text: `${preset.wordCountTarget.toLocaleString()}w/chapter \u00B7 grade ${preset.targetGradeLevel}`
         });
@@ -825,8 +828,8 @@ export function renderDashboardSettingsTab(
 
     // --- Targets ---
 
-    const targetSection = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
-    targetSection.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Targets' });
+    const targetSection = container.createDiv({ cls: 'quill-dashboard-panel__section' });
+    targetSection.createDiv({ cls: 'quill-dashboard-panel__section-heading', text: 'Targets' });
 
     new Setting(targetSection)
         .setName('Chapter word count target')
@@ -880,8 +883,8 @@ export function renderDashboardSettingsTab(
 
     // --- Options ---
 
-    const optionsSection = container.createEl('div', { cls: 'quill-dashboard-panel__section' });
-    optionsSection.createEl('div', { cls: 'quill-dashboard-panel__section-heading', text: 'Options' });
+    const optionsSection = container.createDiv({ cls: 'quill-dashboard-panel__section' });
+    optionsSection.createDiv({ cls: 'quill-dashboard-panel__section-heading', text: 'Options' });
 
     new Setting(optionsSection)
         .setName('Split chapters by heading')

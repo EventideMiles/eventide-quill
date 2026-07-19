@@ -1,6 +1,6 @@
 {
 	"name": "eventide-quill",
-	"version": "1.3.0",
+	"version": "1.3.1",
 	"description": "A feedback-first, novelist-focused writing assistant for Obsidian.",
 	"main": "main.js",
 	"type": "module",
@@ -32,7 +32,7 @@
 		"@vitest/coverage-v8": "^4.1.10",
 		"esbuild": "^0.28.1",
 		"eslint": "^9.39.4",
-		"eslint-plugin-obsidianmd": "^0.3.0",
+		"eslint-plugin-obsidianmd": "^0.4.1",
 		"globals": "^17.6.0",
 		"jiti": "^2.6.1",
 		"jscpd": "^5.0.11",

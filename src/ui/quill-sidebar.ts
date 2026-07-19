@@ -428,9 +428,9 @@ export class QuillSidebarView extends ItemView {
                 cls: `quill-sidebar__tab${this.activeTopTab === tab.id ? ' quill-sidebar__tab--active' : ''}`,
                 attr: { title: tab.label, 'aria-label': tab.label }
             });
-            const iconEl = btn.createEl('span', { cls: 'quill-sidebar__tab-icon' });
+            const iconEl = btn.createSpan({ cls: 'quill-sidebar__tab-icon' });
             setIcon(iconEl, tab.icon);
-            btn.createEl('span', { cls: 'quill-sidebar__tab-label', text: tab.label });
+            btn.createSpan({ cls: 'quill-sidebar__tab-label', text: tab.label });
             this.renderEvents!.registerDomEvent(btn, 'click', () => this.switchTopTab(tab.id));
         }
     }
@@ -1161,7 +1161,7 @@ export class QuillSidebarView extends ItemView {
 
         // Loading indicator while AI is generating.
         if (this.plugin.batchFixInProgress) {
-            container.createEl('div', {
+            container.createDiv({
                 cls: 'quill-linter__pending-loading',
                 text: 'Generating fixes\u2026'
             });
@@ -1190,7 +1190,7 @@ export class QuillSidebarView extends ItemView {
         }
 
         // Individual change cards.
-        const scroll = container.createEl('div', { cls: 'quill-linter__pending-list' });
+        const scroll = container.createDiv({ cls: 'quill-linter__pending-list' });
         for (const edit of edits) {
             void renderChangeCard(scroll, edit, edit.originalText ?? null, this.app, this.renderEvents!, {
                 onApprove: (id: number) => {
@@ -1234,8 +1234,8 @@ export class QuillSidebarView extends ItemView {
             return;
         }
 
-        const header = resultsContainer.createEl('div', { cls: 'quill-linter__header' });
-        header.createEl('span', {
+        const header = resultsContainer.createDiv({ cls: 'quill-linter__header' });
+        header.createSpan({
             text: `${this.results.length} issue${this.results.length !== 1 ? 's' : ''} found`
         });
 
@@ -1272,16 +1272,16 @@ export class QuillSidebarView extends ItemView {
                 }
             });
 
-            const badge = item.createEl('span', { cls: 'quill-linter__badge' });
+            const badge = item.createSpan({ cls: 'quill-linter__badge' });
             badge.setText(result.severity);
 
-            const rule = item.createEl('span', { cls: 'quill-linter__rule-name' });
+            const rule = item.createSpan({ cls: 'quill-linter__rule-name' });
             rule.setText(info?.name ?? result.rule);
 
-            const message = item.createEl('span', { cls: 'quill-linter__message' });
+            const message = item.createSpan({ cls: 'quill-linter__message' });
             message.setText(result.message);
 
-            const location = item.createEl('span', { cls: 'quill-linter__location' });
+            const location = item.createSpan({ cls: 'quill-linter__location' });
             location.setText(`Ln ${result.line}, Col ${result.column + 1}`);
         }
     }
@@ -1302,7 +1302,7 @@ export class QuillSidebarView extends ItemView {
         const info = RULE_INFO[result.rule];
         const ruleName = info?.name ?? result.rule;
 
-        const header = detailsContainer.createEl('div', { cls: 'quill-linter-details__header' });
+        const header = detailsContainer.createDiv({ cls: 'quill-linter-details__header' });
 
         const backBtn = header.createEl('button', {
             cls: 'quill-linter-details__back',
@@ -1310,10 +1310,10 @@ export class QuillSidebarView extends ItemView {
         });
         this.renderEvents!.registerDomEvent(backBtn, 'click', () => this.switchLinterSubTab('results'));
 
-        const ruleEl = header.createEl('span', { cls: 'quill-linter-details__rule-name' });
+        const ruleEl = header.createSpan({ cls: 'quill-linter-details__rule-name' });
         ruleEl.setText(ruleName);
 
-        const severityEl = header.createEl('span', {
+        const severityEl = header.createSpan({
             cls: `quill-linter__badge quill-linter__item--${result.severity}`
         });
         severityEl.setText(result.severity);
@@ -1323,28 +1323,28 @@ export class QuillSidebarView extends ItemView {
             const ctxLabel = detailsContainer.createEl('p', { cls: 'quill-linter-details__label' });
             ctxLabel.setText('In text');
 
-            const ctxBlock = detailsContainer.createEl('div', { cls: 'quill-linter-details__context' });
+            const ctxBlock = detailsContainer.createDiv({ cls: 'quill-linter-details__context' });
 
             for (const lineInfo of passage.lines) {
-                const lineEl = ctxBlock.createEl('div', { cls: 'quill-linter-details__context-line' });
+                const lineEl = ctxBlock.createDiv({ cls: 'quill-linter-details__context-line' });
 
-                const lineNum = lineEl.createEl('span', { cls: 'quill-linter-details__context-linenum' });
+                const lineNum = lineEl.createSpan({ cls: 'quill-linter-details__context-linenum' });
                 lineNum.setText(String(lineInfo.index) + ' ');
 
                 if (lineInfo.isFlagged) {
                     lineEl
-                        .createEl('span', { cls: 'quill-linter-details__context-before' })
+                        .createSpan({ cls: 'quill-linter-details__context-before' })
                         .setText(lineInfo.text.slice(0, passage.flaggedStart));
 
                     lineEl
-                        .createEl('span', { cls: 'quill-linter-details__context-highlight' })
+                        .createSpan({ cls: 'quill-linter-details__context-highlight' })
                         .setText(lineInfo.text.slice(passage.flaggedStart, passage.flaggedEnd));
 
                     lineEl
-                        .createEl('span', { cls: 'quill-linter-details__context-after' })
+                        .createSpan({ cls: 'quill-linter-details__context-after' })
                         .setText(lineInfo.text.slice(passage.flaggedEnd));
                 } else {
-                    lineEl.createEl('span', { cls: 'quill-linter-details__context-text' }).setText(lineInfo.text);
+                    lineEl.createSpan({ cls: 'quill-linter-details__context-text' }).setText(lineInfo.text);
                 }
             }
         }

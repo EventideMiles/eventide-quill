@@ -905,14 +905,14 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the thought channel section (only during draft generation). */
     private renderThoughtSection(): void {
-        const section = this.containerEl!.createEl('div', { cls: 'quill-cowriter-panel__section' });
+        const section = this.containerEl!.createDiv({ cls: 'quill-cowriter-panel__section' });
 
-        const toggle = section.createEl('div', { cls: 'quill-cowriter-panel__thought-toggle' });
-        toggle.createEl('span', {
+        const toggle = section.createDiv({ cls: 'quill-cowriter-panel__thought-toggle' });
+        toggle.createSpan({
             cls: 'quill-cowriter-panel__thought-icon',
             text: this.thoughtExpanded ? '\u25bc' : '\u25b6'
         });
-        toggle.createEl('span', { text: 'AI reasoning' });
+        toggle.createSpan({ text: 'AI reasoning' });
 
         if (this.thoughtContent) {
             this.renderEvents.registerDomEvent(toggle, 'click', () => {
@@ -921,11 +921,11 @@ export class CoWriterPanel extends AbstractChatPanel {
             });
 
             if (this.thoughtExpanded) {
-                const content = section.createEl('div', { cls: 'quill-cowriter-panel__thought-content' });
+                const content = section.createDiv({ cls: 'quill-cowriter-panel__thought-content' });
                 content.setText(this.thoughtContent);
             }
         } else {
-            toggle.createEl('span', { text: ' (Thinking...)' });
+            toggle.createSpan({ text: ' (Thinking...)' });
         }
     }
 
@@ -938,7 +938,7 @@ export class CoWriterPanel extends AbstractChatPanel {
      * collapse no longer needs to fold these).
      */
     private renderChatHeader(): void {
-        const header = this.containerEl!.createEl('div', { cls: 'quill-cowriter-panel__chat-header' });
+        const header = this.containerEl!.createDiv({ cls: 'quill-cowriter-panel__chat-header' });
         const generating = this.optionsLoading || this.draftState === 'generating' || this.fulfillActive;
 
         const newChatBtn = header.createEl('button', {
@@ -1023,7 +1023,7 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the scrollable chat area with messages or initialize prompt. */
     private renderChatArea(): void {
-        const scroll = this.containerEl!.createEl('div', { cls: 'quill-sidebar__content-plain' });
+        const scroll = this.containerEl!.createDiv({ cls: 'quill-sidebar__content-plain' });
 
         // Bucket reviewable cards by their anchor message so they render inline
         // in the flow (subagents / lore edits / lore images) instead of all
@@ -1038,15 +1038,15 @@ export class CoWriterPanel extends AbstractChatPanel {
         } else {
             for (const msg of this.chatHistory) {
                 if (msg.role === 'user') {
-                    const bubble = scroll.createEl('div', {
+                    const bubble = scroll.createDiv({
                         cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--user'
                     });
                     // Use a child text node rather than bubble.setText so a
                     // thumbnail strip can sit alongside it when images are
                     // attached to this message.
-                    bubble.createEl('div', { cls: 'quill-cowriter-panel__bubble-text' }).setText(msg.content);
+                    bubble.createDiv({ cls: 'quill-cowriter-panel__bubble-text' }).setText(msg.content);
                     if (msg.images && msg.images.length > 0) {
-                        const thumbs = bubble.createEl('div', { cls: 'quill-cowriter-panel__bubble-images' });
+                        const thumbs = bubble.createDiv({ cls: 'quill-cowriter-panel__bubble-images' });
                         for (const b64 of msg.images) {
                             thumbs.createEl('img', {
                                 cls: 'quill-cowriter-panel__bubble-image',
@@ -1101,18 +1101,18 @@ export class CoWriterPanel extends AbstractChatPanel {
                         menu.showAtMouseEvent(e);
                     });
                 } else if (msg.role === 'assistant') {
-                    const bubble = scroll.createEl('div', {
+                    const bubble = scroll.createDiv({
                         cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--assistant'
                     });
 
                     // Per-message thought/reasoning — start expanded
                     if (msg.thought && this.plugin.settings.enableCoWriterThought) {
-                        const thoughtToggle = bubble.createEl('div', {
+                        const thoughtToggle = bubble.createDiv({
                             cls: 'quill-cowriter-panel__message-thought-toggle'
                         });
-                        thoughtToggle.createEl('span', { cls: 'quill-cowriter-panel__thought-icon', text: '\u25bc' });
-                        thoughtToggle.createEl('span', { text: 'AI reasoning' });
-                        const thoughtContent = bubble.createEl('div', {
+                        thoughtToggle.createSpan({ cls: 'quill-cowriter-panel__thought-icon', text: '\u25bc' });
+                        thoughtToggle.createSpan({ text: 'AI reasoning' });
+                        const thoughtContent = bubble.createDiv({
                             cls: 'quill-cowriter-panel__message-thought-content',
                             text: msg.thought
                         });
@@ -1133,8 +1133,8 @@ export class CoWriterPanel extends AbstractChatPanel {
                     }
 
                     if (msg.options && msg.options.length > 0) {
-                        bubble.createEl('div', { cls: 'quill-cowriter-panel__options-intro', text: msg.content });
-                        const optionsContainer = bubble.createEl('div', { cls: 'quill-cowriter-panel__options' });
+                        bubble.createDiv({ cls: 'quill-cowriter-panel__options-intro', text: msg.content });
+                        const optionsContainer = bubble.createDiv({ cls: 'quill-cowriter-panel__options' });
                         for (let i = 0; i < msg.options.length; i++) {
                             this.renderOptionCard(optionsContainer, msg.options[i]!, i);
                         }
@@ -1142,7 +1142,7 @@ export class CoWriterPanel extends AbstractChatPanel {
                         // Render completed discuss responses as markdown
                         const isStreaming =
                             msg === this.chatHistory[this.chatHistory.length - 1] && this.discussStreaming;
-                        const responseEl = bubble.createEl('div', { cls: 'quill-cowriter-panel__response-text' });
+                        const responseEl = bubble.createDiv({ cls: 'quill-cowriter-panel__response-text' });
                         if (isStreaming) {
                             responseEl.addClass('quill-cowriter-panel__response-text--streaming');
                             responseEl.setText(msg.content || '\u2026');
@@ -1175,29 +1175,29 @@ export class CoWriterPanel extends AbstractChatPanel {
                     // (below the response text) so they don't interfere with the
                     // streaming-placeholder logic.
                     if (msg.toolUses && msg.toolUses.length > 0) {
-                        const toolList = bubble.createEl('div', { cls: 'quill-cowriter-panel__tool-uses' });
+                        const toolList = bubble.createDiv({ cls: 'quill-cowriter-panel__tool-uses' });
                         for (const use of msg.toolUses) {
                             const failed = Boolean(use.error);
-                            const entry = toolList.createEl('div', {
+                            const entry = toolList.createDiv({
                                 cls: `quill-cowriter-panel__tool-use${failed ? ' quill-cowriter-panel__tool-use--error' : ''}`,
                                 title: failed ? use.error : undefined
                             });
-                            entry.createEl('span', {
+                            entry.createSpan({
                                 cls: 'quill-cowriter-panel__tool-use-icon',
                                 text: failed ? '\u26a0' : '\u29c9'
                             });
-                            entry.createEl('span', {
+                            entry.createSpan({
                                 cls: 'quill-cowriter-panel__tool-use-name',
                                 text: `${failed ? 'Failed' : 'Used'} ${use.name}`
                             });
                             if (use.argsSummary) {
-                                entry.createEl('span', {
+                                entry.createSpan({
                                     cls: 'quill-cowriter-panel__tool-use-args',
                                     text: use.argsSummary
                                 });
                             }
                             if (use.cached) {
-                                entry.createEl('span', {
+                                entry.createSpan({
                                     cls: 'quill-cowriter-panel__tool-use-cached',
                                     text: 'Cached'
                                 });
@@ -1279,16 +1279,16 @@ export class CoWriterPanel extends AbstractChatPanel {
             // "Describing image…" line in place of "Thinking..." so the writer
             // knows their image is being processed, not silently stalled.
             if (this.describingImages) {
-                const indicator = scroll.createEl('div', {
+                const indicator = scroll.createDiv({
                     cls: 'quill-cowriter-panel__image-describing'
                 });
-                indicator.createEl('span', {
+                indicator.createSpan({
                     cls: 'quill-cowriter-panel__image-describing-icon',
                     text: '\u29c9'
                 });
-                indicator.createEl('span', { text: 'Describing image\u2026' });
+                indicator.createSpan({ text: 'Describing image\u2026' });
             } else if (this.optionsLoading) {
-                const bubble = scroll.createEl('div', {
+                const bubble = scroll.createDiv({
                     cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--assistant quill-cowriter-panel__chat-bubble--streaming'
                 });
                 bubble.setText('Thinking...');
@@ -1343,31 +1343,31 @@ export class CoWriterPanel extends AbstractChatPanel {
      * subagent's live/finalized conversation ({@link renderSubagentView}).
      */
     private renderSubagentCard(container: HTMLElement, sub: SubagentView): void {
-        const card = container.createEl('div', {
+        const card = container.createDiv({
             cls: `quill-cowriter-panel__subagent-card quill-cowriter-panel__subagent-card--${sub.status}`
         });
-        const header = card.createEl('div', { cls: 'quill-cowriter-panel__subagent-card-header' });
-        header.createEl('span', {
+        const header = card.createDiv({ cls: 'quill-cowriter-panel__subagent-card-header' });
+        header.createSpan({
             cls: 'quill-cowriter-panel__subagent-kind',
             text: sub.kind === 'research' ? 'Research' : 'Batch edit'
         });
-        header.createEl('span', {
+        header.createSpan({
             cls: 'quill-cowriter-panel__subagent-status',
             text: this.subagentStatusLabel(sub.status)
         });
-        header.createEl('span', {
+        header.createSpan({
             cls: 'quill-cowriter-panel__subagent-goal',
             text: truncateText(sub.goal, 70)
         });
         if (sub.status === 'running') {
-            card.createEl('div', {
+            card.createDiv({
                 cls: 'quill-cowriter-panel__subagent-progress',
                 text: `Editing ${sub.pathCount} file(s)…`
             });
         } else if (sub.error) {
-            card.createEl('div', { cls: 'quill-cowriter-panel__subagent-error', text: sub.error });
+            card.createDiv({ cls: 'quill-cowriter-panel__subagent-error', text: sub.error });
         } else if (sub.summary) {
-            card.createEl('div', {
+            card.createDiv({
                 cls: 'quill-cowriter-panel__subagent-summary',
                 text: truncateText(sub.summary, 140)
             });
@@ -1444,7 +1444,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (group.subagents.length === 0 && group.loreEdits.length === 0 && group.loreImages.length === 0) {
             return;
         }
-        const host = container.createEl('div', { cls: 'quill-cowriter-panel__anchored-cards' });
+        const host = container.createDiv({ cls: 'quill-cowriter-panel__anchored-cards' });
         for (const sub of group.subagents) {
             this.renderSubagentCard(host, sub);
         }
@@ -1480,29 +1480,29 @@ export class CoWriterPanel extends AbstractChatPanel {
             return;
         }
 
-        const scroll = this.containerEl!.createEl('div', { cls: 'quill-sidebar__content-plain' });
+        const scroll = this.containerEl!.createDiv({ cls: 'quill-sidebar__content-plain' });
 
         // Back bar + identity.
-        const bar = scroll.createEl('div', { cls: 'quill-cowriter-panel__subagent-bar' });
+        const bar = scroll.createDiv({ cls: 'quill-cowriter-panel__subagent-bar' });
         const back = bar.createEl('button', { cls: 'quill-cowriter-panel__subagent-back' });
-        back.createEl('span', { text: '\u2190' });
-        back.createEl('span', { text: 'Back' });
+        back.createSpan({ text: '\u2190' });
+        back.createSpan({ text: 'Back' });
         this.renderEvents.registerDomEvent(back, 'click', () => this.onNavigateToParent?.());
-        bar.createEl('span', {
+        bar.createSpan({
             cls: `quill-cowriter-panel__subagent-status quill-cowriter-panel__subagent-status--${sub.status}`,
             text: this.subagentStatusLabel(sub.status)
         });
-        bar.createEl('span', { cls: 'quill-cowriter-panel__subagent-goal', text: truncateText(sub.goal, 60) });
+        bar.createSpan({ cls: 'quill-cowriter-panel__subagent-goal', text: truncateText(sub.goal, 60) });
 
         // Meta line: what's being edited, plus outcome once resolved.
-        const meta = scroll.createEl('div', { cls: 'quill-cowriter-panel__subagent-meta' });
-        meta.createEl('span', { text: `${sub.pathCount} file(s)` });
+        const meta = scroll.createDiv({ cls: 'quill-cowriter-panel__subagent-meta' });
+        meta.createSpan({ text: `${sub.pathCount} file(s)` });
         if (sub.status === 'running') {
-            meta.createEl('span', { cls: 'quill-cowriter-panel__subagent-progress', text: 'Editing…' });
+            meta.createSpan({ cls: 'quill-cowriter-panel__subagent-progress', text: 'Editing…' });
         } else if (sub.error) {
-            meta.createEl('span', { cls: 'quill-cowriter-panel__subagent-error', text: truncateText(sub.error, 160) });
+            meta.createSpan({ cls: 'quill-cowriter-panel__subagent-error', text: truncateText(sub.error, 160) });
         } else if (sub.summary) {
-            meta.createEl('span', {
+            meta.createSpan({
                 cls: 'quill-cowriter-panel__subagent-summary',
                 text: truncateText(sub.summary, 160)
             });
@@ -1513,33 +1513,33 @@ export class CoWriterPanel extends AbstractChatPanel {
         // swamp the view; the full text stays in the subagent's buffer.
         for (const msg of sub.chatHistory) {
             if (msg.role === 'user' || msg.role === 'system') {
-                const bubble = scroll.createEl('div', {
+                const bubble = scroll.createDiv({
                     cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--user'
                 });
                 this.renderMarkdownInto(bubble, msg.content);
             } else if (msg.role === 'assistant') {
-                const bubble = scroll.createEl('div', {
+                const bubble = scroll.createDiv({
                     cls: 'quill-cowriter-panel__chat-bubble quill-cowriter-panel__chat-bubble--assistant'
                 });
                 if (msg.thought && this.plugin.settings.enableCoWriterThought) {
-                    bubble.createEl('div', {
+                    bubble.createDiv({
                         cls: 'quill-cowriter-panel__message-thought-content',
                         text: msg.thought
                     });
                 }
-                const body = bubble.createEl('div', { cls: 'quill-cowriter-panel__response-text' });
+                const body = bubble.createDiv({ cls: 'quill-cowriter-panel__response-text' });
                 this.renderMarkdownInto(body, msg.content || (sub.status === 'running' ? '\u2026' : '(no text)'));
                 if (msg.toolUses && msg.toolUses.length > 0) {
-                    const toolList = bubble.createEl('div', { cls: 'quill-cowriter-panel__tool-uses' });
+                    const toolList = bubble.createDiv({ cls: 'quill-cowriter-panel__tool-uses' });
                     for (const use of msg.toolUses) {
-                        toolList.createEl('span', {
+                        toolList.createSpan({
                             cls: 'quill-cowriter-panel__tool-use',
                             text: `${use.name}(${truncateText(use.argsSummary, 40)})`
                         });
                     }
                 }
             } else if (msg.role === 'tool') {
-                scroll.createEl('div', {
+                scroll.createDiv({
                     cls: 'quill-cowriter-panel__subagent-tool-result',
                     text: truncateText(msg.content, 300)
                 });
@@ -1693,19 +1693,19 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the initialize prompt with a big button. */
     private renderInitializePrompt(container: HTMLElement): void {
-        const prompt = container.createEl('div', { cls: 'quill-cowriter-panel__init' });
-        prompt.createEl('div', { cls: 'quill-cowriter-panel__init-icon', text: '\u270e' });
+        const prompt = container.createDiv({ cls: 'quill-cowriter-panel__init' });
+        prompt.createDiv({ cls: 'quill-cowriter-panel__init-icon', text: '\u270e' });
 
         // Direct and Fulfill need an active file. Show a warning but DON'T
         // bail — the bottom area renders below with a disabled input row so
         // the user can still switch modes.
         const activeFile = this.app.workspace.getActiveFile();
         if ((this.inputMode === 'direct' || this.inputMode === 'fulfill') && !activeFile) {
-            prompt.createEl('div', {
+            prompt.createDiv({
                 cls: 'quill-cowriter-panel__init-heading',
                 text: this.inputMode === 'direct' ? 'Direct' : 'Fulfill'
             });
-            prompt.createEl('div', {
+            prompt.createDiv({
                 cls: 'quill-cowriter-panel__init-desc',
                 text:
                     this.inputMode === 'direct'
@@ -1716,8 +1716,8 @@ export class CoWriterPanel extends AbstractChatPanel {
         }
 
         if (this.inputMode === 'coach') {
-            prompt.createEl('div', { cls: 'quill-cowriter-panel__init-heading', text: 'Coach' });
-            prompt.createEl('div', {
+            prompt.createDiv({ cls: 'quill-cowriter-panel__init-heading', text: 'Coach' });
+            prompt.createDiv({
                 cls: 'quill-cowriter-panel__init-desc',
                 text: 'Describe what you want this scene to do. The coach asks clarifying questions and helps you shape a direction before any prose is written.'
             });
@@ -1728,7 +1728,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.renderEvents.registerDomEvent(startBtn, 'click', () => {
                 this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-panel__input')?.focus();
             });
-            prompt.createEl('div', {
+            prompt.createDiv({
                 cls: 'quill-cowriter-panel__init-sub',
                 text: 'Or, if you\u2019re feeling uninspired, see a few options that might work.'
             });
@@ -1745,8 +1745,8 @@ export class CoWriterPanel extends AbstractChatPanel {
                 this.onGenerateOptions?.('');
             });
         } else if (this.inputMode === 'fulfill') {
-            prompt.createEl('div', { cls: 'quill-cowriter-panel__init-heading', text: 'Fulfill' });
-            prompt.createEl('div', {
+            prompt.createDiv({ cls: 'quill-cowriter-panel__init-heading', text: 'Fulfill' });
+            prompt.createDiv({
                 cls: 'quill-cowriter-panel__init-desc',
                 text: 'Sweep every `<!-- quill: -->` directive in this document and review each fulfillment as a diff. Add directives first (right-click → Insert inline directive).'
             });
@@ -1767,8 +1767,8 @@ export class CoWriterPanel extends AbstractChatPanel {
                 this.renderEvents.register(() => window.clearTimeout(timeoutId));
             });
         } else if (this.inputMode === 'discuss') {
-            prompt.createEl('div', { cls: 'quill-cowriter-panel__init-heading', text: 'Discuss' });
-            prompt.createEl('div', {
+            prompt.createDiv({ cls: 'quill-cowriter-panel__init-heading', text: 'Discuss' });
+            prompt.createDiv({
                 cls: 'quill-cowriter-panel__init-desc',
                 text: 'Brainstorm with the AI about your scene. Ask questions, explore ideas, or talk through a stuck passage.'
             });
@@ -1781,8 +1781,8 @@ export class CoWriterPanel extends AbstractChatPanel {
                 this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-panel__input')?.focus();
             });
         } else if (this.inputMode === 'lorebook') {
-            prompt.createEl('div', { cls: 'quill-cowriter-panel__init-heading', text: 'Lorebook coach' });
-            prompt.createEl('div', {
+            prompt.createDiv({ cls: 'quill-cowriter-panel__init-heading', text: 'Lorebook coach' });
+            prompt.createDiv({
                 cls: 'quill-cowriter-panel__init-desc',
                 text: 'Develop a character, location, faction, or other lore entry. The coach reads your existing lore and manuscript, asks probing questions, and proposes a draft you can save as a note.'
             });
@@ -1794,14 +1794,14 @@ export class CoWriterPanel extends AbstractChatPanel {
                 this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-panel__input')?.focus();
             });
             if (this.plugin.settings.lorebookFolders.length === 0) {
-                prompt.createEl('div', {
+                prompt.createDiv({
                     cls: 'quill-cowriter-panel__init-sub quill-cowriter-panel__init-sub--warn',
                     text: 'Configure at least one lorebook folder in settings → lorebook first.'
                 });
             }
         } else {
-            prompt.createEl('div', { cls: 'quill-cowriter-panel__init-heading', text: 'Direct' });
-            prompt.createEl('div', {
+            prompt.createDiv({ cls: 'quill-cowriter-panel__init-heading', text: 'Direct' });
+            prompt.createDiv({
                 cls: 'quill-cowriter-panel__init-desc',
                 text: 'Describe what should happen next, then send.'
             });
@@ -1824,14 +1824,14 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Render a single option card with label, description, and Apply button. */
     private renderOptionCard(container: HTMLElement, option: CoWriterOption, index: number): void {
         const expired = !this.currentOptions[index];
-        const card = container.createEl('div', {
+        const card = container.createDiv({
             cls: `quill-cowriter-panel__option-card${expired ? ' quill-cowriter-panel__option-card--expired' : ''}`
         });
-        card.createEl('div', { cls: 'quill-cowriter-panel__option-label', text: option.label });
-        card.createEl('div', { cls: 'quill-cowriter-panel__option-desc', text: option.description });
+        card.createDiv({ cls: 'quill-cowriter-panel__option-label', text: option.label });
+        card.createDiv({ cls: 'quill-cowriter-panel__option-desc', text: option.description });
 
         if (expired) {
-            card.createEl('span', { cls: 'quill-cowriter-panel__option-expired-label', text: 'No longer available' });
+            card.createSpan({ cls: 'quill-cowriter-panel__option-expired-label', text: 'No longer available' });
             return;
         }
 
@@ -1858,7 +1858,7 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the pinned bottom area (draft status, context pills, input row). */
     private renderBottomArea(): void {
-        const bottom = this.containerEl!.createEl('div', {
+        const bottom = this.containerEl!.createDiv({
             cls: [
                 'quill-cowriter-panel__bottom',
                 this.compactWidth ? 'quill-cowriter-panel__bottom--compact' : '',
@@ -1870,11 +1870,11 @@ export class CoWriterPanel extends AbstractChatPanel {
 
         // Coach mode UI
         if (this.inputMode === 'coach') {
-            const coachBar = bottom.createEl('div', { cls: 'quill-cowriter-panel__coach-bar' });
+            const coachBar = bottom.createDiv({ cls: 'quill-cowriter-panel__coach-bar' });
             const generating = this.optionsLoading || this.draftState === 'generating';
 
             // Phase indicator
-            const phaseLabel = coachBar.createEl('span', { cls: 'quill-cowriter-panel__coach-phase' });
+            const phaseLabel = coachBar.createSpan({ cls: 'quill-cowriter-panel__coach-phase' });
             const phaseNames: Record<CoachPhase, string> = {
                 discern: 'Phase 1: Analyzing intent...',
                 clarify: 'Phase 2: Clarifying questions...',
@@ -1887,7 +1887,7 @@ export class CoWriterPanel extends AbstractChatPanel {
 
             // End coach button
             if (this.coachActive) {
-                coachBar.createEl('span', { text: ' ' });
+                coachBar.createSpan({ text: ' ' });
                 const endBtn = coachBar.createEl('button', {
                     cls: 'quill-cowriter-panel__coach-end-btn',
                     text: 'End coaching'
@@ -1897,7 +1897,7 @@ export class CoWriterPanel extends AbstractChatPanel {
                 });
 
                 // Write coach button (available at any phase)
-                coachBar.createEl('span', { text: ' ' });
+                coachBar.createSpan({ text: ' ' });
                 const writeBtn = coachBar.createEl('button', {
                     cls: 'quill-cowriter-panel__coach-options-btn',
                     text: 'Write from coaching'
@@ -1910,7 +1910,7 @@ export class CoWriterPanel extends AbstractChatPanel {
 
                 // Generate options button (if coach is complete)
                 if (this.coachPhase === 'direction') {
-                    coachBar.createEl('span', { text: ' ' });
+                    coachBar.createSpan({ text: ' ' });
                     const optionsBtn = coachBar.createEl('button', {
                         cls: 'quill-cowriter-panel__coach-options-btn',
                         text: 'Generate options'
@@ -1927,13 +1927,13 @@ export class CoWriterPanel extends AbstractChatPanel {
         // Lorebook coach mode UI — phase indicator + end coaching
         if (this.inputMode === 'lorebook') {
             const generating = this.optionsLoading || this.draftState === 'generating';
-            const loreBar = bottom.createEl('div', { cls: 'quill-cowriter-panel__lore-bar' });
+            const loreBar = bottom.createDiv({ cls: 'quill-cowriter-panel__lore-bar' });
             const phaseNames: Record<LoreCoachPhase, string> = {
                 discover: 'Discovering what to develop\u2026',
                 develop: 'Developing the entry\u2026',
                 refine: 'Refining the draft\u2026'
             };
-            loreBar.createEl('span', {
+            loreBar.createSpan({
                 cls: 'quill-cowriter-panel__lore-phase',
                 text: this.loreCoachActive
                     ? phaseNames[this.loreCoachPhase]
@@ -1941,7 +1941,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             });
 
             if (this.loreCoachActive) {
-                loreBar.createEl('span', { text: ' ' });
+                loreBar.createSpan({ text: ' ' });
                 const endBtn = loreBar.createEl('button', {
                     cls: 'quill-cowriter-panel__lore-end-btn',
                     text: 'End coaching'
@@ -1959,18 +1959,18 @@ export class CoWriterPanel extends AbstractChatPanel {
 
         // Directive-active badge (Direct mode only)
         if (this.inputMode === 'direct' && this.directiveActive) {
-            bottom.createEl('div', { cls: 'quill-cowriter-panel__directive-badge', text: 'Directive active' });
+            bottom.createDiv({ cls: 'quill-cowriter-panel__directive-badge', text: 'Directive active' });
         }
 
         // Context file pills
         const contextFiles = this.getContextFiles();
         if (contextFiles.length > 0) {
-            const ctxRow = bottom.createEl('div', { cls: 'quill-cowriter-panel__ctx-row' });
+            const ctxRow = bottom.createDiv({ cls: 'quill-cowriter-panel__ctx-row' });
             for (const filePath of contextFiles) {
-                const pill = ctxRow.createEl('span', { cls: 'quill-cowriter-panel__ctx-pill' });
+                const pill = ctxRow.createSpan({ cls: 'quill-cowriter-panel__ctx-pill' });
                 const parsed = parseEmbedFolderPath(filePath);
                 const label = parsed ? embedFolderLabel(parsed.folderPath, parsed.mode) : fileNameFromPath(filePath);
-                pill.createEl('span', { text: label });
+                pill.createSpan({ text: label });
                 const removeBtn = pill.createEl('button', {
                     cls: 'quill-cowriter-panel__ctx-remove',
                     text: '\u00d7'
@@ -1990,7 +1990,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             const vaultContextCount = this.getVaultContextFiles().length;
             const label = this.buildContextLabel(contextFiles.length, vaultContextCount);
             const breakdown = this.computeBreakdown();
-            const indicator = bottom.createEl('div', {
+            const indicator = bottom.createDiv({
                 cls: 'quill-cowriter-panel__token-indicator',
                 text: formatTokenIndicatorText(label, totalTokens, this.maxAllowedTokens)
             });
@@ -2000,12 +2000,12 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the plot map link row: either a link button or a filename pill with unlink. */
     private renderPlotMapRow(container: HTMLElement): void {
-        const row = container.createEl('div', { cls: 'quill-cowriter-panel__plotmap-row' });
-        row.createEl('span', { cls: 'quill-cowriter-panel__plotmap-label', text: 'Plot map' });
+        const row = container.createDiv({ cls: 'quill-cowriter-panel__plotmap-row' });
+        row.createSpan({ cls: 'quill-cowriter-panel__plotmap-label', text: 'Plot map' });
 
         if (this.plotMap) {
             const plotMapPath = this.plotMap;
-            const pill = row.createEl('span', { cls: 'quill-cowriter-panel__plotmap-pill' });
+            const pill = row.createSpan({ cls: 'quill-cowriter-panel__plotmap-pill' });
             const nameBtn = pill.createEl('button', {
                 cls: 'quill-cowriter-panel__plotmap-name',
                 text: fileNameFromPath(plotMapPath),
@@ -2049,16 +2049,16 @@ export class CoWriterPanel extends AbstractChatPanel {
      *  above the button row when the mode button is clicked, so the writer can
      *  jump straight to the mode they want instead of cycling. */
     private renderModePicker(container: HTMLElement): void {
-        const list = container.createEl('div', { cls: 'quill-cowriter-panel__mode-picker' });
+        const list = container.createDiv({ cls: 'quill-cowriter-panel__mode-picker' });
         for (const m of COWRITER_MODES) {
-            const row = list.createEl('div', {
+            const row = list.createDiv({
                 cls: `quill-cowriter-panel__mode-row${this.inputMode === m.mode ? ' quill-cowriter-panel__mode-row--active' : ''}`,
                 attr: { tabindex: '0', role: 'button' }
             });
-            row.createEl('span', { cls: 'quill-cowriter-panel__mode-row-icon', text: m.icon });
-            const textWrap = row.createEl('div', { cls: 'quill-cowriter-panel__mode-row-text' });
-            textWrap.createEl('div', { cls: 'quill-cowriter-panel__mode-row-label', text: m.label });
-            textWrap.createEl('div', { cls: 'quill-cowriter-panel__mode-row-desc', text: m.desc });
+            row.createSpan({ cls: 'quill-cowriter-panel__mode-row-icon', text: m.icon });
+            const textWrap = row.createDiv({ cls: 'quill-cowriter-panel__mode-row-text' });
+            textWrap.createDiv({ cls: 'quill-cowriter-panel__mode-row-label', text: m.label });
+            textWrap.createDiv({ cls: 'quill-cowriter-panel__mode-row-desc', text: m.desc });
             const choose = () => {
                 this.setMode(m.mode);
             };
@@ -2087,7 +2087,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         }
 
         // Buttons row — mode toggle, add context, refresh, send/stop
-        const btnRow = container.createEl('div', { cls: 'quill-cowriter-panel__btn-row' });
+        const btnRow = container.createDiv({ cls: 'quill-cowriter-panel__btn-row' });
 
         const currentMode = COWRITER_MODES.find((m) => m.mode === this.inputMode);
         const modeBtn = btnRow.createEl('button', {
@@ -2139,19 +2139,27 @@ export class CoWriterPanel extends AbstractChatPanel {
                 if (generating) return;
                 // Transient off-DOM file input. Not registered on renderEvents:
                 // the input must survive re-renders until the picker closes,
-                // then is removed explicitly in the change handler.
-                const fileInput = activeDocument.createElement('input');
+                // then is removed explicitly in the change/cancel handler.
+                // Created via Node.createEl on activeDocument.body so it lands
+                // in the active document and types cleanly as HTMLInputElement.
+                const fileInput = activeDocument.body.createEl('input');
                 fileInput.type = 'file';
                 fileInput.accept = 'image/*';
                 fileInput.multiple = true;
                 fileInput.hidden = true;
+                // Shared cleanup so the input is removed whether the writer
+                // chose files (change) or dismissed the picker (cancel) —
+                // otherwise the hidden input would accumulate in the DOM.
+                const cleanup = (): void => {
+                    fileInput.remove();
+                };
                 fileInput.addEventListener('change', () => {
                     if (fileInput.files && fileInput.files.length > 0) {
                         void this.addImageFiles(Array.from(fileInput.files));
                     }
-                    fileInput.remove();
+                    cleanup();
                 });
-                activeDocument.body.appendChild(fileInput);
+                fileInput.addEventListener('cancel', cleanup);
                 fileInput.click();
             });
         }
@@ -2205,7 +2213,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         });
 
         // Spacer to push send/stop to the right
-        btnRow.createEl('div', { cls: 'quill-cowriter-panel__btn-spacer' });
+        btnRow.createDiv({ cls: 'quill-cowriter-panel__btn-spacer' });
 
         const actionBtn = btnRow.createEl('button', {
             cls: `quill-cowriter-panel__send-btn mod-cta${generating ? ' quill-cowriter-panel__send-btn--stop' : ''}`,
@@ -2224,14 +2232,14 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (noActiveFile) actionBtn.disabled = false;
 
         // Textarea row — below the buttons, ~10 lines tall
-        const taRow = container.createEl('div', { cls: 'quill-cowriter-panel__ta-row' });
+        const taRow = container.createDiv({ cls: 'quill-cowriter-panel__ta-row' });
 
         // Pending-image thumbnail strip (only when images are queued). Rendered
         // above the textarea so it doesn't shift the input height when populated.
         if (this.pendingImages.length > 0) {
-            const previewRow = taRow.createEl('div', { cls: 'quill-cowriter-panel__attach-row' });
+            const previewRow = taRow.createDiv({ cls: 'quill-cowriter-panel__attach-row' });
             this.pendingImages.forEach((b64, idx) => {
-                const chip = previewRow.createEl('div', { cls: 'quill-cowriter-panel__image-preview' });
+                const chip = previewRow.createDiv({ cls: 'quill-cowriter-panel__image-preview' });
                 chip.createEl('img', {
                     cls: 'quill-cowriter-panel__image-preview-img',
                     attr: { src: `data:image/jpeg;base64,${b64}`, alt: 'Pending attachment' }

@@ -1,9 +1,8 @@
-import tseslint from 'typescript-eslint';
 import obsidianmd from 'eslint-plugin-obsidianmd';
 import globals from 'globals';
-import { globalIgnores } from 'eslint/config';
+import { defineConfig, globalIgnores } from 'eslint/config';
 
-export default tseslint.config(
+export default defineConfig(
 	globalIgnores([
 		'node_modules',
 		'dist',
@@ -19,6 +18,7 @@ export default tseslint.config(
 		'package-lock.json',
 		'tsconfig.json',
 		'vitest.config.ts', // Node.js config file (uses node:path, __dirname)
+		'scripts/live-linter-ai.mts', // dev-only LM Studio harness, not part of the plugin build
 	]),
 	{
 		languageOptions: {
@@ -43,6 +43,17 @@ export default tseslint.config(
 		// ignoreRegex escape hatch, not a disable.
 		rules: {
 			'obsidianmd/ui/sentence-case': ['error', { enforceCamelCaseLower: true, ignoreRegex: ['https?://'] }],
+		},
+	},
+	{
+		// `getSettingDefinitions()` (the declarative settings API) is Obsidian
+		// 1.13+ only and our `minAppVersion` is 1.7.2. Implementing it today
+		// would force a major version bump and break compatibility with every
+		// currently released Obsidian build. We will adopt it (and drop this
+		// override) once Obsidian ships it as a stable requirement — adopting
+		// it is itself the trigger for a major version bump. See AGENTS.md.
+		rules: {
+			'obsidianmd/settings-tab/prefer-setting-definitions': 'off',
 		},
 	},
 	{

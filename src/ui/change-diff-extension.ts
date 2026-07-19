@@ -149,54 +149,53 @@ class ChangePreviewWidget extends WidgetType {
     /** Build the widget DOM: red removed box (when present) + green added box
      *  with inline Approve/Reject controls (only once generation is final). */
     toDOM(): HTMLElement {
-        const wrap = window.activeDocument.createElement('div');
+        const wrap = createDiv();
         wrap.className = 'quill-change-diff__group';
 
         // Removed (red) — only when there is old text being replaced.
         if (this.removedText.length > 0) {
-            const removed = window.activeDocument.createElement('div');
+            const removed = wrap.createDiv();
             removed.className = 'quill-change-diff__removed-box';
             removed.textContent = this.removedText;
-            wrap.appendChild(removed);
         }
 
-        // Added (green) — the replacement text + controls.
-        const added = window.activeDocument.createElement('div');
+        // Added (green) — the replacement text + controls. Created detached
+        // and appended at the end so the widget paints in one frame.
+        const added = createDiv();
         added.className = 'quill-change-diff__added';
 
-        const prose = window.activeDocument.createElement('div');
+        const prose = added.createDiv();
         prose.className = 'quill-change-diff__added-prose';
         prose.textContent = this.edit.newText;
-        added.appendChild(prose);
 
         // Controls only once generation has concluded (or been cancelled with
         // partial content kept for review). While 'generating', show a muted
         // "Generating\u2026" hint instead so nobody can approve mid-stream.
         if (this.edit.state === 'pending') {
-            const controls = window.activeDocument.createElement('div');
+            const controls = added.createDiv();
             controls.className = 'quill-change-diff__controls';
-            const approve = window.activeDocument.createElement('button');
+            // Raw addEventListener is intentional here: WidgetType is not an
+            // Obsidian Component, so registerDomEvent() has no lifecycle to
+            // attach to. The buttons live only as long as the widget DOM,
+            // which CodeMirror replaces atomically on re-render.
+            const approve = controls.createEl('button');
             approve.className = 'mod-cta quill-change-diff__btn';
             approve.textContent = 'Approve';
             approve.addEventListener('click', (e: MouseEvent) => {
                 e.stopPropagation();
                 this.handlers.onApprove?.(this.edit.owner, this.edit.id, this.edit.filePath);
             });
-            const reject = window.activeDocument.createElement('button');
+            const reject = controls.createEl('button');
             reject.className = 'quill-change-diff__btn';
             reject.textContent = 'Reject';
             reject.addEventListener('click', (e: MouseEvent) => {
                 e.stopPropagation();
                 this.handlers.onReject?.(this.edit.owner, this.edit.id, this.edit.filePath);
             });
-            controls.appendChild(approve);
-            controls.appendChild(reject);
-            added.appendChild(controls);
         } else if (this.edit.state === 'generating') {
-            const hint = window.activeDocument.createElement('div');
+            const hint = added.createDiv();
             hint.className = 'quill-change-diff__generating';
             hint.textContent = 'Generating\u2026';
-            added.appendChild(hint);
         }
 
         wrap.appendChild(added);

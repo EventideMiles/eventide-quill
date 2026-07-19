@@ -57,12 +57,12 @@ class AddFileModal extends FuzzySuggestModal<VaultSuggestionItem> {
 
     renderSuggestion(item: FuzzyMatch<VaultSuggestionItem>, el: HTMLElement): void {
         if (item.item.kind === 'file') {
-            el.createEl('div', { text: item.item.file.basename });
-            el.createEl('div', { cls: 'quill-context-panel__item-matched', text: item.item.file.path });
+            el.createDiv({ text: item.item.file.basename });
+            el.createDiv({ cls: 'quill-context-panel__item-matched', text: item.item.file.path });
         } else {
             const label = embedFolderLabel(item.item.folderName, item.item.mode);
-            el.createEl('div', { text: label });
-            el.createEl('div', { cls: 'quill-context-panel__item-matched', text: item.item.folderPath });
+            el.createDiv({ text: label });
+            el.createDiv({ cls: 'quill-context-panel__item-matched', text: item.item.folderPath });
         }
     }
 
@@ -118,17 +118,17 @@ export function renderContextTab(
     }
 
     // Narrative voice section
-    const voiceSection = container.createEl('div', { cls: 'quill-context-panel__section' });
-    voiceSection.createEl('div', { cls: 'quill-context-panel__section-heading', text: 'Narrative voice' });
-    const voiceBox = voiceSection.createEl('div', { cls: 'quill-context-panel__voice' });
+    const voiceSection = container.createDiv({ cls: 'quill-context-panel__section' });
+    voiceSection.createDiv({ cls: 'quill-context-panel__section-heading', text: 'Narrative voice' });
+    const voiceBox = voiceSection.createDiv({ cls: 'quill-context-panel__voice' });
     const voice = assembly.voice;
-    voiceBox.createEl('div', {
+    voiceBox.createDiv({
         text: `${capitalize(voice.pov)}, ${voice.tense} tense`
     });
-    voiceBox.createEl('div', {
+    voiceBox.createDiv({
         text: `Avg sentence: ${voice.avgSentenceLength} words`
     });
-    voiceBox.createEl('div', {
+    voiceBox.createDiv({
         text: `Dialogue: ${Math.round(voice.dialogueRatio * 100)}%`
     });
 
@@ -159,7 +159,7 @@ export function renderContextTab(
     renderTokenBudget(container, assembly);
 
     // Actions
-    const actionsRow = container.createEl('div', { cls: 'quill-context-panel__actions' });
+    const actionsRow = container.createDiv({ cls: 'quill-context-panel__actions' });
     const addBtn = actionsRow.createEl('button', { cls: 'quill-context-panel__action-btn', text: 'Add file' });
     component.registerDomEvent(addBtn, 'click', () => {
         new AddFileModal(plugin.app, plugin).open();
@@ -204,14 +204,14 @@ function renderEntitySection(
     plugin: EventideQuillPlugin,
     component: Component
 ): void {
-    const section = container.createEl('div', { cls: 'quill-context-panel__section' });
-    section.createEl('div', {
+    const section = container.createDiv({ cls: 'quill-context-panel__section' });
+    section.createDiv({
         cls: 'quill-context-panel__section-heading',
         text: `${heading} (${entities.length})`
     });
 
     for (const entity of entities) {
-        const card = section.createEl('div', { cls: 'quill-context-panel__entity' });
+        const card = section.createDiv({ cls: 'quill-context-panel__entity' });
 
         const pinBtn = card.createEl('button', {
             cls: `quill-context-panel__pin-btn${entity.pinned ? ' quill-context-panel__pinned' : ''}`,
@@ -222,11 +222,11 @@ function renderEntitySection(
             plugin.toggleEntityPin(entity.id);
         });
 
-        card.createEl('span', { cls: 'quill-context-panel__entity-name', text: entity.name });
-        card.createEl('span', { cls: 'quill-context-panel__entity-count', text: `×${entity.occurrences}` });
+        card.createSpan({ cls: 'quill-context-panel__entity-name', text: entity.name });
+        card.createSpan({ cls: 'quill-context-panel__entity-count', text: `×${entity.occurrences}` });
 
         if (entity.aliases.length > 0) {
-            card.createEl('div', {
+            card.createDiv({
                 cls: 'quill-context-panel__entity-aliases',
                 text: `Aliases: ${entity.aliases.join(', ')}`
             });
@@ -237,7 +237,7 @@ function renderEntitySection(
                 entity.lines.length <= 5
                     ? entity.lines.map(String).join(', ')
                     : `${entity.lines.slice(0, 5).map(String).join(', ')}, ...`;
-            card.createEl('div', { cls: 'quill-context-panel__entity-lines', text: `Ln ${linesText}` });
+            card.createDiv({ cls: 'quill-context-panel__entity-lines', text: `Ln ${linesText}` });
         }
 
         const removeBtn = card.createEl('button', { cls: 'quill-context-panel__remove-btn', text: '×' });
@@ -259,18 +259,18 @@ function renderVaultContextSection(
     plugin: EventideQuillPlugin,
     component: Component
 ): void {
-    const section = container.createEl('div', { cls: 'quill-context-panel__section' });
-    section.createEl('div', {
+    const section = container.createDiv({ cls: 'quill-context-panel__section' });
+    section.createDiv({
         cls: 'quill-context-panel__section-heading',
         text: `Vault context (${items.length} items)`
     });
 
     for (const item of items) {
-        const card = section.createEl('div', {
+        const card = section.createDiv({
             cls: `quill-context-panel__item${item.pinned ? ' quill-context-panel__item--pinned' : ''}${item.manual ? ' quill-context-panel__item--manual' : ''}`
         });
 
-        const header = card.createEl('div', { cls: 'quill-context-panel__item-header' });
+        const header = card.createDiv({ cls: 'quill-context-panel__item-header' });
 
         const pinBtn = header.createEl('button', {
             cls: `quill-context-panel__pin-btn${item.pinned ? ' quill-context-panel__pinned' : ''}`,
@@ -281,7 +281,7 @@ function renderVaultContextSection(
             plugin.toggleContextItemPin(item.filePath);
         });
 
-        header.createEl('span', { cls: 'quill-context-panel__item-name', text: fileNameFromPath(item.filePath) });
+        header.createSpan({ cls: 'quill-context-panel__item-name', text: fileNameFromPath(item.filePath) });
 
         const removeBtn = header.createEl('button', { cls: 'quill-context-panel__remove-btn', text: '\u00d7' });
         component.registerDomEvent(removeBtn, 'click', (e) => {
@@ -289,11 +289,11 @@ function renderVaultContextSection(
             plugin.removeContextItem(item.filePath);
         });
 
-        const details = card.createEl('div', { cls: 'quill-context-panel__item-details' });
-        details.createEl('span', { cls: 'quill-context-panel__item-path', text: item.filePath });
+        const details = card.createDiv({ cls: 'quill-context-panel__item-details' });
+        details.createSpan({ cls: 'quill-context-panel__item-path', text: item.filePath });
 
         if (item.matchedEntities.length > 0) {
-            details.createEl('span', {
+            details.createSpan({
                 cls: 'quill-context-panel__item-matched',
                 text: `Matched: ${item.matchedEntities.join(', ')}`
             });
@@ -303,17 +303,17 @@ function renderVaultContextSection(
 
 /** Render the token budget indicator using a label and progress bar. */
 function renderTokenBudget(container: HTMLElement, assembly: ContextAssembly): void {
-    const section = container.createEl('div', { cls: 'quill-context-panel__budget' });
+    const section = container.createDiv({ cls: 'quill-context-panel__budget' });
     const used = assembly.totalTokens;
     const budget = assembly.tokenBudget;
     const pct = budget > 0 ? Math.round((used / budget) * 100) : 0;
 
-    section.createEl('div', {
+    section.createDiv({
         text: `Token budget: ${used.toLocaleString()} / ${budget.toLocaleString()} (${pct}%)`
     });
 
-    const bar = section.createEl('div', { cls: 'quill-context-panel__budget-bar' });
-    const fill = bar.createEl('div', { cls: 'quill-context-panel__budget-fill' });
+    const bar = section.createDiv({ cls: 'quill-context-panel__budget-bar' });
+    const fill = bar.createDiv({ cls: 'quill-context-panel__budget-fill' });
     fill.style.width = `${Math.min(pct, 100)}%`;
     fill.style.backgroundColor = getBudgetColor(pct);
 }
