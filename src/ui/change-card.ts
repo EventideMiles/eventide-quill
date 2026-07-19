@@ -16,13 +16,13 @@ export function renderChangeBulkBar(
     handlers: { onApproveAll?: () => void; onRejectAll?: () => void }
 ): void {
     if (pendingCount <= 0) return;
-    const bulk = container.createEl('div', { cls: 'quill-change-bulk' });
+    const bulk = container.createDiv({ cls: 'quill-change-bulk' });
     const approveAllBtn = bulk.createEl('button', {
         cls: 'quill-change-bulk__btn mod-cta',
         text: `Approve all (${pendingCount})`
     });
     events.registerDomEvent(approveAllBtn, 'click', () => handlers.onApproveAll?.());
-    bulk.createEl('span', { text: ' ' });
+    bulk.createSpan({ text: ' ' });
     const rejectAllBtn = bulk.createEl('button', {
         cls: 'quill-change-bulk__btn',
         text: 'Reject all'
@@ -44,23 +44,23 @@ export function renderChangeCard(
     events: Component,
     handlers: ChangeCardHandlers
 ): Promise<void> | undefined {
-    const card = container.createEl('div', {
+    const card = container.createDiv({
         cls: `quill-change-card quill-change-card--${edit.state}`
     });
     if (edit.label) {
-        card.createEl('div', { cls: 'quill-change-card__label', text: edit.label });
+        card.createDiv({ cls: 'quill-change-card__label', text: edit.label });
     }
 
     // Removed (red) — only when there is old text to show.
     if (oldText && oldText.length > 0) {
-        const removed = card.createEl('div', { cls: 'quill-change-card__removed' });
+        const removed = card.createDiv({ cls: 'quill-change-card__removed' });
         removed.setText(oldText);
     }
 
     // Added (green)
     let renderPromise: Promise<void> | undefined;
     if (edit.newText.length > 0) {
-        const added = card.createEl('div', { cls: 'quill-change-card__added' });
+        const added = card.createDiv({ cls: 'quill-change-card__added' });
         renderPromise = MarkdownRenderer.render(app, normalizeParagraphBreaks(edit.newText), added, '', events);
     }
 
@@ -73,17 +73,17 @@ export function renderChangeCard(
                 ? 'Generating\u2026'
                 : '';
     if (statusText) {
-        card.createEl('div', { cls: 'quill-change-card__status', text: statusText });
+        card.createDiv({ cls: 'quill-change-card__status', text: statusText });
     }
 
     if (edit.state === 'pending') {
-        const btns = card.createEl('div', { cls: 'quill-change-card__btns' });
+        const btns = card.createDiv({ cls: 'quill-change-card__btns' });
         const approveBtn = btns.createEl('button', {
             cls: 'quill-change-card__btn mod-cta',
             text: 'Approve'
         });
         events.registerDomEvent(approveBtn, 'click', () => handlers.onApprove?.(edit.id));
-        btns.createEl('span', { text: ' ' });
+        btns.createSpan({ text: ' ' });
         const rejectBtn = btns.createEl('button', {
             cls: 'quill-change-card__btn',
             text: 'Reject'

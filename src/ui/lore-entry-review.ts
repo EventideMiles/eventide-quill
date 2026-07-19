@@ -28,29 +28,29 @@ export function renderLoreDraftCard(
         onDiscard?: (draft: LoreDraftEntry) => void;
     }
 ): void {
-    const card = container.createEl('div', { cls: 'quill-lore-draft-card' });
+    const card = container.createDiv({ cls: 'quill-lore-draft-card' });
 
     // Header row: title + type badge.
-    const header = card.createEl('div', { cls: 'quill-lore-draft-card__header' });
-    header.createEl('span', {
+    const header = card.createDiv({ cls: 'quill-lore-draft-card__header' });
+    header.createSpan({
         cls: 'quill-lore-draft-card__title',
         text: draft.name
     });
     if (draft.entryType) {
-        header.createEl('span', {
+        header.createSpan({
             cls: 'quill-lore-draft-card__type-badge',
             text: LORE_TYPE_LABELS[draft.entryType]
         });
     }
 
     // Preview subheading — sets expectation that what's shown is what gets saved.
-    card.createEl('div', {
+    card.createDiv({
         cls: 'quill-lore-draft-card__preview-label',
         text: 'Proposed entry preview'
     });
 
     // Markdown-rendered body. Same async-render pattern as the chat bubbles.
-    const preview = card.createEl('div', { cls: 'quill-lore-draft-card__preview' });
+    const preview = card.createDiv({ cls: 'quill-lore-draft-card__preview' });
     const p = MarkdownRenderer.render(app, draft.content, preview, '', component);
     void p;
 
@@ -61,7 +61,7 @@ export function renderLoreDraftCard(
     }
 
     // Action row.
-    const actions = card.createEl('div', { cls: 'quill-lore-draft-card__actions' });
+    const actions = card.createDiv({ cls: 'quill-lore-draft-card__actions' });
     const saveBtn = actions.createEl('button', {
         cls: 'quill-lore-draft-card__save mod-cta',
         text: 'Save as note'
@@ -260,20 +260,20 @@ export function renderProposedImageThumbnails(
     images: ProposedImage[],
     _component: Component
 ): void {
-    const row = container.createEl('div', { cls: 'quill-lore-draft-card__images' });
+    const row = container.createDiv({ cls: 'quill-lore-draft-card__images' });
     for (const image of images) {
-        const thumb = row.createEl('div', { cls: 'quill-lore-draft-card__image' });
+        const thumb = row.createDiv({ cls: 'quill-lore-draft-card__image' });
         thumb.createEl('img', {
             cls: 'quill-lore-draft-card__image-img',
             attr: { src: `data:image/jpeg;base64,${image.base64}`, alt: image.label || image.suggestedFilename }
         });
-        const meta = thumb.createEl('div', { cls: 'quill-lore-draft-card__image-meta' });
+        const meta = thumb.createDiv({ cls: 'quill-lore-draft-card__image-meta' });
         if (image.label) {
-            meta.createEl('span', { cls: 'quill-lore-draft-card__image-label', text: image.label });
+            meta.createSpan({ cls: 'quill-lore-draft-card__image-label', text: image.label });
         }
-        meta.createEl('span', { cls: 'quill-lore-draft-card__image-filename', text: image.suggestedFilename });
+        meta.createSpan({ cls: 'quill-lore-draft-card__image-filename', text: image.suggestedFilename });
         if (image.caption) {
-            meta.createEl('span', { cls: 'quill-lore-draft-card__image-caption', text: image.caption });
+            meta.createSpan({ cls: 'quill-lore-draft-card__image-caption', text: image.caption });
         }
     }
 }
@@ -652,26 +652,26 @@ export function renderLoreImageAttachmentCard(
         onReject?: (filePath: string) => void;
     }
 ): void {
-    const card = container.createEl('div', { cls: 'quill-lore-draft-card quill-lore-draft-card--attachment' });
+    const card = container.createDiv({ cls: 'quill-lore-draft-card quill-lore-draft-card--attachment' });
 
-    const header = card.createEl('div', { cls: 'quill-lore-draft-card__header' });
-    header.createEl('span', {
+    const header = card.createDiv({ cls: 'quill-lore-draft-card__header' });
+    header.createSpan({
         cls: 'quill-lore-draft-card__title',
         text: proposal.fileBasename
     });
-    header.createEl('span', {
+    header.createSpan({
         cls: 'quill-lore-draft-card__type-badge',
         text: `image${proposal.images.length === 1 ? '' : 's'}`
     });
 
-    card.createEl('div', {
+    card.createDiv({
         cls: 'quill-lore-draft-card__preview-label',
         text: `Proposed attachment${proposal.images.length === 1 ? '' : 's'} — review and approve to write to vault`
     });
 
     renderProposedImageThumbnails(card, proposal.images, component);
 
-    const actions = card.createEl('div', { cls: 'quill-lore-draft-card__actions' });
+    const actions = card.createDiv({ cls: 'quill-lore-draft-card__actions' });
     const approveBtn = actions.createEl('button', {
         cls: 'quill-lore-draft-card__save mod-cta',
         text: 'Approve all'

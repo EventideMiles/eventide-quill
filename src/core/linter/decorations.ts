@@ -188,26 +188,24 @@ export function getLintExtension(
                 create(view: EditorView) {
                     const resolved = getComputedStyle(view.dom);
 
-                    const dom = window.activeDocument.createElement('div');
+                    const dom = createDiv();
                     dom.className = 'quill-linter-tooltip';
                     dom.style.background = resolved.getPropertyValue('--background-primary');
                     dom.style.color = resolved.getPropertyValue('--text-normal');
                     dom.style.border = '1px solid ' + resolved.getPropertyValue('--background-modifier-border');
                     dom.style.boxShadow = '0 2px 8px ' + resolved.getPropertyValue('--background-modifier-box-shadow');
 
-                    const msg = window.activeDocument.createElement('div');
+                    const msg = dom.createDiv();
                     msg.className = 'quill-linter-tooltip__msg';
                     msg.style.color = resolved.getPropertyValue('--text-muted');
                     msg.textContent = `[${pinned.result.rule}] ${pinned.result.message}`;
-                    dom.appendChild(msg);
 
-                    const btnRow = window.activeDocument.createElement('div');
+                    const btnRow = dom.createDiv();
                     btnRow.className = 'quill-linter-tooltip__btns';
-                    dom.appendChild(btnRow);
 
                     const fix = FIXES[pinned.result.rule];
                     if (fix) {
-                        const btn = window.activeDocument.createElement('button');
+                        const btn = btnRow.createEl('button');
                         btn.className = 'quill-linter-tooltip__fix-btn';
                         btn.style.background = resolved.getPropertyValue('--interactive-accent');
                         btn.style.color = resolved.getPropertyValue('--text-on-accent');
@@ -216,11 +214,10 @@ export function getLintExtension(
                             e.stopPropagation();
                             applyFix(view, pinned.result);
                         });
-                        btnRow.appendChild(btn);
                     }
 
                     if (onAiFix && isAiFixEnabled?.() !== false) {
-                        const aiBtn = window.activeDocument.createElement('button');
+                        const aiBtn = btnRow.createEl('button');
                         aiBtn.className = 'quill-linter-tooltip__ai-fix-btn';
                         aiBtn.textContent = 'Fix with AI';
                         aiBtn.addEventListener('click', (e: MouseEvent) => {
@@ -230,11 +227,10 @@ export function getLintExtension(
                             });
                             onAiFix(pinned.result, view);
                         });
-                        btnRow.appendChild(aiBtn);
                     }
 
                     if (onDismiss) {
-                        const dismissBtn = window.activeDocument.createElement('button');
+                        const dismissBtn = btnRow.createEl('button');
                         dismissBtn.className = 'quill-linter-tooltip__dismiss-btn';
                         dismissBtn.textContent = 'Dismiss';
                         dismissBtn.addEventListener('click', (e: MouseEvent) => {
@@ -244,7 +240,6 @@ export function getLintExtension(
                             });
                             onDismiss(pinned.result, view);
                         });
-                        btnRow.appendChild(dismissBtn);
                     }
 
                     return { dom };

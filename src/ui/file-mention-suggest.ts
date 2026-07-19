@@ -180,7 +180,7 @@ export class FileMentionSuggest {
 
         for (let i = 0; i < this.currentItems.length; i++) {
             const item = this.currentItems[i]!;
-            const row = this.suggestEl.createEl('div', {
+            const row = this.suggestEl.createDiv({
                 cls: `quill-file-mention-suggest__item${i === this.selectedIndex ? ' quill-file-mention-suggest__item--selected' : ''}`
             });
 

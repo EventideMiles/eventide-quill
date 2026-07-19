@@ -38,7 +38,7 @@ export class TransformModal extends Modal {
                 textarea.inputEl.addClass('quill-transform-textarea');
             });
 
-        const buttonRow = contentEl.createEl('div', { cls: 'quill-transform-modal-actions' });
+        const buttonRow = contentEl.createDiv({ cls: 'quill-transform-modal-actions' });
 
         buttonRow.createEl('button', { text: 'Cancel' }).addEventListener('click', () => this.close());
 
@@ -78,7 +78,7 @@ export class ToneSuggestModal extends SuggestModal<ToneOption> {
     }
 
     renderSuggestion(tone: ToneOption, el: HTMLElement): void {
-        el.createEl('div', { text: tone });
+        el.createDiv({ text: tone });
     }
 
     onChooseSuggestion(tone: ToneOption): void {

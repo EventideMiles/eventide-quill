@@ -134,7 +134,7 @@ export class ChatContextFiles {
             const name = parsed
                 ? embedFolderLabel(parsed.folderPath, parsed.mode)
                 : (filePath.split('/').pop() ?? filePath);
-            pill.createEl('span', { text: truncateMiddle(name, 24) });
+            pill.createSpan({ text: truncateMiddle(name, 24) });
             const removeBtn = pill.createEl('button', {
                 cls: `${this.cssPrefix}__ctx-remove`,
                 text: '\u00d7',

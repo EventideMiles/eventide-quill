@@ -54,8 +54,8 @@ export class ReportSuggestModal extends SuggestModal<ReportEntry> {
     }
 
     renderSuggestion(entry: ReportEntry, el: HTMLElement): void {
-        el.createEl('div', { text: entry.label });
-        el.createEl('div', { cls: 'quill-context-panel__item-matched', text: entry.name });
+        el.createDiv({ text: entry.label });
+        el.createDiv({ cls: 'quill-context-panel__item-matched', text: entry.name });
     }
 
     onChooseSuggestion(entry: ReportEntry): void {

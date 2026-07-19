@@ -26,7 +26,9 @@ export async function downscaleToJpegBase64(
     const bitmap = await decodeImage(bytes, contentType);
     try {
         const { width, height } = scaleDimensions(bitmap.width, bitmap.height, maxDimension);
-        const canvas = activeDocument.createElement('canvas');
+        // Canvas is never appended to the DOM (purely computational), so the
+        // global helper is correct here and types cleanly as HTMLCanvasElement.
+        const canvas = createEl('canvas');
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
@@ -69,7 +71,9 @@ function loadViaImageElement(bytes: ArrayBuffer, contentType?: string): Promise<
     return new Promise((resolve, reject) => {
         const blob = new Blob([bytes], { type: contentType ?? 'image/jpeg' });
         const url = URL.createObjectURL(blob);
-        const img = activeDocument.createElement('img');
+        // Image element is never appended to the DOM (used only for decode),
+        // so the global helper types cleanly as HTMLImageElement.
+        const img = createEl('img');
         img.onload = () => {
             URL.revokeObjectURL(url);
             resolve(img);

@@ -95,11 +95,11 @@ export class VaultFileSuggestModal extends SuggestModal<VaultSuggestionItem> {
 
     renderSuggestion(item: VaultSuggestionItem, el: HTMLElement): void {
         if (item.kind === 'file') {
-            el.createEl('div', { text: item.file.path });
+            el.createDiv({ text: item.file.path });
         } else {
             const label = embedFolderLabel(item.folderName, item.mode);
-            el.createEl('div', { text: label });
-            el.createEl('div', {
+            el.createDiv({ text: label });
+            el.createDiv({
                 cls: 'quill-context-panel__item-matched',
                 text: item.folderPath
             });

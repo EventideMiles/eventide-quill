@@ -212,7 +212,7 @@ export class SlashCommandSuggest {
 
         for (let i = 0; i < this.currentItems.length; i++) {
             const item = this.currentItems[i]!;
-            const row = this.suggestEl.createEl('div', {
+            const row = this.suggestEl.createDiv({
                 cls: `quill-slash-command-suggest__item${i === this.selectedIndex ? ' quill-slash-command-suggest__item--selected' : ''}`
             });
 

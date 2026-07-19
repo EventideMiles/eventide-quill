@@ -725,9 +725,9 @@ export class ReviewPanel extends AbstractChatPanel {
             const btn = bar.createEl('button', {
                 cls: `quill-sidebar__subtab${this.subtab === tab.id ? ' quill-sidebar__subtab--active' : ''}`
             });
-            btn.createEl('span', { text: tab.label });
+            btn.createSpan({ text: tab.label });
             if (tab.id === 'queue') {
-                this.queueBadgeEl = btn.createEl('span', { cls: 'quill-sidebar__subtab-badge' });
+                this.queueBadgeEl = btn.createSpan({ cls: 'quill-sidebar__subtab-badge' });
             }
             this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.subtab = tab.id;
@@ -805,7 +805,7 @@ export class ReviewPanel extends AbstractChatPanel {
             const toggleWrap = scroll.createDiv({ cls: 'quill-feedback-queue__toggle' });
             const queueToggle = toggleWrap.createEl('input', { attr: { type: 'checkbox' } });
             queueToggle.checked = this.queueMode;
-            toggleWrap.createEl('span', { text: 'Queue instead of running' });
+            toggleWrap.createSpan({ text: 'Queue instead of running' });
             this.renderEvents.registerDomEvent(queueToggle, 'change', () => {
                 this.queueMode = queueToggle.checked;
                 if (this.containerEl) this.render();
@@ -862,8 +862,8 @@ export class ReviewPanel extends AbstractChatPanel {
         for (const eng of engines) {
             const btn = row.createEl('button', { cls: 'quill-option-picker__option' });
             if (this.engine === eng.id) btn.addClass('quill-option-picker__option--active');
-            btn.createEl('span', { cls: 'quill-option-picker__name', text: eng.label });
-            btn.createEl('span', { cls: 'quill-option-picker__desc', text: eng.desc });
+            btn.createSpan({ cls: 'quill-option-picker__name', text: eng.label });
+            btn.createSpan({ cls: 'quill-option-picker__desc', text: eng.desc });
             this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.engine = eng.id;
                 // The engine picker restructures the entire form — reset scroll.
@@ -884,7 +884,7 @@ export class ReviewPanel extends AbstractChatPanel {
             const pct = this.budgetPercent();
             const over = this.isOverBudget();
             const budget = section.createDiv({ cls: 'quill-review-panel__budget' });
-            budget.createEl('span', {
+            budget.createSpan({
                 cls: 'quill-review-panel__budget-text',
                 text: `${this.totalEstimatedTokens()} / ${this.maxAllowedTokens} tokens (system + source + context)`
             });
@@ -894,7 +894,7 @@ export class ReviewPanel extends AbstractChatPanel {
             });
             fill.style.width = `${Math.min(pct, 100)}%`;
             if (over) {
-                budget.createEl('span', {
+                budget.createSpan({
                     cls: 'quill-review-panel__budget-warn',
                     text: `Exceeds provider context limit by ~${this.totalEstimatedTokens() - this.maxAllowedTokens} tokens.`
                 });
@@ -916,8 +916,8 @@ export class ReviewPanel extends AbstractChatPanel {
                 const name = parsed
                     ? embedFolderLabel(parsed.folderPath, parsed.mode)
                     : (filePath.split('/').pop() ?? filePath);
-                item.createEl('span', { cls: 'quill-review-panel__file-name', text: name });
-                item.createEl('span', { cls: 'quill-review-panel__file-tokens', text: `~${tokens} tokens` });
+                item.createSpan({ cls: 'quill-review-panel__file-name', text: name });
+                item.createSpan({ cls: 'quill-review-panel__file-tokens', text: `~${tokens} tokens` });
                 const remove = item.createEl('button', { cls: 'quill-review-panel__file-remove', text: '\u00d7' });
                 this.renderEvents.registerDomEvent(remove, 'click', () => this.removeContextFile(filePath));
             }
@@ -950,9 +950,9 @@ export class ReviewPanel extends AbstractChatPanel {
         const personas = container.createDiv({ cls: 'quill-option-picker' });
         for (const persona of FEEDBACK_PERSONAS) {
             const btn = personas.createEl('button', { cls: 'quill-option-picker__option' });
-            const name = btn.createEl('span', { cls: 'quill-option-picker__name', text: persona.name });
+            const name = btn.createSpan({ cls: 'quill-option-picker__name', text: persona.name });
             name.title = persona.description;
-            btn.createEl('span', { cls: 'quill-option-picker__desc', text: persona.description });
+            btn.createSpan({ cls: 'quill-option-picker__desc', text: persona.description });
             this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.triggerEditorial(persona.id, btn);
             });
@@ -969,8 +969,8 @@ export class ReviewPanel extends AbstractChatPanel {
         for (const mode of ANALYSIS_MODES) {
             const btn = modes.createEl('button', { cls: 'quill-option-picker__option' });
             if (this.currentMode === mode.id) btn.addClass('quill-option-picker__option--active');
-            btn.createEl('span', { cls: 'quill-option-picker__name', text: mode.label });
-            btn.createEl('span', { cls: 'quill-option-picker__desc', text: mode.description });
+            btn.createSpan({ cls: 'quill-option-picker__name', text: mode.label });
+            btn.createSpan({ cls: 'quill-option-picker__desc', text: mode.description });
             this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.currentMode = mode.id;
                 if (this.containerEl) this.render();
@@ -1013,8 +1013,8 @@ export class ReviewPanel extends AbstractChatPanel {
         for (const mode of MANUSCRIPT_ANALYSIS_MODES) {
             const btn = modes.createEl('button', { cls: 'quill-option-picker__option' });
             if (this.currentManuscriptMode === mode.id) btn.addClass('quill-option-picker__option--active');
-            btn.createEl('span', { cls: 'quill-option-picker__name', text: mode.label });
-            btn.createEl('span', { cls: 'quill-option-picker__desc', text: mode.description });
+            btn.createSpan({ cls: 'quill-option-picker__name', text: mode.label });
+            btn.createSpan({ cls: 'quill-option-picker__desc', text: mode.description });
             this.renderEvents.registerDomEvent(btn, 'click', () => {
                 this.currentManuscriptMode = mode.id;
                 // Big-picture modes only make sense over a full manuscript;
@@ -1074,7 +1074,7 @@ export class ReviewPanel extends AbstractChatPanel {
 
         if (!fullOnly && this.currentManuscriptScope.kind === 'surrounding') {
             const countRow = section.createDiv({ cls: 'quill-review-panel__scope-row' });
-            countRow.createEl('span', { cls: 'quill-form__label', text: 'Chapters before/after:' });
+            countRow.createSpan({ cls: 'quill-form__label', text: 'Chapters before/after:' });
 
             const count = this.currentManuscriptScope.count;
             const decBtn = countRow.createEl('button', {
@@ -1087,7 +1087,7 @@ export class ReviewPanel extends AbstractChatPanel {
                 this.refreshManuscriptTokenEstimate();
             });
 
-            countRow.createEl('span', {
+            countRow.createSpan({
                 cls: 'quill-review-panel__scope-count',
                 text: String(count)
             });
@@ -1323,16 +1323,16 @@ export class ReviewPanel extends AbstractChatPanel {
 
             // Header — engine-aware
             const header = scroll.createDiv({ cls: 'quill-review-panel__header' });
-            header.createEl('span', { cls: 'quill-review-panel__persona', text: this.headerLabel });
+            header.createSpan({ cls: 'quill-review-panel__persona', text: this.headerLabel });
             if (this.subLabel) {
-                header.createEl('span', { cls: 'quill-review-panel__scope-tag', text: this.subLabel });
+                header.createSpan({ cls: 'quill-review-panel__scope-tag', text: this.subLabel });
             }
 
             if (this.resultsState === 'loading') {
-                header.createEl('span', { cls: 'quill-review-panel__status', text: 'Analyzing...' });
+                header.createSpan({ cls: 'quill-review-panel__status', text: 'Analyzing...' });
                 scroll.createDiv({ cls: 'quill-review-panel__report' }).setText('');
             } else if (this.resultsState === 'complete') {
-                header.createEl('span', {
+                header.createSpan({
                     cls: 'quill-review-panel__status quill-review-panel__status--done',
                     text: 'Done'
                 });
@@ -1387,7 +1387,7 @@ export class ReviewPanel extends AbstractChatPanel {
                     }
                 }
             } else if (this.resultsState === 'error') {
-                header.createEl('span', { cls: 'quill-review-panel__status', text: 'Failed' });
+                header.createSpan({ cls: 'quill-review-panel__status', text: 'Failed' });
                 scroll.createEl('p', { cls: 'quill-review-panel__error-text', text: this.reportText });
                 const controls = scroll.createDiv({ cls: 'quill-review-panel__controls' });
                 const retryBtn = controls.createEl('button', {
@@ -1474,7 +1474,7 @@ export class ReviewPanel extends AbstractChatPanel {
         this.renderEvents.registerDomEvent(newChatBtn, 'click', () => {
             if (!disabled) this.onNewChat?.(false);
         });
-        btnRow.createEl('div', { cls: 'quill-chat-panel__btn-spacer' });
+        btnRow.createDiv({ cls: 'quill-chat-panel__btn-spacer' });
         const actionBtn = btnRow.createEl('button', {
             cls: `quill-cowriter-panel__send-btn mod-cta${this.chatLoading ? ' quill-cowriter-panel__send-btn--stop' : ''}`,
             text: disabled ? 'Generating\u2026' : this.chatLoading ? 'Stop' : 'Send'

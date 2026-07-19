@@ -420,7 +420,7 @@ class InputModal extends Modal {
             attr: { placeholder: this.placeholder }
         });
 
-        const buttonRow = contentEl.createEl('div', { cls: 'quill-input-modal__actions' });
+        const buttonRow = contentEl.createDiv({ cls: 'quill-input-modal__actions' });
 
         buttonRow.createEl('button', { text: 'Cancel' }).addEventListener('click', () => this.close());
 
@@ -470,7 +470,7 @@ class ModelFetchModal extends SuggestModal<ModelInfo> {
 
     /** Render each suggestion row. */
     renderSuggestion(model: ModelInfo, el: HTMLElement): void {
-        el.createEl('div', { text: model.id });
+        el.createDiv({ text: model.id });
         if (model.ownedBy) {
             el.createEl('small', {
                 text: model.ownedBy,
@@ -518,7 +518,7 @@ class AddProviderModal extends SuggestModal<{ type: ProviderType; label: string;
 
     /** Render each option. */
     renderSuggestion(option: { type: ProviderType; label: string }, el: HTMLElement): void {
-        el.createEl('div', { text: option.label });
+        el.createDiv({ text: option.label });
     }
 
     /** When user selects a type, invoke the callback. */
@@ -758,7 +758,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         const tabs = EventideQuillSettingTab.TABS;
 
         // --- Standard horizontal tab bar (hidden under compact mode) ---
-        const tabBar = containerEl.createEl('div', { cls: 'quill-settings__tab-bar' });
+        const tabBar = containerEl.createDiv({ cls: 'quill-settings__tab-bar' });
         for (const tab of tabs) {
             const btn = tabBar.createEl('button', {
                 cls: `quill-settings__tab${this.activeTab === tab.id ? ' quill-settings__tab--active' : ''}`,
@@ -776,14 +776,14 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         // opens a native Obsidian Menu listing all tabs with a checkmark on the
         // active one. Same pattern as the co-writer panel's overflow hamburger
         // (co-writer-panel.ts:2127).
-        const compactBar = containerEl.createEl('div', { cls: 'quill-settings__compact-bar' });
+        const compactBar = containerEl.createDiv({ cls: 'quill-settings__compact-bar' });
         const compactBtn = compactBar.createEl('button', {
             cls: `quill-settings__compact-tab${' quill-settings__compact-tab--active'}`,
             attr: { type: 'button', 'aria-label': 'Switch settings tab' }
         });
-        const compactLabel = compactBtn.createEl('span', { cls: 'quill-settings__compact-tab-label' });
+        const compactLabel = compactBtn.createSpan({ cls: 'quill-settings__compact-tab-label' });
         compactLabel.textContent = tabs.find((t) => t.id === this.activeTab)?.label ?? '';
-        compactBtn.createEl('span', { cls: 'quill-settings__compact-tab-caret' });
+        compactBtn.createSpan({ cls: 'quill-settings__compact-tab-caret' });
         compactBtn.addEventListener('click', (e: MouseEvent) => {
             const menu = new Menu();
             for (const tab of tabs) {
@@ -870,7 +870,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
         for (const [folder, count] of entries) {
             const row = container.createDiv({ cls: 'quill-folder-override-row' });
-            row.createEl('span', { cls: 'quill-folder-override-row__name', text: folder });
+            row.createSpan({ cls: 'quill-folder-override-row__name', text: folder });
 
             const input = row.createEl('input', {
                 cls: 'quill-folder-override-row__input',
@@ -907,7 +907,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         const folders = [...this.plugin.settings.lorebookFolders].sort((a, b) => a.localeCompare(b));
 
         if (folders.length === 0) {
-            container.createEl('div', {
+            container.createDiv({
                 cls: 'quill-settings__empty-hint',
                 text: 'No lorebook folders configured. Add one to begin scanning for lore entries.'
             });
@@ -916,7 +916,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
         for (const folder of folders) {
             const row = container.createDiv({ cls: 'quill-folder-override-row' });
-            row.createEl('span', { cls: 'quill-folder-override-row__name', text: folder });
+            row.createSpan({ cls: 'quill-folder-override-row__name', text: folder });
 
             // Folder entry-type default. "Mixed" (absent from the map) means each
             // file is typed by its own `quill-type` frontmatter; any other choice
@@ -964,7 +964,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         const commands = this.plugin.settings.slashCommands;
 
         if (commands.length === 0) {
-            container.createEl('div', {
+            container.createDiv({
                 cls: 'quill-settings__empty-hint',
                 text: 'No slash commands configured. Add one to enable the / picker in the co-writer chat input.'
             });
@@ -978,9 +978,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render one slash-command editor card. Mutates `cmd` in place on field edits. */
     private renderSlashCommandCard(container: HTMLElement, cmd: SlashCommand, index: number): void {
-        const card = container.createEl('div', { cls: 'quill-slash-command-card' });
+        const card = container.createDiv({ cls: 'quill-slash-command-card' });
 
-        const headingRow = card.createEl('div', { cls: 'quill-slash-command-card__heading' });
+        const headingRow = card.createDiv({ cls: 'quill-slash-command-card__heading' });
         new Setting(headingRow).setName(cmd.name ? `/${cmd.name}` : 'Untitled command').addButton((button) =>
             button.setButtonText('Remove').onClick(async () => {
                 this.plugin.settings.slashCommands.splice(index, 1);
@@ -1071,8 +1071,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         let group: HTMLElement | null = null;
         for (const child of snapshot) {
             if (child.classList.contains('setting-item-heading')) {
-                group = container.ownerDocument.createElement('div');
-                group.className = 'quill-settings__section';
+                group = createDiv({ cls: 'quill-settings__section' });
                 container.insertBefore(group, child);
                 group.appendChild(child);
             } else if (group) {
@@ -1083,13 +1082,13 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render the welcome tab (onboarding + feature overview). */
     private renderWelcomeTab(containerEl: HTMLElement): void {
-        const content = containerEl.createEl('div', { cls: 'quill-settings-content-welcome' });
+        const content = containerEl.createDiv({ cls: 'quill-settings-content-welcome' });
 
         // --- Hero ---
 
-        const hero = content.createEl('div', { cls: 'quill-settings__welcome-hero' });
-        hero.createEl('div', { cls: 'quill-settings__welcome-title', text: 'Eventide quill' });
-        hero.createEl('div', {
+        const hero = content.createDiv({ cls: 'quill-settings__welcome-hero' });
+        hero.createDiv({ cls: 'quill-settings__welcome-title', text: 'Eventide quill' });
+        hero.createDiv({
             cls: 'quill-settings__welcome-tagline',
             text: 'A feedback-first writing assistant for novelists.'
         });
@@ -1098,7 +1097,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
         new Setting(content).setName('Getting started').setHeading();
 
-        const steps = content.createEl('div', { cls: 'quill-settings__welcome-steps' });
+        const steps = content.createDiv({ cls: 'quill-settings__welcome-steps' });
         const stepItems = [
             {
                 num: '1',
@@ -1122,18 +1121,18 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             }
         ];
         for (const step of stepItems) {
-            const row = steps.createEl('div', { cls: 'quill-settings__welcome-step' });
-            row.createEl('div', { cls: 'quill-settings__welcome-step-num', text: step.num });
-            const body = row.createEl('div', { cls: 'quill-settings__welcome-step-body' });
-            body.createEl('div', { cls: 'quill-settings__welcome-step-title', text: step.title });
-            body.createEl('div', { cls: 'quill-settings__welcome-step-desc', text: step.desc });
+            const row = steps.createDiv({ cls: 'quill-settings__welcome-step' });
+            row.createDiv({ cls: 'quill-settings__welcome-step-num', text: step.num });
+            const body = row.createDiv({ cls: 'quill-settings__welcome-step-body' });
+            body.createDiv({ cls: 'quill-settings__welcome-step-title', text: step.title });
+            body.createDiv({ cls: 'quill-settings__welcome-step-desc', text: step.desc });
         }
 
         // --- Features ---
 
         new Setting(content).setName('Features').setHeading();
 
-        const features = content.createEl('div', { cls: 'quill-settings__welcome-features' });
+        const features = content.createDiv({ cls: 'quill-settings__welcome-features' });
         const featureItems: { icon: string; text: string }[] = [
             {
                 icon: '\u2630',
@@ -1154,16 +1153,16 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             { icon: '\u26A1', text: 'Pluggable providers: Ollama, LM Studio, OpenAI-compatible, and more' }
         ];
         for (const item of featureItems) {
-            const row = features.createEl('div', { cls: 'quill-settings__welcome-feature' });
-            row.createEl('span', { cls: 'quill-settings__welcome-feature-icon', text: item.icon });
-            row.createEl('span', { cls: 'quill-settings__welcome-feature-text', text: item.text });
+            const row = features.createDiv({ cls: 'quill-settings__welcome-feature' });
+            row.createSpan({ cls: 'quill-settings__welcome-feature-icon', text: item.icon });
+            row.createSpan({ cls: 'quill-settings__welcome-feature-text', text: item.text });
         }
 
         // --- Privacy & network tools ---
 
         new Setting(content).setName('Privacy & network tools').setHeading();
 
-        content.createEl('div', {
+        content.createDiv({
             cls: 'quill-settings__welcome-privacy-intro',
             text:
                 'No telemetry. Your manuscript stays yours. The co-writer can call the tools ' +
@@ -1173,7 +1172,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         });
 
         // Inventory: what each outbound tool does and where the request goes.
-        const netTools = content.createEl('div', { cls: 'quill-settings__welcome-net-tools' });
+        const netTools = content.createDiv({ cls: 'quill-settings__welcome-net-tools' });
         const netToolItems: { name: string; desc: string }[] = [
             {
                 name: 'fetch_url',
@@ -1201,9 +1200,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             }
         ];
         for (const t of netToolItems) {
-            const row = netTools.createEl('div', { cls: 'quill-settings__welcome-net-tool' });
+            const row = netTools.createDiv({ cls: 'quill-settings__welcome-net-tool' });
             row.createEl('code', { cls: 'quill-settings__welcome-net-tool-name', text: t.name });
-            row.createEl('span', { cls: 'quill-settings__welcome-net-tool-desc', text: t.desc });
+            row.createSpan({ cls: 'quill-settings__welcome-net-tool-desc', text: t.desc });
         }
 
         new Setting(content)
@@ -1259,7 +1258,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 })
             );
 
-        content.createEl('div', {
+        content.createDiv({
             cls: 'quill-settings__welcome-privacy',
             text:
                 'Fandom queries respect an allowlist by default (empty = Fandom disabled); the ' +
@@ -1271,7 +1270,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 'keep everything on your machine. Full per-tool controls live on the General tab.'
         });
 
-        content.createEl('div', {
+        content.createDiv({
             cls: 'quill-settings__welcome-privacy',
             text:
                 'Images you paste, drop, or attach in the co-writer chat are downscaled locally on your ' +
@@ -1281,7 +1280,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 'machine just like manuscript text.'
         });
 
-        content.createEl('div', {
+        content.createDiv({
             cls: 'quill-settings__welcome-tip',
             text:
                 'Tip: images with one or two characters produce the richest descriptions. The model can ' +
@@ -1293,7 +1292,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render the general settings tab. */
     private renderGeneralTab(containerEl: HTMLElement): void {
-        const content = containerEl.createEl('div', { cls: 'quill-settings-content-general' });
+        const content = containerEl.createDiv({ cls: 'quill-settings-content-general' });
 
         new Setting(content).setName('Sidebar').setHeading();
 
@@ -1561,7 +1560,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
      * when adding content here.
      */
     private renderFooter(containerEl: HTMLElement): void {
-        containerEl.createEl('div', { cls: 'quill-settings__footer' });
+        containerEl.createDiv({ cls: 'quill-settings__footer' });
     }
 
     /** Render the Embeddings settings block into `content` (retrieval index config). */
@@ -1716,7 +1715,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render the Lorebook tab — lorebook config, cached wikis, lore entry images, lore folders. */
     private renderLorebookTab(containerEl: HTMLElement): void {
-        const content = containerEl.createEl('div', { cls: 'quill-settings-content-lorebook' });
+        const content = containerEl.createDiv({ cls: 'quill-settings-content-lorebook' });
         this.renderLorebookSettings(content);
     }
 
@@ -2150,7 +2149,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 
     private renderLinterTab(containerEl: HTMLElement): void {
-        const content = containerEl.createEl('div', { cls: 'quill-settings-content-linter' });
+        const content = containerEl.createDiv({ cls: 'quill-settings-content-linter' });
 
         new Setting(content).setName('Prose linter').setHeading();
 
@@ -2452,7 +2451,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render the AI providers configuration section. */
     private renderAiProvidersTab(containerEl: HTMLElement): void {
-        const content = containerEl.createEl('div', { cls: 'quill-settings-content-ai-providers' });
+        const content = containerEl.createDiv({ cls: 'quill-settings-content-ai-providers' });
 
         new Setting(content).setName('AI providers').setHeading();
 
@@ -2480,10 +2479,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render a single provider card. */
     private renderProviderCard(containerEl: HTMLElement, provider: ProviderConfig, index: number): void {
-        const card = containerEl.createEl('div', { cls: 'quill-provider-card' });
+        const card = containerEl.createDiv({ cls: 'quill-provider-card' });
 
         // Provider heading row
-        const headingRow = card.createEl('div', { cls: 'quill-provider-card__heading' });
+        const headingRow = card.createDiv({ cls: 'quill-provider-card__heading' });
 
         new Setting(headingRow).setName(provider.name || 'Unnamed provider').addButton((button) =>
             button.setButtonText('Remove').onClick(async () => {
@@ -2606,7 +2605,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     dropdown.setValue(current);
                 } else {
                     dropdown.setValue('custom');
-                    card.createEl('div', {
+                    card.createDiv({
                         cls: 'quill-provider-card__setting-extra',
                         text: `Custom value: ${current}`
                     });
@@ -2655,13 +2654,13 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render the model list for a provider. */
     private renderModelList(containerEl: HTMLElement, provider: ProviderConfig): void {
-        containerEl.createEl('div', {
+        containerEl.createDiv({
             cls: 'quill-provider-card__models-heading',
             text: 'Models'
         });
 
         for (const [mIdx, model] of provider.models.entries()) {
-            const modelCard = containerEl.createEl('div', { cls: 'quill-provider-card__model' });
+            const modelCard = containerEl.createDiv({ cls: 'quill-provider-card__model' });
 
             new Setting(modelCard)
                 .setName(`Model ${mIdx + 1}`)
@@ -2738,7 +2737,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render test connection and test embeddings buttons. */
     private renderTestButtons(containerEl: HTMLElement, provider: ProviderConfig): void {
-        const testRow = containerEl.createEl('div', { cls: 'quill-provider-card__test-row' });
+        const testRow = containerEl.createDiv({ cls: 'quill-provider-card__test-row' });
 
         new Setting(testRow)
             .addButton((button) =>
@@ -2918,7 +2917,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
     /** Render the Model behaviors settings tab. */
     private renderModelBehaviorsTab(containerEl: HTMLElement): void {
-        const content = containerEl.createEl('div', { cls: 'quill-settings-content-model-behaviors' });
+        const content = containerEl.createDiv({ cls: 'quill-settings-content-model-behaviors' });
         this.renderModelBehaviorsSettings(content);
     }
 
@@ -2957,7 +2956,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 });
             });
 
-        const rulesArea = containerEl.createEl('div', { cls: 'quill-narrative-rules' });
+        const rulesArea = containerEl.createDiv({ cls: 'quill-narrative-rules' });
         this.renderNarrativeVoiceRules(containerEl, rulesArea);
 
         new Setting(containerEl)
@@ -3786,7 +3785,7 @@ class FolderSuggestModal extends SuggestModal<string> {
     }
 
     renderSuggestion(folder: string, el: HTMLElement): void {
-        el.createEl('span', { text: folder });
+        el.createSpan({ text: folder });
     }
 
     onChooseSuggestion(folder: string): void {

@@ -48,7 +48,7 @@ export function renderLorebookTab(
     }
 
     // Refresh button row — dispatches to the subtab-appropriate refresh.
-    const actionBar = container.createEl('div', { cls: 'quill-lorebook-panel__actions' });
+    const actionBar = container.createDiv({ cls: 'quill-lorebook-panel__actions' });
     const refreshBtn = actionBar.createEl('button', {
         cls: 'quill-lorebook-panel__refresh-btn',
         text: 'Scan lorebook'
@@ -133,28 +133,28 @@ function renderLorebookDocumentTab(
     coverage: LoreCoverage
 ): void {
     // Coverage summary.
-    const summary = container.createEl('div', { cls: 'quill-lorebook-panel__summary' });
-    summary.createEl('span', { cls: 'quill-lorebook-panel__stat', text: `${coverage.totalEntries} entries` });
-    summary.createEl('span', {
+    const summary = container.createDiv({ cls: 'quill-lorebook-panel__summary' });
+    summary.createSpan({ cls: 'quill-lorebook-panel__stat', text: `${coverage.totalEntries} entries` });
+    summary.createSpan({
         cls: 'quill-lorebook-panel__stat',
         text: `${coverage.folderCount} folder${coverage.folderCount === 1 ? '' : 's'}`
     });
-    summary.createEl('span', {
+    summary.createSpan({
         cls: 'quill-lorebook-panel__stat quill-lorebook-panel__stat--good',
         text: `${coverage.referenced.length} referenced`
     });
-    summary.createEl('span', {
+    summary.createSpan({
         cls: 'quill-lorebook-panel__stat quill-lorebook-panel__stat--muted',
         text: `${coverage.orphaned.length} not referenced`
     });
 
     // Orphaned entries (defined but not found in this document).
     if (coverage.orphaned.length > 0) {
-        container.createEl('div', {
+        container.createDiv({
             cls: 'quill-lorebook-panel__subheading',
             text: 'Not referenced in this document'
         });
-        const list = container.createEl('div', { cls: 'quill-lorebook-panel__entries' });
+        const list = container.createDiv({ cls: 'quill-lorebook-panel__entries' });
         for (const entry of coverage.orphaned) {
             renderLoreEntryRow(list, entry, false);
         }
@@ -162,11 +162,11 @@ function renderLorebookDocumentTab(
 
     // Referenced entries.
     if (coverage.referenced.length > 0) {
-        container.createEl('div', {
+        container.createDiv({
             cls: 'quill-lorebook-panel__subheading',
             text: 'Referenced in this document'
         });
-        const list = container.createEl('div', { cls: 'quill-lorebook-panel__entries' });
+        const list = container.createDiv({ cls: 'quill-lorebook-panel__entries' });
         for (const entry of coverage.referenced) {
             renderLoreEntryRow(list, entry, true);
         }
@@ -187,35 +187,35 @@ function renderLorebookManuscriptTab(
     // from, so the user can tell which manuscript they're looking at when
     // working across multiple projects.
     if (plugin.currentManuscriptFolder) {
-        container.createEl('div', {
+        container.createDiv({
             cls: 'quill-lorebook-panel__manuscript-source',
             text: `Manuscript: ${plugin.currentManuscriptFolder}`
         });
     }
 
     // Coverage summary line.
-    const summary = container.createEl('div', { cls: 'quill-lorebook-panel__summary' });
-    summary.createEl('span', { cls: 'quill-lorebook-panel__stat', text: `${coverage.totalEntries} entries` });
-    summary.createEl('span', {
+    const summary = container.createDiv({ cls: 'quill-lorebook-panel__summary' });
+    summary.createSpan({ cls: 'quill-lorebook-panel__stat', text: `${coverage.totalEntries} entries` });
+    summary.createSpan({
         cls: 'quill-lorebook-panel__stat',
         text: `${coverage.folderCount} folder${coverage.folderCount === 1 ? '' : 's'}`
     });
-    summary.createEl('span', {
+    summary.createSpan({
         cls: 'quill-lorebook-panel__stat quill-lorebook-panel__stat--good',
         text: `${coverage.referenced.length} referenced`
     });
-    summary.createEl('span', {
+    summary.createSpan({
         cls: 'quill-lorebook-panel__stat quill-lorebook-panel__stat--muted',
         text: `${coverage.orphaned.length} orphaned`
     });
-    summary.createEl('span', {
+    summary.createSpan({
         cls: 'quill-lorebook-panel__stat quill-lorebook-panel__stat--warn',
         text: `${coverage.gaps.length} missing`
     });
 
     // Missing-entity gaps (highest signal — surface first).
     if (coverage.gaps.length > 0) {
-        const gapsHeading = container.createEl('div', {
+        const gapsHeading = container.createDiv({
             cls: 'quill-lorebook-panel__subheading',
             text: 'Mentioned but not documented'
         });
@@ -224,15 +224,15 @@ function renderLorebookManuscriptTab(
             `Entities appearing ${LORE_COVERAGE_GAP_MIN_OCCURRENCES}+ times with no lore entry`
         );
 
-        const gapList = container.createEl('div', { cls: 'quill-lorebook-panel__gaps' });
+        const gapList = container.createDiv({ cls: 'quill-lorebook-panel__gaps' });
         for (const gap of coverage.gaps) {
-            const row = gapList.createEl('div', { cls: 'quill-lorebook-panel__gap' });
-            row.createEl('span', {
+            const row = gapList.createDiv({ cls: 'quill-lorebook-panel__gap' });
+            row.createSpan({
                 cls: `quill-lorebook-panel__badge quill-lorebook-panel__badge--${gap.entityType}`,
                 text: LORE_TYPE_LABELS[gap.entityType]
             });
-            row.createEl('span', { cls: 'quill-lorebook-panel__gap-name', text: gap.entityName });
-            row.createEl('span', { cls: 'quill-lorebook-panel__gap-count', text: `${gap.occurrences}\u00D7` });
+            row.createSpan({ cls: 'quill-lorebook-panel__gap-name', text: gap.entityName });
+            row.createSpan({ cls: 'quill-lorebook-panel__gap-count', text: `${gap.occurrences}\u00D7` });
             const dismissBtn = row.createEl('button', {
                 cls: 'quill-lorebook-panel__gap-btn',
                 text: 'Dismiss',
@@ -247,11 +247,11 @@ function renderLorebookManuscriptTab(
 
     // Orphaned entries (defined but not referenced in this manuscript).
     if (coverage.orphaned.length > 0) {
-        container.createEl('div', {
+        container.createDiv({
             cls: 'quill-lorebook-panel__subheading',
             text: 'Not referenced in this manuscript'
         });
-        const list = container.createEl('div', { cls: 'quill-lorebook-panel__entries' });
+        const list = container.createDiv({ cls: 'quill-lorebook-panel__entries' });
         for (const entry of coverage.orphaned) {
             renderLoreEntryRow(list, entry, false);
         }
@@ -259,11 +259,11 @@ function renderLorebookManuscriptTab(
 
     // Referenced entries.
     if (coverage.referenced.length > 0) {
-        container.createEl('div', {
+        container.createDiv({
             cls: 'quill-lorebook-panel__subheading',
             text: 'Referenced in this manuscript'
         });
-        const list = container.createEl('div', { cls: 'quill-lorebook-panel__entries' });
+        const list = container.createDiv({ cls: 'quill-lorebook-panel__entries' });
         for (const entry of coverage.referenced) {
             renderLoreEntryRow(list, entry, true);
         }
@@ -322,19 +322,19 @@ function renderLorebookRelationshipsTab(
         .sort((a, b) => a.fileBasename.localeCompare(b.fileBasename));
 
     // Summary line.
-    const summary = container.createEl('div', { cls: 'quill-lorebook-panel__summary' });
-    summary.createEl('span', { cls: 'quill-lorebook-panel__stat', text: `${rel.totalEntries} entries` });
-    summary.createEl('span', {
+    const summary = container.createDiv({ cls: 'quill-lorebook-panel__summary' });
+    summary.createSpan({ cls: 'quill-lorebook-panel__stat', text: `${rel.totalEntries} entries` });
+    summary.createSpan({
         cls: 'quill-lorebook-panel__stat quill-lorebook-panel__stat--good',
         text: `${rel.edges.length} link${rel.edges.length === 1 ? '' : 's'}`
     });
     if (rel.dangling.length > 0) {
-        summary.createEl('span', {
+        summary.createSpan({
             cls: 'quill-lorebook-panel__stat quill-lorebook-panel__stat--warn',
             text: `${rel.dangling.length} dangling`
         });
     }
-    summary.createEl('span', {
+    summary.createSpan({
         cls: 'quill-lorebook-panel__stat quill-lorebook-panel__stat--muted',
         text: `${rel.unconnected.length} unconnected`
     });
@@ -350,7 +350,7 @@ function renderLorebookRelationshipsTab(
 
     // Matrix view — only when the connected-entry count is small enough.
     if (connectedEntries.length > 0 && connectedEntries.length <= MATRIX_MAX_ENTRIES) {
-        container.createEl('div', { cls: 'quill-lorebook-panel__subheading', text: 'Matrix' });
+        container.createDiv({ cls: 'quill-lorebook-panel__subheading', text: 'Matrix' });
         renderRelationshipMatrix(container, connectedEntries, adjacency);
     } else if (connectedEntries.length > MATRIX_MAX_ENTRIES) {
         container.createEl('p', {
@@ -361,8 +361,8 @@ function renderLorebookRelationshipsTab(
 
     // List view — per-entry connections, always shown when edges exist.
     if (rel.edges.length > 0) {
-        container.createEl('div', { cls: 'quill-lorebook-panel__subheading', text: 'Connections' });
-        const list = container.createEl('div', { cls: 'quill-lorebook-panel__connections' });
+        container.createDiv({ cls: 'quill-lorebook-panel__subheading', text: 'Connections' });
+        const list = container.createDiv({ cls: 'quill-lorebook-panel__connections' });
         const byDegree = connectedEntries
             .map((entry) => {
                 const neighbors = [...(adjacency.get(entry.filePath) ?? new Set<string>())]
@@ -375,18 +375,18 @@ function renderLorebookRelationshipsTab(
                     b.neighbors.length - a.neighbors.length || a.entry.fileBasename.localeCompare(b.entry.fileBasename)
             );
         for (const { entry, neighbors } of byDegree) {
-            const row = list.createEl('div', { cls: 'quill-lorebook-panel__connection' });
-            row.createEl('span', {
+            const row = list.createDiv({ cls: 'quill-lorebook-panel__connection' });
+            row.createSpan({
                 cls: `quill-lorebook-panel__badge quill-lorebook-panel__badge--${entry.type}`,
                 text: LORE_TYPE_LABELS[entry.type]
             });
-            row.createEl('span', { cls: 'quill-lorebook-panel__connection-name', text: entry.fileBasename });
+            row.createSpan({ cls: 'quill-lorebook-panel__connection-name', text: entry.fileBasename });
             const names = neighbors.map((n) => n.fileBasename).sort((a, b) => a.localeCompare(b));
-            row.createEl('span', {
+            row.createSpan({
                 cls: 'quill-lorebook-panel__connection-targets',
                 text: `\u2192 ${names.join(', ')}`
             });
-            row.createEl('span', {
+            row.createSpan({
                 cls: 'quill-lorebook-panel__connection-count',
                 text: `${neighbors.length}`
             });
@@ -397,22 +397,22 @@ function renderLorebookRelationshipsTab(
     // Each row is clickable: opens the source entry and places the cursor at
     // the link, so the writer can see / fix the dangling reference in context.
     if (rel.dangling.length > 0) {
-        container.createEl('div', {
+        container.createDiv({
             cls: 'quill-lorebook-panel__subheading',
             text: 'Links to unwritten entries'
         });
-        const list = container.createEl('div', { cls: 'quill-lorebook-panel__entries' });
+        const list = container.createDiv({ cls: 'quill-lorebook-panel__entries' });
         for (const d of rel.dangling) {
             const source = entryByPath.get(d.from);
-            const row = list.createEl('div', {
+            const row = list.createDiv({
                 cls: 'quill-lorebook-panel__entry quill-lorebook-panel__entry--dangling quill-lorebook-panel__entry--clickable',
                 attr: { tabindex: '0', role: 'button', title: `Open ${source?.fileBasename ?? d.from} at this link` }
             });
-            row.createEl('span', {
+            row.createSpan({
                 cls: 'quill-lorebook-panel__entry-name',
                 text: source?.fileBasename ?? d.from
             });
-            row.createEl('span', {
+            row.createSpan({
                 cls: 'quill-lorebook-panel__connection-targets',
                 text: `\u2192 ${d.target}`
             });
@@ -430,8 +430,8 @@ function renderLorebookRelationshipsTab(
 
     // Unconnected entries — zero relationships. Parallel to coverage's "Not referenced".
     if (rel.unconnected.length > 0) {
-        container.createEl('div', { cls: 'quill-lorebook-panel__subheading', text: 'Unconnected' });
-        const list = container.createEl('div', { cls: 'quill-lorebook-panel__entries' });
+        container.createDiv({ cls: 'quill-lorebook-panel__subheading', text: 'Unconnected' });
+        const list = container.createDiv({ cls: 'quill-lorebook-panel__entries' });
         for (const entry of rel.unconnected) {
             renderLoreEntryRow(list, entry, false);
         }
@@ -455,14 +455,14 @@ function renderRelationshipMatrix(
     entries: LoreEntry[],
     adjacency: Map<string, Set<string>>
 ): void {
-    const outer = container.createEl('div', { cls: 'quill-lorebook-panel__matrix-outer' });
+    const outer = container.createDiv({ cls: 'quill-lorebook-panel__matrix-outer' });
 
     // Frozen labels column: corner + one row label per entry. Never scrolls,
     // so the writer always knows which row is which entry as they pan right.
-    const labels = outer.createEl('div', { cls: 'quill-lorebook-panel__matrix-labels' });
-    labels.createEl('div', { cls: 'quill-lorebook-panel__matrix-corner' });
+    const labels = outer.createDiv({ cls: 'quill-lorebook-panel__matrix-labels' });
+    labels.createDiv({ cls: 'quill-lorebook-panel__matrix-corner' });
     for (const rowEntry of entries) {
-        labels.createEl('div', {
+        labels.createDiv({
             cls: 'quill-lorebook-panel__matrix-rowhead',
             text: rowEntry.fileBasename,
             attr: { title: rowEntry.fileBasename }
@@ -470,13 +470,13 @@ function renderRelationshipMatrix(
     }
 
     // Scrollable cells grid: header row + body cells, NO label column.
-    const scroll = outer.createEl('div', { cls: 'quill-lorebook-panel__matrix-scroll' });
-    const grid = scroll.createEl('div', { cls: 'quill-lorebook-panel__matrix' });
+    const scroll = outer.createDiv({ cls: 'quill-lorebook-panel__matrix-scroll' });
+    const grid = scroll.createDiv({ cls: 'quill-lorebook-panel__matrix' });
     grid.style.gridTemplateColumns = `repeat(${entries.length}, var(--quill-matrix-cell, 22px))`;
 
     // Header row: one abbreviated label per column entry.
     for (const col of entries) {
-        grid.createEl('div', {
+        grid.createDiv({
             cls: 'quill-lorebook-panel__matrix-head',
             text: abbreviateMatrixLabel(col.fileBasename),
             attr: { title: col.fileBasename }
@@ -498,7 +498,7 @@ function renderRelationshipMatrix(
                 .join(' ');
             const attr: Record<string, string> =
                 related && !isDiagonal ? { title: `${rowEntry.fileBasename} \u2194 ${colEntry.fileBasename}` } : {};
-            grid.createEl('div', { cls, attr });
+            grid.createDiv({ cls, attr });
         }
     }
 }
@@ -520,20 +520,20 @@ function abbreviateMatrixLabel(name: string): string {
 
 /** Render a single lore entry row with a type badge. */
 function renderLoreEntryRow(container: HTMLElement, entry: LoreEntry, referenced: boolean): void {
-    const row = container.createEl('div', {
+    const row = container.createDiv({
         cls: `quill-lorebook-panel__entry${referenced ? ' quill-lorebook-panel__entry--referenced' : ''}`
     });
-    row.createEl('span', {
+    row.createSpan({
         cls: `quill-lorebook-panel__badge quill-lorebook-panel__badge--${entry.type}`,
         text: LORE_TYPE_LABELS[entry.type]
     });
-    row.createEl('span', { cls: 'quill-lorebook-panel__entry-name', text: entry.fileBasename });
+    row.createSpan({ cls: 'quill-lorebook-panel__entry-name', text: entry.fileBasename });
     // Image-count chip — visible only when the entry has at least one parsed
     // image. Surfaces what's available to the AI via `get_lore_image` without
     // a separate panel; the writer gets a quick visual of which entries are
     // visually populated. Missing files (badge but no TFile) still count.
     if (entry.images.length > 0) {
-        row.createEl('span', {
+        row.createSpan({
             cls: 'quill-lorebook-panel__entry-images',
             text: `${entry.images.length} img${entry.images.length === 1 ? '' : 's'}`
         });
@@ -558,11 +558,11 @@ function renderActiveEntryEditor(
     const folder = findLoreFolder(file.path, plugin.settings.lorebookFolders);
     if (folder === null) return;
 
-    const section = container.createEl('div', { cls: 'quill-lorebook-panel__active-entry' });
-    section.createEl('div', { cls: 'quill-lorebook-panel__subheading', text: 'Active entry' });
+    const section = container.createDiv({ cls: 'quill-lorebook-panel__active-entry' });
+    section.createDiv({ cls: 'quill-lorebook-panel__subheading', text: 'Active entry' });
 
-    const row = section.createEl('div', { cls: 'quill-lorebook-panel__active-entry-row' });
-    row.createEl('span', { cls: 'quill-lorebook-panel__active-entry-label', text: 'Type' });
+    const row = section.createDiv({ cls: 'quill-lorebook-panel__active-entry-row' });
+    row.createSpan({ cls: 'quill-lorebook-panel__active-entry-label', text: 'Type' });
 
     const frontmatter = plugin.app.metadataCache.getFileCache(file)?.frontmatter ?? {};
     // Prefer the pending type (just-written value) when the cache hasn't caught
@@ -586,7 +586,7 @@ function renderActiveEntryEditor(
     });
 
     // Effective-type hint so the writer sees how a "Mixed" choice resolves.
-    section.createEl('div', {
+    section.createDiv({
         cls: 'quill-lorebook-panel__active-entry-hint',
         text:
             effective === 'untyped'
