@@ -10,25 +10,36 @@ import {
 
 /**
  * Propose inserting content into an existing note without removing anything.
- * The model passes an `anchor` snippet and `new_text`; the tool finds the line
- * containing the anchor and splices `new_text` in relative to that *line* (not
- * the exact character), so insertions always land on a clean line boundary.
- * The note opens in a new tab with the new content shown as a green inline diff
- * (same review UX as Direct/Fulfill/Transform) so the writer can approve or
- * reject it in context.
+ * The model passes either:
+ *   - an `anchor` snippet + a `position` of "after" / "before" / "end_of_section"
+ *     (text-relative insertion; the tool finds the line containing the anchor
+ *     and splices `new_text` in relative to that *line*, not the exact
+ *     character), or
+ *   - a `position` of "at_top" or "at_line" (anchor-less insertion; the model
+ *     picks a deterministic location that cannot fail on text matching).
+ *
+ * Either path produces a zero-width `[from, to)` range, so an insert can NEVER
+ * delete or replace existing content by construction — `originalText` is always
+ * `''`. The note opens in a new tab with the new content shown as a green
+ * inline diff (same review UX as Direct/Fulfill/Transform) so the writer can
+ * approve or reject it in context.
  *
  * Matching is whitespace-tolerant and runs against the note BODY only
  * (frontmatter is stripped first), which is the view the model has of the note
  * via `vault_lookup`. The body-relative insertion offset is mapped back onto
  * the raw document, so an insert can never land inside the YAML frontmatter
- * block — even when the model anchors on the first body line.
+ * block — even when the model anchors on the first body line or passes
+ * `position: "at_top"` (which inserts at body offset 0, i.e. immediately after
+ * frontmatter).
  *
  * Multiple pending edits to the same file coexist (each surfaces as its own
  * review card); edits to different files are independent.
  *
  * The tool does NOT write to the file. The writer must click "Approve" to
  * commit the edit or "Reject" to discard it. To CHANGE existing wording, use
- * `edit_note` instead; to add content at the END of a note, use `append_to_note`.
+ * `edit_note` instead (note: `edit_note` REMOVES its `old_text` from the note
+ * — if your goal is to ADD without removing, you are in the right place); to
+ * add content at the END of a note, use `append_to_note`.
  */
 export const insertNoteTool: Tool = {
     id: 'insert_note',
@@ -36,15 +47,24 @@ export const insertNoteTool: Tool = {
         'Propose inserting new content into a note that is NOT currently open, without ' +
         'removing anything (it opens in a new tab as a diff; the writer approves or ' +
         'rejects it after you finish). For the open file, recommend Direct or Fulfill ' +
-        'mode instead. Pass anchor = a distinctive snippet that identifies a LINE in ' +
-        'the note (whitespace-tolerant — does not need to be byte-exact; the tool finds ' +
-        'the line containing it). new_text = the content to add, placed relative to that ' +
-        'whole line: position "after" (default) inserts on a new line right after it; ' +
-        '"before" inserts on a new line right before it; "end_of_section" requires the ' +
-        "anchor to match a heading and inserts at the END of that heading's section " +
-        '(the right choice for "add a bullet/paragraph to the X section"). Use this only ' +
-        'when ADDING content with nothing to remove. To CHANGE or rewrite existing ' +
-        'wording, use `edit_note` instead; to add at the END of a note, use ' +
+        'mode instead. This tool is the SAFE choice for any addition: it produces a ' +
+        'zero-width insertion that CANNOT delete or overwrite existing text by ' +
+        'construction. Reach for it before `edit_note` whenever you are adding content. ' +
+        '\n\n' +
+        'Two ways to target the insertion point:\n' +
+        '1. Anchor-based (text match): pass `anchor` = a distinctive snippet that ' +
+        'identifies a LINE in the note (whitespace-tolerant — does not need to be ' +
+        'byte-exact; the tool finds the line containing it) plus `position` = ' +
+        '"after" (default) / "before" / "end_of_section" (anchor must match a heading; ' +
+        'inserts at the END of that heading\'s section — the right choice for "add a ' +
+        'bullet/paragraph to the X section").\n' +
+        '2. Anchor-LESS (deterministic): `position` = "at_top" (insert at the very ' +
+        'top of the body, above the first line) or "at_line" with `line` = a 1-indexed ' +
+        'body line number (inserts before that line). These never fail on text ' +
+        'matching — use them when the anchor would be ambiguous or when you just want ' +
+        'a positional insert.\n\n' +
+        'Use this only when ADDING content with nothing to remove. To CHANGE or rewrite ' +
+        'existing wording, use `edit_note` instead; to add at the END of a note, use ' +
         '`append_to_note`. Frontmatter is invisible to you and is never touched.',
     parameters: {
         type: 'object',
@@ -60,7 +80,8 @@ export const insertNoteTool: Tool = {
                     'A distinctive snippet from a single line in the note. The tool finds the line ' +
                     'whose text contains this snippet (whitespace-tolerant) and inserts relative to ' +
                     'that LINE. Must be unique enough to identify one line; if it matches several, ' +
-                    'the tool lists them and asks for a more distinctive snippet.'
+                    'the tool lists them and asks for a more distinctive snippet. OPTIONAL when ' +
+                    '`position` is "at_top" or "at_line"; required otherwise.'
             },
             new_text: {
                 type: 'string',
@@ -68,14 +89,24 @@ export const insertNoteTool: Tool = {
             },
             position: {
                 type: 'string',
-                enum: ['after', 'before', 'end_of_section'],
+                enum: ['after', 'before', 'end_of_section', 'at_top', 'at_line'],
                 description:
-                    'Where new_text goes relative to the anchor line. "after" (default): new line(s) ' +
-                    'right after it. "before": new line(s) right before it. "end_of_section": the ' +
-                    'anchor must match a heading; inserts at the end of that section.'
+                    'Where new_text goes. "after" (default): new line(s) right after the anchor line. ' +
+                    '"before": new line(s) right before the anchor line. "end_of_section": the anchor ' +
+                    'must match a heading; inserts at the end of that section. "at_top": insert at ' +
+                    'the very top of the body (anchor-less). "at_line": insert before the line number ' +
+                    'given in `line` (anchor-less).'
+            },
+            line: {
+                type: 'integer',
+                minimum: 1,
+                description:
+                    'Required when `position` = "at_line". 1-indexed body line number; the insertion ' +
+                    'lands at the start of that line (before its content). Out-of-range values error ' +
+                    "with the body's actual line count so you can retry with a valid number."
             }
         },
-        required: ['path', 'anchor', 'new_text']
+        required: ['path', 'new_text']
     },
     maxResultTokens: 100,
     requiresNetwork: false,
@@ -83,12 +114,29 @@ export const insertNoteTool: Tool = {
     async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
         const path = typeof args.path === 'string' ? args.path.trim() : '';
         const anchor = typeof args.anchor === 'string' ? args.anchor : '';
-        const position = args.position === 'before' || args.position === 'end_of_section' ? args.position : 'after';
+        const position = resolvePosition(args.position);
         const newText = typeof args.new_text === 'string' ? args.new_text : '';
+        const line = typeof args.line === 'number' && Number.isInteger(args.line) ? args.line : null;
 
         if (!path) return 'Error: "path" is required.';
-        if (!anchor) return 'Error: "anchor" is required.';
         if (!newText) return 'Error: "new_text" is required.';
+
+        // Anchor is required only for the text-match positions. The anchor-less
+        // modes (at_top, at_line) bypass matching entirely.
+        const isAnchorRequired = position === 'after' || position === 'before' || position === 'end_of_section';
+        if (isAnchorRequired && !anchor) {
+            return (
+                `Error: "anchor" is required for position "${position}". ` +
+                'Pass a distinctive snippet from a line in the note, OR switch to ' +
+                'position "at_top" / "at_line" for an anchor-less insertion.'
+            );
+        }
+
+        if (position === 'at_line') {
+            if (!line || line < 1) {
+                return 'Error: "line" (a positive 1-indexed integer) is required when position = "at_line".';
+            }
+        }
 
         const { plugin } = ctx;
         const file = resolveNoteFile(plugin, path);
@@ -100,11 +148,11 @@ export const insertNoteTool: Tool = {
         // Work in body coordinates (frontmatter-stripped) so the model's anchor
         // — derived from vault_lookup's frontmatter-stripped view — actually
         // matches, and so no insertion can ever land inside the YAML block.
-        // bodyOffset is added back when mapping the insertion point onto the
-        // raw document that the ChangeSet edits.
+        // bodyOffset is added back when mapping the insertion point onto
+        // the raw document that the ChangeSet edits.
         const { bodyOffset, body } = splitFrontmatter(raw);
 
-        const resolved = resolveInsertionOffset(body, anchor, position);
+        const resolved = resolveInsertionOffset(body, anchor, position, line);
         if (typeof resolved === 'string') return resolved;
 
         const bodyInsertOffset = resolved;
@@ -146,6 +194,14 @@ export const insertNoteTool: Tool = {
     }
 };
 
+/** Clamp the inbound `position` argument to the known enum, defaulting to "after". */
+function resolvePosition(value: unknown): 'after' | 'before' | 'end_of_section' | 'at_top' | 'at_line' {
+    if (value === 'before' || value === 'end_of_section' || value === 'at_top' || value === 'at_line') {
+        return value;
+    }
+    return 'after';
+}
+
 /** Collapse runs of whitespace to single spaces and trim, for tolerant matching. */
 function normalizeWs(s: string): string {
     return s
@@ -167,16 +223,50 @@ function bodyPreview(body: string): string {
 }
 
 /**
- * Resolve where (in body coordinates) the insertion should go. Finds the line
- * whose normalized text contains the normalized anchor, then snaps to a line
- * boundary according to `position`. Returns a body-relative offset, or an
- * error string the tool surfaces verbatim to the model.
+ * Resolve where (in body coordinates) the insertion should go. Returns a
+ * body-relative offset, or an error string the tool surfaces verbatim to the
+ * model.
+ *
+ * Anchor-less modes (`at_top`, `at_line`) cannot fail on text matching — they
+ * resolve deterministically and only error on out-of-range line numbers.
  */
 function resolveInsertionOffset(
     body: string,
     anchor: string,
-    position: 'after' | 'before' | 'end_of_section'
+    position: 'after' | 'before' | 'end_of_section' | 'at_top' | 'at_line',
+    line: number | null
 ): number | string {
+    // ── Anchor-less modes ───────────────────────────────────────────
+
+    if (position === 'at_top') {
+        // Body offset 0 — frontmatter (if any) is stripped before this point,
+        // so 0 here means "immediately after the YAML block, above all body
+        // content." Mapping back to raw-doc coordinates happens in execute().
+        return 0;
+    }
+
+    if (position === 'at_line') {
+        if (!line || line < 1) {
+            return 'Error: "line" (a positive 1-indexed integer) is required for position "at_line".';
+        }
+        const lines = body.split('\n');
+        if (line > lines.length) {
+            return (
+                `Error: line ${line} is out of range — note body has ${lines.length} line(s). ` +
+                'Use a smaller line number, or position "at_top" / "append_to_note" for the ends.'
+            );
+        }
+        // Offset of the start of line N (1-indexed): sum of (line.length + 1)
+        // for lines [0..N-2], where the +1 accounts for the '\n' separator.
+        let offset = 0;
+        for (let i = 0; i < line - 1; i++) {
+            offset += (lines[i]?.length ?? 0) + 1;
+        }
+        return offset;
+    }
+
+    // ── Anchor-based modes ──────────────────────────────────────────
+
     const normAnchor = normalizeWs(anchor);
     if (!normAnchor) return 'Error: "anchor" is empty after trimming whitespace.';
 
@@ -205,20 +295,24 @@ function resolveInsertionOffset(
             .slice(0, 8)
             .map((idx) => `  L${idx + 1}: ${truncate((lines[idx] ?? '').trim(), 80)}`)
             .join('\n');
-        return `Error: anchor matches ${matched.length} lines. Pass a more distinctive snippet from one of them:\n${listing}`;
+        return (
+            `Error: anchor matches ${matched.length} lines. Pass a more distinctive snippet from one of them, ` +
+            `or use position "at_line" with a line number for an anchor-less insertion:\n${listing}`
+        );
     }
 
     const i = matched[0];
     if (i === undefined) return 'Error: anchor not found in the note body.';
-    const line = lines[i] ?? '';
+    const matchedLine = lines[i] ?? '';
 
     if (position === 'end_of_section') {
-        const level = /^(#{1,6})\s/.exec(line)?.[1]?.length ?? 0;
+        const level = /^(#{1,6})\s/.exec(matchedLine)?.[1]?.length ?? 0;
         if (!level) {
             return (
                 'Error: position "end_of_section" requires the anchor to match a heading line ' +
                 '(e.g., "## Appearance"). The matched line is not a heading. Use "after"/"before" ' +
-                "for non-heading lines, or anchor on the section's heading."
+                "for non-heading lines, anchor on the section's heading, or fall back to " +
+                'position "at_line" with a line number.'
             );
         }
         // End of section = the line before the next heading of the same or a
