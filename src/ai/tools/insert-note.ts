@@ -123,8 +123,8 @@ export const insertNoteTool: Tool = {
 
         // Anchor is required only for the text-match positions. The anchor-less
         // modes (at_top, at_line) bypass matching entirely.
-        const anchorRequired = position === 'after' || position === 'before' || position === 'end_of_section';
-        if (anchorRequired && !anchor) {
+        const isAnchorRequired = position === 'after' || position === 'before' || position === 'end_of_section';
+        if (isAnchorRequired && !anchor) {
             return (
                 `Error: "anchor" is required for position "${position}". ` +
                 'Pass a distinctive snippet from a line in the note, OR switch to ' +
