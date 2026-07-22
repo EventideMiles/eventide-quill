@@ -92,20 +92,7 @@ export class SlashCommandSuggest extends SuggestBase<RankedCommand> {
         const nameRow = row.createDiv({ cls: `${this.cssBlock()}__name-row` });
         nameRow.createSpan({ cls: `${this.cssBlock()}__slash`, text: '/' });
 
-        const name = item.name;
-        const lowerName = name.toLowerCase();
-        const matchIdx = lowerQuery === '' ? -1 : lowerName.indexOf(lowerQuery);
-
-        if (matchIdx >= 0) {
-            const before = name.slice(0, matchIdx);
-            const match = name.slice(matchIdx, matchIdx + lowerQuery.length);
-            const after = name.slice(matchIdx + lowerQuery.length);
-            if (before) nameRow.createSpan({ text: before });
-            nameRow.createSpan({ cls: `${this.cssBlock()}__highlight`, text: match });
-            if (after) nameRow.createSpan({ text: after });
-        } else {
-            nameRow.createSpan({ text: name });
-        }
+        this.highlightInto(nameRow, item.name, lowerQuery);
 
         if (item.description) {
             row.createDiv({ cls: `${this.cssBlock()}__desc`, text: item.description });

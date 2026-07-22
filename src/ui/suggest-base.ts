@@ -212,6 +212,32 @@ export abstract class SuggestBase<TItem> {
         this.isOpen = true;
     }
 
+    /**
+     * Render `text` into `parent` with the first case-insensitive occurrence
+     * of `lowerQuery` wrapped in a `__highlight` span. When `lowerQuery` is
+     * empty or no match is found, renders the text as a single plain span.
+     * Empty `before` / `after` segments are skipped (no empty spans).
+     *
+     * Shared by both subclasses' `renderItem` overrides — centralizes the
+     * match-splitting so highlight behavior stays consistent.
+     */
+    protected highlightInto(parent: HTMLElement, text: string, lowerQuery: string): void {
+        const matchIdx = lowerQuery === '' ? -1 : text.toLowerCase().indexOf(lowerQuery);
+
+        if (matchIdx < 0) {
+            parent.createSpan({ text });
+            return;
+        }
+
+        const before = text.slice(0, matchIdx);
+        const match = text.slice(matchIdx, matchIdx + lowerQuery.length);
+        const after = text.slice(matchIdx + lowerQuery.length);
+
+        if (before) parent.createSpan({ text: before });
+        parent.createSpan({ cls: `${this.cssBlock()}__highlight`, text: match });
+        if (after) parent.createSpan({ text: after });
+    }
+
     protected highlightSelected(): void {
         if (!this.suggestEl) return;
         const items = this.suggestEl.querySelectorAll(`.${this.cssBlock()}__item`);

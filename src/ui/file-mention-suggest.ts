@@ -79,20 +79,7 @@ export class FileMentionSuggest extends SuggestBase<SuggestionItem> {
     }
 
     protected renderItem(item: SuggestionItem, row: HTMLElement, lowerQuery: string): void {
-        const path = item.file.path;
-        const lowerPath = path.toLowerCase();
-        const matchIdx = lowerPath.indexOf(lowerQuery);
-
-        if (matchIdx >= 0) {
-            const before = path.slice(0, matchIdx);
-            const match = path.slice(matchIdx, matchIdx + lowerQuery.length);
-            const after = path.slice(matchIdx + lowerQuery.length);
-            row.createSpan({ text: before });
-            row.createSpan({ cls: `${this.cssBlock()}__highlight`, text: match });
-            row.createSpan({ text: after });
-        } else {
-            row.setText(path);
-        }
+        this.highlightInto(row, item.file.path, lowerQuery);
     }
 
     protected commitItem(item: SuggestionItem, triggerStart: number, cursorPos: number): void {
