@@ -29,13 +29,16 @@ export const editNoteTool: Tool = {
         'Propose a find-and-replace change to a note that is NOT currently open (it opens ' +
         'in a new tab as a diff; the writer approves or rejects it after you finish). For ' +
         'the open file, recommend Direct or Fulfill mode instead. Pass old_text = the ' +
-        'exact text to remove, copied verbatim (a phrase, a sentence, or a whole ' +
-        'paragraph — whatever you are replacing) and new_text = the replacement. Use this ' +
-        'whenever you are changing, rephrasing, or rewriting existing wording, including a ' +
-        'full paragraph. To ADD content without removing anything, use `insert_note` ' +
-        'instead; to add at the END of a note, use `append_to_note`. old_text must be ' +
-        'character-for-character and unique in the note. Keep old_text to just the excerpt being ' +
-        'replaced (the whole file is too large to match uniquely).',
+        'exact text to REMOVE from the note (it is deleted; new_text takes its place), ' +
+        'copied verbatim (a phrase, a sentence, or a whole paragraph — whatever you are ' +
+        'replacing) and new_text = the replacement. CAUTION: old_text is removed from the ' +
+        'note when the edit is approved — if you misidentify old_text, the wrong text gets ' +
+        'deleted. If your goal is to ADD content without removing anything, you are in the ' +
+        'wrong tool: use `insert_note` instead (zero-width insertion that CANNOT delete or ' +
+        'overwrite by construction), or `append_to_note` to add at the end. Use edit_note ' +
+        'only for genuine rewording — changing, rephrasing, or rewriting existing wording. ' +
+        'old_text must be character-for-character and unique in the note. Keep old_text to ' +
+        'just the excerpt being replaced (the whole file is too large to match uniquely).',
     parameters: {
         type: 'object',
         properties: {
