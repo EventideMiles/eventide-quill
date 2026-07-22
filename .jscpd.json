@@ -4,6 +4,6 @@
     "minLines": 6,
     "minTokens": 70,
     "mode": "weak",
-    "ignore": ["**/node_modules/**", "**/slash-command-suggest.ts"],
-    "threshold": 5
+    "ignore": ["**/node_modules/**"],
+    "threshold": 3
 }
