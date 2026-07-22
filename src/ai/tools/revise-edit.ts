@@ -98,7 +98,7 @@ export const reviseEditTool: Tool = {
         // Re-anchor the card to this turn (latest-touch) so a revised edit's
         // card follows the revise rather than the original add.
         entry.anchorMessageId = session.currentAnchorMessageId();
-        pushLoreEditDiff(opened.cm, entry.changeSet, file.path);
+        pushLoreEditDiff(opened.cm, entry.changeSet, file.path, plugin.app);
         session.onLoreEditUpdate?.();
 
         return `Revised pending edit id ${editId} on "${file.basename}". The diff now shows the updated content; the writer can approve or reject it. Continue with your response.`;
