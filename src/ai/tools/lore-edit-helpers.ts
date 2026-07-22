@@ -58,10 +58,36 @@ export async function openNoteForEdit(
  * for THIS file's editor first (other files' diffs in other editors are
  * untouched). Pass `filePath` so the inline Approve/Reject buttons can route
  * to the correct file when multiple edits are pending.
+ *
+ * **Multi-tab safety:** the `cm` argument is the editor `openNoteForEdit`
+ * happened to activate, but the writer may have the same note open in
+ * another tab or split. Without pushing to EVERY open editor for this file,
+ * the diff appears in one tab while the writer is looking at another — the
+ * "edit shows in chat but not in the active editor" symptom. The `app`
+ * argument is used to find all other markdown leaves showing `filePath` and
+ * push to each. Each editor has its own CodeMirror instance with its own
+ * decoration state, so each needs its own push.
  */
-export function pushLoreEditDiff(cm: EditorView, changeSet: ChangeSet, filePath: string): void {
+export function pushLoreEditDiff(cm: EditorView, changeSet: ChangeSet, filePath: string, app: App): void {
+    const snapshots = toDiffSnapshots(changeSet, 'lore_edit', filePath);
+
+    // Primary editor (the one openNoteForEdit opened/activated).
     clearDiffEdits(cm, 'lore_edit');
-    pushDiffEdits(cm, toDiffSnapshots(changeSet, 'lore_edit', filePath), 'lore_edit');
+    pushDiffEdits(cm, snapshots, 'lore_edit');
+
+    // ALSO push to any OTHER open editors showing the same file. Each editor
+    // has its own CodeMirror instance with its own decoration state; without
+    // this loop, a writer looking at a duplicate tab/split sees no diff even
+    // though one was pushed elsewhere.
+    for (const leaf of app.workspace.getLeavesOfType('markdown')) {
+        if (!(leaf.view instanceof MarkdownView)) continue;
+        if (leaf.view.file?.path !== filePath) continue;
+        const otherCm = (leaf.view.editor as unknown as { cm: EditorView }).cm;
+        if (otherCm && otherCm !== cm) {
+            clearDiffEdits(otherCm, 'lore_edit');
+            pushDiffEdits(otherCm, snapshots, 'lore_edit');
+        }
+    }
 }
 
 /**

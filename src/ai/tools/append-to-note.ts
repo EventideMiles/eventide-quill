@@ -86,7 +86,7 @@ export const appendToNoteTool: Tool = {
             originalText: ''
         });
 
-        pushLoreEditDiff(opened.cm, entry.changeSet, file.path);
+        pushLoreEditDiff(opened.cm, entry.changeSet, file.path, plugin.app);
         session.onLoreEditUpdate?.();
 
         return `Append proposed for "${file.basename}" (edit id ${created.id}). The writer will see the new content as a diff and can approve or reject it.`;

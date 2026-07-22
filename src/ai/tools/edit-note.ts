@@ -128,7 +128,7 @@ export const editNoteTool: Tool = {
             originalText: oldText
         });
 
-        pushLoreEditDiff(opened.cm, entry.changeSet, file.path);
+        pushLoreEditDiff(opened.cm, entry.changeSet, file.path, plugin.app);
         session.onLoreEditUpdate?.();
 
         return `Edit proposed for "${file.basename}" (edit id ${created.id}). The writer will see the diff and can approve or reject it. Continue with your response.`;
