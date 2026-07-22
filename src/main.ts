@@ -2548,6 +2548,10 @@ export default class EventideQuillPlugin extends Plugin {
         const change = this.lintBatchChangeSet.approve(id);
         if (!change) return;
         applyApprovedEdit(cm, change, 'lint-batch', toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+        // Refresh the sidebar's Pending card so it reflects the new state.
+        // The inline editor button path skips the sidebar's own re-render
+        // (which the sidebar-button path triggers naturally via render()).
+        this.lintPanel?.refreshPendingTab();
     }
 
     /** Reject a single batch-fix edit: leave the original passage. */
@@ -2558,6 +2562,7 @@ export default class EventideQuillPlugin extends Plugin {
         if (!cm) return;
         this.lintBatchChangeSet.reject(id);
         pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+        this.lintPanel?.refreshPendingTab();
     }
 
     /** Approve all pending batch-fix edits in document order. */
@@ -2571,6 +2576,7 @@ export default class EventideQuillPlugin extends Plugin {
             cm.dispatch({ changes: change });
         }
         pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+        this.lintPanel?.refreshPendingTab();
     }
 
     /** Reject all pending batch-fix edits. */
@@ -2581,6 +2587,7 @@ export default class EventideQuillPlugin extends Plugin {
         if (!cm) return;
         this.lintBatchChangeSet.rejectAll();
         pushDiffEdits(cm, toDiffSnapshots(this.lintBatchChangeSet, 'lint-batch'));
+        this.lintPanel?.refreshPendingTab();
     }
 
     /**
