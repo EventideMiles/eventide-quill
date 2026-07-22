@@ -10,6 +10,7 @@ import {
     DEFAULT_INCLUDE_SUBFOLDERS
 } from '../core/dashboard/presets';
 import { flowLabel } from '../core/dashboard/readability';
+import { formatTrendVelocity } from '../core/dashboard/trend';
 import { getActiveDocument, renderDocumentHeader } from './document-header';
 
 /** Expand state for chapter rows, keyed by `${filePath}:${lineStart}`. Survives re-renders. */
@@ -741,15 +742,15 @@ function renderTrends(container: HTMLElement, snapshots: ManuscriptSnapshot[] | 
         }
     });
 
-    // Velocity: words per day between first and last snapshot.
-    const first = points[0]!;
-    const last = points[points.length - 1]!;
-    const daysElapsed = (last.takenAt - first.takenAt) / 86_400_000;
-    if (daysElapsed > 0) {
-        const velocity = Math.round((last.totalWords - first.totalWords) / daysElapsed);
+    // Velocity: words-per-day averaged over the window, OR — for sub-day
+    // spans where extrapolation would inflate the pace ~24x — the honest
+    // "<delta> words in <Hh Mm>" form. See formatTrendVelocity for the
+    // regime switch.
+    const velocityLabel = formatTrendVelocity(points);
+    if (velocityLabel) {
         section.createDiv({
             cls: 'quill-dashboard-panel__trend-velocity',
-            text: `${velocity.toLocaleString()} words/day over ${points.length} snapshots`
+            text: velocityLabel
         });
     }
 }
