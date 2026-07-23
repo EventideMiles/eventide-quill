@@ -36,7 +36,9 @@ function makeState(title?: string): SerializedCoWriterState {
 }
 
 /** State shaped like a saved `'review-discuss'` session (carries reviewEngine). */
-function makeReviewDiscussState(engine: 'editorial' | 'critical' | 'manuscript'): SerializedCoWriterState {
+function makeReviewDiscussState(
+    engine: 'editorial' | 'critical' | 'manuscript' | 'generic'
+): SerializedCoWriterState {
     return { ...makeState('What did you think of chapter 3?'), mode: 'review-discuss', reviewEngine: engine };
 }
 
@@ -107,6 +109,14 @@ describe('saveSession + loadSession round-trip', () => {
         expect(loaded).not.toBeNull();
         expect(loaded!.mode).toBe('review-discuss');
         expect(loaded!.reviewEngine).toBe('critical');
+    });
+
+    it('round-trips a generic review-discuss session (Path B — manual entry)', async () => {
+        const vault = makeMemoryVault();
+        const entry = await saveSession(vault, dir, makeReviewDiscussState('generic'));
+        const loaded = await loadSession(vault, dir, entry.id);
+        expect(loaded).not.toBeNull();
+        expect(loaded!.reviewEngine).toBe('generic');
     });
 
     it('still loads older sidecars that omit reviewEngine', async () => {

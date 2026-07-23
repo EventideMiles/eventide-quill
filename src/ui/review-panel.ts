@@ -1453,14 +1453,31 @@ export class ReviewPanel extends AbstractChatPanel {
 
     /**
      * Mount the embedded CoWriterPanel (via the sidebar-provided provider)
-     * into `host`. The panel takes over the host as its container and runs
-     * its own render + lifecycle. No-op if no provider is wired or it
-     * returns null (e.g. the co-writer tools master toggle is off and the
-     * sidebar chose not to construct the embedded panel).
+     * into `host`. Sets the panel to `'review-discuss'` mode explicitly
+     * (never coach, never discuss) right before `setContainer`, eliminating
+     * any timing ambiguity from the sync block in the sidebar. The panel
+     * takes over the host as its container and runs its own render +
+     * lifecycle. No-op if no provider is wired or it returns null.
      */
     private mountEmbeddedPanel(host: HTMLElement): void {
         const panel = this.embeddedPanelProvider?.() ?? null;
         if (!panel) return;
+        // Explicit: the embedded panel is ALWAYS in review-discuss mode when
+        // mounted into the Review tab. This runs right before setContainer
+        // so the first render uses the correct mode — no gap for the default
+        // ('coach') to survive.
+        if (panel.getMode() !== 'review-discuss') {
+            panel.restoreMode('review-discuss');
+        }
+        if (__DEV__ && this.plugin?.settings.enableDebugLogging) {
+            const session = this.plugin.coWriterSession;
+            console.warn('[Quill Review] mountEmbeddedPanel', {
+                reviewEngine: session.reviewEngine,
+                chatHistoryLength: session.chatHistory.length,
+                discussMessagesLength: session.discussCurrentMessages.length,
+                panelModeBefore: panel.getMode()
+            });
+        }
         panel.setContainer(host);
         this.embeddedPanelMounted = true;
     }

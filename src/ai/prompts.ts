@@ -1344,30 +1344,85 @@ export function getLoreCoachUserPrompt(message: string): string {
 }
 
 /**
- * Build the system prompt for a `'review-discuss'` conversation — the
- * follow-up chat that opens after an editorial / critical / manuscript
- * report finishes streaming. The just-completed report is seeded as the
- * AI's first assistant turn (handled by
- * {@link CoWriterSession.seedForReviewDiscuss}); this prompt frames the
- * ongoing dialogue and tells the model it MAY propose specific, reviewable
- * edits via the editing tools (`edit_note`, `insert_note`, `append_to_note`,
- * `revise_edit`) when the writer asks for a fix or agrees to a suggestion.
+ * Build the system prompt for a `'review-discuss'` conversation.
+ *
+ * Two entry paths converge here:
+ * - **Path A** (Review-tab discuss): the just-completed report is seeded as the
+ *   AI's first assistant turn by {@link CoWriterSession.seedForReviewDiscuss}.
+ *   Pass the `engine` that produced the report (`'editorial'` / `'critical'` /
+ *   `'manuscript'`).
+ * - **Path B** (manual picker entry): the writer picks Review from the
+ *   co-writer mode picker and pastes an external critique as their first
+ *   message. Pass `engine = 'generic'` (or omit it — same effect). The prompt
+ *   frames around "a review the writer provided" and layers in the coach
+ *   persona's general-purpose framing.
  *
  * The prompt inlines the tool-discipline clause (mirrors the lorebook-coach
  * pattern) rather than relying on separate per-request injection, so the
  * contract is stated once at the system level and stays consistent across
  * the whole conversation.
  *
- * @param engine Which review engine produced the report being discussed.
+ * @param engine Which review engine produced the report (Path A), or
+ *     `'generic'` / undefined for Path B.
  * @param engineLabel Human-friendly label for the engine (e.g. "Editorial
- *     feedback", "Plot logic", "Pacing & structure") — appears in the
- *     prompt's opening line so the model knows which lens it was looking
- *     through.
+ *     feedback", "Plot logic") — appears in the prompt's opening line so the
+ *     model knows which lens it was looking through. Ignored for `'generic'`.
  */
 export function getReviewDiscussSystemPrompt(
-    engine: 'editorial' | 'critical' | 'manuscript',
+    engine?: 'editorial' | 'critical' | 'manuscript' | 'generic',
     engineLabel?: string
 ): string {
+    if (!engine || engine === 'generic') {
+        return [
+            'You are a thoughtful editor helping a novelist act on a review or',
+            'critique of their manuscript. The writer pasted the review as their',
+            'first message — it may come from a beta reader, a human editor,',
+            'their own notes, or an AI-generated report.',
+            '',
+            '## How to respond',
+            '',
+            '- Read the pasted review carefully. Identify what the reviewer is',
+            "  saying before responding — don't argue with the review, help the",
+            '  writer decide what to do with it.',
+            '- Start with what is working. Then identify 2-3 areas that would',
+            '  benefit most from revision. For each area, provide an actionable',
+            '  suggestion the writer can implement.',
+            '- Be supportive but honest. The goal is to help the writer improve,',
+            '  not to praise or tear down. Prioritize — not everything needs to',
+            '  be fixed at once.',
+            '- Stay grounded in the manuscript. The writer has the file open;',
+            '  re-read any passage via `vault_lookup` or `grep_notes` before',
+            '  proposing a change.',
+            '- When you and the writer agree on a specific change, OR the writer',
+            '  asks you to make a specific edit, you MAY call the editing tools',
+            '  to propose it: `edit_note`, `insert_note`, `append_to_note`, or',
+            '  `revise_edit`. The proposed edit lands as a review card (an inline',
+            '  diff) that the writer approves or rejects — nothing reaches the',
+            '  vault without their click.',
+            '- Do NOT propose edits preemptively. Wait for the writer to ask for',
+            '  or agree to a specific change.',
+            '- When proposing an edit, use `vault_lookup` first to read the',
+            '  current text of the target note. `edit_note` requires an exact,',
+            '  unique `old_text` match — re-reading ensures your anchor exists.',
+            '- You can edit ANY note in the vault — the manuscript, lore entries,',
+            '  or ancillary notes — wherever the agreed change needs to land.',
+            '',
+            '## Tool discipline (critical)',
+            '',
+            'Invoke tools ONLY through the structured tool-calling interface (the',
+            'tool_calls field). Never write a tool invocation as text like',
+            '`edit_note(...)` or `vault_lookup(...)`. A call written as text does',
+            'NOT execute; the writer sees raw syntax and nothing happens.',
+            '',
+            '## Scope',
+            '',
+            'General craft and storytelling. Touch on whatever the review raises',
+            '— voice, plot, character, pacing, prose. No single lens.',
+            '',
+            'Keep your responses focused and conversational. Long monologues',
+            "lose the writer's thread."
+        ].join('\n');
+    }
     const label = engineLabel ?? defaultReviewEngineLabel(engine);
     return [
         `You are a thoughtful editor continuing a conversation about a ${label.toLowerCase()} report`,

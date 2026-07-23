@@ -29,9 +29,10 @@ import type { ProposedEdit } from '../core/change-set';
 import type { SubagentView } from '../ai/subagent-session';
 
 /**
- * Co-writer input modes. `'review-discuss'` is intentionally absent from
- * {@link COWRITER_MODES} — it is entered only via the Review tab's "discuss
- * this report" entry point, never from the Co-writer mode picker.
+ * Co-writer input modes. `'review-discuss'` is a first-class mode reachable
+ * from either the Review tab's "discuss this report" entry point (Path A)
+ * or the Co-writer mode picker (Path B — manual entry, writer pastes an
+ * external review or critique as the first message).
  */
 export type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill' | 'lorebook' | 'review-discuss';
 
@@ -46,6 +47,12 @@ const COWRITER_MODES: { mode: InputMode; icon: string; label: string; desc: stri
         icon: '\u{1f4d6}',
         label: 'Lorebook',
         desc: 'Develop characters and lore entries with AI tools'
+    },
+    {
+        mode: 'review-discuss',
+        icon: '\u270e',
+        label: 'Review',
+        desc: 'Discuss a review or critique and act on it with editable suggestions'
     }
 ];
 
@@ -216,7 +223,7 @@ export class CoWriterPanel extends AbstractChatPanel {
      * currently subagents. {@link pendingImages} is cleared locally since it
      * lives on the panel.
      */
-    private onModeSwitch: (() => void) | null = null;
+    private onModeSwitch: ((newMode: InputMode) => void) | null = null;
     /** Open the conversation-history switcher (saved sessions). */
     private onHistory: (() => void) | null = null;
     /** Snapshot the current conversation to disk without clearing it. */
@@ -524,7 +531,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         // chatHistory reset for stateful-mode crossings is handled above via
         // onNewChat; this only clears the subagent views.
         if (oldMode !== mode) {
-            this.onModeSwitch?.();
+            this.onModeSwitch?.(mode);
         }
         this.scheduleRender();
     }
@@ -608,8 +615,8 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.onDiscardLoreDraft = handler;
     }
 
-    /** Wire a callback fired on every co-writer mode switch (used to clear session-scoped state like subagents). */
-    setModeSwitchHandler(handler: () => void): void {
+    /** Wire a callback fired on every co-writer mode switch (used to clear session-scoped state like subagents, and to set/clear the review-engine signal). */
+    setModeSwitchHandler(handler: (newMode: InputMode) => void): void {
         this.onModeSwitch = handler;
     }
 
@@ -1770,6 +1777,19 @@ export class CoWriterPanel extends AbstractChatPanel {
                 // before the async sweep work blocks the main thread.
                 const timeoutId = window.setTimeout(() => this.onRunFulfill?.(''));
                 this.renderEvents.register(() => window.clearTimeout(timeoutId));
+            });
+        } else if (this.inputMode === 'review-discuss') {
+            prompt.createDiv({ cls: 'quill-cowriter-panel__init-heading', text: '\u270e Review' });
+            prompt.createDiv({
+                cls: 'quill-cowriter-panel__init-desc',
+                text: 'Paste a review or critique below. The editor will help you discuss it and propose specific, reviewable edits to act on it.'
+            });
+            const startBtn = prompt.createEl('button', {
+                cls: 'quill-cowriter-panel__init-btn mod-cta',
+                text: 'Start reviewing'
+            });
+            this.renderEvents.registerDomEvent(startBtn, 'click', () => {
+                this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-panel__input')?.focus();
             });
         } else if (this.inputMode === 'discuss') {
             prompt.createDiv({ cls: 'quill-cowriter-panel__init-heading', text: 'Discuss' });

@@ -60,4 +60,40 @@ describe('getReviewDiscussSystemPrompt', () => {
         expect(prompt).toContain('vault_lookup');
         expect(prompt).toContain('grep_notes');
     });
+
+    describe('generic (Path B — manual entry)', () => {
+        it('produces a valid prompt when engine is "generic"', () => {
+            const prompt = getReviewDiscussSystemPrompt('generic');
+            // Path B framing: the writer pasted a review, not the AI delivering a report.
+            expect(prompt).toMatch(/review\s+or\s+critique/i);
+            expect(prompt).toMatch(/the writer pasted the review/i);
+        });
+
+        it('produces a valid prompt when engine is omitted', () => {
+            const prompt = getReviewDiscussSystemPrompt();
+            expect(prompt).toMatch(/review\s+or\s+critique/i);
+        });
+
+        it('includes the coach-persona framing (actionable, prioritized)', () => {
+            const prompt = getReviewDiscussSystemPrompt('generic');
+            expect(prompt).toMatch(/start with what is working/i);
+            expect(prompt).toMatch(/2-3 areas/i);
+            expect(prompt).toMatch(/actionable\s+suggestion/i);
+        });
+
+        it('still includes the tool-discipline + approval-gate clauses', () => {
+            const prompt = getReviewDiscussSystemPrompt('generic');
+            expect(prompt).toContain('tool_calls field');
+            expect(prompt).toContain('edit_note(');
+            expect(prompt).toMatch(/approves or rejects/i);
+            expect(prompt).toContain('vault_lookup');
+        });
+
+        it('does NOT reference a specific engine lens', () => {
+            const prompt = getReviewDiscussSystemPrompt('generic');
+            expect(prompt).not.toMatch(/Editorial lens:/);
+            expect(prompt).not.toMatch(/Critical lens:/);
+            expect(prompt).not.toMatch(/Manuscript lens:/);
+        });
+    });
 });

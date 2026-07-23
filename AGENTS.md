@@ -273,7 +273,10 @@ Tool tiers (gating):
 
 ### `'review-discuss'` mode (v1.4.0 — proactive editor chat)
 
-A fifth co-writer `InputMode` entered only via the Review tab's "discuss this report" entry points (queue "Discuss" button, saved-report picker, or follow-up after an interactive stream completes). Gated by `reviewSuggestedEditsEnabled` (default on). When active, the Review Results sub-tab hosts an **embedded `CoWriterPanel`** mounted into `.quill-review-panel__discuss-mount` (see `ReviewPanel.mountEmbeddedPanel`); the flat-report-rendered block + hand-rolled chat input are bypassed entirely.
+A fifth co-writer `InputMode` reachable via TWO entry points. Gated by `reviewSuggestedEditsEnabled` (default on). When active on the Review tab, the Results sub-tab hosts an **embedded `CoWriterPanel`** mounted into `.quill-review-panel__discuss-mount`; on the Co-writer tab it's a regular picker-selectable mode.
+
+- **Path A (Review-tab discuss):** entered after a report finishes streaming, via the queue "Discuss" button, or via the saved-report picker. `seedForReviewDiscuss` pre-seeds the report as the first assistant turn. `reviewEngine` is set to `'editorial'` / `'critical'` / `'manuscript'`.
+- **Path B (Co-writer picker):** the writer picks "Review" (✎) from the mode picker. Fresh chat; the empty-state prompt says "Paste a review or critique below." The writer's first message IS the review (external critic, beta-reader notes, etc.). `reviewEngine` is set to `'generic'`, which uses the coach persona's general framing in the system prompt.
 
 - **Toolset** = `createToolRegistry(plugin, false, false)` — same as `discuss`: all 12 internal tools, no `propose_entry`/`attach_lore_image`, no subagent spawners. Network/image tools follow their existing toggles. Locked down by `tests/ai/tools/tool-registry.test.ts`.
 - **System prompt** = `getReviewDiscussSystemPrompt(engine, engineLabel?)` (`prompts.ts`) — inlines the `TOOL_DISCIPLINE` clause (lorebook-coach pattern), tells the model it MAY call editing tools when the writer asks/agrees, tells it NOT to edit preemptively, restates the approval-gate contract.

@@ -19,6 +19,7 @@ import {
     getLoreCoachSystemPrompt,
     getLoreCoachUserPrompt,
     getResearchSystemPrompt,
+    getReviewDiscussSystemPrompt,
     type ActiveSteering
 } from './prompts';
 import { compactConversation } from './compaction';
@@ -484,11 +485,13 @@ export interface SerializedCoWriterState {
     mode: string;
     /**
      * For `'review-discuss'` mode: which review engine produced the report
-     * this session is following up on. `null` for all other modes (and for
-     * review-discuss sessions prior to the field's introduction). Optional on
-     * the wire so older sidecars still pass {@link isValidState}.
+     * this session is following up on. `'generic'` covers the manual-entry
+     * path (writer picked Review from the picker and pastes their own
+     * critique). `null` for all other modes (and for review-discuss
+     * sessions prior to the field's introduction). Optional on the wire so
+     * older sidecars still pass {@link isValidState}.
      */
-    reviewEngine?: 'editorial' | 'critical' | 'manuscript' | null;
+    reviewEngine?: 'editorial' | 'critical' | 'manuscript' | 'generic' | null;
     chatHistory: CoWriterChatMessage[];
     discussCurrentMessages: ChatMessage[];
     loreCoachMessages: ChatMessage[];
@@ -520,11 +523,13 @@ export class CoWriterSession {
     manuscriptPath: string | null = null;
     /**
      * For `'review-discuss'` mode: which review engine produced the report
-     * this session is following up on. Carries into the saved-session label
+     * this session is following up on. `'generic'` covers the manual-entry
+     * path (writer picked Review from the picker and pastes an external
+     * critique as the first message). Carries into the saved-session label
      * so the writer can identify the chat in the History modal. `null` in
      * every other mode.
      */
-    reviewEngine: 'editorial' | 'critical' | 'manuscript' | null = null;
+    reviewEngine: 'editorial' | 'critical' | 'manuscript' | 'generic' | null = null;
     /** Full document text at the time an option was applied. */
     originalText = '';
     /** Offset in the document where the AI's insertion begins. */
@@ -1178,13 +1183,20 @@ export class CoWriterSession {
 
         const prompt = getCoWriterDiscussPrompt(proseForContext || '(empty document)', message);
 
-        // Initialize discussCurrentMessages on first call: system prompt + first user message
+        // Initialize discussCurrentMessages on first call: system prompt + first user message.
+        // When in review-discuss mode (entered via the picker, Path B), use the dedicated
+        // review-discuss prompt instead of the generic discuss one. Path A (Review-tab
+        // discuss) pre-seeds discussCurrentMessages via seedForReviewDiscuss, so this init
+        // block is skipped for that path.
         if (this.discussCurrentMessages.length === 0) {
-            const systemPrompt: ChatMessage = {
-                role: 'system',
-                content:
-                    'You are a thoughtful, knowledgeable editor assisting a novelist in a discussion about their work. Respond with specific, craft-focused observations. Ask clarifying questions when helpful. Keep to analysis and discussion, generating prose only when the writer explicitly asks for it.'
-            };
+            const systemPrompt: ChatMessage =
+                this.reviewEngine !== null
+                    ? { role: 'system', content: getReviewDiscussSystemPrompt(this.reviewEngine) }
+                    : {
+                          role: 'system',
+                          content:
+                              'You are a thoughtful, knowledgeable editor assisting a novelist in a discussion about their work. Respond with specific, craft-focused observations. Ask clarifying questions when helpful. Keep to analysis and discussion, generating prose only when the writer explicitly asks for it.'
+                      };
             this.discussCurrentMessages = [systemPrompt];
         }
 

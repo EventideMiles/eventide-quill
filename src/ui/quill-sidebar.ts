@@ -808,8 +808,9 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setRegenerateHandler((messageId) => {
                 void this.plugin.regenerateCoWriterResponse(messageId);
             });
-            this.coWriterPanel.setModeSwitchHandler(() => {
+            this.coWriterPanel.setModeSwitchHandler((newMode) => {
                 this.plugin.clearCoWriterSubagents();
+                this.syncReviewEngine(newMode);
             });
             this.coWriterPanel.setCoachMessageHandler((message: string, images?: string[], mentionPaths?: string[]) => {
                 void this.plugin.sendCoWriterCoach(message, images, mentionPaths);
@@ -979,8 +980,9 @@ export class QuillSidebarView extends ItemView {
             p.setRewindHandler((messageId) => {
                 this.plugin.rewindCoWriterChat(messageId);
             });
-            p.setModeSwitchHandler(() => {
+            p.setModeSwitchHandler((newMode) => {
                 this.plugin.clearCoWriterSubagents();
+                this.syncReviewEngine(newMode);
             });
             p.setApproveLoreEditHandler((filePath, id) => {
                 this.plugin.approveLoreEdit(filePath, id);
@@ -1017,14 +1019,6 @@ export class QuillSidebarView extends ItemView {
             this.embeddedCoWriterPanel.setProposedLoreImages(session.getLoreImageCardViews());
             this.embeddedCoWriterPanel.setSubagents(session.getSubagentViews());
             this.embeddedCoWriterPanel.setActiveSubagent(session.activeSubagentId);
-            // Mirror the session's review-discuss state into the embedded panel's
-            // inputMode. Uses restoreMode (no side effects) rather than setMode
-            // because the session is already seeded — we're not asking the panel
-            // to drive a reset, just to render in the right mode.
-            const desiredMode = session.reviewEngine !== null ? 'review-discuss' : 'discuss';
-            if (this.embeddedCoWriterPanel.getMode() !== desiredMode) {
-                this.embeddedCoWriterPanel.restoreMode(desiredMode);
-            }
         }
 
         const chat = this.plugin.getDefaultChatProvider();
@@ -1033,6 +1027,30 @@ export class QuillSidebarView extends ItemView {
         }
 
         return this.embeddedCoWriterPanel;
+    }
+
+    /**
+     * Sync the session's `reviewEngine` signal on every co-writer mode switch.
+     * Entering `'review-discuss'` via the picker sets it to `'generic'` (Path B —
+     * the writer will paste an external critique). Leaving review-discuss
+     * clears it back to null. Path A (Review-tab discuss) sets the engine via
+     * `seedForReviewDiscuss` and is unaffected — this only fires on manual
+     * mode switches via the picker or right-click submenu.
+     */
+    private syncReviewEngine(newMode: InputMode): void {
+        const session = this.plugin.coWriterSession;
+        if (newMode === 'review-discuss') {
+            // Only set to 'generic' if not already set by Path A seeding.
+            // This preserves the engine when crossing discuss ↔ review-discuss
+            // (both use discussCurrentMessages, so the seeded engine is still
+            // relevant). But if coming from a fresh mode (coach/fulfill/lorebook),
+            // reviewEngine was null — set it to 'generic' for Path B.
+            if (session.reviewEngine === null) {
+                session.reviewEngine = 'generic';
+            }
+        } else {
+            session.reviewEngine = null;
+        }
     }
 
     reviewStartLoading(engine: 'editorial' | 'critical' | 'manuscript', headerLabel: string, subLabel?: string): void {
