@@ -20,7 +20,8 @@ import {
 
 describe('checkLongSentences', () => {
     it('flags sentences exceeding the word limit', () => {
-        const long = 'This is a sentence that goes on and on and on and keeps going well past the default threshold of forty words which is quite long indeed and should absolutely be flagged by the linter as exceeding the configured maximum length.';
+        const long =
+            'This is a sentence that goes on and on and on and keeps going well past the default threshold of forty words which is quite long indeed and should absolutely be flagged by the linter as exceeding the configured maximum length.';
         const results = checkLongSentences(long, 40);
         expect(results.length).toBeGreaterThanOrEqual(1);
         expect(results[0]!.rule).toBe('long-sentences');
@@ -123,67 +124,52 @@ describe('checkEchoes', () => {
         expect(checkEchoes(text)).toEqual([]);
     });
 
-    // Regression: column was hardcoded to 1, so the highlight landed on the
-    // 2nd character of the paragraph start instead of on the echoed phrase.
-    // Reproduces the user report where "He had" (echoing mid-paragraph) was
-    // flagged but the highlight + AI-fix target pointed at "As he walked"
-    // (the paragraph's opening words).
-    it('points the result range at the echoed phrase, not the paragraph start', () => {
-        const text =
-            'As he walked along the campus something caught his eyes. ' +
-            'It was another rabbit, though this one was just a bit shorter than him and more lithe. ' +
-            'He had charcoal black fur, as opposed to Owen\'s own tan fur, and striking violet eyes. ' +
-            'He had several white accents on his body, including around his muzzle and on what could be seen of his chest. ' +
-            'He was holding a stack of papers, and as he saw Owen approaching he seemed to brighten up.';
+    // Regression: the echo result's line/column must point at the first
+    // occurrence of the echoed phrase, not the paragraph start. Pre-fix the
+    // column was hardcoded to 1, landing the highlight on the wrong word.
+    // Each case pins the exact line, column, and phrase content read back
+    // from the source text.
+    it.each([
+        {
+            name: 'single-line paragraph',
+            text:
+                'The morning was cold and quiet. A faint sound drifted from the hallway. ' +
+                'He had left the window open all night. He had forgotten to check the lock.',
+            line: 1,
+            column: 72,
+            phrase: 'he had'
+        },
+        {
+            name: 'multiline paragraph (echo after a newline)',
+            text:
+                'First sentence sets the scene.\n' +
+                'He had walked the road for hours.\n' +
+                'He had no memory of turning back.\n' +
+                'He had left the map behind.',
+            line: 2,
+            column: 0,
+            phrase: 'he had'
+        },
+        {
+            name: 'paragraph not last in document (PARA_BREAK loop path)',
+            text:
+                'The morning was cold and quiet. A faint sound drifted from the hallway. ' +
+                'He had left the window open all night. He had forgotten to check the lock.\n\n' +
+                'Second paragraph here. Nothing echoes.',
+            line: 1,
+            column: 72,
+            phrase: 'he had'
+        }
+    ])('points the echo result at the correct line and column: $name', ({ text, line, column, phrase }) => {
         const results = checkEchoes(text);
         expect(results.length).toBe(1);
-        const r = results[0]!;
-        // The flagged span, read out of the line at the reported position,
-        // must actually BE the echoed phrase (case-insensitive). Pre-fix this
-        // returned "s he w" because column was hardcoded to 1.
-        const oneLine = text; // single-line paragraph: result.line === 1
-        const flagged = oneLine.slice(r.column, r.column + r.length);
-        expect(flagged.toLowerCase()).toBe('he had');
-    });
-
-    // Regression: when the echoed phrase sits on a later line of a multiline
-    // (single-\n) paragraph, the reported line must be the phrase's actual
-    // line, not line 1 — and slicing that line by column+length must yield the
-    // echoed phrase verbatim.
-    it('reports the echoed phrase line and column across newlines', () => {
-        const text =
-            'First line introduces the scene here.\n' +
-            'He had been walking for hours in the cold.\n' +
-            'He had no idea where he was going next.\n' +
-            'He had forgotten the map back at the inn.';
-        const results = checkEchoes(text);
-        const echo = results.find((r) => r.rule === 'echoes' && r.message.includes('he had'));
-        expect(echo).toBeDefined();
-        // The echoed phrase is on line 2 (1-based) of the multiline paragraph.
-        const phraseLine = text.split('\n')[echo!.line - 1]!;
-        const flagged = phraseLine.slice(echo!.column, echo!.column + echo!.length);
-        expect(flagged.toLowerCase()).toBe('he had');
-    });
-
-    it('points at the echoed phrase when the paragraph is not the last in the document', () => {
-        // Same scenario, but the echoing paragraph is followed by another
-        // paragraph — exercises the PARA_BREAK while-loop path rather than
-        // the trailing-paragraph path.
-        const text =
-            'As he walked along the campus something caught his eyes. ' +
-            'It was another rabbit, though this one was just a bit shorter than him and more lithe. ' +
-            'He had charcoal black fur, as opposed to Owen\'s own tan fur, and striking violet eyes. ' +
-            'He had several white accents on his body, including around his muzzle and on what could be seen of his chest. ' +
-            'He was holding a stack of papers, and as he saw Owen approaching he seemed to brighten up.\n\n' +
-            'Owen waved. The rabbit waved back.';
-        const results = checkEchoes(text);
-        const echo = results.find((r) => r.rule === 'echoes' && r.message.includes('he had'));
-        expect(echo).toBeDefined();
-        // The paragraph is on line 1; the echoed phrase starts somewhere in
-        // the middle of that line. Verify by reading back from the position.
-        const line1 = text.split('\n')[0]!;
-        const flagged = line1.slice(echo!.column, echo!.column + echo!.length);
-        expect(flagged.toLowerCase()).toBe('he had');
+        const echo = results[0]!;
+        expect(echo.rule).toBe('echoes');
+        expect(echo.line).toBe(line);
+        expect(echo.column).toBe(column);
+        const lineText = text.split('\n')[line - 1]!;
+        const flagged = lineText.slice(column, column + echo.length);
+        expect(flagged.toLowerCase()).toBe(phrase);
     });
 });
 
