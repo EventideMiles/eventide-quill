@@ -65,7 +65,7 @@ import { mediawikiArticleCount } from './ai/tools/mediawiki';
 import type { ChatMessage } from './ai/provider';
 
 import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
-import type { LoreDraftEntry } from './ai/co-writer';
+import type { LoreDraftEntry, SerializedCoWriterState } from './ai/co-writer';
 import { MobileStreamWatchdog, notifyMobileStreamRisk } from './ai/mobile-watchdog';
 import { resolveSessionsDir, listSessions, saveSession, loadSession, deleteSession } from './ai/conversation-store';
 import { SessionListModal } from './ui/session-list-modal';
@@ -397,6 +397,28 @@ export default class EventideQuillPlugin extends Plugin {
      * existing session file; when null, a snapshot creates a new one.
      */
     private currentCoWriterSessionId: string | null = null;
+    /**
+     * Background snapshot of the co-writer-tab chat, captured when the writer
+     * enters review-discuss mode (or swaps to the Review tab with an active
+     * review-discuss session). Restored when the writer switches back to the
+     * Co-writer tab. Null when there's no saved co-writer chat to return to
+     * (either never set, or already restored). Part of v1.4.0's snapshot-on-
+     * tab-swap protocol — see {@link swapSessionForTab}.
+     *
+     * Persistence limitation: the background snapshot is in-memory only. If
+     * Obsidian closes while a background chat exists, only the foreground
+     * (active) chat is auto-saved by the existing onunload snapshot path.
+     * Writers who care about preserving a background chat should switch to
+     * that tab before closing. Persisting both slots across restarts is a
+     * v1.4.x follow-on (would need per-slot sidecar tracking).
+     */
+    private coWriterBackgroundSnapshot: SerializedCoWriterState | null = null;
+    /**
+     * Background snapshot of the Review-tab review-discuss chat, captured when
+     * the writer swaps from Review (with active discuss) to Co-writer. Restored
+     * when they switch back. Null when there's no saved review-discuss session.
+     */
+    private reviewBackgroundSnapshot: SerializedCoWriterState | null = null;
     /** Proposed transform edit awaiting inline review (one at a time). */
     transformChangeSet: ChangeSet = new ChangeSet();
     /** Proposed batch lint-fix edits awaiting inline review. */
@@ -2709,8 +2731,69 @@ export default class EventideQuillPlugin extends Plugin {
         reportText: string,
         engineLabel?: string
     ): void {
+        const session = this.coWriterSession;
+        // If the session currently holds a non-review-discuss chat, snapshot it
+        // so the writer can resume by switching to the Co-writer tab. This is
+        // the cross-tab hand-off: the seedForReviewDiscuss call below clears
+        // the session, so without this snapshot the prior chat would be lost.
+        if (session.reviewEngine === null && session.chatHistory.length > 0) {
+            const outgoingMode = this.lintPanel?.coWriterGetMode() ?? 'discuss';
+            this.coWriterBackgroundSnapshot = session.snapshotState(outgoingMode);
+        }
         const systemPrompt = getReviewDiscussSystemPrompt(engine, engineLabel);
-        this.coWriterSession.seedForReviewDiscuss({ engine, systemPrompt, reportText });
+        session.seedForReviewDiscuss({ engine, systemPrompt, reportText });
+    }
+
+    /**
+     * Snapshot-swap the shared co-writer session between the Review and
+     * Co-writer tabs. Called by the sidebar's tab-switch handler on every
+     * Review ↔ Co-writer transition. Each tab gets its own conversation
+     * state — the writer can carry on a review-discuss in parallel with a
+     * co-writer chat without one clobbering the other.
+     *
+     * Protocol:
+     *  - Review → Co-writer with active review-discuss: snapshot the
+     *    review-discuss state into {@link reviewBackgroundSnapshot}, restore
+     *    {@link coWriterBackgroundSnapshot} if any (else start a fresh chat).
+     *  - Co-writer → Review with a saved review-discuss: snapshot the
+     *    co-writer state into {@link coWriterBackgroundSnapshot}, restore
+     *    {@link reviewBackgroundSnapshot}, and tell the Review panel to
+     *    re-enter discuss mode so the embedded CoWriterPanel re-mounts.
+     *
+     * No-op for transitions that don't cross Review ↔ Co-writer, and when
+     * there's no saved state to swap to.
+     */
+    swapSessionForTab(targetTab: 'review' | 'cowriter'): void {
+        const session = this.coWriterSession;
+        const inReviewDiscuss = session.reviewEngine !== null;
+        if (targetTab === 'cowriter') {
+            // Leaving Review for Co-writer.
+            if (!inReviewDiscuss) return; // nothing to swap; session is already the co-writer chat
+            this.reviewBackgroundSnapshot = session.snapshotState('review-discuss');
+            if (this.coWriterBackgroundSnapshot) {
+                session.restoreState(this.coWriterBackgroundSnapshot);
+                this.coWriterBackgroundSnapshot = null;
+            } else {
+                // No prior co-writer chat to return to — start fresh.
+                session.resetChat(true);
+                session.reviewEngine = null;
+            }
+            this.lintPanel?.coWriterRefresh();
+        } else if (targetTab === 'review') {
+            // Leaving Co-writer for Review.
+            if (!this.reviewBackgroundSnapshot) return; // no review-discuss to restore
+            // Snapshot the outgoing co-writer chat (if it has content).
+            if (!inReviewDiscuss && session.chatHistory.length > 0) {
+                const outgoingMode = this.lintPanel?.coWriterGetMode() ?? 'discuss';
+                this.coWriterBackgroundSnapshot = session.snapshotState(outgoingMode);
+            }
+            session.restoreState(this.reviewBackgroundSnapshot);
+            this.reviewBackgroundSnapshot = null;
+            // Tell the Review panel to mount the embedded panel with the
+            // restored state. Without this, ReviewPanel doesn't know the
+            // session now holds a review-discuss conversation.
+            this.lintPanel?.reviewRestoreDiscussAfterSwap();
+        }
     }
 
     /**

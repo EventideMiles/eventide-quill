@@ -1418,6 +1418,26 @@ export class ReviewPanel extends AbstractChatPanel {
     }
 
     /**
+     * Re-enter discuss mode after a snapshot swap restored a review-discuss
+     * session into the shared co-writer session. Called by the sidebar when
+     * the writer switches back to the Review tab. Forces a transition even
+     * if `discussMode` was already true (the embedded panel was unmounted on
+     * the tab switch and needs to re-mount with the restored state).
+     */
+    restoreDiscussAfterSwap(): void {
+        if (!this.plugin?.settings.reviewSuggestedEditsEnabled) return;
+        // Force the embedded panel to re-mount by marking it as unmounted.
+        // The next render() call in discuss mode will create a fresh mount
+        // div and call setContainer on the embedded panel, which re-renders
+        // with the (now-restored) session state.
+        this.subtab = 'results';
+        this.resultsState = 'complete';
+        this.discussMode = true;
+        this.embeddedPanelMounted = false;
+        if (this.containerEl) this.render();
+    }
+
+    /**
      * Leave discuss mode and return to whatever subtab/state the panel is
      * otherwise in. Detaches the embedded panel from the DOM (the panel
      * instance itself is owned by the sidebar and survives for re-mount).
