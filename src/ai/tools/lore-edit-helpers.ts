@@ -206,13 +206,10 @@ export function findTextInContent(content: string, oldText: string): TextMatchRe
     // Fast path: exact character-for-character match.
     const exactIdx = content.indexOf(oldText);
     if (exactIdx !== -1) {
-        // Check uniqueness — if the exact text appears multiple times, the
-        // caller (edit_note) handles the ambiguity. Return the first match;
-        // the caller checks for multiples separately.
         return { from: exactIdx, to: exactIdx + oldText.length, exact: true };
     }
 
-    // Fallback: whitespace-insensitive match. Collapse all whitespace runs
+    // Fallback 1: whitespace-insensitive match. Collapse all whitespace runs
     // in both strings to single spaces, then search. Build a mapping from
     // normalized positions back to original positions so the match range
     // can be projected onto the real content.
@@ -220,16 +217,20 @@ export function findTextInContent(content: string, oldText: string): TextMatchRe
     const { normalized: normOld } = normalizeWhitespace(oldText);
 
     const normIdx = normContent.indexOf(normOld);
-    if (normIdx === -1) return null;
+    if (normIdx !== -1) {
+        const from = origPositions[normIdx] ?? 0;
+        const lastNormIdx = normIdx + normOld.length - 1;
+        const to = origPositions[lastNormIdx + 1] ?? content.length;
+        return { from, to, exact: false };
+    }
 
-    // Map normalized positions back to original positions. origPositions[i]
-    // gives the original-content offset of the character at normContent[i].
-    const from = origPositions[normIdx] ?? 0;
-    const lastNormIdx = normIdx + normOld.length - 1;
-    // The original range extends one past the last mapped position to include
-    // any trailing whitespace that was collapsed.
-    const to = origPositions[lastNormIdx + 1] ?? content.length;
-    return { from, to, exact: false };
+    // Fallback 2: fuzzy paragraph match. Local/quantized models can't
+    // reproduce text character-for-character. Split the content at paragraph
+    // boundaries and find the paragraph with the highest word overlap. If
+    // overlap is above threshold, accept the match — the model's old_text is
+    // close enough to identify the right passage even if individual words
+    // differ slightly.
+    return findFuzzyParagraphMatch(content, oldText);
 }
 
 /**
@@ -340,4 +341,70 @@ export function buildNotFoundHint(content: string, oldText: string): string {
         `Re-read this section, then retry edit_note with old_text copied verbatim from the CURRENT ` +
         `file content above (not from memory — the note may have been edited since you last saw it).`
     );
+}
+
+/**
+ * Minimum word-overlap percentage for a fuzzy paragraph match to be accepted.
+ * At 75%, three quarters of the old_text's distinctive words must appear in
+ * the content paragraph — high enough to avoid false positives, low enough
+ * to handle quantized models that paraphrase slightly.
+ */
+const FUZZY_MATCH_THRESHOLD = 0.75;
+
+/**
+ * Fuzzy paragraph-level matching for when exact and whitespace-insensitive
+ * matching both fail (common with quantized/local models that can't reproduce
+ * text verbatim). Splits the content at paragraph boundaries, scores each
+ * paragraph by word overlap with `oldText`, and returns the best match if it
+ * exceeds the threshold.
+ *
+ * Distinctive words (length > 3) are used for scoring so common words like
+ * "the", "and", "said" don't inflate the overlap. The match is case-insensitive.
+ */
+function findFuzzyParagraphMatch(content: string, oldText: string): TextMatchResult | null {
+    const oldWords = [
+        ...new Set(
+            oldText
+                .toLowerCase()
+                .split(/\s+/)
+                .filter((w) => w.length > 3)
+        )
+    ];
+    if (oldWords.length < 5) return null; // too few distinctive words to score reliably
+
+    // Split content into paragraphs with their character offsets.
+    const paragraphs: { text: string; from: number; to: number }[] = [];
+    let paraStart = 0;
+    for (let i = 0; i < content.length; i++) {
+        if (content[i] === '\n' && i + 1 < content.length && content[i + 1] === '\n') {
+            const text = content.slice(paraStart, i);
+            if (text.trim()) paragraphs.push({ text, from: paraStart, to: i });
+            paraStart = i + 2; // skip the double newline
+            i++; // skip the second \n
+        }
+    }
+    // Last paragraph (no trailing double newline).
+    const lastText = content.slice(paraStart);
+    if (lastText.trim()) paragraphs.push({ text: lastText, from: paraStart, to: content.length });
+
+    let bestScore = 0;
+    let bestPara: { from: number; to: number } | null = null;
+
+    for (const para of paragraphs) {
+        const paraLower = para.text.toLowerCase();
+        let score = 0;
+        for (const word of oldWords) {
+            if (paraLower.includes(word)) score++;
+        }
+        const ratio = score / oldWords.length;
+        if (ratio > bestScore) {
+            bestScore = ratio;
+            bestPara = { from: para.from, to: para.to };
+        }
+    }
+
+    if (bestPara && bestScore >= FUZZY_MATCH_THRESHOLD) {
+        return { from: bestPara.from, to: bestPara.to, exact: false };
+    }
+    return null;
 }
