@@ -1428,9 +1428,9 @@ export function getReviewDiscussSystemPrompt(
             '',
             '## Style',
             '',
-            'Do NOT use em dashes in your responses. They are an AI writing tell',
-            'that distractingly marks your text as machine-generated. Use periods,',
-            'commas, colons, or parentheses to structure your sentences instead.'
+            'Use natural, human punctuation: periods, commas, colons, and',
+            'parentheses. Em dashes in particular read as an AI writing tell, so',
+            'keep your sentence structure grounded in standard stops.'
         ].join('\n');
     }
     const label = engineLabel ?? defaultReviewEngineLabel(engine);
@@ -1487,9 +1487,9 @@ export function getReviewDiscussSystemPrompt(
         '',
         '## Style',
         '',
-        'Do NOT use em dashes in your responses. They are an AI writing tell',
-        'that distractingly marks your text as machine-generated. Use periods,',
-        'commas, colons, or parentheses to structure your sentences instead.'
+        'Use natural, human punctuation: periods, commas, colons, and',
+        'parentheses. Em dashes in particular read as an AI writing tell, so',
+        'keep your sentence structure grounded in standard stops.'
     ].join('\n');
 }
 

@@ -61,11 +61,12 @@ describe('getReviewDiscussSystemPrompt', () => {
         expect(prompt).toContain('grep_notes');
     });
 
-    it('tells the model to avoid em dashes', () => {
+    it('tells the model to prefer natural punctuation over em dashes', () => {
         const prompt = getReviewDiscussSystemPrompt('editorial');
-        expect(prompt).toMatch(/do NOT use em dashes/i);
+        expect(prompt).toMatch(/natural.*punctuation/i);
+        expect(prompt).toMatch(/em dashes/i);
         const generic = getReviewDiscussSystemPrompt('generic');
-        expect(generic).toMatch(/do NOT use em dashes/i);
+        expect(generic).toMatch(/natural.*punctuation/i);
     });
 
     describe('generic (Path B — manual entry)', () => {
