@@ -91,27 +91,6 @@ export const editNoteTool: Tool = {
         const aiIsmError = checkAiIsms(newText);
         if (aiIsmError) return aiIsmError;
 
-        // Paragraph guard: reject edits where old_text spans multiple
-        // paragraphs (contains blank-line breaks). Multi-paragraph matches
-        // fail reliably and produce overwhelming review cards. The model
-        // should issue one edit_note per paragraph.
-        const paragraphs = oldText.split(/\n\s*\n/).filter((p) => p.trim().length > 0);
-        if (paragraphs.length > 1) {
-            const preview = paragraphs
-                .map((p, i) => {
-                    const snippet = p.trim().slice(0, 60);
-                    return `  ${i + 1}. "${snippet}${p.trim().length > 60 ? '...' : ''}"`;
-                })
-                .join('\n');
-            return (
-                `Error: old_text spans ${paragraphs.length} paragraphs (separated by blank ` +
-                `lines). Re-issue as ${paragraphs.length} separate edit_note calls — one per ` +
-                `paragraph. Issue ALL of them in this response (multiple tool calls per turn ` +
-                `are supported). Here are the paragraph boundaries:\n${preview}\n\n` +
-                `Each call: old_text = just that one paragraph, new_text = your rewrite of it.`
-            );
-        }
-
         const { plugin } = ctx;
         const file = resolveNoteFile(plugin, path);
         if (!file) return `Error: note "${path}" not found in the vault.`;
@@ -119,31 +98,36 @@ export const editNoteTool: Tool = {
         const content = await readNoteContent(plugin, file.path);
         if (content === null) return `Error: could not read "${file.path}".`;
 
-        // Find the excerpt to replace — a replace range [from, to).
-        // Try exact match first, then fall back to whitespace-insensitive
-        // matching so the model's old_text succeeds even when its indentation
-        // or line wrapping differs slightly from the file.
-        const match = findTextInContent(content, oldText);
-        if (!match) {
-            const hint = buildNotFoundHint(content, oldText);
-            return `Error: old_text not found in "${file.path}". ${hint}`;
+        // Determine edit units: if old_text spans multiple paragraphs, try to
+        // auto-split into paragraph-level edits (matching old paragraphs to
+        // new paragraphs by position). This avoids the model having to issue
+        // separate tool calls, which it struggles with.
+        const oldParas = oldText.split(/\n\s*\n/).filter((p) => p.trim().length > 0);
+        const newParas = newText.split(/\n\s*\n/).filter((p) => p.trim().length > 0);
+
+        let editPairs: { oldText: string; newText: string }[];
+        if (oldParas.length > 1 && oldParas.length === newParas.length) {
+            // Auto-split: pair paragraphs by position.
+            editPairs = oldParas.map((old, i) => ({ oldText: old, newText: newParas[i]! }));
+        } else if (oldParas.length > 1 && newParas.length === 1) {
+            // Model merged paragraphs. Reject — can't auto-split new_text.
+            const preview = oldParas
+                .map((p, i) => {
+                    const snippet = p.trim().slice(0, 50);
+                    return `  ${i + 1}. "${snippet}${p.trim().length > 50 ? '...' : ''}"`;
+                })
+                .join('\n');
+            return (
+                `Error: old_text has ${oldParas.length} paragraphs but new_text has only 1. ` +
+                'Keep the same paragraph structure in new_text (same number of blank-line ' +
+                'breaks), or issue separate edit_note calls.\n\n' +
+                `old_text paragraphs:\n${preview}`
+            );
+        } else {
+            editPairs = [{ oldText, newText }];
         }
-        const { from, to } = match;
 
-        // Uniqueness check: if the matched text (or a whitespace variant of it)
-        // appears elsewhere, the model needs to provide a larger excerpt.
-        if (hasAdditionalMatch(content, oldText, from, to)) {
-            return `Error: old_text matches multiple places in "${file.path}". Pass a larger excerpt that uniquely identifies the section to change.`;
-        }
-
-        // Reject overlaps BEFORE opening a tab, so a conflicting proposal
-        // doesn't spawn a review tab. Keeps pending edits on a file pairwise
-        // disjoint — the invariant that makes any approval order safe.
-        const existingEntry = plugin.coWriterSession.loreEdits.get(file.path);
-        const conflict = existingEntry ? overlapError(existingEntry.changeSet, from, to) : null;
-        if (conflict) return conflict;
-
-        // Open the note and push the diff.
+        // Open the note once (shared across all paragraph edits).
         const opened = await openNoteForEdit(plugin.app, file.path);
         if (!opened) return `Error: could not open "${file.path}" for review.`;
 
@@ -151,22 +135,53 @@ export const editNoteTool: Tool = {
         if (!opened.wasAlreadyOpen) {
             session.loreEditOpenedByTool.add(file.path);
         }
-        // Edits accumulate per file. Offsets are in original-document coordinates
-        // because lore edits are proposed, never applied, until the writer
-        // approves — so concurrent proposals don't shift each other's ranges.
         const entry = session.getOrCreateLoreEdit(file.path, file.basename);
 
-        const created = entry.changeSet.add({
-            from,
-            to,
-            newText,
-            label: `Edit ${file.basename}`,
-            originalText: oldText
-        });
+        // Stage each paragraph edit independently.
+        let staged = 0;
+        let skipped = 0;
+        const errors: string[] = [];
+        for (const { oldText: editOld, newText: editNew } of editPairs) {
+            const match = findTextInContent(content, editOld);
+            if (!match) {
+                const hint = buildNotFoundHint(content, editOld);
+                errors.push(`paragraph not found: ${hint}`);
+                skipped++;
+                continue;
+            }
+            if (hasAdditionalMatch(content, editOld, match.from, match.to)) {
+                errors.push('old_text matches multiple places');
+                skipped++;
+                continue;
+            }
+            const conflict = overlapError(entry.changeSet, match.from, match.to);
+            if (conflict) {
+                errors.push(conflict);
+                skipped++;
+                continue;
+            }
+            entry.changeSet.add({
+                from: match.from,
+                to: match.to,
+                newText: editNew,
+                label: `Edit ${file.basename}`,
+                originalText: editOld
+            });
+            staged++;
+        }
 
         pushLoreEditDiff(opened.cm, entry.changeSet, file.path, plugin.app);
         session.onLoreEditUpdate?.();
 
-        return `Edit proposed for "${file.basename}" (edit id ${created.id}). The writer will see the diff and can approve or reject it. Continue with your response.`;
+        if (staged === 0) {
+            return `Error: could not stage any edits for "${file.basename}". ${errors.join('; ')}`;
+        }
+        if (editPairs.length === 1) {
+            return `Edit proposed for "${file.basename}" (edit id ${entry.changeSet.edits[entry.changeSet.edits.length - 1]?.id}). The writer will see the diff and can approve or reject it. Continue with your response.`;
+        }
+        const summary = `Split into ${staged} paragraph-level edit${staged === 1 ? '' : 's'} for "${file.basename}"`;
+        return skipped > 0
+            ? `${summary} (${skipped} skipped). The writer will see each as a separate review card.`
+            : `${summary}. The writer will see each as a separate review card.`;
     }
 };
