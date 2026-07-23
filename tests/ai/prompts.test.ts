@@ -4,10 +4,8 @@ import { getReviewDiscussSystemPrompt } from '../../src/ai/prompts';
 describe('getReviewDiscussSystemPrompt', () => {
     it('includes the tool-discipline clause', () => {
         const prompt = getReviewDiscussSystemPrompt('editorial');
-        // Mirrors the lorebook-coach pattern: the discipline clause must be
-        // inlined in the system prompt itself, not rely on per-request injection.
         expect(prompt).toContain('tool_calls field');
-        expect(prompt).toMatch(/never write a tool invocation as text/i);
+        expect(prompt).toMatch(/tool invocation written as text/i);
         expect(prompt).toContain('edit_note(');
     });
 
@@ -20,9 +18,7 @@ describe('getReviewDiscussSystemPrompt', () => {
 
     it('tells the model to wait for the writer to ask before proposing edits', () => {
         const prompt = getReviewDiscussSystemPrompt('manuscript');
-        expect(prompt).toMatch(/do NOT propose edits preemptively/i);
-        // Word-boundary spans a line break in the prompt; \s+ accommodates it.
-        expect(prompt).toMatch(/wait\s+for\s+the\s+writer\s+to\s+ask/i);
+        expect(prompt).toMatch(/propose edits only after the writer asks/i);
     });
 
     it('advertises the editing tools by name', () => {
