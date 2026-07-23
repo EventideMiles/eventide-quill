@@ -780,8 +780,17 @@ export class ReviewPanel extends AbstractChatPanel {
         // scroll position, focus, in-flight streaming state, and DOM-listener
         // bindings across background render calls (the session pushes state
         // into the embedded panel directly via the plugin callbacks).
+        //
+        // BUT: verify the mount div is still in the current container. Tab
+        // switches call setContainer with a fresh DOM element, which means
+        // the old mount div (and the embedded panel's DOM) is gone. A stale
+        // embeddedPanelMounted flag would short-circuit here and leave the
+        // Review tab blank.
         if (this.subtab === 'results' && this.discussMode && this.embeddedPanelMounted) {
-            return;
+            if (this.containerEl.querySelector('.quill-review-panel__discuss-mount')) {
+                return;
+            }
+            this.embeddedPanelMounted = false;
         }
         // Leaving discuss mode (or arriving at a non-results subtab while the
         // panel was mounted): mark unmounted so renderResultsTab knows to
