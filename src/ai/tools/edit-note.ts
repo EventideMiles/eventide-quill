@@ -95,13 +95,20 @@ export const editNoteTool: Tool = {
         // paragraphs (contains blank-line breaks). Multi-paragraph matches
         // fail reliably and produce overwhelming review cards. The model
         // should issue one edit_note per paragraph.
-        const paragraphCount = (oldText.match(/\n\s*\n/g) ?? []).length + 1;
-        if (paragraphCount > 1) {
+        const paragraphs = oldText.split(/\n\s*\n/).filter((p) => p.trim().length > 0);
+        if (paragraphs.length > 1) {
+            const preview = paragraphs
+                .map((p, i) => {
+                    const snippet = p.trim().slice(0, 60);
+                    return `  ${i + 1}. "${snippet}${p.trim().length > 60 ? '...' : ''}"`;
+                })
+                .join('\n');
             return (
-                `Error: old_text spans ${paragraphCount} paragraphs. ` +
-                'Edit one paragraph at a time: issue a separate edit_note call for each ' +
-                'paragraph, with old_text set to just that paragraph\u2019s text. You can ' +
-                'issue multiple edit_note calls in the same response.'
+                `Error: old_text spans ${paragraphs.length} paragraphs (separated by blank ` +
+                `lines). Re-issue as ${paragraphs.length} separate edit_note calls — one per ` +
+                `paragraph. Issue ALL of them in this response (multiple tool calls per turn ` +
+                `are supported). Here are the paragraph boundaries:\n${preview}\n\n` +
+                `Each call: old_text = just that one paragraph, new_text = your rewrite of it.`
             );
         }
 
