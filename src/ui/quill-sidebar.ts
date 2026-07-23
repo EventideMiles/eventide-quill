@@ -63,6 +63,15 @@ export class QuillSidebarView extends ItemView {
     private reviewPanel: ReviewPanel | null = null;
     /** Co-writer panel for the Co-writer tab. */
     private coWriterPanel: CoWriterPanel | null = null;
+    /**
+     * Embedded Co-writer panel mounted inside the Review Results sub-tab when
+     * `'review-discuss'` mode is active. Constructed + wired lazily on first
+     * use (mirrors {@link coWriterPanel}'s wiring). Lives separately from
+     * {@link coWriterPanel} because the two panels can be mounted in different
+     * tabs at different times; the shared {@link plugin.coWriterSession}
+     * stitches them together (Phase 5 wires the snapshot-on-tab-swap protocol).
+     */
+    private embeddedCoWriterPanel: CoWriterPanel | null = null;
     private resizeObserver: ResizeObserver | null = null;
 
     /** Create the sidebar view for the given workspace leaf. */
@@ -582,6 +591,11 @@ export class QuillSidebarView extends ItemView {
     private renderReviewTab() {
         if (!this.reviewPanel) {
             this.reviewPanel = new ReviewPanel(this.app);
+            // Wire the embedded Co-writer panel provider. The panel is
+            // constructed lazily on first mount (when `'review-discuss'` mode
+            // is entered). ReviewPanel never owns the instance — it only
+            // mounts it via setContainer.
+            this.reviewPanel.setEmbeddedPanelProvider(() => this.ensureEmbeddedCoWriterPanel());
             this.reviewPanel.setEditorialGenerateHandler((personaId, customInstruction) => {
                 void this.plugin.requestFeedback(personaId, customInstruction);
             });
@@ -895,6 +909,100 @@ export class QuillSidebarView extends ItemView {
     }
 
     // --- Review tab passthroughs (unified for editorial + critical engines) ---
+
+    /**
+     * Construct (on first call) and return the embedded Co-writer panel used by
+     * the Review Results sub-tab in `'review-discuss'` mode. Wiring mirrors
+     * {@link renderCoWriterTab} — same handler set, same session sync — so the
+     * embedded panel behaves exactly like the Co-writer tab's panel. The panel
+     * is NOT mounted here; {@link ReviewPanel.mountEmbeddedPanel} calls
+     * `setContainer(hostEl)` on the returned instance.
+     *
+     * Returns null while `reviewSuggestedEditsEnabled` is off (defensive — the
+     * Review-tab code paths check the toggle before reaching this method, but
+     * the gate here makes the off-state a single-source-of-truth invariant).
+     */
+    private ensureEmbeddedCoWriterPanel(): CoWriterPanel | null {
+        if (!this.plugin.settings.reviewSuggestedEditsEnabled) return null;
+        if (!this.embeddedCoWriterPanel) {
+            this.embeddedCoWriterPanel = new CoWriterPanel(this.app, this.plugin);
+            // Reuse the same handler wiring as the Co-writer tab. The embedded
+            // panel and the Co-writer-tab panel both target the single shared
+            // plugin.coWriterSession, so the same closures work for both.
+            const p = this.embeddedCoWriterPanel;
+            p.setDiscussMessageHandler((message: string, images?: string[], mentionPaths?: string[]) => {
+                void this.plugin.sendCoWriterDiscussion(message, images, mentionPaths);
+            });
+            p.setCancelGenerationHandler(() => {
+                this.plugin.coWriterSession.cancelGeneration();
+            });
+            p.setCompactHandler(() => {
+                void this.plugin.compactCoWriter();
+            });
+            p.setNewChatHandler((_clearContext: boolean) => {
+                // Review-discuss "new chat" returns to the Review Create subtab
+                // rather than clearing the co-writer chat in place. Phase 5
+                // refines this when snapshot-on-tab-swap lands.
+                this.reviewPanel?.resetResults();
+            });
+            p.setSaveSnapshotHandler(() => {
+                void this.plugin.snapshotCoWriterSession().then((ok) => {
+                    if (ok) new Notice('Conversation saved.');
+                });
+            });
+            p.setHistoryHandler(() => {
+                void this.plugin.openCoWriterHistory();
+            });
+            p.setRewindHandler((messageId) => {
+                this.plugin.rewindCoWriterChat(messageId);
+            });
+            p.setModeSwitchHandler(() => {
+                this.plugin.clearCoWriterSubagents();
+            });
+            p.setApproveLoreEditHandler((filePath, id) => {
+                this.plugin.approveLoreEdit(filePath, id);
+            });
+            p.setRejectLoreEditHandler((filePath, id) => {
+                this.plugin.rejectLoreEdit(filePath, id);
+            });
+            p.setApproveProposedLoreImageHandler((filePath) => {
+                this.plugin.approveProposedLoreImage(filePath);
+            });
+            p.setRejectProposedLoreImageHandler((filePath) => {
+                this.plugin.rejectProposedLoreImage(filePath);
+            });
+            p.setNavigateToSubagentHandler((id) => {
+                this.plugin.coWriterSession.navigateToSubagent(id);
+            });
+            p.setNavigateToParentHandler(() => {
+                this.plugin.coWriterSession.navigateToParent();
+            });
+            p.setAddContextFileHandler((filePath: string) => {
+                void this.plugin.addCoWriterContextFile(filePath);
+            });
+            p.setRemoveContextFileHandler((filePath: string) => {
+                void this.plugin.removeCoWriterContextFile(filePath);
+            });
+        }
+
+        // Sync current state from the session (mirrors renderCoWriterTab).
+        const session = this.plugin.coWriterSession;
+        if (session) {
+            this.embeddedCoWriterPanel.setThoughtContent(session.thoughtBuffer);
+            this.embeddedCoWriterPanel.setChatHistory(session.chatHistory);
+            this.embeddedCoWriterPanel.setLoreEdits(session.getLoreEditCardViews());
+            this.embeddedCoWriterPanel.setProposedLoreImages(session.getLoreImageCardViews());
+            this.embeddedCoWriterPanel.setSubagents(session.getSubagentViews());
+            this.embeddedCoWriterPanel.setActiveSubagent(session.activeSubagentId);
+        }
+
+        const chat = this.plugin.getDefaultChatProvider();
+        if (chat.provider) {
+            this.embeddedCoWriterPanel.setMaxAllowedTokens(chat.provider.config.maxContextTokens);
+        }
+
+        return this.embeddedCoWriterPanel;
+    }
 
     reviewStartLoading(engine: 'editorial' | 'critical' | 'manuscript', headerLabel: string, subLabel?: string): void {
         this.reviewPanel?.startLoading(engine, headerLabel, subLabel);

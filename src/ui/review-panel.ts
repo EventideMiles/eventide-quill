@@ -11,6 +11,7 @@ import type { CompactionStrategy } from '../ai/manuscript-compaction';
 import type EventideQuillPlugin from '../main';
 import { buildFileLabel, formatTokenIndicatorText } from './token-indicator';
 import { AbstractChatPanel, normalizeParagraphBreaks } from './chat-panel';
+import type { CoWriterPanel } from './co-writer-panel';
 import { FileMentionSuggest } from './file-mention-suggest';
 import { VaultFileSuggestModal } from './vault-file-suggest-modal';
 import { buildEmbedFolderPath, embedFolderLabel, parseEmbedFolderPath, resolveAtMentions } from '../utils/vault-files';
@@ -110,6 +111,31 @@ export class ReviewPanel extends AbstractChatPanel {
     private contextTokenOverride: number | null = null;
     private chatContextFiles: ChatContextFiles;
 
+    /**
+     * When true, the Results sub-tab hosts an embedded {@link CoWriterPanel}
+     * running in `'review-discuss'` mode instead of the flat text-only chat.
+     * Set by {@link finishLoading} (after the initial report stream completes)
+     * and {@link loadReportForDiscussion} (already-complete report) when
+     * `reviewSuggestedEditsEnabled` is on. The embedded panel renders its own
+     * chat history, bottom area, tool indicators, and inline change cards;
+     * ReviewPanel's flat chat UI is bypassed entirely while this is true.
+     */
+    private discussMode = false;
+    /**
+     * Whether the embedded CoWriterPanel is currently mounted into the Results
+     * sub-tab DOM. Used by {@link render} to short-circuit teardown while the
+     * embedded panel owns the DOM (preserves scroll, focus, and streaming
+     * state across background render calls).
+     */
+    private embeddedPanelMounted = false;
+    /**
+     * Sidebar-provided factory that returns the shared embedded CoWriterPanel
+     * instance (constructing + wiring it on first call). Set by the sidebar
+     * via {@link setEmbeddedPanelProvider}. ReviewPanel never owns the panel
+     * instance — it only mounts it via `setContainer(hostEl)`.
+     */
+    private embeddedPanelProvider: (() => CoWriterPanel | null) | null = null;
+
     /** Labels for the Results header (set by startLoading). */
     private headerLabel = '';
     private subLabel = '';
@@ -187,6 +213,26 @@ export class ReviewPanel extends AbstractChatPanel {
     /** Provide the plugin reference (used by the Queue subtab). */
     setPlugin(plugin: EventideQuillPlugin): void {
         this.plugin = plugin;
+    }
+
+    /**
+     * Provide the factory that returns the shared embedded CoWriterPanel
+     * instance (constructed + wired by the sidebar). Called once during
+     * sidebar init. ReviewPanel calls the provider when it needs to mount
+     * the embedded panel into the Results sub-tab.
+     */
+    setEmbeddedPanelProvider(provider: (() => CoWriterPanel | null) | null): void {
+        this.embeddedPanelProvider = provider;
+    }
+
+    /**
+     * Whether the Results sub-tab is currently hosting an embedded
+     * CoWriterPanel in `'review-discuss'` mode. The sidebar reads this to
+     * decide whether to route Review-tab chat actions through the embedded
+     * panel (true) or the legacy per-engine handlers (false).
+     */
+    isDiscussMode(): boolean {
+        return this.discussMode;
     }
 
     /** Handler for editorial feedback queued (not run interactively) from the Create sub-tab. */
@@ -417,6 +463,10 @@ export class ReviewPanel extends AbstractChatPanel {
         this.chatInputDraft = '';
         this.contextTokenOverride = null;
         this.chatContextFiles.clear();
+        // The initial report always streams into the flat-report view. If/when
+        // `reviewSuggestedEditsEnabled` is on, `finishLoading` will flip us into
+        // discuss mode after the stream completes.
+        this.exitDiscussMode();
         this.subtab = 'results';
         if (this.containerEl) this.render();
     }
@@ -438,10 +488,21 @@ export class ReviewPanel extends AbstractChatPanel {
         this.contextTokenOverride = null;
         this.chatContextFiles.clear();
         this.subtab = 'results';
+        // Phase 3 will populate the session before this call so the embedded
+        // panel renders the report as the first assistant turn.
+        if (this.plugin?.settings.reviewSuggestedEditsEnabled) {
+            this.enterDiscussMode();
+            return;
+        }
+        this.exitDiscussMode();
         if (this.containerEl) this.render();
     }
 
     appendChunk(text: string): void {
+        // Streaming chunks target the flat-report view; in discuss mode the
+        // embedded panel handles its own streaming. (Defensive — appendChunk
+        // shouldn't fire after enterDiscussMode.)
+        if (this.discussMode) return;
         this.reportText += text;
         if (!this.containerEl) return;
         const el = this.containerEl.querySelector('.quill-review-panel__report');
@@ -450,6 +511,12 @@ export class ReviewPanel extends AbstractChatPanel {
 
     async finishLoading(): Promise<void> {
         this.resultsState = 'complete';
+        if (this.plugin?.settings.reviewSuggestedEditsEnabled) {
+            // Phase 3 seeds the session + pushes the streamed report as the
+            // first assistant message before we mount the embedded panel.
+            this.enterDiscussMode();
+            return;
+        }
         await this.rerenderResultsTab();
         const c = this.getScrollContainer();
         if (c) c.scrollTop = 0;
@@ -457,11 +524,13 @@ export class ReviewPanel extends AbstractChatPanel {
 
     showError(message: string): void {
         this.resultsState = 'error';
+        this.exitDiscussMode();
         this.reportText = message;
         if (this.containerEl) this.render();
     }
 
     resetResults(): void {
+        this.exitDiscussMode();
         this.subtab = 'create';
         this.resultsState = 'idle';
         this.reportText = '';
@@ -476,6 +545,7 @@ export class ReviewPanel extends AbstractChatPanel {
 
     /** Full reset including manuscript context files. */
     resetAll(): void {
+        this.exitDiscussMode();
         this.subtab = 'create';
         this.resultsState = 'idle';
         this.contextFilePaths = [];
@@ -500,11 +570,13 @@ export class ReviewPanel extends AbstractChatPanel {
     }
 
     appendChatSystemMessage(content: string): void {
+        if (this.discussMode) return;
         this.chatHistory.push({ role: 'system', content });
         if (this.containerEl) void this.rerenderResultsTab();
     }
 
     appendChatSystemMessageInPlace(content: string): void {
+        if (this.discussMode) return;
         this.chatHistory.push({ role: 'system', content });
         if (!this.containerEl) return;
         const chatSection = this.containerEl.querySelector('.quill-chat-panel__section');
@@ -518,15 +590,18 @@ export class ReviewPanel extends AbstractChatPanel {
     }
 
     replaceChatHistory(history: { role: 'user' | 'assistant' | 'system'; content: string }[]): void {
+        if (this.discussMode) return;
         this.chatHistory = [...history];
         if (this.containerEl) void this.rerenderResultsTab();
     }
 
     chatStartLoading(): void {
+        if (this.discussMode) return;
         super.chatStartLoading();
     }
 
     chatAppendChunk(text: string): void {
+        if (this.discussMode) return;
         let last = this.chatHistory[this.chatHistory.length - 1];
         if (last && last.role === 'assistant') {
             last.content += text;
@@ -541,6 +616,7 @@ export class ReviewPanel extends AbstractChatPanel {
     }
 
     async chatFinished(): Promise<void> {
+        if (this.discussMode) return;
         await this.withScrollRestore(async () => {
             this.chatLoading = false;
             await this.rerenderResultsTab();
@@ -548,6 +624,7 @@ export class ReviewPanel extends AbstractChatPanel {
     }
 
     async chatError(message: string): Promise<void> {
+        if (this.discussMode) return;
         await this.withScrollRestore(async () => {
             this.chatLoading = false;
             const last = this.chatHistory[this.chatHistory.length - 1];
@@ -702,6 +779,21 @@ export class ReviewPanel extends AbstractChatPanel {
 
     render(): void {
         if (!this.containerEl) return;
+        // Short-circuit: when the Results sub-tab is active AND in discuss mode
+        // AND the embedded panel is mounted, the embedded CoWriterPanel owns
+        // its DOM and handles its own updates. Skipping teardown preserves
+        // scroll position, focus, in-flight streaming state, and DOM-listener
+        // bindings across background render calls (the session pushes state
+        // into the embedded panel directly via the plugin callbacks).
+        if (this.subtab === 'results' && this.discussMode && this.embeddedPanelMounted) {
+            return;
+        }
+        // Leaving discuss mode (or arriving at a non-results subtab while the
+        // panel was mounted): mark unmounted so renderResultsTab knows to
+        // re-mount if we come back to a discuss-mode Results subtab.
+        if (this.embeddedPanelMounted && !(this.subtab === 'results' && this.discussMode)) {
+            this.embeddedPanelMounted = false;
+        }
         const token = ++this.renderToken;
         this.renderPending = true;
         this.unloadAndClearContainer();
@@ -1308,7 +1400,55 @@ export class ReviewPanel extends AbstractChatPanel {
     // Results sub-tab (shared, engine-aware header)
     // ========================================================================
 
+    // ========================================================================
+    // Discuss mode (embedded CoWriterPanel) lifecycle
+    // ========================================================================
+
+    /**
+     * Transition the Results sub-tab into discuss mode: the flat-report view
+     * is replaced by an embedded {@link CoWriterPanel} running in
+     * `'review-discuss'` mode. The session is expected to already be seeded
+     * (Phase 3) by the time this is called. No-op if already in discuss mode.
+     */
+    private enterDiscussMode(): void {
+        if (this.discussMode) return;
+        this.discussMode = true;
+        this.chatLoading = false;
+        if (this.containerEl) this.render();
+    }
+
+    /**
+     * Leave discuss mode and return to whatever subtab/state the panel is
+     * otherwise in. Detaches the embedded panel from the DOM (the panel
+     * instance itself is owned by the sidebar and survives for re-mount).
+     */
+    private exitDiscussMode(): void {
+        if (!this.discussMode) {
+            this.embeddedPanelMounted = false;
+            return;
+        }
+        this.discussMode = false;
+        this.embeddedPanelMounted = false;
+    }
+
+    /**
+     * Mount the embedded CoWriterPanel (via the sidebar-provided provider)
+     * into `host`. The panel takes over the host as its container and runs
+     * its own render + lifecycle. No-op if no provider is wired or it
+     * returns null (e.g. the co-writer tools master toggle is off and the
+     * sidebar chose not to construct the embedded panel).
+     */
+    private mountEmbeddedPanel(host: HTMLElement): void {
+        const panel = this.embeddedPanelProvider?.() ?? null;
+        if (!panel) return;
+        panel.setContainer(host);
+        this.embeddedPanelMounted = true;
+    }
+
     private async rerenderResultsTab(): Promise<void> {
+        // In discuss mode the embedded panel owns the DOM; re-rendering the
+        // flat-report view would wipe its host and lose streaming state.
+        if (this.discussMode) return;
         if (!this.containerEl) return;
         this.renderToken++;
         this.unloadAndClearContainer();
@@ -1319,6 +1459,17 @@ export class ReviewPanel extends AbstractChatPanel {
     private async renderResultsTab(token: number): Promise<void> {
         try {
             if (!this.containerEl) return;
+
+            // Discuss mode: render a single mount div for the embedded
+            // CoWriterPanel and bail. The embedded panel renders its own
+            // header / chat area / bottom bar; the flat-report view and
+            // hand-rolled chat input are skipped entirely.
+            if (this.discussMode) {
+                const mountHost = this.containerEl.createDiv({ cls: 'quill-review-panel__discuss-mount' });
+                this.mountEmbeddedPanel(mountHost);
+                return;
+            }
+
             const scroll = this.containerEl.createDiv({ cls: 'quill-sidebar__content-plain' });
 
             if (this.resultsState === 'idle') {

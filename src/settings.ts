@@ -256,6 +256,15 @@ export interface EventideQuillSettings {
      * create (the pre-1.4.0 behavior) — escape hatch.
      */
     lorePreferEditOverCreate: boolean;
+    /**
+     * When on, follow-up discussion of a review report runs through the
+     * co-writer session machinery with editing tools enabled, so the editor
+     * can propose specific, reviewable inline-diff edits (not just advisory
+     * prose). Off preserves the pre-1.4.0 text-only chat behavior. Default:
+     * on (flipped in v1.4.0); Phase 2 of the rollout ships it off to keep
+     * the mount infrastructure dormant until seeding + prompts land.
+     */
+    reviewSuggestedEditsEnabled: boolean;
     /** Master toggle for the async feedback queue. Off hides the Queue tab and the Review handoff. Default: on. */
     enableFeedbackQueue: boolean;
     /** Max queue jobs retained on disk (sidecar blobs). Older completed jobs are LRU-evicted; the vault report note is never touched by LRU. Default 20. */
@@ -388,6 +397,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     loreEntryImageAttachments: true,
     loreEntryImageAttachmentFolder: '',
     lorePreferEditOverCreate: true,
+    reviewSuggestedEditsEnabled: false,
     enableFeedbackQueue: true,
     feedbackQueueLimit: 20,
     feedbackQueueAutoRun: true,
