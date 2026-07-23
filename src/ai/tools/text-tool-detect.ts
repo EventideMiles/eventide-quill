@@ -83,22 +83,18 @@ export function detectTextToolCall(response: string, toolNames: string[]): TextT
 // isn't writing tool syntax as text — it's narrating its plan in natural
 // language and then stopping.
 //
-// The detection looks for COMMITMENT phrases (I'll, I'm going to, let me)
-// paired with action verbs (edit, fix, change, start, work on). Suggestion
-// phrases (I could, would you like, shall I) are deliberately excluded so
-// the nudge doesn't fire when the model is legitimately discussing options.
+// The detection looks for COMMITMENT phrases only (I'll, I'm going to, let me)
+// paired with action verbs (edit, fix, change, start, work on). Questions and
+// suggestion phrases ("would you like me to...", "shall I...", "I could...")
+// are deliberately excluded so the nudge does not fire when the model is
+// legitimately asking the writer how they want to proceed.
 
 const INTENT_PATTERNS: RegExp[] = [
     /\bI'?ll\s+(start|get started|begin|work on|edit|fix|change|update|process|make)\b/i,
     /\bI'?m going to\s+(start|begin|edit|fix|change|update|work on|process)\b/i,
     /\blet me\s+(edit|fix|change|update|start|work on|process)\b/i,
     /\bI will\s+(start|edit|fix|change|update|work on)\b/i,
-    /\bstarting (on|with|those|these|the)\b/i,
-    // Permission-seeking stall: the model asks if it should propose an edit
-    // instead of just proposing it. The review card IS the approval gate —
-    // there's no need for an extra permission step.
-    /\bwould you like me to\s+(propose|edit|make|fix|change|update|work on)\b/i,
-    /\bshall I\s+(propose|edit|make|fix|change|update)\b/i
+    /\bstarting (on|with|those|these|the)\b/i
 ];
 
 export interface IntentNarration {

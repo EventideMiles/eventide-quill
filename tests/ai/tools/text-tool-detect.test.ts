@@ -131,11 +131,18 @@ describe('detectIntentNarration', () => {
         expect(detectIntentNarration('I could edit that paragraph if you want.')).toBeNull();
     });
 
-    it('DOES fire for permission-seeking with edit verbs ("would you like me to fix...")', () => {
-        // This IS a stall — the model should just propose the edit, not ask
-        // permission. "fix" is an edit verb in the pattern.
-        const result = detectIntentNarration('Would you like me to fix that for you?');
-        expect(result).not.toBeNull();
+    it('does NOT fire for permission questions ("would you like me to...")', () => {
+        // The model is legitimately asking the writer how they want to
+        // proceed. This is a clarifying question, not a stall.
+        expect(detectIntentNarration('Would you like me to fix that for you?')).toBeNull();
+    });
+
+    it('does NOT fire for "shall I make that change?"', () => {
+        expect(detectIntentNarration('Shall I make that change for you?')).toBeNull();
+    });
+
+    it('does NOT fire for "would you like me to propose an edit?"', () => {
+        expect(detectIntentNarration('Would you like me to propose an edit?')).toBeNull();
     });
 
     it('does NOT fire for ordinary prose with no editing intent', () => {
@@ -146,22 +153,7 @@ describe('detectIntentNarration', () => {
         expect(detectIntentNarration('')).toBeNull();
     });
 
-    it('detects permission-seeking stall: "Would you like me to propose an edit?"', () => {
-        const result = detectIntentNarration(
-            'I think we should tighten that paragraph. Would you like me to propose an edit?'
-        );
-        expect(result).not.toBeNull();
-        expect(result!.snippet).toContain('Would you like me to propose');
-    });
-
-    it('detects permission-seeking stall: "Shall I make that change?"', () => {
-        const result = detectIntentNarration('Shall I make that change for you?');
-        expect(result).not.toBeNull();
-    });
-
-    it('does NOT fire for non-edit permission questions', () => {
-        // "Would you like me to focus on pacing?" is a genuine clarifying
-        // question, not a permission-to-edit stall.
+    it('does NOT fire for non-edit questions', () => {
         expect(detectIntentNarration('Would you like me to focus on the pacing?')).toBeNull();
     });
 });
