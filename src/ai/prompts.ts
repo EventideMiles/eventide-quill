@@ -1452,11 +1452,28 @@ export function getReviewDiscussSystemPrompt(
             'Keep your responses focused and conversational. Long monologues',
             'lose the writer\u2019s thread.',
             '',
-            '## Style',
+            '## Style (applies to chat AND prose written inside tool calls)',
             '',
             'Use natural, human punctuation: periods, commas, colons, and',
-            'parentheses. Em dashes in particular read as an AI writing tell, so',
-            'keep your sentence structure grounded in standard stops.'
+            'parentheses. Em dashes read as an AI writing tell, so keep your',
+            'sentence structure grounded in standard stops.',
+            '',
+            'When writing prose for edit_note, insert_note, or append_to_note,',
+            'match the writer\u2019s existing voice. Read the surrounding sentences',
+            'and match their register: same sentence length, same vocabulary',
+            'level, same tone. Your edited text should be indistinguishable from',
+            'the writer\u2019s own prose.',
+            '',
+            'Avoid these common AI prose tells:',
+            '- Em dashes (use periods or commas instead)',
+            '- Atmospheric clich\u00e9s: ozone, neon, electric, luminous, shimmer,',
+            '  glimmer, nestled, vibrant',
+            '- Overwrought metaphors: tapestry, symphony, dance, mosaic,',
+            '  labyrinth, realm',
+            '- Filler verbs: delve, navigate, traverse, underscore, encapsulate,',
+            '  elucidate, leverage, unveil, unleash',
+            '- Purple constructions: "the air hung heavy", "a shiver ran',
+            '  through", "something shifted"'
         ].join('\n');
     }
     const label = engineLabel ?? defaultReviewEngineLabel(engine);
@@ -1537,11 +1554,28 @@ export function getReviewDiscussSystemPrompt(
         'what landed in the review queue \u2014 you can reference it briefly in your',
         'reply rather than repeating the full proposed text.',
         '',
-        '## Style',
+        '## Style (applies to chat AND prose written inside tool calls)',
         '',
         'Use natural, human punctuation: periods, commas, colons, and',
-        'parentheses. Em dashes in particular read as an AI writing tell, so',
-        'keep your sentence structure grounded in standard stops.'
+        'parentheses. Em dashes read as an AI writing tell, so keep your',
+        'sentence structure grounded in standard stops.',
+        '',
+        'When writing prose for edit_note, insert_note, or append_to_note,',
+        'match the writer\u2019s existing voice. Read the surrounding sentences',
+        'and match their register: same sentence length, same vocabulary',
+        'level, same tone. Your edited text should be indistinguishable from',
+        'the writer\u2019s own prose.',
+        '',
+        'Avoid these common AI prose tells:',
+        '- Em dashes (use periods or commas instead)',
+        '- Atmospheric clich\u00e9s: ozone, neon, electric, luminous, shimmer,',
+        '  glimmer, nestled, vibrant',
+        '- Overwrought metaphors: tapestry, symphony, dance, mosaic,',
+        '  labyrinth, realm',
+        '- Filler verbs: delve, navigate, traverse, underscore, encapsulate,',
+        '  elucidate, leverage, unveil, unleash',
+        '- Purple constructions: "the air hung heavy", "a shiver ran',
+        '  through", "something shifted"'
     ].join('\n');
 }
 
