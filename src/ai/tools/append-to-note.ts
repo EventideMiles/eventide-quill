@@ -26,9 +26,11 @@ export const appendToNoteTool: Tool = {
             content: {
                 type: 'string',
                 description:
-                    'The content to append. Match the writer\u2019s existing voice and ' +
-                    'punctuation. Avoid AI tells: em dashes, clich\u00e9 words (ozone, ' +
-                    'neon, shimmer, tapestry, delve, traverse), and purple constructions.'
+                    'CRITICAL: Study 2-3 sentences at the end of the note before writing. Mirror ' +
+                    'the writer\u2019s exact sentence length, vocabulary level, punctuation habits, ' +
+                    'and descriptive density. The result must be indistinguishable from the ' +
+                    'writer\u2019s own prose. Common AI tells: em dashes, invented atmospheric ' +
+                    'details, words like ozone, tapestry, delve.'
             }
         },
         required: ['path', 'content']

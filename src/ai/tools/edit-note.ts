@@ -56,11 +56,12 @@ export const editNoteTool: Tool = {
             new_text: {
                 type: 'string',
                 description:
-                    'The replacement prose. Match the writer\u2019s existing voice, vocabulary, ' +
-                    'and punctuation. Avoid AI tells: em dashes (use periods or commas), ' +
-                    'clich\u00e9 words (ozone, neon, shimmer, tapestry, delve, traverse), and ' +
-                    'purple constructions. The edited text should read as though the writer ' +
-                    'wrote it themselves.'
+                    'CRITICAL: Before writing, study 2-3 sentences surrounding old_text. Mirror ' +
+                    'the writer\u2019s exact sentence length, vocabulary level, punctuation habits, ' +
+                    'and descriptive density. Only use sensory words (smells, textures, sounds) the ' +
+                    'writer has already established in the surrounding text. The result must be ' +
+                    'indistinguishable from the writer\u2019s own prose. Common AI tells to avoid: em ' +
+                    'dashes, invented atmospheric details, and words like ozone, tapestry, delve.'
             }
         },
         required: ['path', 'old_text', 'new_text']

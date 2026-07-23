@@ -1459,21 +1459,14 @@ export function getReviewDiscussSystemPrompt(
             'sentence structure grounded in standard stops.',
             '',
             'When writing prose for edit_note, insert_note, or append_to_note,',
-            'match the writer\u2019s existing voice. Read the surrounding sentences',
-            'and match their register: same sentence length, same vocabulary',
-            'level, same tone. Your edited text should be indistinguishable from',
-            'the writer\u2019s own prose.',
-            '',
-            'Avoid these common AI prose tells:',
-            '- Em dashes (use periods or commas instead)',
-            '- Atmospheric clich\u00e9s: ozone, neon, electric, luminous, shimmer,',
-            '  glimmer, nestled, vibrant',
-            '- Overwrought metaphors: tapestry, symphony, dance, mosaic,',
-            '  labyrinth, realm',
-            '- Filler verbs: delve, navigate, traverse, underscore, encapsulate,',
-            '  elucidate, leverage, unveil, unleash',
-            '- Purple constructions: "the air hung heavy", "a shiver ran',
-            '  through", "something shifted"'
+            'study 2-3 sentences surrounding the edit location FIRST. Mirror the',
+            'writer\u2019s exact sentence length, vocabulary level, punctuation habits,',
+            'and descriptive density. Only use sensory words (smells, textures,',
+            'sounds) the writer has already established. Your edited text must be',
+            'indistinguishable from the writer\u2019s own prose. Common AI tells:',
+            'em dashes, invented atmospheric details ("industrial cleaner",',
+            '"ozone"), overwrought metaphors (tapestry, symphony), filler verbs',
+            '(delve, traverse), and purple constructions.'
         ].join('\n');
     }
     const label = engineLabel ?? defaultReviewEngineLabel(engine);
@@ -1561,21 +1554,14 @@ export function getReviewDiscussSystemPrompt(
         'sentence structure grounded in standard stops.',
         '',
         'When writing prose for edit_note, insert_note, or append_to_note,',
-        'match the writer\u2019s existing voice. Read the surrounding sentences',
-        'and match their register: same sentence length, same vocabulary',
-        'level, same tone. Your edited text should be indistinguishable from',
-        'the writer\u2019s own prose.',
-        '',
-        'Avoid these common AI prose tells:',
-        '- Em dashes (use periods or commas instead)',
-        '- Atmospheric clich\u00e9s: ozone, neon, electric, luminous, shimmer,',
-        '  glimmer, nestled, vibrant',
-        '- Overwrought metaphors: tapestry, symphony, dance, mosaic,',
-        '  labyrinth, realm',
-        '- Filler verbs: delve, navigate, traverse, underscore, encapsulate,',
-        '  elucidate, leverage, unveil, unleash',
-        '- Purple constructions: "the air hung heavy", "a shiver ran',
-        '  through", "something shifted"'
+        'study 2-3 sentences surrounding the edit location FIRST. Mirror the',
+        'writer\u2019s exact sentence length, vocabulary level, punctuation habits,',
+        'and descriptive density. Only use sensory words (smells, textures,',
+        'sounds) the writer has already established. Your edited text must be',
+        'indistinguishable from the writer\u2019s own prose. Common AI tells:',
+        'em dashes, invented atmospheric details ("industrial cleaner",',
+        '"ozone"), overwrought metaphors (tapestry, symphony), filler verbs',
+        '(delve, traverse), and purple constructions.'
     ].join('\n');
 }
 
