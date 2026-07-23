@@ -2771,12 +2771,18 @@ export default class EventideQuillPlugin extends Plugin {
             if (!inReviewDiscuss) return; // nothing to swap; session is already the co-writer chat
             this.reviewBackgroundSnapshot = session.snapshotState('review-discuss');
             if (this.coWriterBackgroundSnapshot) {
-                session.restoreState(this.coWriterBackgroundSnapshot);
+                // Restore the saved co-writer chat AND its mode so the panel
+                // lands in the mode the writer was in when they left (not the
+                // 'coach' default).
+                const restoredMode = session.restoreState(this.coWriterBackgroundSnapshot);
                 this.coWriterBackgroundSnapshot = null;
+                this.lintPanel?.coWriterRestoreMode(restoredMode as InputMode);
             } else {
-                // No prior co-writer chat to return to — start fresh.
+                // No prior co-writer chat to return to — start fresh in
+                // 'discuss' (the closest general-purpose mode to review-discuss).
                 session.resetChat(true);
                 session.reviewEngine = null;
+                this.lintPanel?.coWriterRestoreMode('discuss');
             }
             this.lintPanel?.coWriterRefresh();
         } else if (targetTab === 'review') {
