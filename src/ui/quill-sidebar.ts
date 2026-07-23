@@ -313,12 +313,11 @@ export class QuillSidebarView extends ItemView {
         if (tab === 'linter') {
             this.activeLinterSubTab = 'results';
         }
-        // v1.4.0: snapshot-swap the shared co-writer session between Review
-        // and Co-writer tabs so each surface keeps its own conversation state.
-        // No-op when neither tab is Review/Co-writer, or when there's no
-        // saved background snapshot to swap to.
+        // When crossing Review ↔ Co-writer, sync the destination panel's mode
+        // if there's an active review-discuss session (the session follows the
+        // writer across tabs). No-op when the session isn't in review-discuss.
         if ((oldTab === 'review' && tab === 'cowriter') || (oldTab === 'cowriter' && tab === 'review')) {
-            this.plugin.swapSessionForTab(tab);
+            this.plugin.syncReviewDiscussOnTabSwitch(tab);
         }
         this.render();
     }
