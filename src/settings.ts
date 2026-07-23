@@ -397,7 +397,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     loreEntryImageAttachments: true,
     loreEntryImageAttachmentFolder: '',
     lorePreferEditOverCreate: true,
-    reviewSuggestedEditsEnabled: false,
+    reviewSuggestedEditsEnabled: true,
     enableFeedbackQueue: true,
     feedbackQueueLimit: 20,
     feedbackQueueAutoRun: true,
@@ -3267,6 +3267,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.feedbackQueueAutoRun = DEFAULT_SETTINGS.feedbackQueueAutoRun;
                         this.plugin.settings.autoSaveFeedbackReports = DEFAULT_SETTINGS.autoSaveFeedbackReports;
                         this.plugin.settings.feedbackReportFolder = DEFAULT_SETTINGS.feedbackReportFolder;
+                        this.plugin.settings.reviewSuggestedEditsEnabled = DEFAULT_SETTINGS.reviewSuggestedEditsEnabled;
                         await this.plugin.saveSettings();
                         this.display();
                     })
@@ -3278,6 +3279,21 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .addToggle((toggle) =>
                 toggle.setValue(this.plugin.settings.enableFeedbackQueue).onChange(async (value) => {
                     this.plugin.settings.enableFeedbackQueue = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(containerEl)
+            .setName('Proactive editor chat')
+            .setDesc(
+                'After a report finishes, the follow-up discussion runs through the co-writer session ' +
+                    'with editing tools enabled, so the editor can propose specific, reviewable inline-diff ' +
+                    'edits (not just advisory prose). Every proposed edit still requires your approval before ' +
+                    'it reaches the vault. Turn off to keep the pre-1.4.0 text-only chat behavior. Default: on.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.reviewSuggestedEditsEnabled).onChange(async (value) => {
+                    this.plugin.settings.reviewSuggestedEditsEnabled = value;
                     await this.plugin.saveSettings();
                 })
             );

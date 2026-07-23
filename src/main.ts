@@ -38,6 +38,7 @@ import {
     entityFromId
 } from './utils/frontmatter';
 import { buildFeedbackMessages, getChunkedFeedback, getPersonaById, getFeedback } from './ai/feedback';
+import { getReviewDiscussSystemPrompt } from './ai/prompts';
 import {
     type FeedbackJob,
     mintJobId,
@@ -2691,20 +2692,24 @@ export default class EventideQuillPlugin extends Plugin {
      * {@link loadReportFileForDiscussion}, {@link loadManuscriptReportForDiscussion})
      * and by the three streaming-completion paths (in {@link requestFeedback},
      * {@link requestAnalysis}, {@link requestManuscriptAnalysis}) when
-     * `reviewSuggestedEditsEnabled` is on. Seeds the session with the engine's
-     * system prompt + the just-completed report as the first assistant turn,
-     * then the Review panel's finishLoading / loadReportForDiscussion path
-     * mounts the embedded CoWriterPanel into the Results sub-tab.
+     * `reviewSuggestedEditsEnabled` is on. Seeds the session with the
+     * dedicated review-discuss system prompt + the just-completed report as
+     * the first assistant turn, then the Review panel's finishLoading /
+     * loadReportForDiscussion path mounts the embedded CoWriterPanel into
+     * the Results sub-tab.
      *
-     * Phase 3: `systemPrompt` is whatever engine-specific prompt the caller
-     * already built (placeholder). Phase 4 swaps in the dedicated
-     * review-discuss prompt via {@link getReviewDiscussSystemPrompt}.
+     * @param engine Which review engine produced the report.
+     * @param reportText The completed report markdown (becomes the AI's
+     *     first assistant turn).
+     * @param engineLabel Human-friendly label for the engine (passed to
+     *     {@link getReviewDiscussSystemPrompt} for the opening line).
      */
     private beginReviewDiscuss(
         engine: 'editorial' | 'critical' | 'manuscript',
         reportText: string,
-        systemPrompt: string
+        engineLabel?: string
     ): void {
+        const systemPrompt = getReviewDiscussSystemPrompt(engine, engineLabel);
         this.coWriterSession.seedForReviewDiscuss({ engine, systemPrompt, reportText });
     }
 
@@ -3299,15 +3304,12 @@ export default class EventideQuillPlugin extends Plugin {
                         estimateTokens(this.manuscriptAnalysisCurrentMessages)
                     );
                     if (this.settings.reviewSuggestedEditsEnabled) {
-                        const seedSystem = this.manuscriptAnalysisCurrentMessages[0]?.content;
-                        if (typeof seedSystem === 'string') {
-                            this.coWriterSession.seedForReviewDiscuss({
-                                engine: 'manuscript',
-                                systemPrompt: seedSystem,
-                                reportText: fullResponse,
-                                contextMessages: this.manuscriptAnalysisCurrentMessages.slice(1)
-                            });
-                        }
+                        const label = getManuscriptAnalysisModeById(mode)?.label ?? mode;
+                        this.coWriterSession.seedForReviewDiscuss({
+                            engine: 'manuscript',
+                            systemPrompt: getReviewDiscussSystemPrompt('manuscript', label),
+                            reportText: fullResponse
+                        });
                     }
                     await this.lintPanel?.reviewFinished();
                     this.archiveInteractiveReport(
@@ -4057,10 +4059,8 @@ export default class EventideQuillPlugin extends Plugin {
                     this.analysisCurrentMessages.push({ role: 'assistant', content: fullResponse });
                     this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
                     if (this.settings.reviewSuggestedEditsEnabled) {
-                        const seedSystem = this.analysisCurrentMessages[0]?.content;
-                        if (typeof seedSystem === 'string') {
-                            this.beginReviewDiscuss('critical', fullResponse, seedSystem);
-                        }
+                        const label = getAnalysisModeById(mode)?.label ?? mode;
+                        this.beginReviewDiscuss('critical', fullResponse, label);
                     }
                     await this.lintPanel?.reviewFinished();
                     this.archiveInteractiveReport(
@@ -5098,10 +5098,8 @@ export default class EventideQuillPlugin extends Plugin {
                     // indicator updates immediately when files change.
                     this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
                     if (this.settings.reviewSuggestedEditsEnabled) {
-                        const seedSystem = this.feedbackCurrentMessages[0]?.content;
-                        if (typeof seedSystem === 'string') {
-                            this.beginReviewDiscuss('editorial', fullResponse, seedSystem);
-                        }
+                        const label = persona?.name ?? 'Editorial feedback';
+                        this.beginReviewDiscuss('editorial', fullResponse, label);
                     }
                     await this.lintPanel?.reviewFinished();
                     this.archiveInteractiveReport(
@@ -5656,17 +5654,14 @@ export default class EventideQuillPlugin extends Plugin {
                 narrativePreset: snapshot.narrativePreset,
                 customInstruction: job.focusPrompt
             })[0]!;
+            const engineLabel = persona?.name ?? 'Editorial feedback';
             if (this.settings.reviewSuggestedEditsEnabled) {
-                this.beginReviewDiscuss('editorial', reportText, systemMsg.content);
+                this.beginReviewDiscuss('editorial', reportText, engineLabel);
             } else {
                 this.feedbackCurrentMessages = [systemMsg, { role: 'assistant', content: reportText }];
                 this.feedbackAbort = null;
             }
-            this.lintPanel?.reviewLoadReportForDiscussion(
-                'editorial',
-                persona?.name ?? 'Editorial feedback',
-                reportText
-            );
+            this.lintPanel?.reviewLoadReportForDiscussion('editorial', engineLabel, reportText);
         } else if (snapshot.kind === 'critical') {
             // sendAnalysisChatMessage injects reference files only, so bake the
             // current source document into the seed as context.
@@ -5680,8 +5675,9 @@ export default class EventideQuillPlugin extends Plugin {
                 plotThreads: snapshot.plotThreads,
                 customInstruction: job.focusPrompt
             })[0]!;
+            const label = getAnalysisModeById(snapshot.mode)?.label ?? snapshot.mode;
             if (this.settings.reviewSuggestedEditsEnabled) {
-                this.beginReviewDiscuss('critical', reportText, systemMsg.content);
+                this.beginReviewDiscuss('critical', reportText, label);
             } else {
                 this.analysisCurrentMessages = [
                     systemMsg,
@@ -5690,7 +5686,6 @@ export default class EventideQuillPlugin extends Plugin {
                 ];
                 this.analysisAbort = null;
             }
-            const label = getAnalysisModeById(snapshot.mode)?.label ?? snapshot.mode;
             this.lintPanel?.reviewLoadReportForDiscussion('critical', label, reportText);
         } else {
             // manuscript: re-run compaction on the current manuscript.
@@ -5767,24 +5762,22 @@ export default class EventideQuillPlugin extends Plugin {
             const systemMsg = buildFeedbackMessages(persona, {
                 narrativePreset: this.settings.narrativeVoicePreset
             })[0]!;
+            const engineLabel = persona?.name ?? 'Editorial feedback';
             if (this.settings.reviewSuggestedEditsEnabled) {
-                this.beginReviewDiscuss('editorial', reportText, systemMsg.content);
+                this.beginReviewDiscuss('editorial', reportText, engineLabel);
             } else {
                 this.feedbackCurrentMessages = [systemMsg, { role: 'assistant', content: reportText }];
                 this.feedbackAbort = null;
             }
-            this.lintPanel?.reviewLoadReportForDiscussion(
-                'editorial',
-                persona?.name ?? 'Editorial feedback',
-                reportText
-            );
+            this.lintPanel?.reviewLoadReportForDiscussion('editorial', engineLabel, reportText);
         } else if (engine === 'critical') {
             // sendAnalysisChatMessage injects reference files only, so bake the
             // current source document into the seed as context.
             const docText = await this.getFileText(sourceFile.path);
             const systemMsg = buildAnalysisMessages(modeStr as AnalysisMode, { text: '', scope: 'document' })[0]!;
+            const label = getAnalysisModeById(modeStr as AnalysisMode)?.label ?? modeStr ?? 'Critical analysis';
             if (this.settings.reviewSuggestedEditsEnabled) {
-                this.beginReviewDiscuss('critical', reportText, systemMsg.content);
+                this.beginReviewDiscuss('critical', reportText, label);
             } else {
                 this.analysisCurrentMessages = [
                     systemMsg,
@@ -5796,7 +5789,6 @@ export default class EventideQuillPlugin extends Plugin {
                 ];
                 this.analysisAbort = null;
             }
-            const label = getAnalysisModeById(modeStr as AnalysisMode)?.label ?? modeStr ?? 'Critical analysis';
             this.lintPanel?.reviewLoadReportForDiscussion('critical', label, reportText);
         } else {
             // manuscript: re-run compaction on the current manuscript.
@@ -5894,21 +5886,14 @@ export default class EventideQuillPlugin extends Plugin {
         // The compacted manuscript is baked in; follow-up injects reference files
         // fresh via sendManuscriptAnalysisChatMessage.
         if (this.settings.reviewSuggestedEditsEnabled) {
-            // Review-discuss: seed the co-writer session. The compacted
-            // manuscript is passed as contextMessages so the model has access
-            // to the source for editing. The first message of the prepared
-            // payload is the system prompt; the rest is engine-specific
-            // context that sits between system and report.
-            const preparedHead = prepared.existingMessages[0];
-            const preparedTail = prepared.existingMessages.slice(1);
+            // Review-discuss: seed the co-writer session with the dedicated
+            // review-discuss prompt. The compacted manuscript is passed as
+            // contextMessages so the model has access to the source for editing.
             this.coWriterSession.seedForReviewDiscuss({
                 engine: 'manuscript',
-                systemPrompt:
-                    preparedHead && typeof preparedHead.content === 'string'
-                        ? preparedHead.content
-                        : 'You are a thoughtful editor discussing a manuscript analysis report.',
+                systemPrompt: getReviewDiscussSystemPrompt('manuscript', headerLabel),
                 reportText,
-                contextMessages: preparedTail
+                contextMessages: prepared.existingMessages
             });
         } else {
             this.manuscriptAnalysisCurrentMessages = [

@@ -1342,3 +1342,102 @@ export function getLoreCoachUserPrompt(message: string): string {
         'request is vague.)'
     ].join('\n');
 }
+
+/**
+ * Build the system prompt for a `'review-discuss'` conversation — the
+ * follow-up chat that opens after an editorial / critical / manuscript
+ * report finishes streaming. The just-completed report is seeded as the
+ * AI's first assistant turn (handled by
+ * {@link CoWriterSession.seedForReviewDiscuss}); this prompt frames the
+ * ongoing dialogue and tells the model it MAY propose specific, reviewable
+ * edits via the editing tools (`edit_note`, `insert_note`, `append_to_note`,
+ * `revise_edit`) when the writer asks for a fix or agrees to a suggestion.
+ *
+ * The prompt inlines the tool-discipline clause (mirrors the lorebook-coach
+ * pattern) rather than relying on separate per-request injection, so the
+ * contract is stated once at the system level and stays consistent across
+ * the whole conversation.
+ *
+ * @param engine Which review engine produced the report being discussed.
+ * @param engineLabel Human-friendly label for the engine (e.g. "Editorial
+ *     feedback", "Plot logic", "Pacing & structure") — appears in the
+ *     prompt's opening line so the model knows which lens it was looking
+ *     through.
+ */
+export function getReviewDiscussSystemPrompt(
+    engine: 'editorial' | 'critical' | 'manuscript',
+    engineLabel?: string
+): string {
+    const label = engineLabel ?? defaultReviewEngineLabel(engine);
+    return [
+        `You are a thoughtful editor continuing a conversation about a ${label.toLowerCase()} report`,
+        'you just delivered on the manuscript. The report is your first turn in this chat.',
+        'The writer is now following up — asking questions, requesting clarification,',
+        'or asking you to act on a specific point from the report.',
+        '',
+        '## How to respond',
+        '',
+        '- Stay grounded in the manuscript. The writer has the file open; you can',
+        '  re-read any passage via `vault_lookup` (the active document or any note)',
+        '  or `grep_notes` to find specific passages.',
+        '- Be concrete. Reference specific scenes, lines, or craft choices rather',
+        '  than gesturing vaguely at "the prose" or "the pacing".',
+        '- When you and the writer agree on a specific change, OR the writer asks',
+        '  you to make a specific edit, you MAY call the editing tools to propose it:',
+        '  `edit_note`, `insert_note`, `append_to_note`, or `revise_edit`. The',
+        '  proposed edit lands as a review card (an inline diff) that the writer',
+        '  approves or rejects — nothing reaches the vault without their click.',
+        '- Do NOT propose edits preemptively. Wait for the writer to ask for or',
+        '  agree to a specific change. If your advice is "consider tightening this',
+        '  paragraph", that is a discussion point — wait for the writer to say',
+        '  "yes, do it" before calling a tool.',
+        '- When proposing an edit, use `vault_lookup` first to read the current',
+        '  text of the target note (the writer may have edited it since the',
+        '  report was generated). `edit_note` requires an exact, unique `old_text`',
+        '  match — re-reading ensures your anchor still exists.',
+        '- You can edit ANY note in the vault — the manuscript, lore entries, or',
+        '  ancillary notes — wherever the agreed change needs to land.',
+        '',
+        '## Tool discipline (critical)',
+        '',
+        'Invoke tools ONLY through the structured tool-calling interface (the',
+        'tool_calls field). Never write a tool invocation as text like',
+        '`edit_note(...)` or `vault_lookup(...)`. A call written as text does NOT',
+        'execute; the writer sees raw syntax and nothing happens. If a previous',
+        'turn failed to invoke a tool this way, the system may nudge you to',
+        're-issue it correctly — take the nudge.',
+        '',
+        '## Scope',
+        '',
+        `${scopeLineForEngine(engine)}`,
+        '',
+        'Keep your responses focused and conversational. Long monologues lose the',
+        "writer's thread. When you do propose an edit, the tool result confirms",
+        'what landed in the review queue — you do not need to repeat the proposed',
+        'text in your reply.'
+    ].join('\n');
+}
+
+/** Default human-friendly label for each engine when no explicit one is supplied. */
+function defaultReviewEngineLabel(engine: 'editorial' | 'critical' | 'manuscript'): string {
+    switch (engine) {
+        case 'editorial':
+            return 'Editorial feedback';
+        case 'critical':
+            return 'Critical analysis';
+        case 'manuscript':
+            return 'Manuscript analysis';
+    }
+}
+
+/** Engine-specific scope reminder for the review-discuss system prompt. */
+function scopeLineForEngine(engine: 'editorial' | 'critical' | 'manuscript'): string {
+    switch (engine) {
+        case 'editorial':
+            return 'Editorial lens: voice, craft, line-level prose, and developmental feedback. Treat the report as the starting position — your follow-ups deepen or act on its points.';
+        case 'critical':
+            return 'Critical lens: plot logic, character consistency, continuity, and voice drift. Verify findings against the current manuscript before proposing any fix — details may have shifted since the report ran.';
+        case 'manuscript':
+            return 'Manuscript lens: structural diagnostics, pacing, chapter-level flow, and readability. Proposed edits at this scale tend to be larger — confirm the scope with the writer before calling a tool.';
+    }
+}
