@@ -93,7 +93,12 @@ const INTENT_PATTERNS: RegExp[] = [
     /\bI'?m going to\s+(start|begin|edit|fix|change|update|work on|process)\b/i,
     /\blet me\s+(edit|fix|change|update|start|work on|process)\b/i,
     /\bI will\s+(start|edit|fix|change|update|work on)\b/i,
-    /\bstarting (on|with|those|these|the)\b/i
+    /\bstarting (on|with|those|these|the)\b/i,
+    // Permission-seeking stall: the model asks if it should propose an edit
+    // instead of just proposing it. The review card IS the approval gate —
+    // there's no need for an extra permission step.
+    /\bwould you like me to\s+(propose|edit|make|fix|change|update|work on)\b/i,
+    /\bshall I\s+(propose|edit|make|fix|change|update)\b/i
 ];
 
 export interface IntentNarration {

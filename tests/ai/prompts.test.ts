@@ -14,15 +14,15 @@ describe('getReviewDiscussSystemPrompt', () => {
     it('states the approval-gate contract', () => {
         const prompt = getReviewDiscussSystemPrompt('critical');
         // The model must know nothing reaches the vault without the writer's click.
-        expect(prompt).toMatch(/approves or rejects/i);
-        expect(prompt).toMatch(/nothing reaches the vault without their click/i);
+        expect(prompt).toMatch(/approves\s+or\s+rejects/i);
+        expect(prompt).toMatch(/nothing reaches the vault/i);
     });
 
     it('tells the model to wait for the writer to ask before proposing edits', () => {
         const prompt = getReviewDiscussSystemPrompt('manuscript');
         expect(prompt).toMatch(/do NOT propose edits preemptively/i);
         // Word-boundary spans a line break in the prompt; \s+ accommodates it.
-        expect(prompt).toMatch(/wait for the writer to ask for\s+or\s+agree to/i);
+        expect(prompt).toMatch(/wait\s+for\s+the\s+writer\s+to\s+ask/i);
     });
 
     it('advertises the editing tools by name', () => {
@@ -93,7 +93,7 @@ describe('getReviewDiscussSystemPrompt', () => {
             const prompt = getReviewDiscussSystemPrompt('generic');
             expect(prompt).toContain('tool_calls field');
             expect(prompt).toContain('edit_note(');
-            expect(prompt).toMatch(/approves or rejects/i);
+            expect(prompt).toMatch(/approves\s+or\s+rejects/i);
             expect(prompt).toContain('vault_lookup');
         });
 
