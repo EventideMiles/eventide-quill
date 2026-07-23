@@ -482,6 +482,13 @@ export interface ProposedLoreImageEntry {
 export interface SerializedCoWriterState {
     /** Co-writer mode active at snapshot time (`InputMode` as a plain string). */
     mode: string;
+    /**
+     * For `'review-discuss'` mode: which review engine produced the report
+     * this session is following up on. `null` for all other modes (and for
+     * review-discuss sessions prior to the field's introduction). Optional on
+     * the wire so older sidecars still pass {@link isValidState}.
+     */
+    reviewEngine?: 'editorial' | 'critical' | 'manuscript' | null;
     chatHistory: CoWriterChatMessage[];
     discussCurrentMessages: ChatMessage[];
     loreCoachMessages: ChatMessage[];
@@ -511,6 +518,13 @@ export interface SerializedCoWriterState {
 export class CoWriterSession {
     /** Path of the manuscript being worked on. */
     manuscriptPath: string | null = null;
+    /**
+     * For `'review-discuss'` mode: which review engine produced the report
+     * this session is following up on. Carries into the saved-session label
+     * so the writer can identify the chat in the History modal. `null` in
+     * every other mode.
+     */
+    reviewEngine: 'editorial' | 'critical' | 'manuscript' | null = null;
     /** Full document text at the time an option was applied. */
     originalText = '';
     /** Offset in the document where the AI's insertion begins. */
@@ -4081,6 +4095,7 @@ export class CoWriterSession {
     snapshotState(mode: string): SerializedCoWriterState {
         const snapshot: SerializedCoWriterState = {
             mode,
+            reviewEngine: this.reviewEngine,
             chatHistory: this.chatHistory,
             discussCurrentMessages: this.discussCurrentMessages,
             loreCoachMessages: this.loreCoachMessages,
@@ -4144,6 +4159,7 @@ export class CoWriterSession {
         this.discussCurrentMessages = stubDanglingToolCalls(state.discussCurrentMessages);
         this.loreCoachMessages = stubDanglingToolCalls(state.loreCoachMessages);
         this.manuscriptPath = state.manuscriptPath;
+        this.reviewEngine = state.reviewEngine ?? null;
         this.voiceProfile = state.voiceProfile;
         this.contextFilePaths = state.contextFilePaths;
         this.recentImages = state.recentImages;

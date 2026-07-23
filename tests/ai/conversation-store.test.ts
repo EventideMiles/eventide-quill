@@ -35,6 +35,11 @@ function makeState(title?: string): SerializedCoWriterState {
     } as unknown as SerializedCoWriterState;
 }
 
+/** State shaped like a saved `'review-discuss'` session (carries reviewEngine). */
+function makeReviewDiscussState(engine: 'editorial' | 'critical' | 'manuscript'): SerializedCoWriterState {
+    return { ...makeState('What did you think of chapter 3?'), mode: 'review-discuss', reviewEngine: engine };
+}
+
 // Use fake timers (Date only) so LRU eviction tests have deterministic timestamps.
 // Real setTimeout/setInterval still work — only Date.now() is controlled.
 beforeEach(() => {
@@ -91,6 +96,28 @@ describe('saveSession + loadSession round-trip', () => {
         const vault = makeMemoryVault();
         const entry = await saveSession(vault, dir, makeState());
         expect(entry.title).toBe('Untitled');
+    });
+
+    it('round-trips a review-discuss session with its engine tag', async () => {
+        const vault = makeMemoryVault();
+        const entry = await saveSession(vault, dir, makeReviewDiscussState('critical'));
+        expect(entry.mode).toBe('review-discuss');
+
+        const loaded = await loadSession(vault, dir, entry.id);
+        expect(loaded).not.toBeNull();
+        expect(loaded!.mode).toBe('review-discuss');
+        expect(loaded!.reviewEngine).toBe('critical');
+    });
+
+    it('still loads older sidecars that omit reviewEngine', async () => {
+        const vault = makeMemoryVault();
+        // Hand-write a sidecar shaped like a pre-1.4.0 save (no reviewEngine field).
+        const state = makeState('legacy chat') as SerializedCoWriterState & { reviewEngine?: unknown };
+        delete state.reviewEngine;
+        const entry = await saveSession(vault, dir, state);
+        const loaded = await loadSession(vault, dir, entry.id);
+        expect(loaded).not.toBeNull();
+        expect(loaded!.reviewEngine).toBeUndefined();
     });
 });
 

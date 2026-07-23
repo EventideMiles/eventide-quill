@@ -28,7 +28,12 @@ import type {
 import type { ProposedEdit } from '../core/change-set';
 import type { SubagentView } from '../ai/subagent-session';
 
-export type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill' | 'lorebook';
+/**
+ * Co-writer input modes. `'review-discuss'` is intentionally absent from
+ * {@link COWRITER_MODES} — it is entered only via the Review tab's "discuss
+ * this report" entry point, never from the Co-writer mode picker.
+ */
+export type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill' | 'lorebook' | 'review-discuss';
 
 /** The co-writer modes, in cycle/picker order, with icon, label, and a one-line descriptor. */
 const COWRITER_MODES: { mode: InputMode; icon: string; label: string; desc: string }[] = [
