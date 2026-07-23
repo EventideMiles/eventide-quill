@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createToolRegistry } from '../../../src/ai/tools';
-import type { EventideQuillPlugin } from '../../../src/main';
+import type EventideQuillPlugin from '../../../src/main';
 
 /**
  * Minimal plugin stub for the registry factory tests. Only the settings
