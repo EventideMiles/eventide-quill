@@ -45,6 +45,16 @@ export class QuillSidebarView extends ItemView {
     private content!: HTMLElement;
     private renderEvents: Component | null = null;
     private plugin: EventideQuillPlugin;
+
+    /**
+     * Path of the active file when the sidebar last rendered, so the
+     * active-leaf-change handler can distinguish "file changed" (needs
+     * re-render to refresh the document header) from "focus shifted
+     * between leaves" (editor ↔ sidebar, same file — re-rendering would
+     * wipe the Review/Co-writer panel's unsaved draft inputs and reset
+     * scroll for no reason). Updated at the end of {@link render}.
+     */
+    private lastRenderedActiveFilePath: string | null = null;
     /** Captured at lint time so the passage context is available even when the sidebar has focus. */
     private cachedEditorText: string | null = null;
     /** Current context assembly to display in the Context tab. */
@@ -111,8 +121,14 @@ export class QuillSidebarView extends ItemView {
 
         // Re-render context, co-writer, and review tabs when the active file
         // changes (each shows the active document header / derives from it).
+        // SKIPPED when only focus shifted between leaves (editor ↔ sidebar)
+        // without the file itself changing — the tab's content is still
+        // correct, and a full re-render would wipe unsaved draft text in the
+        // Review/Co-writer chat inputs and reset the Results scroll position.
         this.registerEvent(
             this.app.workspace.on('active-leaf-change', () => {
+                const currentPath = this.app.workspace.getActiveFile()?.path ?? null;
+                if (currentPath === this.lastRenderedActiveFilePath) return;
                 if (
                     this.activeTopTab === 'context' ||
                     this.activeTopTab === 'cowriter' ||
@@ -410,6 +426,10 @@ export class QuillSidebarView extends ItemView {
                 );
             }
         }
+
+        // Record the active file path so the active-leaf-change handler can
+        // skip the re-render when only focus shifted (see that handler).
+        this.lastRenderedActiveFilePath = this.app.workspace.getActiveFile()?.path ?? null;
     }
 
     /** Render the top-level tab bar with icons, labels, and hover tooltips. */
