@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { detectTextToolCall, buildToolNudgeMessage, MAX_TEXT_TOOL_NUDGES } from '../../../src/ai/tools/text-tool-detect';
+import {
+    detectTextToolCall,
+    detectIntentNarration,
+    buildToolNudgeMessage,
+    buildIntentNudgeMessage,
+    MAX_TEXT_TOOL_NUDGES
+} from '../../../src/ai/tools/text-tool-detect';
 
 const TOOLS = [
     'edit_note',
@@ -96,5 +102,60 @@ describe('MAX_TEXT_TOOL_NUDGES', () => {
         expect(Number.isInteger(MAX_TEXT_TOOL_NUDGES)).toBe(true);
         expect(MAX_TEXT_TOOL_NUDGES).toBeGreaterThanOrEqual(1);
         expect(MAX_TEXT_TOOL_NUDGES).toBeLessThanOrEqual(3);
+    });
+});
+
+describe('detectIntentNarration', () => {
+    it('detects "I\'ll get started on those edits now"', () => {
+        const result = detectIntentNarration("Great, I'll get started on those edits now!");
+        expect(result).not.toBeNull();
+        expect(result!.snippet).toContain("I'll get started");
+    });
+
+    it('detects "I\'m going to fix that paragraph"', () => {
+        const result = detectIntentNarration("I'm going to fix that paragraph right away.");
+        expect(result).not.toBeNull();
+    });
+
+    it('detects "let me edit the signing section"', () => {
+        const result = detectIntentNarration('Sure, let me edit the signing section for you.');
+        expect(result).not.toBeNull();
+    });
+
+    it('detects "I\'ll start processing these now"', () => {
+        const result = detectIntentNarration("I'll start processing these now!");
+        expect(result).not.toBeNull();
+    });
+
+    it('does NOT fire for suggestion language ("I could edit...")', () => {
+        expect(detectIntentNarration('I could edit that paragraph if you want.')).toBeNull();
+    });
+
+    it('does NOT fire for "would you like me to..."', () => {
+        expect(detectIntentNarration('Would you like me to fix that for you?')).toBeNull();
+    });
+
+    it('does NOT fire for ordinary prose with no editing intent', () => {
+        expect(detectIntentNarration('The scene works well. The pacing is good.')).toBeNull();
+    });
+
+    it('does NOT fire for empty text', () => {
+        expect(detectIntentNarration('')).toBeNull();
+    });
+});
+
+describe('buildIntentNudgeMessage', () => {
+    it('produces a role:user message that tells the model to act, not narrate', () => {
+        const msg = buildIntentNudgeMessage({ snippet: "I'll get started on those edits" });
+        expect(msg.role).toBe('user');
+        expect(msg.content).toContain('did not call any tools');
+        expect(msg.content).toContain('edit_note');
+        expect(msg.content).toContain('tool-calling interface');
+        expect(msg.content).toContain('do not describe what you plan to do');
+    });
+
+    it('includes the detected snippet so the model recognizes its own words', () => {
+        const msg = buildIntentNudgeMessage({ snippet: "I'm going to fix that" });
+        expect(msg.content).toContain("I'm going to fix that");
     });
 });
