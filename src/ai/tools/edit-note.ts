@@ -55,7 +55,12 @@ export const editNoteTool: Tool = {
             },
             new_text: {
                 type: 'string',
-                description: 'The replacement for old_text (include any line breaks).'
+                description:
+                    'The replacement prose. Match the writer\u2019s existing voice, vocabulary, ' +
+                    'and punctuation. Avoid AI tells: em dashes (use periods or commas), ' +
+                    'clich\u00e9 words (ozone, neon, shimmer, tapestry, delve, traverse), and ' +
+                    'purple constructions. The edited text should read as though the writer ' +
+                    'wrote it themselves.'
             }
         },
         required: ['path', 'old_text', 'new_text']

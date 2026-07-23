@@ -25,7 +25,10 @@ export const appendToNoteTool: Tool = {
             },
             content: {
                 type: 'string',
-                description: 'The content to append to the end of the note.'
+                description:
+                    'The content to append. Match the writer\u2019s existing voice and ' +
+                    'punctuation. Avoid AI tells: em dashes, clich\u00e9 words (ozone, ' +
+                    'neon, shimmer, tapestry, delve, traverse), and purple constructions.'
             }
         },
         required: ['path', 'content']

@@ -4161,6 +4161,26 @@ export class CoWriterSession {
     }
 
     /**
+     * Append a streaming chunk to the review-discuss report message (the last
+     * assistant turn seeded by {@link seedForReviewDiscuss}). Updates both the
+     * display `chatHistory` and the API-level `discussCurrentMessages`, then
+     * fires `onChatUpdate` so the embedded panel re-renders with the growing
+     * text. Used when the report streams directly into the co-writer session
+     * instead of the legacy flat-report view.
+     */
+    appendReviewDiscussChunk(text: string): void {
+        const lastDisplay = this.chatHistory[this.chatHistory.length - 1];
+        if (lastDisplay && lastDisplay.role === 'assistant') {
+            lastDisplay.content += text;
+        }
+        const lastApi = this.discussCurrentMessages[this.discussCurrentMessages.length - 1];
+        if (lastApi && lastApi.role === 'assistant') {
+            lastApi.content += text;
+        }
+        this.onChatUpdate?.();
+    }
+
+    /**
      * Snapshot the session's serializable state for persistence. `mode` is the
      * co-writer mode active at snapshot time (the session doesn't own it; the
      * caller passes it in from the panel). Ephemeral runtime concerns

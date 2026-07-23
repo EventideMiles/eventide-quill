@@ -463,12 +463,17 @@ export class ReviewPanel extends AbstractChatPanel {
         this.chatInputDraft = '';
         this.contextTokenOverride = null;
         this.chatContextFiles.clear();
-        // The initial report always streams into the flat-report view. If/when
-        // `reviewSuggestedEditsEnabled` is on, `finishLoading` will flip us into
-        // discuss mode after the stream completes.
-        this.exitDiscussMode();
         this.subtab = 'results';
-        if (this.containerEl) this.render();
+        // When review-discuss is enabled, mount the embedded panel immediately.
+        // The report streams directly into the session's first assistant
+        // message via appendReviewDiscussChunk, so the writer sees it appear
+        // in the co-writer chat rather than the legacy flat-report view.
+        if (this.plugin?.settings.reviewSuggestedEditsEnabled) {
+            this.enterDiscussMode();
+        } else {
+            this.exitDiscussMode();
+            if (this.containerEl) this.render();
+        }
     }
 
     /**

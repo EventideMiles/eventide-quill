@@ -84,7 +84,11 @@ export const insertNoteTool: Tool = {
             },
             new_text: {
                 type: 'string',
-                description: 'The content to add (include any line breaks).'
+                description:
+                    'The content to add (include any line breaks). Match the writer\u2019s ' +
+                    'existing voice and punctuation. Avoid AI tells: em dashes, clich\u00e9 ' +
+                    'words (ozone, neon, shimmer, tapestry, delve, traverse), and purple ' +
+                    'constructions.'
             },
             position: {
                 type: 'string',
