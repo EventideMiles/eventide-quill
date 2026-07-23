@@ -1199,7 +1199,14 @@ export class CoWriterSession {
             injectedContext.push(discussInternalMsg);
         }
 
-        const prompt = getCoWriterDiscussPrompt(proseForContext || '(empty document)', message);
+        // Build the user prompt. For review-discuss, skip the limited
+        // "Passage up to cursor" section — the full document is already
+        // injected as a system message above. Appending the cursor snippet
+        // misleads the model into thinking it only has that limited view.
+        const prompt =
+            this.reviewEngine !== null
+                ? message
+                : getCoWriterDiscussPrompt(proseForContext || '(empty document)', message);
 
         // Initialize discussCurrentMessages on first call: system prompt + first user message.
         // When in review-discuss mode (entered via the picker, Path B), use the dedicated
