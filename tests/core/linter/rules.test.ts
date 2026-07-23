@@ -122,6 +122,50 @@ describe('checkEchoes', () => {
         const text = 'She ran fast.\n\nThe wind howled.\n\nDarkness fell quickly.';
         expect(checkEchoes(text)).toEqual([]);
     });
+
+    // Regression: column was hardcoded to 1, so the highlight landed on the
+    // 2nd character of the paragraph start instead of on the echoed phrase.
+    // Reproduces the user report where "He had" (echoing mid-paragraph) was
+    // flagged but the highlight + AI-fix target pointed at "As he walked"
+    // (the paragraph's opening words).
+    it('points the result range at the echoed phrase, not the paragraph start', () => {
+        const text =
+            'As he walked along the campus something caught his eyes. ' +
+            'It was another rabbit, though this one was just a bit shorter than him and more lithe. ' +
+            'He had charcoal black fur, as opposed to Owen\'s own tan fur, and striking violet eyes. ' +
+            'He had several white accents on his body, including around his muzzle and on what could be seen of his chest. ' +
+            'He was holding a stack of papers, and as he saw Owen approaching he seemed to brighten up.';
+        const results = checkEchoes(text);
+        expect(results.length).toBe(1);
+        const r = results[0]!;
+        // The flagged span, read out of the line at the reported position,
+        // must actually BE the echoed phrase (case-insensitive). Pre-fix this
+        // returned "s he w" because column was hardcoded to 1.
+        const oneLine = text; // single-line paragraph: result.line === 1
+        const flagged = oneLine.slice(r.column, r.column + r.length);
+        expect(flagged.toLowerCase()).toBe('he had');
+    });
+
+    it('points at the echoed phrase when the paragraph is not the last in the document', () => {
+        // Same scenario, but the echoing paragraph is followed by another
+        // paragraph — exercises the PARA_BREAK while-loop path rather than
+        // the trailing-paragraph path.
+        const text =
+            'As he walked along the campus something caught his eyes. ' +
+            'It was another rabbit, though this one was just a bit shorter than him and more lithe. ' +
+            'He had charcoal black fur, as opposed to Owen\'s own tan fur, and striking violet eyes. ' +
+            'He had several white accents on his body, including around his muzzle and on what could be seen of his chest. ' +
+            'He was holding a stack of papers, and as he saw Owen approaching he seemed to brighten up.\n\n' +
+            'Owen waved. The rabbit waved back.';
+        const results = checkEchoes(text);
+        const echo = results.find((r) => r.rule === 'echoes' && r.message.includes('he had'));
+        expect(echo).toBeDefined();
+        // The paragraph is on line 1; the echoed phrase starts somewhere in
+        // the middle of that line. Verify by reading back from the position.
+        const line1 = text.split('\n')[0]!;
+        const flagged = line1.slice(echo!.column, echo!.column + echo!.length);
+        expect(flagged.toLowerCase()).toBe('he had');
+    });
 });
 
 describe('checkComplexWords', () => {
