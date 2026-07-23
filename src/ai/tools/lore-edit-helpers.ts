@@ -345,11 +345,12 @@ export function buildNotFoundHint(content: string, oldText: string): string {
 
 /**
  * Minimum word-overlap percentage for a fuzzy paragraph match to be accepted.
- * At 75%, three quarters of the old_text's distinctive words must appear in
- * the content paragraph — high enough to avoid false positives, low enough
- * to handle quantized models that paraphrase slightly.
+ * Kept low (30%) because quantized models paraphrase heavily — the goal is to
+ * identify the RIGHT paragraph, not to verify the text is identical. Combined
+ * with the uniqueness check (distinctive words, length > 3), false positives
+ * are rare in practice.
  */
-const FUZZY_MATCH_THRESHOLD = 0.75;
+const FUZZY_MATCH_THRESHOLD = 0.3;
 
 /**
  * Fuzzy paragraph-level matching for when exact and whitespace-insensitive

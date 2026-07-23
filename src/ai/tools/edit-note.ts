@@ -299,7 +299,14 @@ export const editNoteTool: Tool = {
         session.onLoreEditUpdate?.();
 
         if (staged === 0) {
-            return `Error: could not stage any edits for "${file.basename}". ${errors.join('; ')}`;
+            return (
+                `Error: could not stage any edits for "${file.basename}". ` +
+                `${errors.join('; ')}\n\n` +
+                `TIP: Use the paragraph_start parameter instead of old_text. Pass just the ` +
+                `first 5-10 words of the paragraph you want to edit. The tool will find the ` +
+                `paragraph in the file and read the exact text automatically. Example:\n` +
+                `edit_note(path: "${file.basename}", paragraph_start: "<first words of paragraph>", new_text: "<your rewrite>")`
+            );
         }
         if (editPairs.length === 1) {
             return `Edit proposed for "${file.basename}" (edit id ${entry.changeSet.edits[entry.changeSet.edits.length - 1]?.id}). The writer will see the diff and can approve or reject it. Continue with your response.`;
