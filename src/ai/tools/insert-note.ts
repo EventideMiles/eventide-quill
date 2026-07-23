@@ -44,12 +44,11 @@ import {
 export const insertNoteTool: Tool = {
     id: 'insert_note',
     description:
-        'Propose inserting new content into a note that is NOT currently open, without ' +
-        'removing anything (it opens in a new tab as a diff; the writer approves or ' +
-        'rejects it after you finish). For the open file, recommend Direct or Fulfill ' +
-        'mode instead. This tool is the SAFE choice for any addition: it produces a ' +
-        'zero-width insertion that CANNOT delete or overwrite existing text by ' +
-        'construction. Reach for it before `edit_note` whenever you are adding content. ' +
+        'Propose inserting new content into any note, without removing anything (opens as ' +
+        'an inline diff; the writer approves or rejects it after you finish). This tool is ' +
+        'the SAFE choice for any addition: it produces a zero-width insertion that CANNOT ' +
+        'delete or overwrite existing text by construction. Reach for it before `edit_note` ' +
+        'whenever you are adding content.' +
         '\n\n' +
         'Two ways to target the insertion point:\n' +
         '1. Anchor-based (text match): pass `anchor` = a distinctive snippet that ' +

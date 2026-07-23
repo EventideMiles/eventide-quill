@@ -12,10 +12,9 @@ import { openNoteForEdit, overlapError, pushLoreEditDiff, readNoteContent, resol
 export const appendToNoteTool: Tool = {
     id: 'append_to_note',
     description:
-        'Propose appending content to an existing note that is NOT currently open. ' +
-        'The note opens in a new tab with the new content shown as a diff. The writer ' +
-        'reviews and approves or rejects it AFTER you finish. For the file the writer ' +
-        'currently has open, recommend they use Direct or Fulfill mode instead. ' +
+        'Propose appending content to the end of any existing note. ' +
+        'The note opens as an inline diff with the new content shown. The writer ' +
+        'reviews and approves or rejects it AFTER you finish. ' +
         'When editing multiple files, batch your edits, flowing straight from one file to the next.',
     parameters: {
         type: 'object',

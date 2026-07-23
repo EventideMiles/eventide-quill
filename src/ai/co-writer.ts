@@ -1168,9 +1168,15 @@ export class CoWriterSession {
         if (discussDirective) {
             injectedContext.push(discussDirective);
         }
-        const activeFileMsg = buildActiveFileMessage(plugin);
-        if (activeFileMsg) {
-            injectedContext.push(activeFileMsg);
+        // Inject the "recommend Direct/Fulfill for the active file" guidance ONLY
+        // when NOT in review-discuss mode. In review-discuss, the system prompt
+        // explicitly authorizes editing the active manuscript — this message
+        // would contradict it and cause the model to refuse edits to the open file.
+        if (this.reviewEngine === null) {
+            const activeFileMsg = buildActiveFileMessage(plugin);
+            if (activeFileMsg) {
+                injectedContext.push(activeFileMsg);
+            }
         }
         const discussNetworkMsg = buildNetworkToolsMessage(plugin);
         if (discussNetworkMsg) {
