@@ -2686,6 +2686,29 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
+     * Begin a review-discuss conversation in the shared co-writer session.
+     * Called by the three seeding paths ({@link loadReportForDiscussion},
+     * {@link loadReportFileForDiscussion}, {@link loadManuscriptReportForDiscussion})
+     * and by the three streaming-completion paths (in {@link requestFeedback},
+     * {@link requestAnalysis}, {@link requestManuscriptAnalysis}) when
+     * `reviewSuggestedEditsEnabled` is on. Seeds the session with the engine's
+     * system prompt + the just-completed report as the first assistant turn,
+     * then the Review panel's finishLoading / loadReportForDiscussion path
+     * mounts the embedded CoWriterPanel into the Results sub-tab.
+     *
+     * Phase 3: `systemPrompt` is whatever engine-specific prompt the caller
+     * already built (placeholder). Phase 4 swaps in the dedicated
+     * review-discuss prompt via {@link getReviewDiscussSystemPrompt}.
+     */
+    private beginReviewDiscuss(
+        engine: 'editorial' | 'critical' | 'manuscript',
+        reportText: string,
+        systemPrompt: string
+    ): void {
+        this.coWriterSession.seedForReviewDiscuss({ engine, systemPrompt, reportText });
+    }
+
+    /**
      * Reset the co-writer chat while keeping manuscript and vault context.
      *
      * @param clearContext When true, also clears additional chat context files.
@@ -3275,6 +3298,17 @@ export default class EventideQuillPlugin extends Plugin {
                     this.lintPanel?.reviewSetContextTokenEstimate(
                         estimateTokens(this.manuscriptAnalysisCurrentMessages)
                     );
+                    if (this.settings.reviewSuggestedEditsEnabled) {
+                        const seedSystem = this.manuscriptAnalysisCurrentMessages[0]?.content;
+                        if (typeof seedSystem === 'string') {
+                            this.coWriterSession.seedForReviewDiscuss({
+                                engine: 'manuscript',
+                                systemPrompt: seedSystem,
+                                reportText: fullResponse,
+                                contextMessages: this.manuscriptAnalysisCurrentMessages.slice(1)
+                            });
+                        }
+                    }
                     await this.lintPanel?.reviewFinished();
                     this.archiveInteractiveReport(
                         fullResponse,
@@ -4022,6 +4056,12 @@ export default class EventideQuillPlugin extends Plugin {
                 if (chunk.done) {
                     this.analysisCurrentMessages.push({ role: 'assistant', content: fullResponse });
                     this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
+                    if (this.settings.reviewSuggestedEditsEnabled) {
+                        const seedSystem = this.analysisCurrentMessages[0]?.content;
+                        if (typeof seedSystem === 'string') {
+                            this.beginReviewDiscuss('critical', fullResponse, seedSystem);
+                        }
+                    }
                     await this.lintPanel?.reviewFinished();
                     this.archiveInteractiveReport(
                         fullResponse,
@@ -5057,6 +5097,12 @@ export default class EventideQuillPlugin extends Plugin {
                     // adds manuscript and reference file tokens on top so the
                     // indicator updates immediately when files change.
                     this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
+                    if (this.settings.reviewSuggestedEditsEnabled) {
+                        const seedSystem = this.feedbackCurrentMessages[0]?.content;
+                        if (typeof seedSystem === 'string') {
+                            this.beginReviewDiscuss('editorial', fullResponse, seedSystem);
+                        }
+                    }
                     await this.lintPanel?.reviewFinished();
                     this.archiveInteractiveReport(
                         fullResponse,
@@ -5610,8 +5656,12 @@ export default class EventideQuillPlugin extends Plugin {
                 narrativePreset: snapshot.narrativePreset,
                 customInstruction: job.focusPrompt
             })[0]!;
-            this.feedbackCurrentMessages = [systemMsg, { role: 'assistant', content: reportText }];
-            this.feedbackAbort = null;
+            if (this.settings.reviewSuggestedEditsEnabled) {
+                this.beginReviewDiscuss('editorial', reportText, systemMsg.content);
+            } else {
+                this.feedbackCurrentMessages = [systemMsg, { role: 'assistant', content: reportText }];
+                this.feedbackAbort = null;
+            }
             this.lintPanel?.reviewLoadReportForDiscussion(
                 'editorial',
                 persona?.name ?? 'Editorial feedback',
@@ -5630,12 +5680,16 @@ export default class EventideQuillPlugin extends Plugin {
                 plotThreads: snapshot.plotThreads,
                 customInstruction: job.focusPrompt
             })[0]!;
-            this.analysisCurrentMessages = [
-                systemMsg,
-                { role: 'system', content: `Current manuscript (full document) — "${file.name}":\n\n${docText}` },
-                { role: 'assistant', content: reportText }
-            ];
-            this.analysisAbort = null;
+            if (this.settings.reviewSuggestedEditsEnabled) {
+                this.beginReviewDiscuss('critical', reportText, systemMsg.content);
+            } else {
+                this.analysisCurrentMessages = [
+                    systemMsg,
+                    { role: 'system', content: `Current manuscript (full document) — "${file.name}":\n\n${docText}` },
+                    { role: 'assistant', content: reportText }
+                ];
+                this.analysisAbort = null;
+            }
             const label = getAnalysisModeById(snapshot.mode)?.label ?? snapshot.mode;
             this.lintPanel?.reviewLoadReportForDiscussion('critical', label, reportText);
         } else {
@@ -5713,8 +5767,12 @@ export default class EventideQuillPlugin extends Plugin {
             const systemMsg = buildFeedbackMessages(persona, {
                 narrativePreset: this.settings.narrativeVoicePreset
             })[0]!;
-            this.feedbackCurrentMessages = [systemMsg, { role: 'assistant', content: reportText }];
-            this.feedbackAbort = null;
+            if (this.settings.reviewSuggestedEditsEnabled) {
+                this.beginReviewDiscuss('editorial', reportText, systemMsg.content);
+            } else {
+                this.feedbackCurrentMessages = [systemMsg, { role: 'assistant', content: reportText }];
+                this.feedbackAbort = null;
+            }
             this.lintPanel?.reviewLoadReportForDiscussion(
                 'editorial',
                 persona?.name ?? 'Editorial feedback',
@@ -5725,12 +5783,19 @@ export default class EventideQuillPlugin extends Plugin {
             // current source document into the seed as context.
             const docText = await this.getFileText(sourceFile.path);
             const systemMsg = buildAnalysisMessages(modeStr as AnalysisMode, { text: '', scope: 'document' })[0]!;
-            this.analysisCurrentMessages = [
-                systemMsg,
-                { role: 'system', content: `Current manuscript (full document) — "${sourceFile.name}":\n\n${docText}` },
-                { role: 'assistant', content: reportText }
-            ];
-            this.analysisAbort = null;
+            if (this.settings.reviewSuggestedEditsEnabled) {
+                this.beginReviewDiscuss('critical', reportText, systemMsg.content);
+            } else {
+                this.analysisCurrentMessages = [
+                    systemMsg,
+                    {
+                        role: 'system',
+                        content: `Current manuscript (full document) — "${sourceFile.name}":\n\n${docText}`
+                    },
+                    { role: 'assistant', content: reportText }
+                ];
+                this.analysisAbort = null;
+            }
             const label = getAnalysisModeById(modeStr as AnalysisMode)?.label ?? modeStr ?? 'Critical analysis';
             this.lintPanel?.reviewLoadReportForDiscussion('critical', label, reportText);
         } else {
@@ -5828,10 +5893,29 @@ export default class EventideQuillPlugin extends Plugin {
         // Seed: [system, ...lore, user(compacted manuscript), assistant = report].
         // The compacted manuscript is baked in; follow-up injects reference files
         // fresh via sendManuscriptAnalysisChatMessage.
-        this.manuscriptAnalysisCurrentMessages = [
-            ...prepared.existingMessages,
-            { role: 'assistant', content: reportText }
-        ];
+        if (this.settings.reviewSuggestedEditsEnabled) {
+            // Review-discuss: seed the co-writer session. The compacted
+            // manuscript is passed as contextMessages so the model has access
+            // to the source for editing. The first message of the prepared
+            // payload is the system prompt; the rest is engine-specific
+            // context that sits between system and report.
+            const preparedHead = prepared.existingMessages[0];
+            const preparedTail = prepared.existingMessages.slice(1);
+            this.coWriterSession.seedForReviewDiscuss({
+                engine: 'manuscript',
+                systemPrompt:
+                    preparedHead && typeof preparedHead.content === 'string'
+                        ? preparedHead.content
+                        : 'You are a thoughtful editor discussing a manuscript analysis report.',
+                reportText,
+                contextMessages: preparedTail
+            });
+        } else {
+            this.manuscriptAnalysisCurrentMessages = [
+                ...prepared.existingMessages,
+                { role: 'assistant', content: reportText }
+            ];
+        }
         this.lintPanel?.reviewLoadReportForDiscussion('manuscript', headerLabel, reportText);
     }
 

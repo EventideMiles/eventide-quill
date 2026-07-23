@@ -4080,6 +4080,50 @@ export class CoWriterSession {
     }
 
     /**
+     * Reset and seed the session for a `'review-discuss'` conversation — the
+     * entry point for v1.4.0's proactive editor chat. The system prompt and
+     * the just-completed report become the AI's opening turn: the system
+     * message at index 0 of {@link discussCurrentMessages}, the report as the
+     * first assistant message (id-stamped via {@link pushChatMessage} so it
+     * renders as a chat bubble and can anchor any subsequent change cards).
+     * The writer's follow-ups then flow through {@link sendDiscussion} as
+     * normal — sendDiscussion's "first call" system-prompt initialization is
+     * bypassed because `discussCurrentMessages` is non-empty.
+     *
+     * The optional `contextMessages` are sandwiched between the system prompt
+     * and the report — used when an engine needs to bake in engine-specific
+     * context (e.g. a compacted manuscript for the manuscript engine). For
+     * Phase 3 the call sites pass none; the model uses tools to gather
+     * context. Phase 4 may populate them when the dedicated prompt lands.
+     *
+     * Clears all chat state via {@link resetChat}. The caller is responsible
+     * for snapshotting (Phase 5) any prior co-writer chat it wants to preserve.
+     * Sets {@link reviewEngine} so saved sessions carry their engine tag into
+     * the History modal.
+     */
+    seedForReviewDiscuss(opts: {
+        engine: 'editorial' | 'critical' | 'manuscript';
+        systemPrompt: string;
+        reportText: string;
+        contextMessages?: ChatMessage[];
+    }): void {
+        this.resetChat(true);
+        // Stamp the report as the first display message so the embedded panel
+        // renders it as a chat bubble. The freshly minted id is reused as the
+        // quillAnchorId on the API-level assistant turn so rewind + anchored
+        // cards work the same as a normal turn.
+        this.pushChatMessage({ role: 'assistant', content: opts.reportText });
+        const reportId = this.chatHistory[this.chatHistory.length - 1]!.id;
+        this.discussCurrentMessages = [
+            { role: 'system', content: opts.systemPrompt },
+            ...(opts.contextMessages ?? []),
+            { role: 'assistant', content: opts.reportText, quillAnchorId: reportId }
+        ];
+        this.reviewEngine = opts.engine;
+        this.onChatUpdate?.();
+    }
+
+    /**
      * Snapshot the session's serializable state for persistence. `mode` is the
      * co-writer mode active at snapshot time (the session doesn't own it; the
      * caller passes it in from the panel). Ephemeral runtime concerns

@@ -994,6 +994,14 @@ export class QuillSidebarView extends ItemView {
             this.embeddedCoWriterPanel.setProposedLoreImages(session.getLoreImageCardViews());
             this.embeddedCoWriterPanel.setSubagents(session.getSubagentViews());
             this.embeddedCoWriterPanel.setActiveSubagent(session.activeSubagentId);
+            // Mirror the session's review-discuss state into the embedded panel's
+            // inputMode. Uses restoreMode (no side effects) rather than setMode
+            // because the session is already seeded — we're not asking the panel
+            // to drive a reset, just to render in the right mode.
+            const desiredMode = session.reviewEngine !== null ? 'review-discuss' : 'discuss';
+            if (this.embeddedCoWriterPanel.getMode() !== desiredMode) {
+                this.embeddedCoWriterPanel.restoreMode(desiredMode);
+            }
         }
 
         const chat = this.plugin.getDefaultChatProvider();
