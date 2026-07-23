@@ -2721,27 +2721,17 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
-     * Sync the destination panel's mode when crossing Review ↔ Co-writer tabs
-     * with an active review-discuss session. The session is shared — it
-     * follows the writer across tabs. No snapshot-swap: whatever mode the
-     * session is in stays, and the destination panel renders in that mode.
-     *
-     * Called by the sidebar's `switchTopTab` on Review ↔ Co-writer
-     * transitions. When the session has `reviewEngine !== null` (active
-     * review-discuss), the destination panel is set to 'review-discuss'
-     * mode so the conversation continues seamlessly. Otherwise, no-op
-     * (the panel keeps its current/default mode — typically 'coach').
+     * When switching to the Review tab with an active review-discuss session,
+     * tell the Review panel to re-mount the embedded CoWriterPanel. The
+     * Co-writer → Review direction is the only one that needs this explicit
+     * nudge (the Review panel doesn't otherwise know the session changed).
+     * The Review → Co-writer direction is handled inside renderCoWriterTab,
+     * which checks session.reviewEngine and sets the panel mode on every render.
      */
     syncReviewDiscussOnTabSwitch(targetTab: 'review' | 'cowriter'): void {
-        const session = this.coWriterSession;
-        if (session.reviewEngine === null) return;
-        // Active review-discuss session — ensure the destination panel
-        // displays in review-discuss mode.
-        if (targetTab === 'cowriter') {
-            this.lintPanel?.coWriterRestoreMode('review-discuss');
-        } else {
-            this.lintPanel?.reviewRestoreDiscussAfterSwap();
-        }
+        if (targetTab !== 'review') return;
+        if (this.coWriterSession.reviewEngine === null) return;
+        this.lintPanel?.reviewRestoreDiscussAfterSwap();
     }
 
     /**

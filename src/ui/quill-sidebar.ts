@@ -913,6 +913,16 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setMaxAllowedTokens(chat.provider.config.maxContextTokens);
         }
 
+        // If the session has an active review-discuss (reviewEngine !== null),
+        // ensure the panel displays in 'review-discuss' mode. This catches both
+        // first-construction (panel defaults to 'coach') and tab-switch-back.
+        // Safe against manual mode changes: syncReviewEngine (fired by
+        // setModeSwitchHandler) clears reviewEngine when the writer leaves
+        // review-discuss, so this check is false after a manual switch.
+        if (session && session.reviewEngine !== null && this.coWriterPanel.getMode() !== 'review-discuss') {
+            this.coWriterPanel.restoreMode('review-discuss');
+        }
+
         this.coWriterPanel.setContainer(this.content);
     }
 
