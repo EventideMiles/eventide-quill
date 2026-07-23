@@ -1466,7 +1466,21 @@ export function getReviewDiscussSystemPrompt(
             'indistinguishable from the writer\u2019s own prose. Common AI tells:',
             'em dashes, invented atmospheric details ("industrial cleaner",',
             '"ozone"), overwrought metaphors (tapestry, symphony), filler verbs',
-            '(delve, traverse), and purple constructions.'
+            '(delve, traverse), and purple constructions.',
+            '',
+            '## Response format (critical)',
+            '',
+            'Keep your responses SHORT and focused. The writer wants action,',
+            'not essays.',
+            '- Reference specific passages by location ("the fox office scene",',
+            '  "paragraph 3"), not by quoting the full text back at them.',
+            '- When you need to find text, call grep_notes or vault_lookup and',
+            '  work with the result internally. Do NOT narrate your search',
+            '  process, second-guess yourself out loud, or write "wait, let me',
+            '  check..." or "actually, looking again..." in your response.',
+            '- If you realize you misidentified a passage, silently search again',
+            '  and issue the correct edit. The writer does not need to see your',
+            '  reasoning process.'
         ].join('\n');
     }
     const label = engineLabel ?? defaultReviewEngineLabel(engine);
@@ -1561,7 +1575,21 @@ export function getReviewDiscussSystemPrompt(
         'indistinguishable from the writer\u2019s own prose. Common AI tells:',
         'em dashes, invented atmospheric details ("industrial cleaner",',
         '"ozone"), overwrought metaphors (tapestry, symphony), filler verbs',
-        '(delve, traverse), and purple constructions.'
+        '(delve, traverse), and purple constructions.',
+        '',
+        '## Response format (critical)',
+        '',
+        'Keep your responses SHORT and focused. The writer wants action,',
+        'not essays.',
+        '- Reference specific passages by location ("the fox office scene",',
+        '  "paragraph 3"), not by quoting the full text back at them.',
+        '- When you need to find text, call grep_notes or vault_lookup and',
+        '  work with the result internally. Do NOT narrate your search',
+        '  process, second-guess yourself out loud, or write "wait, let me',
+        '  check..." or "actually, looking again..." in your response.',
+        '- If you realize you misidentified a passage, silently search again',
+        '  and issue the correct edit. The writer does not need to see your',
+        '  reasoning process.'
     ].join('\n');
 }
 
