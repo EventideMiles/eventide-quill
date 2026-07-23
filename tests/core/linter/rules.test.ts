@@ -154,7 +154,7 @@ describe('checkEchoes', () => {
             name: 'paragraph not last in document (PARA_BREAK loop path)',
             text:
                 'The morning was cold and quiet. A faint sound drifted from the hallway. ' +
-                'He had left the window open all night. He had forgotten to check the lock.\n\n' +
+                'He had left the window open all night. He had forgotten to check the lock.   \n\n' +
                 'Second paragraph here. Nothing echoes.',
             line: 1,
             column: 72,
