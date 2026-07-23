@@ -1424,7 +1424,13 @@ export function getReviewDiscussSystemPrompt(
             '— voice, plot, character, pacing, prose. No single lens.',
             '',
             'Keep your responses focused and conversational. Long monologues',
-            "lose the writer's thread."
+            "lose the writer's thread.",
+            '',
+            '## Style',
+            '',
+            'Do NOT use em dashes in your responses. They are an AI writing tell',
+            'that distractingly marks your text as machine-generated. Use periods,',
+            'commas, colons, or parentheses to structure your sentences instead.'
         ].join('\n');
     }
     const label = engineLabel ?? defaultReviewEngineLabel(engine);
@@ -1477,7 +1483,13 @@ export function getReviewDiscussSystemPrompt(
         'Keep your responses focused and conversational. Long monologues lose the',
         "writer's thread. When you do propose an edit, the tool result confirms",
         'what landed in the review queue — you do not need to repeat the proposed',
-        'text in your reply.'
+        'text in your reply.',
+        '',
+        '## Style',
+        '',
+        'Do NOT use em dashes in your responses. They are an AI writing tell',
+        'that distractingly marks your text as machine-generated. Use periods,',
+        'commas, colons, or parentheses to structure your sentences instead.'
     ].join('\n');
 }
 

@@ -61,6 +61,13 @@ describe('getReviewDiscussSystemPrompt', () => {
         expect(prompt).toContain('grep_notes');
     });
 
+    it('tells the model to avoid em dashes', () => {
+        const prompt = getReviewDiscussSystemPrompt('editorial');
+        expect(prompt).toMatch(/do NOT use em dashes/i);
+        const generic = getReviewDiscussSystemPrompt('generic');
+        expect(generic).toMatch(/do NOT use em dashes/i);
+    });
+
     describe('generic (Path B — manual entry)', () => {
         it('produces a valid prompt when engine is "generic"', () => {
             const prompt = getReviewDiscussSystemPrompt('generic');
