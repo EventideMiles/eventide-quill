@@ -1177,6 +1177,18 @@ export class CoWriterSession {
             if (activeFileMsg) {
                 injectedContext.push(activeFileMsg);
             }
+        } else if (fullText) {
+            // Review-discuss mode: inject the FULL active document so the editor
+            // can reference and edit any section, not just the ~4000 chars near
+            // the cursor. The model should still call vault_lookup before editing
+            // to get the latest text (the writer may have changed it since this
+            // injection).
+            const activeFile = plugin.app.workspace.getActiveFile();
+            const fileName = activeFile?.name ?? 'the manuscript';
+            injectedContext.push({
+                role: 'system',
+                content: `Current manuscript (full document) — "${fileName}":\n\n${fullText}`
+            });
         }
         const discussNetworkMsg = buildNetworkToolsMessage(plugin);
         if (discussNetworkMsg) {
