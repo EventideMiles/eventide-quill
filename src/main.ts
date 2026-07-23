@@ -3260,15 +3260,7 @@ export default class EventideQuillPlugin extends Plugin {
         // --- Scope resolution (shared with the async queue's manuscript builder). ---
         const { selectedChapters, scopeLabel } = this.resolveManuscriptScope(chapters, activeFile, scope);
 
-        const manuscriptLabel = modeMeta?.label ?? mode;
-        if (this.settings.reviewSuggestedEditsEnabled) {
-            this.coWriterSession.seedForReviewDiscuss({
-                engine: 'manuscript',
-                systemPrompt: getReviewDiscussSystemPrompt('manuscript', manuscriptLabel),
-                reportText: ''
-            });
-        }
-        this.lintPanel?.reviewStartLoading('manuscript', manuscriptLabel, scopeLabel);
+        this.lintPanel?.reviewStartLoading('manuscript', modeMeta?.label ?? mode, scopeLabel);
 
         // Vault context (best-effort) + linked plot map — resolved before the
         // shared compaction helper, which needs them to build the messages.
@@ -3328,13 +3320,19 @@ export default class EventideQuillPlugin extends Plugin {
             let fullResponse = '';
             for await (const chunk of stream) {
                 if (chunk.done) {
-                    if (!this.settings.reviewSuggestedEditsEnabled) {
-                        this.manuscriptAnalysisCurrentMessages.push({ role: 'assistant', content: fullResponse });
-                        this.lintPanel?.reviewSetContextTokenEstimate(
-                            estimateTokens(this.manuscriptAnalysisCurrentMessages)
-                        );
-                        await this.lintPanel?.reviewFinished();
+                    this.manuscriptAnalysisCurrentMessages.push({ role: 'assistant', content: fullResponse });
+                    this.lintPanel?.reviewSetContextTokenEstimate(
+                        estimateTokens(this.manuscriptAnalysisCurrentMessages)
+                    );
+                    if (this.settings.reviewSuggestedEditsEnabled) {
+                        const label = getManuscriptAnalysisModeById(mode)?.label ?? mode;
+                        this.coWriterSession.seedForReviewDiscuss({
+                            engine: 'manuscript',
+                            systemPrompt: getReviewDiscussSystemPrompt('manuscript', label),
+                            reportText: fullResponse
+                        });
                     }
+                    await this.lintPanel?.reviewFinished();
                     this.archiveInteractiveReport(
                         fullResponse,
                         'manuscript',
@@ -3345,11 +3343,7 @@ export default class EventideQuillPlugin extends Plugin {
                     );
                 } else {
                     fullResponse += chunk.text;
-                    if (this.settings.reviewSuggestedEditsEnabled) {
-                        this.coWriterSession.appendReviewDiscussChunk(chunk.text);
-                    } else {
-                        this.lintPanel?.reviewAppendChunk(chunk.text);
-                    }
+                    this.lintPanel?.reviewAppendChunk(chunk.text);
                 }
             }
         } catch (err: unknown) {
@@ -4003,15 +3997,11 @@ export default class EventideQuillPlugin extends Plugin {
         const myAnalysisAbort = this.analysisAbort;
 
         const modeMeta = ANALYSIS_MODES.find((m) => m.id === mode);
-        const criticalLabel = modeMeta?.label ?? mode;
-        if (this.settings.reviewSuggestedEditsEnabled) {
-            this.coWriterSession.seedForReviewDiscuss({
-                engine: 'critical',
-                systemPrompt: getReviewDiscussSystemPrompt('critical', criticalLabel),
-                reportText: ''
-            });
-        }
-        this.lintPanel?.reviewStartLoading('critical', criticalLabel, scope === 'auto' ? 'auto scope' : scope);
+        this.lintPanel?.reviewStartLoading(
+            'critical',
+            modeMeta?.label ?? mode,
+            scope === 'auto' ? 'auto scope' : scope
+        );
 
         // Collect deterministic signal from the context engine.
         // Guard against stale context: if the assembly was built for a different
@@ -4087,11 +4077,13 @@ export default class EventideQuillPlugin extends Plugin {
             let fullResponse = '';
             for await (const chunk of stream) {
                 if (chunk.done) {
-                    if (!this.settings.reviewSuggestedEditsEnabled) {
-                        this.analysisCurrentMessages.push({ role: 'assistant', content: fullResponse });
-                        this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
-                        await this.lintPanel?.reviewFinished();
+                    this.analysisCurrentMessages.push({ role: 'assistant', content: fullResponse });
+                    this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
+                    if (this.settings.reviewSuggestedEditsEnabled) {
+                        const label = getAnalysisModeById(mode)?.label ?? mode;
+                        this.beginReviewDiscuss('critical', fullResponse, label);
                     }
+                    await this.lintPanel?.reviewFinished();
                     this.archiveInteractiveReport(
                         fullResponse,
                         'critical',
@@ -4102,11 +4094,7 @@ export default class EventideQuillPlugin extends Plugin {
                     );
                 } else {
                     fullResponse += chunk.text;
-                    if (this.settings.reviewSuggestedEditsEnabled) {
-                        this.coWriterSession.appendReviewDiscussChunk(chunk.text);
-                    } else {
-                        this.lintPanel?.reviewAppendChunk(chunk.text);
-                    }
+                    this.lintPanel?.reviewAppendChunk(chunk.text);
                 }
             }
         } catch (err: unknown) {
@@ -4981,18 +4969,8 @@ export default class EventideQuillPlugin extends Plugin {
         this.feedbackAbort = new AbortController();
         notifyMobileStreamRisk();
 
-        // Start loading state in the Review tab. When review-discuss is
-        // enabled, seed the session first so the report streams directly
-        // into the embedded co-writer panel's first assistant message.
-        const editorialLabel = persona?.name ?? 'Custom';
-        if (this.settings.reviewSuggestedEditsEnabled) {
-            this.coWriterSession.seedForReviewDiscuss({
-                engine: 'editorial',
-                systemPrompt: getReviewDiscussSystemPrompt('editorial', editorialLabel),
-                reportText: ''
-            });
-        }
-        this.lintPanel?.reviewStartLoading('editorial', editorialLabel);
+        // Start loading state in the Review tab
+        this.lintPanel?.reviewStartLoading('editorial', persona?.name ?? 'Custom');
 
         // Capture the controller for this specific request so we can guard its cleanup.
         const myFeedbackAbort = this.feedbackAbort;
@@ -5135,15 +5113,13 @@ export default class EventideQuillPlugin extends Plugin {
             let fullResponse = '';
             for await (const chunk of stream) {
                 if (chunk.done) {
-                    if (!this.settings.reviewSuggestedEditsEnabled) {
-                        this.feedbackCurrentMessages.push({ role: 'assistant', content: fullResponse });
-                        this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
-                        await this.lintPanel?.reviewFinished();
+                    this.feedbackCurrentMessages.push({ role: 'assistant', content: fullResponse });
+                    this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
+                    if (this.settings.reviewSuggestedEditsEnabled) {
+                        const label = persona?.name ?? 'Editorial feedback';
+                        this.beginReviewDiscuss('editorial', fullResponse, label);
                     }
-                    // When review-discuss is enabled, the session was seeded
-                    // before streaming and chunks were pushed incrementally.
-                    // No finishLoading needed — the report is already in the
-                    // session as the first assistant message.
+                    await this.lintPanel?.reviewFinished();
                     this.archiveInteractiveReport(
                         fullResponse,
                         'editorial',
@@ -5154,11 +5130,7 @@ export default class EventideQuillPlugin extends Plugin {
                     );
                 } else {
                     fullResponse += chunk.text;
-                    if (this.settings.reviewSuggestedEditsEnabled) {
-                        this.coWriterSession.appendReviewDiscussChunk(chunk.text);
-                    } else {
-                        this.lintPanel?.reviewAppendChunk(chunk.text);
-                    }
+                    this.lintPanel?.reviewAppendChunk(chunk.text);
                 }
             }
         } catch (err: unknown) {

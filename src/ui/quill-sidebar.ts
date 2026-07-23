@@ -613,7 +613,16 @@ export class QuillSidebarView extends ItemView {
                 void this.plugin.requestManuscriptAnalysis(mode, scope, compaction, customInstruction);
             });
             this.reviewPanel.setChatMessageHandler((message) => {
-                // Dispatch to the right engine's chat handler.
+                // When review-discuss is enabled and the writer sends their
+                // first follow-up, swap to the embedded co-writer panel.
+                // The report was seeded into the session at completion time;
+                // the writer's message goes through sendDiscussion.
+                if (this.plugin.settings.reviewSuggestedEditsEnabled && !this.reviewPanel?.isDiscussMode()) {
+                    this.reviewPanel?.enterDiscussFromChat();
+                    void this.plugin.sendCoWriterDiscussion(message);
+                    return;
+                }
+                // Legacy dispatch to the right engine's chat handler.
                 if (this.reviewPanel?.activeEngine === 'editorial') {
                     void this.plugin.sendFeedbackChatMessage(message);
                 } else if (this.reviewPanel?.activeEngine === 'manuscript') {

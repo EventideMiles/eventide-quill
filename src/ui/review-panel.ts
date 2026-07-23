@@ -464,16 +464,8 @@ export class ReviewPanel extends AbstractChatPanel {
         this.contextTokenOverride = null;
         this.chatContextFiles.clear();
         this.subtab = 'results';
-        // When review-discuss is enabled, mount the embedded panel immediately.
-        // The report streams directly into the session's first assistant
-        // message via appendReviewDiscussChunk, so the writer sees it appear
-        // in the co-writer chat rather than the legacy flat-report view.
-        if (this.plugin?.settings.reviewSuggestedEditsEnabled) {
-            this.enterDiscussMode();
-        } else {
-            this.exitDiscussMode();
-            if (this.containerEl) this.render();
-        }
+        this.exitDiscussMode();
+        if (this.containerEl) this.render();
     }
 
     /**
@@ -516,12 +508,10 @@ export class ReviewPanel extends AbstractChatPanel {
 
     async finishLoading(): Promise<void> {
         this.resultsState = 'complete';
-        if (this.plugin?.settings.reviewSuggestedEditsEnabled) {
-            // Phase 3 seeds the session + pushes the streamed report as the
-            // first assistant message before we mount the embedded panel.
-            this.enterDiscussMode();
-            return;
-        }
+        // The session has been seeded by beginReviewDiscuss (if the toggle
+        // is on). Keep the flat-report view — the writer reads the report here.
+        // The swap to the co-writer panel happens when the writer sends their
+        // first follow-up message (see the chat handler in the sidebar).
         await this.rerenderResultsTab();
         const c = this.getScrollContainer();
         if (c) c.scrollTop = 0;
@@ -1408,6 +1398,16 @@ export class ReviewPanel extends AbstractChatPanel {
     // ========================================================================
     // Discuss mode (embedded CoWriterPanel) lifecycle
     // ========================================================================
+
+    /**
+     * Enter discuss mode from the chat handler — called when the writer sends
+     * their first follow-up message and review-discuss is enabled. Swaps from
+     * the flat-report view to the embedded CoWriterPanel, which takes over
+     * the chat surface. The session was already seeded at report completion.
+     */
+    enterDiscussFromChat(): void {
+        this.enterDiscussMode();
+    }
 
     /**
      * Transition the Results sub-tab into discuss mode: the flat-report view
