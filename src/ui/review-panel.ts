@@ -414,6 +414,7 @@ export class ReviewPanel extends AbstractChatPanel {
         this.reportText = '';
         this.chatHistory = [];
         this.chatLoading = false;
+        this.chatInputDraft = '';
         this.contextTokenOverride = null;
         this.chatContextFiles.clear();
         this.subtab = 'results';
@@ -433,6 +434,7 @@ export class ReviewPanel extends AbstractChatPanel {
         this.reportText = reportText;
         this.chatHistory = [];
         this.chatLoading = false;
+        this.chatInputDraft = '';
         this.contextTokenOverride = null;
         this.chatContextFiles.clear();
         this.subtab = 'results';

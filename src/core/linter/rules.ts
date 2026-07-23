@@ -175,14 +175,15 @@ export function checkRepeatedWords(text: string, minLength: number = 4): LintRes
 const ECHO_THRESHOLD = 3;
 
 /**
- * Compute the document position of the first non-whitespace character of a
+ * Compute the document position of the first lexical character of a
  * sentence whose untrimmed `start` offset (within a paragraph slice that
  * begins at `paraStartOffset` in the full document) is `sentenceStart`.
  *
  * `splitSentences` records `start` as the untrimmed offset — when the
  * previous sentence ended with punctuation followed by a space (the common
  * case), the recorded start points at the space, not at the sentence's
- * first word. Skipping past whitespace lands the highlight on the actual
+ * first word. Skipping past non-word characters (whitespace and leading
+ * punctuation such as an opening quote) lands the highlight on the actual
  * echoed phrase, matching the `length` (phrase length) the caller sets.
  */
 function echoPhrasePosition(
@@ -191,7 +192,7 @@ function echoPhrasePosition(
     sentenceStart: number
 ): { line: number; column: number } {
     let offset = paraStartOffset + sentenceStart;
-    while (offset < text.length && /\s/.test(text[offset]!)) offset++;
+    while (offset < text.length && !/\w/.test(text[offset]!)) offset++;
     return posAtOffset(text, offset);
 }
 

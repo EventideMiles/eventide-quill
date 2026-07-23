@@ -29,6 +29,10 @@ const MS_PER_DAY = 86_400_000;
 export function formatTrendVelocity(snapshots: ManuscriptSnapshot[]): string | null {
     if (snapshots.length < 2) return null;
 
+    for (let i = 1; i < snapshots.length; i++) {
+        if (snapshots[i]!.takenAt <= snapshots[i - 1]!.takenAt) return null;
+    }
+
     const first = snapshots[0]!;
     const last = snapshots[snapshots.length - 1]!;
     const elapsedMs = last.takenAt - first.takenAt;

@@ -26,6 +26,13 @@ describe('formatTrendVelocity', () => {
         expect(formatTrendVelocity(series([5, 200], [3, 100]))).toBeNull();
     });
 
+    // Regression: a non-monotonic middle pair is not caught by the endpoint
+    // check alone (first < last), so the per-pair scan is required to reject
+    // a sequence like [0, 10, 5] whose endpoints look fine.
+    it('returns null when any adjacent pair is not strictly increasing', () => {
+        expect(formatTrendVelocity(series([0, 0], [10, 200], [5, 400]))).toBeNull();
+    });
+
     it('uses sub-day "<delta> words in <Hh Mm> across N" form for short windows', () => {
         // 1,610 words over 73 minutes — the bug report's scenario.
         // 73 minutes = 1h 13m.

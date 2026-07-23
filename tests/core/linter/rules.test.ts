@@ -146,6 +146,25 @@ describe('checkEchoes', () => {
         expect(flagged.toLowerCase()).toBe('he had');
     });
 
+    // Regression: when the echoed phrase sits on a later line of a multiline
+    // (single-\n) paragraph, the reported line must be the phrase's actual
+    // line, not line 1 — and slicing that line by column+length must yield the
+    // echoed phrase verbatim.
+    it('reports the echoed phrase line and column across newlines', () => {
+        const text =
+            'First line introduces the scene here.\n' +
+            'He had been walking for hours in the cold.\n' +
+            'He had no idea where he was going next.\n' +
+            'He had forgotten the map back at the inn.';
+        const results = checkEchoes(text);
+        const echo = results.find((r) => r.rule === 'echoes' && r.message.includes('he had'));
+        expect(echo).toBeDefined();
+        // The echoed phrase is on line 2 (1-based) of the multiline paragraph.
+        const phraseLine = text.split('\n')[echo!.line - 1]!;
+        const flagged = phraseLine.slice(echo!.column, echo!.column + echo!.length);
+        expect(flagged.toLowerCase()).toBe('he had');
+    });
+
     it('points at the echoed phrase when the paragraph is not the last in the document', () => {
         // Same scenario, but the echoing paragraph is followed by another
         // paragraph — exercises the PARA_BREAK while-loop path rather than
