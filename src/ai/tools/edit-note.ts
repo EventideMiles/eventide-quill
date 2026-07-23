@@ -12,6 +12,14 @@ import {
 import { checkAiIsms } from '../ai-ism-detector';
 
 /**
+ * Maximum length of old_text in a single edit_note call. Edits larger than
+ * this fail to match reliably (whitespace differences accumulate over long
+ * passages) and produce overwhelming review cards. The model should break
+ * big rewrites into paragraph-by-paragraph edits at or below this limit.
+ */
+const MAX_OLD_TEXT_LENGTH = 800;
+
+/**
  * Propose a replacement to an existing note. The model provides the exact
  * `old_text` to find and the `new_text` to replace it with. The note is opened
  * in a new tab and the edit is surfaced as a green inline diff (same review UX
@@ -90,6 +98,20 @@ export const editNoteTool: Tool = {
         // message tells the model exactly what to fix.
         const aiIsmError = checkAiIsms(newText);
         if (aiIsmError) return aiIsmError;
+
+        // Size guard: reject edits where old_text is too large. Large matches
+        // fail reliably (whitespace and formatting differences accumulate over
+        // long passages). The model should break big rewrites into one
+        // edit_note per paragraph.
+        if (oldText.length > MAX_OLD_TEXT_LENGTH) {
+            return (
+                `Error: old_text is ${oldText.length} characters (max ${MAX_OLD_TEXT_LENGTH}). ` +
+                'Large edits fail to match reliably. Break this into paragraph-by-paragraph ' +
+                'edits: issue a separate edit_note call for each paragraph, with old_text ' +
+                'set to just that paragraph\u2019s text. You can issue multiple edit_note calls ' +
+                'in the same response.'
+            );
+        }
 
         const { plugin } = ctx;
         const file = resolveNoteFile(plugin, path);
