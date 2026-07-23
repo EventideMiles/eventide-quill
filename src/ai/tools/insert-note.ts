@@ -7,6 +7,7 @@ import {
     resolveNoteFile,
     splitFrontmatter
 } from './lore-edit-helpers';
+import { checkAiIsms } from '../ai-ism-detector';
 
 /**
  * Propose inserting content into an existing note without removing anything.
@@ -125,6 +126,10 @@ export const insertNoteTool: Tool = {
 
         if (!path) return 'Error: "path" is required.';
         if (!newText) return 'Error: "new_text" is required.';
+
+        // AI-ism check: reject if the proposed text contains writing tells.
+        const aiIsmError = checkAiIsms(newText);
+        if (aiIsmError) return aiIsmError;
 
         // Anchor is required only for the text-match positions. The anchor-less
         // modes (at_top, at_line) bypass matching entirely.

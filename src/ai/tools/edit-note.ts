@@ -9,6 +9,7 @@ import {
     readNoteContent,
     resolveNoteFile
 } from './lore-edit-helpers';
+import { checkAiIsms } from '../ai-ism-detector';
 
 /**
  * Propose a replacement to an existing note. The model provides the exact
@@ -83,6 +84,12 @@ export const editNoteTool: Tool = {
             return 'Error: "new_text" is required and must be a string.';
         }
         const newText = args.new_text;
+
+        // AI-ism check: reject the call if the proposed text contains writing
+        // tells (em dashes, cliché words, purple constructions). The error
+        // message tells the model exactly what to fix.
+        const aiIsmError = checkAiIsms(newText);
+        if (aiIsmError) return aiIsmError;
 
         const { plugin } = ctx;
         const file = resolveNoteFile(plugin, path);

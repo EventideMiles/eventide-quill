@@ -1,5 +1,6 @@
 import type { Tool, ToolContext } from './tool';
 import { openNoteForEdit, overlapError, pushLoreEditDiff, readNoteContent, resolveNoteFile } from './lore-edit-helpers';
+import { checkAiIsms } from '../ai-ism-detector';
 
 /**
  * Propose appending content to the end of an existing note. The note opens
@@ -44,6 +45,10 @@ export const appendToNoteTool: Tool = {
 
         if (!path) return 'Error: "path" is required.';
         if (!content) return 'Error: "content" is required.';
+
+        // AI-ism check: reject if the proposed text contains writing tells.
+        const aiIsmError = checkAiIsms(content);
+        if (aiIsmError) return aiIsmError;
 
         const { plugin } = ctx;
         const file = resolveNoteFile(plugin, path);
