@@ -14,3 +14,11 @@ reviews:
         base_branches:
             - main
             - develop
+    tools:
+        # Checkov is an infrastructure-as-code scanner (Terraform, K8s,
+        # Docker, CloudFormation). This repo is an Obsidian TypeScript plugin
+        # with no IaC files, so the tool is irrelevant here — and CodeRabbit's
+        # runtime currently ships a broken install (ModuleNotFoundError: No
+        # module named 'checkov'), which surfaces as a warning on every review.
+        checkov:
+            enabled: false

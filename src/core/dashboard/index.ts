@@ -22,6 +22,7 @@ export {
     pacingAnalysis
 } from './metrics';
 export { daleChall, reweightedFlesch, customComposite, automatedReadabilityIndex, narrativeFlow } from './readability';
+export { formatTrendVelocity } from './trend';
 export {
     loadManuscriptFile,
     saveManuscriptFile,

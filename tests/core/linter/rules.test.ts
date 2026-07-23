@@ -20,7 +20,8 @@ import {
 
 describe('checkLongSentences', () => {
     it('flags sentences exceeding the word limit', () => {
-        const long = 'This is a sentence that goes on and on and on and keeps going well past the default threshold of forty words which is quite long indeed and should absolutely be flagged by the linter as exceeding the configured maximum length.';
+        const long =
+            'This is a sentence that goes on and on and on and keeps going well past the default threshold of forty words which is quite long indeed and should absolutely be flagged by the linter as exceeding the configured maximum length.';
         const results = checkLongSentences(long, 40);
         expect(results.length).toBeGreaterThanOrEqual(1);
         expect(results[0]!.rule).toBe('long-sentences');
@@ -121,6 +122,54 @@ describe('checkEchoes', () => {
     it('does not flag varied sentence openings', () => {
         const text = 'She ran fast.\n\nThe wind howled.\n\nDarkness fell quickly.';
         expect(checkEchoes(text)).toEqual([]);
+    });
+
+    // Regression: the echo result's line/column must point at the first
+    // occurrence of the echoed phrase, not the paragraph start. Pre-fix the
+    // column was hardcoded to 1, landing the highlight on the wrong word.
+    // Each case pins the exact line, column, and phrase content read back
+    // from the source text.
+    it.each([
+        {
+            name: 'single-line paragraph',
+            text:
+                'The morning was cold and quiet. A faint sound drifted from the hallway. ' +
+                'He had left the window open all night. He had forgotten to check the lock.',
+            line: 1,
+            column: 72,
+            phrase: 'he had'
+        },
+        {
+            name: 'multiline paragraph (echo after a newline)',
+            text:
+                'First sentence sets the scene.\n' +
+                'He had walked the road for hours.\n' +
+                'He had no memory of turning back.\n' +
+                'He had left the map behind.',
+            line: 2,
+            column: 0,
+            phrase: 'he had'
+        },
+        {
+            name: 'paragraph not last in document (PARA_BREAK loop path)',
+            text:
+                'The morning was cold and quiet. A faint sound drifted from the hallway. ' +
+                'He had left the window open all night. He had forgotten to check the lock.   \n\n' +
+                'Second paragraph here. Nothing echoes.',
+            line: 1,
+            column: 72,
+            phrase: 'he had'
+        }
+    ])('points the echo result at the correct line and column: $name', ({ text, line, column, phrase }) => {
+        const results = checkEchoes(text);
+        expect(results.length).toBe(1);
+        const echo = results[0]!;
+        expect(echo.rule).toBe('echoes');
+        expect(echo.line).toBe(line);
+        expect(echo.column).toBe(column);
+        const lineText = text.split('\n')[line - 1]!;
+        const flagged = lineText.slice(column, column + echo.length);
+        expect(flagged.toLowerCase()).toBe(phrase);
     });
 });
 

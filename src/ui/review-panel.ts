@@ -102,6 +102,10 @@ export class ReviewPanel extends AbstractChatPanel {
     // --- Shared state ---
     private reportText = '';
     private customInstruction = '';
+    /** Follow-up chat input draft — preserved across re-renders so focus
+     *  shifts (active-leaf-change) don't wipe text the writer is mid-type on.
+     *  Mirrors Co-writer's `inputValue` pattern. */
+    private chatInputDraft = '';
     private chatHistory: { role: 'user' | 'assistant' | 'system'; content: string }[] = [];
     private contextTokenOverride: number | null = null;
     private chatContextFiles: ChatContextFiles;
@@ -410,6 +414,7 @@ export class ReviewPanel extends AbstractChatPanel {
         this.reportText = '';
         this.chatHistory = [];
         this.chatLoading = false;
+        this.chatInputDraft = '';
         this.contextTokenOverride = null;
         this.chatContextFiles.clear();
         this.subtab = 'results';
@@ -429,6 +434,7 @@ export class ReviewPanel extends AbstractChatPanel {
         this.reportText = reportText;
         this.chatHistory = [];
         this.chatLoading = false;
+        this.chatInputDraft = '';
         this.contextTokenOverride = null;
         this.chatContextFiles.clear();
         this.subtab = 'results';
@@ -462,6 +468,7 @@ export class ReviewPanel extends AbstractChatPanel {
         this.currentPersonaId = '';
         this.chatHistory = [];
         this.chatLoading = false;
+        this.chatInputDraft = '';
         this.contextTokenOverride = null;
         this.chatContextFiles.clear();
         if (this.containerEl) this.render();
@@ -477,6 +484,7 @@ export class ReviewPanel extends AbstractChatPanel {
         this.contextTokenOverride = null;
         this.currentPersonaId = '';
         this.customInstruction = '';
+        this.chatInputDraft = '';
         this.chatHistory = [];
         this.chatLoading = false;
         this.chatContextFiles.clear();
@@ -1487,6 +1495,12 @@ export class ReviewPanel extends AbstractChatPanel {
             placeholder: disabled ? 'Generating report\u2026' : 'Ask a follow-up\u2026'
         });
         input.disabled = disabled;
+        // Restore the draft so a re-render mid-type (e.g. active-leaf-change
+        // when the file actually changed) doesn't lose what the writer typed.
+        input.value = this.chatInputDraft;
+        this.renderEvents.registerDomEvent(input, 'input', () => {
+            this.chatInputDraft = input.value;
+        });
 
         // Inline file-mention autocomplete for @-references
         if (!disabled) {
@@ -1507,6 +1521,7 @@ export class ReviewPanel extends AbstractChatPanel {
 
             this.chatHistory.push({ role: 'user', content: text });
             input.value = '';
+            this.chatInputDraft = '';
             this.chatLoading = true;
             this.userScrolledUp = false;
 

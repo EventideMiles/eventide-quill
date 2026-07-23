@@ -174,6 +174,28 @@ export function checkRepeatedWords(text: string, minLength: number = 4): LintRes
 
 const ECHO_THRESHOLD = 3;
 
+/**
+ * Compute the document position of the first lexical character of a
+ * sentence whose untrimmed `start` offset (within a paragraph slice that
+ * begins at `paraStartOffset` in the full document) is `sentenceStart`.
+ *
+ * `splitSentences` records `start` as the untrimmed offset — when the
+ * previous sentence ended with punctuation followed by a space (the common
+ * case), the recorded start points at the space, not at the sentence's
+ * first word. Skipping past non-word characters (whitespace and leading
+ * punctuation such as an opening quote) lands the highlight on the actual
+ * echoed phrase, matching the `length` (phrase length) the caller sets.
+ */
+function echoPhrasePosition(
+    text: string,
+    paraStartOffset: number,
+    sentenceStart: number
+): { line: number; column: number } {
+    let offset = paraStartOffset + sentenceStart;
+    while (offset < text.length && !/\w/.test(text[offset]!)) offset++;
+    return posAtOffset(text, offset);
+}
+
 /** Flag paragraphs where multiple sentences start with the same two words. */
 export function checkEchoes(text: string): LintResult[] {
     const results: LintResult[] = [];
@@ -189,7 +211,7 @@ export function checkEchoes(text: string): LintResult[] {
         if (!trimmed) continue;
 
         const leadingTrim = paraText.length - paraText.trimStart().length;
-        const paraPos = posAtOffset(text, match.index - paraText.length + leadingTrim);
+        const paraStartOffset = match.index - paraText.length + leadingTrim;
         const sentences = splitSentences(trimmed, ABBREVIATIONS);
         if (sentences.length < ECHO_THRESHOLD) continue;
 
@@ -212,9 +234,10 @@ export function checkEchoes(text: string): LintResult[] {
                 if (idx === undefined) continue;
                 const first = sentences[idx];
                 if (!first) continue;
+                const pos = echoPhrasePosition(text, paraStartOffset, first.start);
                 results.push({
-                    line: paraPos.line + first.line - 1,
-                    column: 1,
+                    line: pos.line,
+                    column: pos.column,
                     length: start.length,
                     message: `Echo: "${start}" starts ${indices.length} sentences in this paragraph.`,
                     severity: 'info',
@@ -224,9 +247,11 @@ export function checkEchoes(text: string): LintResult[] {
         }
     }
 
-    const remaining = text.slice(searchFrom).trim();
+    const tail = text.slice(searchFrom);
+    const leadingTrim = tail.length - tail.trimStart().length;
+    const remaining = tail.trim();
     if (remaining) {
-        const paraPos = posAtOffset(text, text.length - remaining.length);
+        const paraStartOffset = searchFrom + leadingTrim;
         const sentences = splitSentences(remaining, ABBREVIATIONS);
         if (sentences.length >= ECHO_THRESHOLD) {
             const starts = sentences.map((s) => {
@@ -248,9 +273,10 @@ export function checkEchoes(text: string): LintResult[] {
                     if (idx === undefined) continue;
                     const first = sentences[idx];
                     if (!first) continue;
+                    const pos = echoPhrasePosition(text, paraStartOffset, first.start);
                     results.push({
-                        line: paraPos.line + first.line - 1,
-                        column: 1,
+                        line: pos.line,
+                        column: pos.column,
                         length: start.length,
                         message: `Echo: "${start}" starts ${indices.length} sentences in this paragraph.`,
                         severity: 'info',
