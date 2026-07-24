@@ -4184,6 +4184,7 @@ export class CoWriterSession {
         this.thoughtBuffer = '';
         this.chatHistory = [];
         this.lastTokenBreakdown = null;
+        this.reviewEngine = null;
         this.currentOptions = [];
         this.optionsLoading = false;
         this.onChatUpdate?.();
