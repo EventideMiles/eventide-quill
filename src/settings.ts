@@ -268,8 +268,8 @@ export interface EventideQuillSettings {
     /**
      * Free-form world-building rules injected into the review-discuss context
      * so the model follows them when writing or editing prose. Examples:
-     * "Characters are anthropomorphic animals. Use 'fur' not 'skin', 'paws'
-     * not 'hands', 'muzzle' not 'face' for canines." Default: empty.
+     * "This world uses magic based on sound. Swords are called 'blades'
+     * regardless of shape." Default: empty.
      */
     reviewWorldRules: string;
     /** Master toggle for the async feedback queue. Off hides the Queue tab and the Review handoff. Default: on. */
@@ -3312,14 +3312,14 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             .setDesc(
                 'World-building rules the editor follows when writing or editing prose in review-discuss. ' +
                     'Describe how your world works so edits use the right vocabulary and details. ' +
-                    'Example: "Characters are anthropomorphic animals. Use fur not skin, paws not hands, ' +
-                    'muzzle not face for canines. Magic is visible as blue light."'
+                    'Example: "Magic is visible as blue light. Swords are called blades regardless of shape. ' +
+                    'The setting is a tropical archipelago."'
             )
             .addTextArea((text) => {
                 text.setPlaceholder(
-                    'Characters are anthropomorphic animals. Use fur not skin...\n' +
+                    'Magic is visible as blue light...\n' +
                         'The setting is a tropical archipelago...\n' +
-                        'Magic requires a spoken incantation...'
+                        'Swords are called blades regardless of shape...'
                 )
                     .setValue(this.plugin.settings.reviewWorldRules)
                     .onChange(async (value) => {

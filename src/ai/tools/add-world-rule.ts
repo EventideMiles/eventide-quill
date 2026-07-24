@@ -10,9 +10,8 @@ import type { Tool } from './tool';
  * that should be remembered for all future prose edits — vocabulary, physical
  * traits, magic system rules, setting details, etc.
  *
- * Example: the writer says "in my world characters have fur, not skin" →
- * call add_world_rule(rule: "Characters have fur, not skin. Use 'fur' or
- * 'pelt' instead of 'skin' in descriptions.")
+ * Example: the writer says "in my world swords are called blades" ->
+ * call add_world_rule(rule: "Swords are called 'blades' regardless of shape.")
  */
 export const addWorldRuleTool: Tool = {
     id: 'add_world_rule',
@@ -21,8 +20,7 @@ export const addWorldRuleTool: Tool = {
         'The rule will be followed in all future prose edits. Use this when ' +
         'the writer mentions a world-specific detail that should be remembered ' +
         '(vocabulary, physical traits, magic rules, setting details). ' +
-        'Example: add_world_rule(rule: "Characters are anthropomorphic. Use ' +
-        "'fur' not 'skin', 'paws' not 'hands'.\")",
+        'Example: add_world_rule(rule: "Swords are called blades regardless of shape.")',
     parameters: {
         type: 'object',
         properties: {
@@ -31,8 +29,7 @@ export const addWorldRuleTool: Tool = {
                 description:
                     'The rule to add, phrased as a clear instruction. ' +
                     'Be specific about what to do, not just what to avoid. ' +
-                    'Example: "Use fur or pelt instead of skin when describing ' +
-                    'physical contact."'
+                    'Example: "Swords are called blades regardless of shape in this world."'
             }
         },
         required: ['rule']
