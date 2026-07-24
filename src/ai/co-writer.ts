@@ -1189,6 +1189,15 @@ export class CoWriterSession {
                 role: 'system',
                 content: `Current manuscript (full document) — "${fileName}":\n\n${fullText}`
             });
+            // Inject the writer's world-building rules so the model follows
+            // them when writing or editing prose (e.g., "use 'fur' not 'skin'").
+            const worldRules = plugin.settings.reviewWorldRules?.trim();
+            if (worldRules) {
+                injectedContext.push({
+                    role: 'system',
+                    content: `World rules (follow these when writing or editing prose):\n${worldRules}`
+                });
+            }
         }
         const discussNetworkMsg = buildNetworkToolsMessage(plugin);
         if (discussNetworkMsg) {

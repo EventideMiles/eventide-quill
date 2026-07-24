@@ -265,6 +265,13 @@ export interface EventideQuillSettings {
      * the mount infrastructure dormant until seeding + prompts land.
      */
     reviewSuggestedEditsEnabled: boolean;
+    /**
+     * Free-form world-building rules injected into the review-discuss context
+     * so the model follows them when writing or editing prose. Examples:
+     * "Characters are anthropomorphic animals. Use 'fur' not 'skin', 'paws'
+     * not 'hands', 'muzzle' not 'face' for canines." Default: empty.
+     */
+    reviewWorldRules: string;
     /** Master toggle for the async feedback queue. Off hides the Queue tab and the Review handoff. Default: on. */
     enableFeedbackQueue: boolean;
     /** Max queue jobs retained on disk (sidecar blobs). Older completed jobs are LRU-evicted; the vault report note is never touched by LRU. Default 20. */
@@ -398,6 +405,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     loreEntryImageAttachmentFolder: '',
     lorePreferEditOverCreate: true,
     reviewSuggestedEditsEnabled: true,
+    reviewWorldRules: '',
     enableFeedbackQueue: true,
     feedbackQueueLimit: 20,
     feedbackQueueAutoRun: true,
@@ -3268,6 +3276,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.autoSaveFeedbackReports = DEFAULT_SETTINGS.autoSaveFeedbackReports;
                         this.plugin.settings.feedbackReportFolder = DEFAULT_SETTINGS.feedbackReportFolder;
                         this.plugin.settings.reviewSuggestedEditsEnabled = DEFAULT_SETTINGS.reviewSuggestedEditsEnabled;
+                        this.plugin.settings.reviewWorldRules = DEFAULT_SETTINGS.reviewWorldRules;
                         await this.plugin.saveSettings();
                         this.display();
                     })
@@ -3297,6 +3306,28 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 })
             );
+
+        new Setting(containerEl)
+            .setName('World rules')
+            .setDesc(
+                'World-building rules the editor follows when writing or editing prose in review-discuss. ' +
+                    'Describe how your world works so edits use the right vocabulary and details. ' +
+                    'Example: "Characters are anthropomorphic animals. Use fur not skin, paws not hands, ' +
+                    'muzzle not face for canines. Magic is visible as blue light."'
+            )
+            .addTextArea((text) => {
+                text.setPlaceholder(
+                    'Characters are anthropomorphic animals. Use fur not skin...\n' +
+                        'The setting is a tropical archipelago...\n' +
+                        'Magic requires a spoken incantation...'
+                )
+                    .setValue(this.plugin.settings.reviewWorldRules)
+                    .onChange(async (value) => {
+                        this.plugin.settings.reviewWorldRules = value;
+                        await this.plugin.saveSettings();
+                    });
+                text.inputEl.rows = 5;
+            });
 
         new Setting(containerEl)
             .setName('Run queued jobs automatically')
