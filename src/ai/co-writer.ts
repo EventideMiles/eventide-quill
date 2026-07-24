@@ -1386,6 +1386,20 @@ export class CoWriterSession {
         const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
         let nudgesUsed = 0;
 
+        // Helper: push a token estimate that includes the injected context
+        // (full manuscript, tool ads, world rules) so the pre-send indicator
+        // for the NEXT turn matches the actual request size.
+        const pushFullTokenEstimate = () => {
+            this.onTokenEstimate?.(
+                this.estimateRequestBreakdown([
+                    this.discussCurrentMessages[0]!,
+                    ...injectedContext,
+                    ...this.discussCurrentMessages.slice(1)
+                ]),
+                maxTokens
+            );
+        };
+
         try {
             ctx.signal = this.abortController.signal;
 
@@ -1463,7 +1477,7 @@ export class CoWriterSession {
                 // Update token estimate so the indicator reflects tool-result
                 // growth — tool results stay in the conversation and keep
                 // getting re-sent, so the user needs to see their cost.
-                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                pushFullTokenEstimate();
 
                 // No structured tool calls this round. Before giving up, check
                 // whether the model wrote a tool call as plain text (common with
@@ -1508,7 +1522,7 @@ export class CoWriterSession {
                 this.annotateToolUseErrors(execResults);
 
                 // Re-estimate after tool results were appended.
-                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                pushFullTokenEstimate();
 
                 // Mid-loop compaction: refine first (deterministic, free), then
                 // AI-summarize older turns if still over the threshold. Keeps
@@ -1522,7 +1536,7 @@ export class CoWriterSession {
                     );
                     if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens <= compactPct) {
                         needsCompaction = false;
-                        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                        pushFullTokenEstimate();
                     }
                 }
                 if (needsCompaction) {
@@ -1533,10 +1547,7 @@ export class CoWriterSession {
                         });
                         if (cResult) {
                             this.discussCurrentMessages = cResult.messages;
-                            this.onTokenEstimate?.(
-                                this.estimateRequestBreakdown(this.discussCurrentMessages),
-                                maxTokens
-                            );
+                            pushFullTokenEstimate();
                         }
                     } catch (compErr: unknown) {
                         // Propagate aborts to the outer catch so the normal
