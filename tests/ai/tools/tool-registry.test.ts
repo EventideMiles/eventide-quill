@@ -59,12 +59,12 @@ describe('createToolRegistry — review-discuss configuration', () => {
         expect(reg).not.toBeNull();
     });
 
-    it('registers all 14 internal tools for review-discuss', () => {
+    it('registers exactly the internal tools + subagent spawners, no extras', () => {
         const plugin = makePlugin();
         const reg = createToolRegistry(plugin, false, true)!;
-        for (const id of INTERNAL_TOOL_IDS) {
-            expect(reg.get(id), `expected ${id} to be registered`).toBeDefined();
-        }
+        const expected = [...INTERNAL_TOOL_IDS, 'run_lorebook_batch', 'run_research'];
+        const actual = reg.list().map((t) => t.id);
+        expect(actual.sort()).toEqual(expected.sort());
     });
 
     it('does NOT register propose_entry for review-discuss', () => {
@@ -79,62 +79,67 @@ describe('createToolRegistry — review-discuss configuration', () => {
         expect(reg.get('attach_lore_image')).toBeUndefined();
     });
 
-    it('registers subagent spawners (run_lorebook_batch, run_research)', () => {
-        const plugin = makePlugin();
+    it.each([
+        {
+            label: 'omits network tools when lorebookNetworkTools is off',
+            overrides: { lorebookNetworkTools: false },
+            expectRegistered: [],
+            expectOmitted: ['fetch_url', 'wikipedia_lookup', 'wikipedia_page']
+        },
+        {
+            label: 'registers network tools when lorebookNetworkTools is on',
+            overrides: { lorebookNetworkTools: true },
+            expectRegistered: ['fetch_url', 'wikipedia_lookup', 'wikipedia_page'],
+            expectOmitted: []
+        },
+        {
+            label: 'omits image tools when lorebookImageTools is off',
+            overrides: { lorebookImageTools: false },
+            expectRegistered: [],
+            expectOmitted: ['fetch_image_url']
+        },
+        {
+            label: 'registers fetch_image_url when lorebookImageTools is on',
+            overrides: { lorebookImageTools: true },
+            expectRegistered: ['fetch_image_url'],
+            expectOmitted: []
+        },
+        {
+            label: 'Fandom: empty allowlist + allowAll off → no fandom_lookup',
+            overrides: {
+                lorebookNetworkTools: true,
+                lorebookFandomWikis: [],
+                lorebookFandomAllowAllWikis: false
+            },
+            expectRegistered: [],
+            expectOmitted: ['fandom_lookup']
+        },
+        {
+            label: 'Fandom: populated allowlist + network on → fandom_lookup',
+            overrides: {
+                lorebookNetworkTools: true,
+                lorebookFandomWikis: ['dragonage']
+            },
+            expectRegistered: ['fandom_lookup'],
+            expectOmitted: []
+        },
+        {
+            label: 'Fandom: allowAll + network on → fandom_lookup',
+            overrides: {
+                lorebookNetworkTools: true,
+                lorebookFandomAllowAllWikis: true
+            },
+            expectRegistered: ['fandom_lookup'],
+            expectOmitted: []
+        }
+    ])('$label', ({ overrides, expectRegistered, expectOmitted }) => {
+        const plugin = makePlugin(overrides);
         const reg = createToolRegistry(plugin, false, true)!;
-        expect(reg.get('run_lorebook_batch')).toBeDefined();
-        expect(reg.get('run_research')).toBeDefined();
-    });
-
-    it('omits network tools when lorebookNetworkTools is off', () => {
-        const plugin = makePlugin({ lorebookNetworkTools: false });
-        const reg = createToolRegistry(plugin, false, true)!;
-        expect(reg.get('fetch_url')).toBeUndefined();
-        expect(reg.get('wikipedia_lookup')).toBeUndefined();
-        expect(reg.get('wikipedia_page')).toBeUndefined();
-    });
-
-    it('omits image tools when lorebookImageTools is off', () => {
-        const plugin = makePlugin({ lorebookImageTools: false });
-        const reg = createToolRegistry(plugin, false, true)!;
-        expect(reg.get('fetch_image_url')).toBeUndefined();
-    });
-
-    it('registers network tools when lorebookNetworkTools is on', () => {
-        const plugin = makePlugin({ lorebookNetworkTools: true });
-        const reg = createToolRegistry(plugin, false, true)!;
-        expect(reg.get('fetch_url')).toBeDefined();
-        expect(reg.get('wikipedia_lookup')).toBeDefined();
-        expect(reg.get('wikipedia_page')).toBeDefined();
-    });
-
-    it('registers fetch_image_url when lorebookImageTools is on', () => {
-        const plugin = makePlugin({ lorebookImageTools: true });
-        const reg = createToolRegistry(plugin, false, true)!;
-        expect(reg.get('fetch_image_url')).toBeDefined();
-    });
-
-    it('registers fandom tools only when allowlist + reachability conditions are met', () => {
-        // Empty allowlist + allowAll off = no Fandom, even with network on.
-        const noAllow = makePlugin({
-            lorebookNetworkTools: true,
-            lorebookFandomWikis: [],
-            lorebookFandomAllowAllWikis: false
-        });
-        expect(createToolRegistry(noAllow, false, true)!.get('fandom_lookup')).toBeUndefined();
-
-        // Populated allowlist + network on = live Fandom.
-        const withAllow = makePlugin({
-            lorebookNetworkTools: true,
-            lorebookFandomWikis: ['dragonage']
-        });
-        expect(createToolRegistry(withAllow, false, true)!.get('fandom_lookup')).toBeDefined();
-
-        // Danger mode (allow any) + network on = live Fandom.
-        const allowAll = makePlugin({
-            lorebookNetworkTools: true,
-            lorebookFandomAllowAllWikis: true
-        });
-        expect(createToolRegistry(allowAll, false, true)!.get('fandom_lookup')).toBeDefined();
+        for (const id of expectRegistered) {
+            expect(reg.get(id), `expected ${id} to be registered`).toBeDefined();
+        }
+        for (const id of expectOmitted) {
+            expect(reg.get(id), `expected ${id} to be omitted`).toBeUndefined();
+        }
     });
 });
