@@ -3321,11 +3321,7 @@ export default class EventideQuillPlugin extends Plugin {
                     );
                     if (this.settings.reviewSuggestedEditsEnabled) {
                         const label = getManuscriptAnalysisModeById(mode)?.label ?? mode;
-                        this.coWriterSession.seedForReviewDiscuss({
-                            engine: 'manuscript',
-                            systemPrompt: getReviewDiscussSystemPrompt('manuscript', label),
-                            reportText: fullResponse
-                        });
+                        this.beginReviewDiscuss('manuscript', fullResponse, label);
                     }
                     await this.lintPanel?.reviewFinished();
                     this.archiveInteractiveReport(

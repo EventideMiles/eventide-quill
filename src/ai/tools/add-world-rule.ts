@@ -43,6 +43,27 @@ export const addWorldRuleTool: Tool = {
 
         const { plugin } = ctx;
         const current = plugin.settings.reviewWorldRules?.trim() ?? '';
+        const existingRules = current
+            ? current
+                  .split('\n')
+                  .map((r) => r.trim())
+                  .filter(Boolean)
+            : [];
+
+        // Prevent duplicates (case-insensitive comparison).
+        if (existingRules.some((r) => r.toLowerCase() === rule.toLowerCase())) {
+            return `Rule already exists: "${rule.slice(0, 80)}${rule.length > 80 ? '...' : ''}". No changes made.`;
+        }
+
+        // Enforce a reasonable maximum (20 rules) to prevent unbounded growth.
+        const MAX_WORLD_RULES = 20;
+        if (existingRules.length >= MAX_WORLD_RULES) {
+            return (
+                `Error: maximum of ${MAX_WORLD_RULES} world rules reached. ` +
+                'Remove an existing rule in settings before adding a new one.'
+            );
+        }
+
         const updated = current ? `${current}\n${rule}` : rule;
         plugin.settings.reviewWorldRules = updated;
         await plugin.saveSettings();

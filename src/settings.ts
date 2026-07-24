@@ -261,8 +261,7 @@ export interface EventideQuillSettings {
      * co-writer session machinery with editing tools enabled, so the editor
      * can propose specific, reviewable inline-diff edits (not just advisory
      * prose). Off preserves the pre-1.4.0 text-only chat behavior. Default:
-     * on (flipped in v1.4.0); Phase 2 of the rollout ships it off to keep
-     * the mount infrastructure dormant until seeding + prompts land.
+     * on.
      */
     reviewSuggestedEditsEnabled: boolean;
     /**
@@ -3658,6 +3657,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.feedbackQueueAutoRun = DEFAULT_SETTINGS.feedbackQueueAutoRun;
                     this.plugin.settings.autoSaveFeedbackReports = DEFAULT_SETTINGS.autoSaveFeedbackReports;
                     this.plugin.settings.feedbackReportFolder = DEFAULT_SETTINGS.feedbackReportFolder;
+                    this.plugin.settings.reviewSuggestedEditsEnabled = DEFAULT_SETTINGS.reviewSuggestedEditsEnabled;
+                    this.plugin.settings.reviewWorldRules = DEFAULT_SETTINGS.reviewWorldRules;
                     await this.plugin.saveSettings();
                     this.display();
                 })

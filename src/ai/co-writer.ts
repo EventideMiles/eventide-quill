@@ -1177,19 +1177,21 @@ export class CoWriterSession {
             if (activeFileMsg) {
                 injectedContext.push(activeFileMsg);
             }
-        } else if (this.reviewEngine !== 'manuscript' && fullText) {
-            // Review-discuss (non-manuscript engines): inject the FULL active
-            // document so the editor can reference and edit any section. The
-            // manuscript engine skips this because the full text was already
-            // seeded into discussCurrentMessages via contextMessages in
-            // seedForReviewDiscuss — injecting again would double-count it in
-            // token estimates and waste context window.
-            const activeFile = plugin.app.workspace.getActiveFile();
-            const fileName = activeFile?.name ?? 'the manuscript';
-            injectedContext.push({
-                role: 'system',
-                content: `Current manuscript (full document) — "${fileName}":\n\n${fullText}`
-            });
+        } else {
+            // Review-discuss: inject the FULL active document so the editor
+            // can reference and edit any section. The manuscript engine would
+            // otherwise skip this because the full text was already seeded
+            // into discussCurrentMessages via contextMessages, but the world
+            // rules are engine-independent and should apply to all review
+            // engines.
+            if (this.reviewEngine !== 'manuscript' && fullText) {
+                const activeFile = plugin.app.workspace.getActiveFile();
+                const fileName = activeFile?.name ?? 'the manuscript';
+                injectedContext.push({
+                    role: 'system',
+                    content: `Current manuscript (full document) — "${fileName}":\n\n${fullText}`
+                });
+            }
             // Inject the writer's world-building rules so the model follows
             // them when writing or editing prose (e.g., "use 'fur' not 'skin'").
             const worldRules = plugin.settings.reviewWorldRules?.trim();

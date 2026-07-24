@@ -21,7 +21,7 @@ import wordLists from '../core/linter/word-lists.json';
 /** A single AI-ism detected in the model's proposed text. */
 export interface AiIsm {
     /** Category for grouping in the error message. */
-    category: 'em-dash' | 'cliche-word' | 'purple-construction' | 'filler-verb';
+    category: 'em-dash' | 'cliche-word' | 'purple-construction';
     /** The specific word or phrase that triggered the detection. */
     match: string;
     /** Short snippet of surrounding context for the error message. */
@@ -70,7 +70,8 @@ export function detectAiIsms(text: string): AiIsm[] {
 
     // AI cliché words (from the linter's own word list)
     const clicheWords = wordLists.aiClichePhrases;
-    const clicheRegex = new RegExp(`\\b(${clicheWords.join('|')})\\b`, 'gi');
+    const escaped = clicheWords.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const clicheRegex = new RegExp(`\\b(${escaped.join('|')})\\b`, 'gi');
     while ((match = clicheRegex.exec(text)) !== null) {
         isms.push({
             category: 'cliche-word',
@@ -121,9 +122,7 @@ export function formatAiIsmError(isms: AiIsm[]): string {
                 ? `Em dash`
                 : ism.category === 'cliche-word'
                   ? `Clich\u00e9 word "${ism.match}"`
-                  : ism.category === 'purple-construction'
-                    ? `Purple construction "${ism.match}"`
-                    : `Filler verb "${ism.match}"`;
+                  : `Purple construction "${ism.match}"`;
         lines.push(`- ${label}: "...${ism.snippet}..."`);
     }
     if (isms.length > 8) {

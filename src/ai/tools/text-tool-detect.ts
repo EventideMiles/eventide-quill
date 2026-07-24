@@ -208,11 +208,15 @@ export function tryNudgeTextToolLeak(opts: NudgeTextToolLeakOptions): NudgeTextT
             return { nudged: true, nudgesUsed: opts.nudgesUsed + 1 };
         }
         // 2. Check for intent narration ("I'll start editing..." with no calls).
-        const intent = detectIntentNarration(opts.response);
-        if (intent) {
-            opts.messages.push(buildIntentNudgeMessage(intent));
-            opts.onChatUpdate?.();
-            return { nudged: true, nudgesUsed: opts.nudgesUsed + 1 };
+        //    Only when editing tools are registered — if the model has no tools,
+        //    narrating intent without calling them is expected behavior.
+        if (opts.toolNames.length > 0) {
+            const intent = detectIntentNarration(opts.response);
+            if (intent) {
+                opts.messages.push(buildIntentNudgeMessage(intent));
+                opts.onChatUpdate?.();
+                return { nudged: true, nudgesUsed: opts.nudgesUsed + 1 };
+            }
         }
     }
     return { nudged: false, nudgesUsed: opts.nudgesUsed };

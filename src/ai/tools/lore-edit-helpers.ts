@@ -390,6 +390,7 @@ function findFuzzyParagraphMatch(content: string, oldText: string): TextMatchRes
 
     let bestScore = 0;
     let bestPara: { from: number; to: number } | null = null;
+    let secondBestScore = 0;
 
     for (const para of paragraphs) {
         const paraLower = para.text.toLowerCase();
@@ -399,12 +400,19 @@ function findFuzzyParagraphMatch(content: string, oldText: string): TextMatchRes
         }
         const ratio = score / oldWords.length;
         if (ratio > bestScore) {
+            secondBestScore = bestScore;
             bestScore = ratio;
             bestPara = { from: para.from, to: para.to };
+        } else if (ratio > secondBestScore) {
+            secondBestScore = ratio;
         }
     }
 
-    if (bestPara && bestScore >= FUZZY_MATCH_THRESHOLD) {
+    // Require the winning score to exceed the runner-up by a meaningful
+    // margin (1.15x) to avoid ambiguous matches where two paragraphs score
+    // similarly. Falls back to the raw threshold when there's only one candidate.
+    const margin = secondBestScore > 0 ? bestScore / secondBestScore : Infinity;
+    if (bestPara && bestScore >= FUZZY_MATCH_THRESHOLD && (secondBestScore === 0 || margin >= 1.15)) {
         return { from: bestPara.from, to: bestPara.to, exact: false };
     }
     return null;

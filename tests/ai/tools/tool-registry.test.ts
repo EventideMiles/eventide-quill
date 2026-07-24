@@ -23,7 +23,7 @@ function makePlugin(overrides: Record<string, unknown> = {}): EventideQuillPlugi
     return { settings } as unknown as EventideQuillPlugin;
 }
 
-/** Tool ids registered by createInternalToolRegistry (the base 12). */
+/** Tool ids registered by createInternalToolRegistry (the base 14). */
 const INTERNAL_TOOL_IDS = [
     'manuscript_mentions',
     'lore_siblings',
@@ -32,6 +32,8 @@ const INTERNAL_TOOL_IDS = [
     'measure_folder',
     'calculate_file_sizes',
     'edit_note',
+    'delete_paragraph',
+    'add_world_rule',
     'insert_note',
     'append_to_note',
     'revise_edit',
@@ -56,7 +58,7 @@ describe('createToolRegistry — review-discuss configuration', () => {
         expect(reg).not.toBeNull();
     });
 
-    it('registers all 12 internal tools for review-discuss', () => {
+    it('registers all 14 internal tools for review-discuss', () => {
         const plugin = makePlugin();
         const reg = createToolRegistry(plugin, false, false)!;
         for (const id of INTERNAL_TOOL_IDS) {

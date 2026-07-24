@@ -374,8 +374,11 @@ export class QuillSidebarView extends ItemView {
         // so they can't fire on — or repopulate — another tab's UI while the
         // tab is inactive. setContainer re-establishes both on return. Both
         // the co-writer and review panels extend AbstractChatPanel and share
-        // the same detach() (observer + keydown teardown).
-        this.activeCoWriterPanel?.detach();
+        // the same detach() (observer + keydown teardown). Detach both
+        // co-writer panel instances so the previously mounted panel is also
+        // cleaned up when switching tabs.
+        this.coWriterPanel?.detach();
+        this.embeddedCoWriterPanel?.detach();
         this.reviewPanel?.detach();
         this.content.empty();
 
