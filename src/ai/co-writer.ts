@@ -1240,9 +1240,20 @@ export class CoWriterSession {
         const conversationTokens = this.estimateRequestTokens(hypotheticalConversation);
         const totalTokens = conversationTokens + injectedTokens;
 
-        // Push conversation-only token estimate to the panel.
-        // The panel adds vault context item tokens on top to get the total.
-        this.onTokenEstimate?.(this.estimateRequestBreakdown(hypotheticalConversation), maxTokens);
+        // Push the FULL request token estimate to the panel — conversation
+        // PLUS injected context (full manuscript, tool ads, vault context).
+        // In review-discuss mode, the injected context includes the entire
+        // document, so a conversation-only estimate was thousands of tokens
+        // short of the actual request size.
+        this.onTokenEstimate?.(
+            this.estimateRequestBreakdown([
+                this.discussCurrentMessages[0]!,
+                ...injectedContext,
+                ...this.discussCurrentMessages.slice(1),
+                { role: 'user' as const, content: prompt }
+            ]),
+            maxTokens
+        );
 
         // --- Compaction: refine first (deterministic, free), then AI-summarize if still over ---
         let needsCompaction = totalTokens / maxTokens >= compactPct;
@@ -1265,7 +1276,9 @@ export class CoWriterSession {
                 needsCompaction = false;
                 this.onTokenEstimate?.(
                     this.estimateRequestBreakdown([
-                        ...this.discussCurrentMessages,
+                        this.discussCurrentMessages[0]!,
+                        ...injectedContext,
+                        ...this.discussCurrentMessages.slice(1),
                         { role: 'user' as const, content: prompt }
                     ]),
                     maxTokens
@@ -1282,7 +1295,9 @@ export class CoWriterSession {
                     this.discussCurrentMessages = result.messages;
                     this.onTokenEstimate?.(
                         this.estimateRequestBreakdown([
-                            ...this.discussCurrentMessages,
+                            this.discussCurrentMessages[0]!,
+                            ...injectedContext,
+                            ...this.discussCurrentMessages.slice(1),
                             { role: 'user' as const, content: prompt }
                         ]),
                         maxTokens
