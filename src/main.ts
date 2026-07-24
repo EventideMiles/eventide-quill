@@ -64,7 +64,7 @@ import { isValidFandomSubdomain } from './ai/tools/fandom-lookup';
 import { mediawikiArticleCount } from './ai/tools/mediawiki';
 import type { ChatMessage } from './ai/provider';
 
-import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
+import { CoWriterSession } from './ai/co-writer';
 import type { LoreDraftEntry } from './ai/co-writer';
 import { MobileStreamWatchdog, notifyMobileStreamRisk } from './ai/mobile-watchdog';
 import { resolveSessionsDir, listSessions, saveSession, loadSession, deleteSession } from './ai/conversation-store';
@@ -1632,7 +1632,6 @@ export default class EventideQuillPlugin extends Plugin {
         this.plotMapFile = active.path;
         await setPlotMap(this.app, active, path);
         this.lintPanel?.coWriterSetPlotMap(path);
-        await this.updateCoWriterPlotMapTokens();
     }
 
     /** Unlink the plot map from the active manuscript. Persists to frontmatter. */
@@ -1643,7 +1642,6 @@ export default class EventideQuillPlugin extends Plugin {
         this.plotMapFile = active.path;
         await setPlotMap(this.app, active, null);
         this.lintPanel?.coWriterSetPlotMap(null);
-        await this.updateCoWriterPlotMapTokens();
     }
 
     /** Toggle the pinned state of an entity. Persists across re-assemblies and to frontmatter. */
@@ -2758,9 +2756,6 @@ export default class EventideQuillPlugin extends Plugin {
         this.lintPanel?.coWriterSetCoachActive(false);
         this.lintPanel?.coWriterSetCoachPhase('discern');
         this.lintPanel?.coWriterSetContextTokenEstimate({ sections: [], total: 0 });
-        if (clearContext) {
-            this.lintPanel?.coWriterSetAdditionalContextTokens(0);
-        }
         this.lintPanel?.coWriterRefresh();
     }
 
@@ -4241,35 +4236,13 @@ export default class EventideQuillPlugin extends Plugin {
     /** Add a context file to the co-writer session. */
     async addCoWriterContextFile(filePath: string): Promise<void> {
         this.coWriterSession.addContextFile(filePath);
-        await this.updateCoWriterAdditionalTokens();
         this.lintPanel?.coWriterRefresh();
     }
 
     /** Remove a context file from the co-writer session. */
     async removeCoWriterContextFile(filePath: string): Promise<void> {
         this.coWriterSession.removeContextFile(filePath);
-        await this.updateCoWriterAdditionalTokens();
         this.lintPanel?.coWriterRefresh();
-    }
-
-    /**
-     * Compute token estimates for additional context files and push to the panel.
-     */
-    private async updateCoWriterAdditionalTokens(): Promise<void> {
-        const files = this.coWriterSession.getContextFiles();
-        // Mirror loadAdditionalContext's combined source (lore embeds + context
-        // files) so the emptiness check doesn't skip counting when lore is
-        // auto-injected but no manual context files are selected.
-        const lorePaths = this.settings.coWriterLoreContext ? loreFolderEmbedPaths(this.settings.lorebookFolders) : [];
-        const allPaths = [...lorePaths, ...files];
-        if (allPaths.length === 0) {
-            this.lintPanel?.coWriterSetAdditionalContextTokens(0);
-            return;
-        }
-        const activeFile = this.app.workspace.getActiveFile();
-        const documentText = activeFile ? await this.getFileText(activeFile.path) : '';
-        const messages = await loadAdditionalContext(this, files, documentText);
-        this.lintPanel?.coWriterSetAdditionalContextTokens(estimateTokens(messages));
     }
 
     /**
@@ -4286,15 +4259,6 @@ export default class EventideQuillPlugin extends Plugin {
         // Discard if the writer swapped/unlinked the plot map mid-read.
         if (path !== this.currentPlotMap) return '';
         return text;
-    }
-
-    /**
-     * Compute the linked plot map's token estimate and push it to the co-writer
-     * panel. Reads the plot map note text (capped) and estimates its token cost.
-     */
-    async updateCoWriterPlotMapTokens(): Promise<void> {
-        const text = await this.loadCurrentPlotMapText();
-        this.lintPanel?.coWriterSetPlotMapTokens(text ? estimateTokens(text) : 0);
     }
 
     /** Open the sidebar and switch to the Co-writer tab. */

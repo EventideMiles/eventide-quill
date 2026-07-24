@@ -1177,12 +1177,13 @@ export class CoWriterSession {
             if (activeFileMsg) {
                 injectedContext.push(activeFileMsg);
             }
-        } else if (fullText) {
-            // Review-discuss mode: inject the FULL active document so the editor
-            // can reference and edit any section, not just the ~4000 chars near
-            // the cursor. The model should still call vault_lookup before editing
-            // to get the latest text (the writer may have changed it since this
-            // injection).
+        } else if (this.reviewEngine !== 'manuscript' && fullText) {
+            // Review-discuss (non-manuscript engines): inject the FULL active
+            // document so the editor can reference and edit any section. The
+            // manuscript engine skips this because the full text was already
+            // seeded into discussCurrentMessages via contextMessages in
+            // seedForReviewDiscuss — injecting again would double-count it in
+            // token estimates and waste context window.
             const activeFile = plugin.app.workspace.getActiveFile();
             const fileName = activeFile?.name ?? 'the manuscript';
             injectedContext.push({
@@ -1776,7 +1777,17 @@ export class CoWriterSession {
         const conversationTokens = this.estimateRequestTokens(this.discussCurrentMessages);
         const totalTokens = conversationTokens + injectedTokens;
 
-        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+        // Helper: build a token breakdown that includes injected context
+        // (vault, additional files, plot map, active file, tool ads) so the
+        // indicator reflects the actual request size, not just the conversation.
+        const coachFullBreakdown = () =>
+            this.estimateRequestBreakdown([
+                this.discussCurrentMessages[0]!,
+                ...injectedContext,
+                ...this.discussCurrentMessages.slice(1)
+            ]);
+
+        this.onTokenEstimate?.(coachFullBreakdown(), maxTokens);
 
         // Compaction: refine first (deterministic, free), then AI-summarize if still over
         let needsCompaction = totalTokens / maxTokens >= compactPct;
@@ -1789,7 +1800,7 @@ export class CoWriterSession {
             const refinedTokens = this.estimateRequestTokens(this.discussCurrentMessages) + injectedTokens;
             if (refinedTokens / maxTokens <= compactPct) {
                 needsCompaction = false;
-                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                this.onTokenEstimate?.(coachFullBreakdown(), maxTokens);
             }
         }
         if (needsCompaction) {
@@ -1800,7 +1811,7 @@ export class CoWriterSession {
                 });
                 if (result) {
                     this.discussCurrentMessages = result.messages;
-                    this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                    this.onTokenEstimate?.(coachFullBreakdown(), maxTokens);
                 }
             } catch (err: unknown) {
                 if (err instanceof Error && err.name === 'AbortError') {
@@ -1916,7 +1927,7 @@ export class CoWriterSession {
                     quillAnchorId: this.currentAnchorMessageId() ?? undefined
                 });
 
-                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                this.onTokenEstimate?.(coachFullBreakdown(), maxTokens);
 
                 // No structured tool calls. Check for a text-form tool call and
                 // nudge the model to re-issue it properly (see discuss mode).
@@ -1954,7 +1965,7 @@ export class CoWriterSession {
                 await injectImagesIntoMessages(plugin, coachCollectedImages, this.discussCurrentMessages, ctx.signal);
 
                 this.annotateToolUseErrors(coachExecResults);
-                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                this.onTokenEstimate?.(coachFullBreakdown(), maxTokens);
 
                 // Mid-loop compaction: refine first (deterministic, free), then AI-summarize if still over.
                 let needsCompaction = this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens >= compactPct;
@@ -1966,7 +1977,7 @@ export class CoWriterSession {
                     );
                     if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens <= compactPct) {
                         needsCompaction = false;
-                        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                        this.onTokenEstimate?.(coachFullBreakdown(), maxTokens);
                     }
                 }
                 if (needsCompaction) {
@@ -1977,10 +1988,7 @@ export class CoWriterSession {
                         });
                         if (cResult) {
                             this.discussCurrentMessages = cResult.messages;
-                            this.onTokenEstimate?.(
-                                this.estimateRequestBreakdown(this.discussCurrentMessages),
-                                maxTokens
-                            );
+                            this.onTokenEstimate?.(coachFullBreakdown(), maxTokens);
                         }
                     } catch (compErr: unknown) {
                         // Propagate aborts to the outer catch so the normal
@@ -2355,9 +2363,21 @@ export class CoWriterSession {
             }
         };
 
+        const loreInjectedContext: ChatMessage[] = [];
+        const loreActiveFileMsg = buildActiveFileMessage(plugin);
+        if (loreActiveFileMsg) loreInjectedContext.push(loreActiveFileMsg);
+        const loreNetworkMsg = buildNetworkToolsMessage(plugin);
+        if (loreNetworkMsg) loreInjectedContext.push(loreNetworkMsg);
+
         const compactPct = Math.max(50, Math.min(95, this.settingsOrDefault(plugin).contextCompactAtPercent)) / 100;
         const conversationTokens = this.estimateRequestTokens(this.loreCoachMessages);
-        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+        const loreFullBreakdown = () =>
+            this.estimateRequestBreakdown([
+                this.loreCoachMessages[0]!,
+                ...loreInjectedContext,
+                ...this.loreCoachMessages.slice(1)
+            ]);
+        this.onTokenEstimate?.(loreFullBreakdown(), maxTokens);
 
         // Compaction: refine first (deterministic, free), then AI-summarize if still over.
         let needsCompaction = conversationTokens / maxTokens >= compactPct;
@@ -2365,7 +2385,7 @@ export class CoWriterSession {
             this.refineForBudgetIfEnabled(plugin, this.loreCoachMessages, Math.ceil(compactPct * maxTokens));
             if (this.estimateRequestTokens(this.loreCoachMessages) / maxTokens <= compactPct) {
                 needsCompaction = false;
-                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+                this.onTokenEstimate?.(loreFullBreakdown(), maxTokens);
             }
         }
         if (needsCompaction) {
@@ -2374,7 +2394,7 @@ export class CoWriterSession {
                 const result = await compactConversation(chat.provider, this.loreCoachMessages, sentenceCount);
                 if (result) {
                     this.loreCoachMessages = result.messages;
-                    this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+                    this.onTokenEstimate?.(loreFullBreakdown(), maxTokens);
                 }
             } catch (err: unknown) {
                 if (err instanceof Error && err.name === 'AbortError') {
@@ -2553,7 +2573,7 @@ export class CoWriterSession {
 
                 // Update token estimate so the indicator reflects tool-result
                 // growth, then sync the chat so the user sees progress.
-                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+                this.onTokenEstimate?.(loreFullBreakdown(), maxTokens);
 
                 // Mid-loop compaction: refine first (deterministic, free), then
                 // AI-summarize older turns if still over the threshold.
@@ -2562,7 +2582,7 @@ export class CoWriterSession {
                     this.refineForBudgetIfEnabled(plugin, this.loreCoachMessages, Math.ceil(compactPct * maxTokens));
                     if (this.estimateRequestTokens(this.loreCoachMessages) / maxTokens <= compactPct) {
                         needsCompaction = false;
-                        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+                        this.onTokenEstimate?.(loreFullBreakdown(), maxTokens);
                     }
                 }
                 if (needsCompaction) {
@@ -2573,7 +2593,7 @@ export class CoWriterSession {
                         });
                         if (cResult) {
                             this.loreCoachMessages = cResult.messages;
-                            this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+                            this.onTokenEstimate?.(loreFullBreakdown(), maxTokens);
                         }
                     } catch (compErr: unknown) {
                         // Propagate aborts to the outer catch so the normal
@@ -2604,7 +2624,7 @@ export class CoWriterSession {
             this.onDiscussFinished?.();
             this.optionsLoading = false;
             this.onOptionsLoading?.(false);
-            this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+            this.onTokenEstimate?.(loreFullBreakdown(), maxTokens);
             this.onChatUpdate?.();
             this.onLoreCoachUpdate?.();
         } catch (err: unknown) {

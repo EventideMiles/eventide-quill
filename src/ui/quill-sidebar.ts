@@ -914,7 +914,6 @@ export class QuillSidebarView extends ItemView {
         // Sync plot map link from the active manuscript's frontmatter
         this.plugin.refreshPlotMap();
         this.coWriterPanel.setPlotMap(this.plugin.currentPlotMap);
-        void this.plugin.updateCoWriterPlotMapTokens();
 
         // Set provider context limit (same pattern as feedback panel init)
         const chat = this.plugin.getDefaultChatProvider();
@@ -1227,19 +1226,9 @@ export class QuillSidebarView extends ItemView {
     }
 
     /** Set the conversation token estimate for the Co-writer token indicator.
-     * The panel adds vault context item tokens on top to compute the total. */
+     * The session-side breakdown includes all injected context sources. */
     coWriterSetContextTokenEstimate(breakdown: TokenBreakdown): void {
         this.activeCoWriterPanel?.setContextTokenEstimate(breakdown);
-    }
-
-    /** Set the additional context file token estimate for the Co-writer token indicator. */
-    coWriterSetAdditionalContextTokens(tokens: number): void {
-        this.activeCoWriterPanel?.setAdditionalContextTokens(tokens);
-    }
-
-    /** Set the plot map token estimate for the Co-writer token indicator. */
-    coWriterSetPlotMapTokens(tokens: number): void {
-        this.activeCoWriterPanel?.setPlotMapTokens(tokens);
     }
 
     /** Start streaming a discuss response. */

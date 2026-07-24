@@ -234,9 +234,10 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onRegenerate: ((messageId: string) => void) | null = null;
 
     /**
-     * Conversation token estimate pushed from the plugin layer.
-     * Contains only system prompt + context heads + chat turns.
-     * Vault context item tokens are added separately in computeTotalTokens().
+     * Conversation token estimate pushed from the plugin layer. Covers the
+     * full request: system prompt + tool defs + injected context + chat
+     * turns. surfaced as a hover tooltip on the token indicator so writers
+     * can see where the budget is going.
      */
     private contextEstimate = 0;
     /**
@@ -246,18 +247,6 @@ export class CoWriterPanel extends AbstractChatPanel {
      * indicator so writers can see where the budget is going.
      */
     private contextBreakdown: TokenBreakdown | null = null;
-
-    /**
-     * Token estimate for additional context files (added via the ± button).
-     * Pushed from the plugin layer when files are added or removed.
-     */
-    private additionalContextTokens = 0;
-
-    /**
-     * Token estimate for the linked plot map note.
-     * Pushed from the plugin layer when the plot map link changes.
-     */
-    private plotMapTokens = 0;
 
     /** Promises from async MarkdownRenderer.render() calls during the current render cycle. */
     private renderPromises: Promise<void>[] = [];
@@ -635,30 +624,13 @@ export class CoWriterPanel extends AbstractChatPanel {
     /**
      * Set the conversation token estimate for the token indicator.
      * Called from the plugin layer with a per-section breakdown of the
-     * request (system prompt, tool definitions, chat history, injected
-     * context sources) so the indicator's hover tooltip can show where
-     * the tokens are going. Vault context item tokens are added on top
-     * by computeTotalTokens().
+     * full request (tool definitions, system prompt, injected context
+     * sources, chat history) so the indicator's hover tooltip can show
+     * where the tokens are going.
      */
     setContextTokenEstimate(breakdown: TokenBreakdown): void {
         this.contextEstimate = breakdown.total;
         this.contextBreakdown = breakdown;
-        this.updateTokenIndicator();
-    }
-
-    /**
-     * Set the additional context file token estimate for the token indicator.
-     * Called from the plugin layer when files are added or removed.
-     */
-    setAdditionalContextTokens(tokens: number): void {
-        this.additionalContextTokens = tokens;
-        this.updateTokenIndicator();
-    }
-
-    /** Set the plot map token estimate for the token indicator.
-     *  Called from the plugin layer when the plot map link changes. */
-    setPlotMapTokens(tokens: number): void {
-        this.plotMapTokens = tokens;
         this.updateTokenIndicator();
     }
 
@@ -2485,53 +2457,22 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /**
      * Build the full token breakdown shown in the indicator's hover tooltip.
-     * Combines the session-side breakdown (tool defs, system prompt, chat
-     * history, injected context) with the panel-side sources (additional
-     * context files, plot map, vault context items) so the tooltip reflects
-     * the actual displayed total.
+     * Delegates to the session-side breakdown which already categorizes
+     * all injected-context sources (vault context, additional files, plot
+     * map, active document, tool advertisements) alongside tool definitions
+     * and chat history.
      */
     private computeBreakdown(): TokenBreakdown {
-        const sections = [...(this.contextBreakdown?.sections ?? [])];
-        if (this.additionalContextTokens > 0) {
-            sections.push({ label: 'Additional context files', tokens: this.additionalContextTokens });
-        }
-        if (this.plotMapTokens > 0) {
-            sections.push({ label: 'Plot map', tokens: this.plotMapTokens });
-        }
-        const assembly = this.plugin.currentAssembly;
-        if (assembly) {
-            let vaultTokens = 0;
-            let vaultCount = 0;
-            for (const item of assembly.contextItems) {
-                vaultTokens += item.tokenEstimate;
-                vaultCount++;
-            }
-            if (vaultTokens > 0) {
-                sections.push({
-                    label: 'Vault context (similarity)',
-                    tokens: vaultTokens,
-                    detail: `${vaultCount} file${vaultCount === 1 ? '' : 's'}`
-                });
-            }
-        }
-        return { sections, total: this.computeTotalTokens() };
+        return this.contextBreakdown ?? { sections: [], total: 0 };
     }
 
     /**
      * Compute the total token estimate for the context indicator.
-     * Combines conversation tokens, additional context file tokens, plot map
-     * tokens, and vault context item tokens so the full context window usage
-     * is shown.
+     * Returns the session-side total which already covers the full request
+     * (system prompt + tool defs + injected context + chat turns).
      */
     private computeTotalTokens(): number {
-        let total = this.contextEstimate + this.additionalContextTokens + this.plotMapTokens;
-        const assembly = this.plugin.currentAssembly;
-        if (assembly) {
-            for (const item of assembly.contextItems) {
-                total += item.tokenEstimate;
-            }
-        }
-        return total;
+        return this.contextEstimate;
     }
 
     /** Build the context label for the token indicator, noting a linked plot map. */
