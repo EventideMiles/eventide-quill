@@ -5,8 +5,17 @@ describe('getReviewDiscussSystemPrompt', () => {
     it('includes the tool-discipline clause', () => {
         const prompt = getReviewDiscussSystemPrompt('editorial');
         expect(prompt).toContain('tool_calls field');
-        expect(prompt).toMatch(/tool invocation written as text/i);
+        expect(prompt).toMatch(/tool invocation as text/i);
         expect(prompt).toContain('edit_note(');
+    });
+
+    it('uses strong constraint language in the tool-discipline clause', () => {
+        const editorial = getReviewDiscussSystemPrompt('editorial');
+        expect(editorial).toMatch(/Invoke tools ONLY through/i);
+        expect(editorial).toMatch(/Never write a tool invocation as text/i);
+        const generic = getReviewDiscussSystemPrompt('generic');
+        expect(generic).toMatch(/Invoke tools ONLY through/i);
+        expect(generic).toMatch(/Never write a tool invocation as text/i);
     });
 
     it('states the approval-gate contract', () => {
