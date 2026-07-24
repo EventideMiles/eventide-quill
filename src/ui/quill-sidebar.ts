@@ -63,6 +63,15 @@ export class QuillSidebarView extends ItemView {
     private reviewPanel: ReviewPanel | null = null;
     /** Co-writer panel for the Co-writer tab. */
     private coWriterPanel: CoWriterPanel | null = null;
+    /**
+     * Embedded Co-writer panel mounted inside the Review Results sub-tab when
+     * `'review-discuss'` mode is active. Constructed + wired lazily on first
+     * use (mirrors {@link coWriterPanel}'s wiring). Lives separately from
+     * {@link coWriterPanel} because the two panels can be mounted in different
+     * tabs at different times; the shared {@link plugin.coWriterSession}
+     * stitches them together (Phase 5 wires the snapshot-on-tab-swap protocol).
+     */
+    private embeddedCoWriterPanel: CoWriterPanel | null = null;
     private resizeObserver: ResizeObserver | null = null;
 
     /** Create the sidebar view for the given workspace leaf. */
@@ -298,10 +307,17 @@ export class QuillSidebarView extends ItemView {
 
     /** Switch the active top-level tab. Clears handled batch edits when leaving the pending view. */
     private switchTopTab(tab: TopTab) {
+        const oldTab = this.activeTopTab;
         this.clearBatchIfHandled();
         this.activeTopTab = tab;
         if (tab === 'linter') {
             this.activeLinterSubTab = 'results';
+        }
+        // When crossing Review ↔ Co-writer, sync the destination panel's mode
+        // if there's an active review-discuss session (the session follows the
+        // writer across tabs). No-op when the session isn't in review-discuss.
+        if ((oldTab === 'review' && tab === 'cowriter') || (oldTab === 'cowriter' && tab === 'review')) {
+            this.plugin.syncReviewDiscussOnTabSwitch(tab);
         }
         this.render();
     }
@@ -358,8 +374,11 @@ export class QuillSidebarView extends ItemView {
         // so they can't fire on — or repopulate — another tab's UI while the
         // tab is inactive. setContainer re-establishes both on return. Both
         // the co-writer and review panels extend AbstractChatPanel and share
-        // the same detach() (observer + keydown teardown).
+        // the same detach() (observer + keydown teardown). Detach both
+        // co-writer panel instances so the previously mounted panel is also
+        // cleaned up when switching tabs.
         this.coWriterPanel?.detach();
+        this.embeddedCoWriterPanel?.detach();
         this.reviewPanel?.detach();
         this.content.empty();
 
@@ -582,6 +601,11 @@ export class QuillSidebarView extends ItemView {
     private renderReviewTab() {
         if (!this.reviewPanel) {
             this.reviewPanel = new ReviewPanel(this.app);
+            // Wire the embedded Co-writer panel provider. The panel is
+            // constructed lazily on first mount (when `'review-discuss'` mode
+            // is entered). ReviewPanel never owns the instance — it only
+            // mounts it via setContainer.
+            this.reviewPanel.setEmbeddedPanelProvider(() => this.ensureEmbeddedCoWriterPanel());
             this.reviewPanel.setEditorialGenerateHandler((personaId, customInstruction) => {
                 void this.plugin.requestFeedback(personaId, customInstruction);
             });
@@ -592,7 +616,16 @@ export class QuillSidebarView extends ItemView {
                 void this.plugin.requestManuscriptAnalysis(mode, scope, compaction, customInstruction);
             });
             this.reviewPanel.setChatMessageHandler((message) => {
-                // Dispatch to the right engine's chat handler.
+                // When review-discuss is enabled and the writer sends their
+                // first follow-up, swap to the embedded co-writer panel.
+                // The report was seeded into the session at completion time;
+                // the writer's message goes through sendDiscussion.
+                if (this.plugin.settings.reviewSuggestedEditsEnabled && !this.reviewPanel?.isDiscussMode()) {
+                    this.reviewPanel?.enterDiscussFromChat();
+                    void this.plugin.sendCoWriterDiscussion(message);
+                    return;
+                }
+                // Legacy dispatch to the right engine's chat handler.
                 if (this.reviewPanel?.activeEngine === 'editorial') {
                     void this.plugin.sendFeedbackChatMessage(message);
                 } else if (this.reviewPanel?.activeEngine === 'manuscript') {
@@ -677,14 +710,12 @@ export class QuillSidebarView extends ItemView {
 
     /** Switch to the Review tab. */
     switchToReviewTab(): void {
-        this.activeTopTab = 'review';
-        this.render();
+        this.switchTopTab('review');
     }
 
     /** Switch to the Co-writer tab. */
     switchToCoWriterTab(): void {
-        this.activeTopTab = 'cowriter';
-        this.render();
+        this.switchTopTab('cowriter');
     }
 
     /** Switch to the Dashboard tab. */
@@ -786,8 +817,9 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setRegenerateHandler((messageId) => {
                 void this.plugin.regenerateCoWriterResponse(messageId);
             });
-            this.coWriterPanel.setModeSwitchHandler(() => {
+            this.coWriterPanel.setModeSwitchHandler((newMode) => {
                 this.plugin.clearCoWriterSubagents();
+                this.syncReviewEngine(newMode);
             });
             this.coWriterPanel.setCoachMessageHandler((message: string, images?: string[], mentionPaths?: string[]) => {
                 void this.plugin.sendCoWriterCoach(message, images, mentionPaths);
@@ -883,7 +915,6 @@ export class QuillSidebarView extends ItemView {
         // Sync plot map link from the active manuscript's frontmatter
         this.plugin.refreshPlotMap();
         this.coWriterPanel.setPlotMap(this.plugin.currentPlotMap);
-        void this.plugin.updateCoWriterPlotMapTokens();
 
         // Set provider context limit (same pattern as feedback panel init)
         const chat = this.plugin.getDefaultChatProvider();
@@ -891,13 +922,173 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setMaxAllowedTokens(chat.provider.config.maxContextTokens);
         }
 
+        // If the session has an active review-discuss (reviewEngine !== null),
+        // ensure the panel displays in 'review-discuss' mode. This catches both
+        // first-construction (panel defaults to 'coach') and tab-switch-back.
+        // Safe against manual mode changes: syncReviewEngine (fired by
+        // setModeSwitchHandler) clears reviewEngine when the writer leaves
+        // review-discuss, so this check is false after a manual switch.
+        if (session && session.reviewEngine !== null && this.coWriterPanel.getMode() !== 'review-discuss') {
+            this.coWriterPanel.restoreMode('review-discuss');
+        }
+
         this.coWriterPanel.setContainer(this.content);
     }
 
     // --- Review tab passthroughs (unified for editorial + critical engines) ---
 
+    /**
+     * The Co-writer panel that should receive session-state pushes right now.
+     * When the Review tab is hosting the embedded panel in discuss mode, this
+     * returns the embedded instance; otherwise it returns the Co-writer-tab
+     * panel. Both panels' setter methods store state without rendering (render
+     * only fires on `setContainer`), so the non-mounted panel stays in sync
+     * silently and renders with the latest state when the writer switches tabs.
+     */
+    private get activeCoWriterPanel(): CoWriterPanel | null {
+        if (this.activeTopTab === 'review' && this.reviewPanel?.isDiscussMode() && this.embeddedCoWriterPanel) {
+            return this.embeddedCoWriterPanel;
+        }
+        return this.coWriterPanel;
+    }
+
+    /**
+     * Construct (on first call) and return the embedded Co-writer panel used by
+     * the Review Results sub-tab in `'review-discuss'` mode. Wiring mirrors
+     * {@link renderCoWriterTab} — same handler set, same session sync — so the
+     * embedded panel behaves exactly like the Co-writer tab's panel. The panel
+     * is NOT mounted here; {@link ReviewPanel.mountEmbeddedPanel} calls
+     * `setContainer(hostEl)` on the returned instance.
+     *
+     * Returns null while `reviewSuggestedEditsEnabled` is off (defensive — the
+     * Review-tab code paths check the toggle before reaching this method, but
+     * the gate here makes the off-state a single-source-of-truth invariant).
+     */
+    private ensureEmbeddedCoWriterPanel(): CoWriterPanel | null {
+        if (!this.plugin.settings.reviewSuggestedEditsEnabled) return null;
+        if (!this.embeddedCoWriterPanel) {
+            this.embeddedCoWriterPanel = new CoWriterPanel(this.app, this.plugin);
+            // Reuse the same handler wiring as the Co-writer tab. The embedded
+            // panel and the Co-writer-tab panel both target the single shared
+            // plugin.coWriterSession, so the same closures work for both.
+            const p = this.embeddedCoWriterPanel;
+            p.setDiscussMessageHandler((message: string, images?: string[], mentionPaths?: string[]) => {
+                void this.plugin.sendCoWriterDiscussion(message, images, mentionPaths);
+            });
+            p.setCancelGenerationHandler(() => {
+                this.plugin.coWriterSession.cancelGeneration();
+            });
+            p.setCompactHandler(() => {
+                void this.plugin.compactCoWriter();
+            });
+            p.setNewChatHandler((_clearContext: boolean) => {
+                // Review-discuss "new chat" returns to the Review Create subtab
+                // rather than clearing the co-writer chat in place. Phase 5
+                // refines this when snapshot-on-tab-swap lands.
+                this.reviewPanel?.resetResults();
+            });
+            p.setSaveSnapshotHandler(() => {
+                void this.plugin.snapshotCoWriterSession().then((ok) => {
+                    if (ok) new Notice('Conversation saved.');
+                });
+            });
+            p.setHistoryHandler(() => {
+                void this.plugin.openCoWriterHistory();
+            });
+            p.setRewindHandler((messageId) => {
+                this.plugin.rewindCoWriterChat(messageId);
+            });
+            p.setModeSwitchHandler((_newMode: InputMode) => {
+                // No-op: the embedded panel is always review-discuss. Mode
+                // restoration is handled by the sidebar's render path
+                // (restoreMode('review-discuss')). Clearing subagents or
+                // syncing reviewEngine here would be premature — the sidebar
+                // owns that lifecycle.
+            });
+            p.setApproveLoreEditHandler((filePath, id) => {
+                this.plugin.approveLoreEdit(filePath, id);
+            });
+            p.setRejectLoreEditHandler((filePath, id) => {
+                this.plugin.rejectLoreEdit(filePath, id);
+            });
+            p.setApproveProposedLoreImageHandler((filePath) => {
+                this.plugin.approveProposedLoreImage(filePath);
+            });
+            p.setRejectProposedLoreImageHandler((filePath) => {
+                this.plugin.rejectProposedLoreImage(filePath);
+            });
+            p.setNavigateToSubagentHandler((id) => {
+                this.plugin.coWriterSession.navigateToSubagent(id);
+            });
+            p.setNavigateToParentHandler(() => {
+                this.plugin.coWriterSession.navigateToParent();
+            });
+            p.setAddContextFileHandler((filePath: string) => {
+                void this.plugin.addCoWriterContextFile(filePath);
+            });
+            p.setRemoveContextFileHandler((filePath: string) => {
+                void this.plugin.removeCoWriterContextFile(filePath);
+            });
+        }
+
+        // Sync current state from the session (mirrors renderCoWriterTab).
+        const session = this.plugin.coWriterSession;
+        if (session) {
+            this.embeddedCoWriterPanel.setThoughtContent(session.thoughtBuffer);
+            this.embeddedCoWriterPanel.setChatHistory(session.chatHistory);
+            this.embeddedCoWriterPanel.setLoreEdits(session.getLoreEditCardViews());
+            this.embeddedCoWriterPanel.setProposedLoreImages(session.getLoreImageCardViews());
+            this.embeddedCoWriterPanel.setSubagents(session.getSubagentViews());
+            this.embeddedCoWriterPanel.setActiveSubagent(session.activeSubagentId);
+            if (session.lastTokenBreakdown) {
+                this.embeddedCoWriterPanel.setContextTokenEstimate(session.lastTokenBreakdown);
+            }
+        }
+
+        const chat = this.plugin.getDefaultChatProvider();
+        if (chat.provider) {
+            this.embeddedCoWriterPanel.setMaxAllowedTokens(chat.provider.config.maxContextTokens);
+        }
+
+        return this.embeddedCoWriterPanel;
+    }
+
+    /**
+     * Sync the session's `reviewEngine` signal on every co-writer mode switch.
+     * Entering `'review-discuss'` via the picker sets it to `'generic'` (Path B —
+     * the writer will paste an external critique). Leaving review-discuss
+     * clears it back to null. Path A (Review-tab discuss) sets the engine via
+     * `seedForReviewDiscuss` and is unaffected — this only fires on manual
+     * mode switches via the picker or right-click submenu.
+     */
+    private syncReviewEngine(newMode: InputMode): void {
+        const session = this.plugin.coWriterSession;
+        if (newMode === 'review-discuss') {
+            // Only set to 'generic' if not already set by Path A seeding.
+            // This preserves the engine when crossing discuss ↔ review-discuss
+            // (both use discussCurrentMessages, so the seeded engine is still
+            // relevant). But if coming from a fresh mode (coach/fulfill/lorebook),
+            // reviewEngine was null — set it to 'generic' for Path B.
+            if (session.reviewEngine === null) {
+                session.reviewEngine = 'generic';
+            }
+        } else {
+            session.reviewEngine = null;
+        }
+    }
+
     reviewStartLoading(engine: 'editorial' | 'critical' | 'manuscript', headerLabel: string, subLabel?: string): void {
         this.reviewPanel?.startLoading(engine, headerLabel, subLabel);
+    }
+
+    /**
+     * Called by the plugin after a Review ← Co-writer snapshot swap to tell
+     * the ReviewPanel that the session now holds a review-discuss conversation
+     * (restored from the background snapshot). Triggers the embedded panel to
+     * mount without re-seeding the session (the session is already populated).
+     */
+    reviewRestoreDiscussAfterSwap(): void {
+        this.reviewPanel?.restoreDiscussAfterSwap();
     }
 
     reviewAppendChunk(text: string): void {
@@ -1001,165 +1192,163 @@ export class QuillSidebarView extends ItemView {
     }
 
     coWriterSetThoughtContent(thought: string): void {
-        this.coWriterPanel?.setThoughtContent(thought);
+        this.activeCoWriterPanel?.setThoughtContent(thought);
     }
 
     /** Update draft state in the Co-writer panel. */
     coWriterSetDraftState(state: DraftState): void {
-        this.coWriterPanel?.setDraftState(state);
+        this.activeCoWriterPanel?.setDraftState(state);
     }
 
     /** Push chat history to the Co-writer panel. */
     coWriterSetChatHistory(history: CoWriterChatMessage[]): void {
-        this.coWriterPanel?.setChatHistory(history);
+        this.activeCoWriterPanel?.setChatHistory(history);
     }
 
     /** Push current options to the Co-writer panel. */
     coWriterSetCurrentOptions(options: CoWriterOption[]): void {
-        this.coWriterPanel?.setCurrentOptions(options);
+        this.activeCoWriterPanel?.setCurrentOptions(options);
     }
 
     /** Push options loading state to the Co-writer panel. */
     coWriterSetOptionsLoading(loading: boolean): void {
-        this.coWriterPanel?.setOptionsLoading(loading);
+        this.activeCoWriterPanel?.setOptionsLoading(loading);
     }
 
     /** Push the Regime B "describing image…" indicator state to the Co-writer panel. */
     coWriterSetDescribingImages(active: boolean): void {
-        this.coWriterPanel?.setDescribingImages(active);
+        this.activeCoWriterPanel?.setDescribingImages(active);
     }
 
     /** Trigger a full refresh of the Co-writer panel (e.g., after context file changes). */
     coWriterRefresh(): void {
-        if (this.activeTopTab === 'cowriter') {
+        if (this.activeTopTab === 'cowriter' || (this.activeTopTab === 'review' && this.reviewPanel?.isDiscussMode())) {
+            // Capture scroll state before render() tears down and rebuilds the DOM.
+            // The panel's own save/restore operates on the old (detached) container,
+            // so scroll and draft-aware auto-follow state would be lost without this.
+            const panel = this.activeCoWriterPanel;
+            const scrollState = panel?.captureScrollState?.() ?? null;
             this.render();
+            if (scrollState && panel) {
+                panel.restoreScrollState(scrollState);
+            }
         }
     }
 
     /** Set the maximum allowed context tokens for the Co-writer token indicator. */
     coWriterSetMaxAllowedTokens(tokens: number): void {
-        this.coWriterPanel?.setMaxAllowedTokens(tokens);
+        this.activeCoWriterPanel?.setMaxAllowedTokens(tokens);
     }
 
     /** Set the conversation token estimate for the Co-writer token indicator.
-     * The panel adds vault context item tokens on top to compute the total. */
+     * The session-side breakdown includes all injected context sources. */
     coWriterSetContextTokenEstimate(breakdown: TokenBreakdown): void {
-        this.coWriterPanel?.setContextTokenEstimate(breakdown);
-    }
-
-    /** Set the additional context file token estimate for the Co-writer token indicator. */
-    coWriterSetAdditionalContextTokens(tokens: number): void {
-        this.coWriterPanel?.setAdditionalContextTokens(tokens);
-    }
-
-    /** Set the plot map token estimate for the Co-writer token indicator. */
-    coWriterSetPlotMapTokens(tokens: number): void {
-        this.coWriterPanel?.setPlotMapTokens(tokens);
+        this.activeCoWriterPanel?.setContextTokenEstimate(breakdown);
     }
 
     /** Start streaming a discuss response. */
     coWriterDiscussStartStreaming(): void {
-        this.coWriterPanel?.discussStartStreaming();
+        this.activeCoWriterPanel?.discussStartStreaming();
     }
 
     /** Append a chunk of text to the streaming discuss response. */
     coWriterDiscussAppendChunk(text: string): void {
-        this.coWriterPanel?.discussAppendChunk(text);
+        this.activeCoWriterPanel?.discussAppendChunk(text);
     }
 
     /** Clear the streaming text (discard draft text emitted before reasoning). */
     coWriterDiscussClearStreaming(): void {
-        this.coWriterPanel?.discussClearStreaming();
+        this.activeCoWriterPanel?.discussClearStreaming();
     }
 
     /** Mark the discuss response as complete; re-render with markdown. */
     async coWriterDiscussFinished(): Promise<void> {
-        await this.coWriterPanel?.discussFinished();
+        await this.activeCoWriterPanel?.discussFinished();
     }
 
     /** Show an error in the discuss response. */
     async coWriterDiscussError(message: string): Promise<void> {
-        await this.coWriterPanel?.discussError(message);
+        await this.activeCoWriterPanel?.discussError(message);
     }
 
     /** Set the coach phase in the co-writer panel. */
     coWriterSetCoachPhase(phase: CoachPhase): void {
-        this.coWriterPanel?.setCoachPhase(phase);
+        this.activeCoWriterPanel?.setCoachPhase(phase);
     }
 
     /** Set the co-writer panel's active mode (e.g. from the right-click submenu). */
     coWriterSetMode(mode: InputMode): void {
-        this.coWriterPanel?.setMode(mode);
+        this.activeCoWriterPanel?.setMode(mode);
     }
 
     /** Read the co-writer panel's active mode (used for snapshot metadata). */
     coWriterGetMode(): InputMode | null {
-        return this.coWriterPanel?.getMode() ?? null;
+        return this.activeCoWriterPanel?.getMode() ?? null;
     }
 
     /** Pre-fill the co-writer chat input (used after a rewind). */
     coWriterSetInputText(text: string): void {
-        this.coWriterPanel?.setInputText(text);
+        this.activeCoWriterPanel?.setInputText(text);
     }
 
     /** Restore the co-writer panel's mode WITHOUT side effects (restore path only). */
     coWriterRestoreMode(mode: InputMode): void {
-        this.coWriterPanel?.restoreMode(mode);
+        this.activeCoWriterPanel?.restoreMode(mode);
     }
 
     /** Set whether coach mode is active. */
     coWriterSetCoachActive(active: boolean): void {
-        this.coWriterPanel?.setCoachActive(active);
+        this.activeCoWriterPanel?.setCoachActive(active);
     }
 
     /** Set the lorebook coach phase. */
     coWriterSetLoreCoachPhase(phase: LoreCoachPhase): void {
-        this.coWriterPanel?.setLoreCoachPhase(phase);
+        this.activeCoWriterPanel?.setLoreCoachPhase(phase);
     }
 
     /** Set whether lorebook coach mode is active. */
     coWriterSetLoreCoachActive(active: boolean): void {
-        this.coWriterPanel?.setLoreCoachActive(active);
+        this.activeCoWriterPanel?.setLoreCoachActive(active);
     }
 
     /** Set the plot map link path shown in the co-writer panel. */
     coWriterSetPlotMap(path: string | null): void {
-        this.coWriterPanel?.setPlotMap(path);
+        this.activeCoWriterPanel?.setPlotMap(path);
     }
 
     /** Set whether an inline directive is active at the cursor (Direct-mode badge). */
     coWriterSetDirectiveActive(active: boolean): void {
-        this.coWriterPanel?.setDirectiveActive(active);
+        this.activeCoWriterPanel?.setDirectiveActive(active);
     }
 
     /** Push Fulfill-mode sections and active flag to the co-writer panel. */
     coWriterSetFulfillState(sections: ProposedEdit[], active: boolean): void {
-        this.coWriterPanel?.setFulfillState(sections, active);
+        this.activeCoWriterPanel?.setFulfillState(sections, active);
     }
 
     /** Push the current Direct continuation edit (or null) to the co-writer panel. */
     coWriterSetDirectChange(edit: ProposedEdit | null): void {
-        this.coWriterPanel?.setDirectChange(edit);
+        this.activeCoWriterPanel?.setDirectChange(edit);
     }
 
     /** Push the pending lore edits to the co-writer panel. */
     coWriterSetLoreEdits(edits: LoreEditCardView[]): void {
-        this.coWriterPanel?.setLoreEdits(edits);
+        this.activeCoWriterPanel?.setLoreEdits(edits);
     }
 
     /** Push the pending lore image attachments to the co-writer panel. */
     coWriterSetProposedLoreImages(proposals: LoreImageCardView[]): void {
-        this.coWriterPanel?.setProposedLoreImages(proposals);
+        this.activeCoWriterPanel?.setProposedLoreImages(proposals);
     }
 
     /** Push the spawned subagent list (status cards + drill-down state). */
     coWriterSetSubagents(list: SubagentView[]): void {
-        this.coWriterPanel?.setSubagents(list);
+        this.activeCoWriterPanel?.setSubagents(list);
     }
 
     /** Push which subagent is drilled-in (null = parent view). */
     coWriterSetActiveSubagent(id: string | null): void {
-        this.coWriterPanel?.setActiveSubagent(id);
+        this.activeCoWriterPanel?.setActiveSubagent(id);
     }
 
     /** Switch to the pending subtab on whichever tab initiated the batch fix. */

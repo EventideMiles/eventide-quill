@@ -74,6 +74,50 @@ export function detectTextToolCall(response: string, toolNames: string[]): TextT
     return { name: best.name, snippet };
 }
 
+// ── Intent narration detection ──────────────────────────────────────────
+//
+// A second failure mode: the model expresses clear COMMITMENT to making edits
+// ("I'll get started on those edits now", "I'm going to fix that paragraph")
+// but then ends its turn WITHOUT calling any tools. The writer is left waiting
+// for edits that never come. Unlike text-tool-syntax leaks (above), the model
+// isn't writing tool syntax as text — it's narrating its plan in natural
+// language and then stopping.
+//
+// The detection looks for COMMITMENT phrases only (I'll, I'm going to, let me)
+// paired with action verbs (edit, fix, change, start, work on). Questions and
+// suggestion phrases ("would you like me to...", "shall I...", "I could...")
+// are deliberately excluded so the nudge does not fire when the model is
+// legitimately asking the writer how they want to proceed.
+
+const INTENT_PATTERNS: RegExp[] = [
+    /\bI'?ll\s+(start|get started|begin|work on|edit|fix|change|update|process|make)\b/i,
+    /\bI'?m going to\s+(start|begin|edit|fix|change|update|work on|process)\b/i,
+    /\blet me\s+(edit|fix|change|update|start|work on|process)\b/i,
+    /\bI will\s+(start|edit|fix|change|update|work on)\b/i,
+    /\bstarting (on|with|those|these|the)\b/i
+];
+
+export interface IntentNarration {
+    snippet: string;
+}
+
+export function detectIntentNarration(response: string): IntentNarration | null {
+    const text = response.trim();
+    if (!text) return null;
+    for (const pattern of INTENT_PATTERNS) {
+        const match = text.match(pattern);
+        if (match) {
+            const start = match.index ?? 0;
+            const snippet = text
+                .slice(start, Math.min(text.length, start + 120))
+                .replace(/\s+/g, ' ')
+                .trim();
+            return { snippet };
+        }
+    }
+    return null;
+}
+
 /**
  * Build the follow-up message that nudges the model to re-issue a leaked tool
  * call through the proper structured interface. Pushed into the API message
@@ -95,6 +139,26 @@ export function buildToolNudgeMessage(leak: TextToolLeak): ChatMessage {
             'you invoke any function. Re-issue your intended call to',
             `\`${leak.name}\` properly now, or respond in plain prose if you did`,
             'not mean to call a tool.'
+        ].join(' ')
+    };
+}
+
+/**
+ * Build a nudge for intent narration: the model expressed commitment to make
+ * edits ("I'll get started on those edits now") but produced no tool calls.
+ * Pushes the model to either call the tools now or clarify that it's waiting
+ * for the writer's confirmation.
+ */
+export function buildIntentNudgeMessage(intent: IntentNarration): ChatMessage {
+    return {
+        role: 'user',
+        content: [
+            `Your previous reply said "${intent.snippet}" but you did not call any tools.`,
+            'If you intended to make edits, call the editing tools (edit_note, insert_note,',
+            'append_to_note) now through the structured tool-calling interface — do not',
+            'describe what you plan to do. If you are waiting for the writer to confirm,',
+            'say so explicitly. The writer cannot see your intent unless you actually call',
+            'the tools.'
         ].join(' ')
     };
 }
@@ -123,26 +187,36 @@ export interface NudgeTextToolLeakResult {
 
 /**
  * Centralized text-form tool-call recovery for a tool-loop round that produced
- * NO structured tool calls: if the model wrote a tool invocation as plain text,
- * push {@link buildToolNudgeMessage} into the conversation and signal that the
- * caller should take another round.
+ * NO structured tool calls. Two detection types, tried in order:
  *
- * Encapsulates the bound ({@link MAX_TEXT_TOOL_NUDGES}), detection, nudge
- * append, and the chat refresh so every tool-loop site stays consistent. The
- * caller owns loop control: on `nudged: true`, increment its counter from the
- * result and `continue`; otherwise end the turn.
+ * 1. **Tool-syntax leak**: the model wrote `edit_note(...)` as plain text.
+ *    Nudged via {@link buildToolNudgeMessage}.
+ * 2. **Intent narration**: the model wrote "I'll get started on those edits"
+ *    or similar commitment phrase, without calling any tools. Nudged via
+ *    {@link buildIntentNudgeMessage}.
  *
- * Currently used by {@link SubagentSession}; the co-writer discuss/coach/
- * lorebook guards are an intended follow-up (same shape — pass the mode's API
- * message array and `registry.list().map((t) => t.id)` as `toolNames`).
+ * Both share the same nudge budget ({@link MAX_TEXT_TOOL_NUDGES}). On
+ * `nudged: true`, the caller takes another round; otherwise ends the turn.
  */
 export function tryNudgeTextToolLeak(opts: NudgeTextToolLeakOptions): NudgeTextToolLeakResult {
     if (opts.response.trim() && opts.nudgesUsed < MAX_TEXT_TOOL_NUDGES) {
+        // 1. Check for tool syntax written as text.
         const leak = detectTextToolCall(opts.response, opts.toolNames);
         if (leak) {
             opts.messages.push(buildToolNudgeMessage(leak));
             opts.onChatUpdate?.();
             return { nudged: true, nudgesUsed: opts.nudgesUsed + 1 };
+        }
+        // 2. Check for intent narration ("I'll start editing..." with no calls).
+        //    Only when editing tools are registered — if the model has no tools,
+        //    narrating intent without calling them is expected behavior.
+        if (opts.toolNames.length > 0) {
+            const intent = detectIntentNarration(opts.response);
+            if (intent) {
+                opts.messages.push(buildIntentNudgeMessage(intent));
+                opts.onChatUpdate?.();
+                return { nudged: true, nudgesUsed: opts.nudgesUsed + 1 };
+            }
         }
     }
     return { nudged: false, nudgesUsed: opts.nudgesUsed };

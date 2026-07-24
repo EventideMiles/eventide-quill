@@ -19,6 +19,7 @@ import {
     getLoreCoachSystemPrompt,
     getLoreCoachUserPrompt,
     getResearchSystemPrompt,
+    getReviewDiscussSystemPrompt,
     type ActiveSteering
 } from './prompts';
 import { compactConversation } from './compaction';
@@ -482,6 +483,15 @@ export interface ProposedLoreImageEntry {
 export interface SerializedCoWriterState {
     /** Co-writer mode active at snapshot time (`InputMode` as a plain string). */
     mode: string;
+    /**
+     * For `'review-discuss'` mode: which review engine produced the report
+     * this session is following up on. `'generic'` covers the manual-entry
+     * path (writer picked Review from the picker and pastes their own
+     * critique). `null` for all other modes (and for review-discuss
+     * sessions prior to the field's introduction). Optional on the wire so
+     * older sidecars still pass {@link isValidState}.
+     */
+    reviewEngine?: 'editorial' | 'critical' | 'manuscript' | 'generic' | null;
     chatHistory: CoWriterChatMessage[];
     discussCurrentMessages: ChatMessage[];
     loreCoachMessages: ChatMessage[];
@@ -511,6 +521,15 @@ export interface SerializedCoWriterState {
 export class CoWriterSession {
     /** Path of the manuscript being worked on. */
     manuscriptPath: string | null = null;
+    /**
+     * For `'review-discuss'` mode: which review engine produced the report
+     * this session is following up on. `'generic'` covers the manual-entry
+     * path (writer picked Review from the picker and pastes an external
+     * critique as the first message). Carries into the saved-session label
+     * so the writer can identify the chat in the History modal. `null` in
+     * every other mode.
+     */
+    reviewEngine: 'editorial' | 'critical' | 'manuscript' | 'generic' | null = null;
     /** Full document text at the time an option was applied. */
     originalText = '';
     /** Offset in the document where the AI's insertion begins. */
@@ -640,6 +659,12 @@ export class CoWriterSession {
     onDescribingImages: ((active: boolean) => void) | null = null;
     /** Called after a draft is accepted, to trigger fresh options. */
     onDraftAccepted: (() => void) | null = null;
+    /**
+     * Last token breakdown emitted by the token-estimate callback, cached so
+     * the embedded panel can restore the indicator on mount without waiting
+     * for the next request event. Set by {@link emitTokenEstimate}.
+     */
+    lastTokenBreakdown: TokenBreakdown | null = null;
     /** Called when the discuss-mode token estimate changes (conversation tokens only;
      * the panel adds vault context item tokens on top to compute the total). */
     onTokenEstimate: ((breakdown: TokenBreakdown, maxTokens: number) => void) | null = null;
@@ -1033,6 +1058,16 @@ export class CoWriterSession {
     }
 
     /**
+     * Emit a token estimate to the panel callback and cache the breakdown
+     * for embedded-panel restoration. Replaces raw `this.onTokenEstimate?.(...)`
+     * calls so the cache stays in sync.
+     */
+    private emitTokenEstimate(breakdown: TokenBreakdown, maxTokens: number): void {
+        this.lastTokenBreakdown = breakdown;
+        this.onTokenEstimate?.(breakdown, maxTokens);
+    }
+
+    /**
      * Annotate the last assistant message's toolUses with error info for
      * failed tool calls, so the panel can render them red and show the
      * reason on hover / right-click copy. Called after the execution loop
@@ -1149,9 +1184,39 @@ export class CoWriterSession {
         if (discussDirective) {
             injectedContext.push(discussDirective);
         }
-        const activeFileMsg = buildActiveFileMessage(plugin);
-        if (activeFileMsg) {
-            injectedContext.push(activeFileMsg);
+        // Inject the "recommend Direct/Fulfill for the active file" guidance ONLY
+        // when NOT in review-discuss mode. In review-discuss, the system prompt
+        // explicitly authorizes editing the active manuscript — this message
+        // would contradict it and cause the model to refuse edits to the open file.
+        if (this.reviewEngine === null) {
+            const activeFileMsg = buildActiveFileMessage(plugin);
+            if (activeFileMsg) {
+                injectedContext.push(activeFileMsg);
+            }
+        } else {
+            // Review-discuss: inject the FULL active document so the editor
+            // can reference and edit any section. The manuscript engine would
+            // otherwise skip this because the full text was already seeded
+            // into discussCurrentMessages via contextMessages, but the world
+            // rules are engine-independent and should apply to all review
+            // engines.
+            if (this.reviewEngine !== 'manuscript' && fullText) {
+                const activeFile = plugin.app.workspace.getActiveFile();
+                const fileName = activeFile?.name ?? 'the manuscript';
+                injectedContext.push({
+                    role: 'system',
+                    content: `Current manuscript (full document) — "${fileName}":\n\n${fullText}`
+                });
+            }
+            // Inject the writer's world-building rules so the model follows
+            // them when writing or editing prose (e.g., "use 'fur' not 'skin'").
+            const worldRules = plugin.settings.reviewWorldRules?.trim();
+            if (worldRules) {
+                injectedContext.push({
+                    role: 'system',
+                    content: `World rules (follow these when writing or editing prose):\n${worldRules}`
+                });
+            }
         }
         const discussNetworkMsg = buildNetworkToolsMessage(plugin);
         if (discussNetworkMsg) {
@@ -1162,15 +1227,29 @@ export class CoWriterSession {
             injectedContext.push(discussInternalMsg);
         }
 
-        const prompt = getCoWriterDiscussPrompt(proseForContext || '(empty document)', message);
+        // Build the user prompt. For review-discuss, skip the limited
+        // "Passage up to cursor" section — the full document is already
+        // injected as a system message above. Appending the cursor snippet
+        // misleads the model into thinking it only has that limited view.
+        const prompt =
+            this.reviewEngine !== null
+                ? message
+                : getCoWriterDiscussPrompt(proseForContext || '(empty document)', message);
 
-        // Initialize discussCurrentMessages on first call: system prompt + first user message
+        // Initialize discussCurrentMessages on first call: system prompt + first user message.
+        // When in review-discuss mode (entered via the picker, Path B), use the dedicated
+        // review-discuss prompt instead of the generic discuss one. Path A (Review-tab
+        // discuss) pre-seeds discussCurrentMessages via seedForReviewDiscuss, so this init
+        // block is skipped for that path.
         if (this.discussCurrentMessages.length === 0) {
-            const systemPrompt: ChatMessage = {
-                role: 'system',
-                content:
-                    'You are a thoughtful, knowledgeable editor assisting a novelist in a discussion about their work. Respond with specific, craft-focused observations. Ask clarifying questions when helpful. Keep to analysis and discussion, generating prose only when the writer explicitly asks for it.'
-            };
+            const systemPrompt: ChatMessage =
+                this.reviewEngine !== null
+                    ? { role: 'system', content: getReviewDiscussSystemPrompt(this.reviewEngine) }
+                    : {
+                          role: 'system',
+                          content:
+                              'You are a thoughtful, knowledgeable editor assisting a novelist in a discussion about their work. Respond with specific, craft-focused observations. Ask clarifying questions when helpful. Keep to analysis and discussion, generating prose only when the writer explicitly asks for it.'
+                      };
             this.discussCurrentMessages = [systemPrompt];
         }
 
@@ -1189,9 +1268,20 @@ export class CoWriterSession {
         const conversationTokens = this.estimateRequestTokens(hypotheticalConversation);
         const totalTokens = conversationTokens + injectedTokens;
 
-        // Push conversation-only token estimate to the panel.
-        // The panel adds vault context item tokens on top to get the total.
-        this.onTokenEstimate?.(this.estimateRequestBreakdown(hypotheticalConversation), maxTokens);
+        // Push the FULL request token estimate to the panel — conversation
+        // PLUS injected context (full manuscript, tool ads, vault context).
+        // In review-discuss mode, the injected context includes the entire
+        // document, so a conversation-only estimate was thousands of tokens
+        // short of the actual request size.
+        this.emitTokenEstimate(
+            this.estimateRequestBreakdown([
+                this.discussCurrentMessages[0]!,
+                ...injectedContext,
+                ...this.discussCurrentMessages.slice(1),
+                { role: 'user' as const, content: prompt }
+            ]),
+            maxTokens
+        );
 
         // --- Compaction: refine first (deterministic, free), then AI-summarize if still over ---
         let needsCompaction = totalTokens / maxTokens >= compactPct;
@@ -1212,9 +1302,11 @@ export class CoWriterSession {
                 ]) + injectedTokens;
             if (refinedTokens / maxTokens <= compactPct) {
                 needsCompaction = false;
-                this.onTokenEstimate?.(
+                this.emitTokenEstimate(
                     this.estimateRequestBreakdown([
-                        ...this.discussCurrentMessages,
+                        this.discussCurrentMessages[0]!,
+                        ...injectedContext,
+                        ...this.discussCurrentMessages.slice(1),
                         { role: 'user' as const, content: prompt }
                     ]),
                     maxTokens
@@ -1229,9 +1321,11 @@ export class CoWriterSession {
                 });
                 if (result) {
                     this.discussCurrentMessages = result.messages;
-                    this.onTokenEstimate?.(
+                    this.emitTokenEstimate(
                         this.estimateRequestBreakdown([
-                            ...this.discussCurrentMessages,
+                            this.discussCurrentMessages[0]!,
+                            ...injectedContext,
+                            ...this.discussCurrentMessages.slice(1),
                             { role: 'user' as const, content: prompt }
                         ]),
                         maxTokens
@@ -1311,6 +1405,20 @@ export class CoWriterSession {
         const maxRounds = plugin.settings.coWriterMaxToolRounds > 0 ? plugin.settings.coWriterMaxToolRounds : Infinity;
         let nudgesUsed = 0;
 
+        // Helper: push a token estimate that includes the injected context
+        // (full manuscript, tool ads, world rules) so the pre-send indicator
+        // for the NEXT turn matches the actual request size.
+        const pushFullTokenEstimate = () => {
+            this.emitTokenEstimate(
+                this.estimateRequestBreakdown([
+                    this.discussCurrentMessages[0]!,
+                    ...injectedContext,
+                    ...this.discussCurrentMessages.slice(1)
+                ]),
+                maxTokens
+            );
+        };
+
         try {
             ctx.signal = this.abortController.signal;
 
@@ -1388,7 +1496,7 @@ export class CoWriterSession {
                 // Update token estimate so the indicator reflects tool-result
                 // growth — tool results stay in the conversation and keep
                 // getting re-sent, so the user needs to see their cost.
-                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                pushFullTokenEstimate();
 
                 // No structured tool calls this round. Before giving up, check
                 // whether the model wrote a tool call as plain text (common with
@@ -1433,7 +1541,7 @@ export class CoWriterSession {
                 this.annotateToolUseErrors(execResults);
 
                 // Re-estimate after tool results were appended.
-                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                pushFullTokenEstimate();
 
                 // Mid-loop compaction: refine first (deterministic, free), then
                 // AI-summarize older turns if still over the threshold. Keeps
@@ -1447,7 +1555,7 @@ export class CoWriterSession {
                     );
                     if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens <= compactPct) {
                         needsCompaction = false;
-                        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                        pushFullTokenEstimate();
                     }
                 }
                 if (needsCompaction) {
@@ -1458,10 +1566,7 @@ export class CoWriterSession {
                         });
                         if (cResult) {
                             this.discussCurrentMessages = cResult.messages;
-                            this.onTokenEstimate?.(
-                                this.estimateRequestBreakdown(this.discussCurrentMessages),
-                                maxTokens
-                            );
+                            pushFullTokenEstimate();
                         }
                     } catch (compErr: unknown) {
                         // Propagate aborts to the outer catch so the normal
@@ -1690,7 +1795,17 @@ export class CoWriterSession {
         const conversationTokens = this.estimateRequestTokens(this.discussCurrentMessages);
         const totalTokens = conversationTokens + injectedTokens;
 
-        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+        // Helper: build a token breakdown that includes injected context
+        // (vault, additional files, plot map, active file, tool ads) so the
+        // indicator reflects the actual request size, not just the conversation.
+        const coachFullBreakdown = () =>
+            this.estimateRequestBreakdown([
+                this.discussCurrentMessages[0]!,
+                ...injectedContext,
+                ...this.discussCurrentMessages.slice(1)
+            ]);
+
+        this.emitTokenEstimate(coachFullBreakdown(), maxTokens);
 
         // Compaction: refine first (deterministic, free), then AI-summarize if still over
         let needsCompaction = totalTokens / maxTokens >= compactPct;
@@ -1703,7 +1818,7 @@ export class CoWriterSession {
             const refinedTokens = this.estimateRequestTokens(this.discussCurrentMessages) + injectedTokens;
             if (refinedTokens / maxTokens <= compactPct) {
                 needsCompaction = false;
-                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                this.emitTokenEstimate(coachFullBreakdown(), maxTokens);
             }
         }
         if (needsCompaction) {
@@ -1714,7 +1829,7 @@ export class CoWriterSession {
                 });
                 if (result) {
                     this.discussCurrentMessages = result.messages;
-                    this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                    this.emitTokenEstimate(coachFullBreakdown(), maxTokens);
                 }
             } catch (err: unknown) {
                 if (err instanceof Error && err.name === 'AbortError') {
@@ -1830,7 +1945,7 @@ export class CoWriterSession {
                     quillAnchorId: this.currentAnchorMessageId() ?? undefined
                 });
 
-                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                this.emitTokenEstimate(coachFullBreakdown(), maxTokens);
 
                 // No structured tool calls. Check for a text-form tool call and
                 // nudge the model to re-issue it properly (see discuss mode).
@@ -1868,7 +1983,7 @@ export class CoWriterSession {
                 await injectImagesIntoMessages(plugin, coachCollectedImages, this.discussCurrentMessages, ctx.signal);
 
                 this.annotateToolUseErrors(coachExecResults);
-                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                this.emitTokenEstimate(coachFullBreakdown(), maxTokens);
 
                 // Mid-loop compaction: refine first (deterministic, free), then AI-summarize if still over.
                 let needsCompaction = this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens >= compactPct;
@@ -1880,7 +1995,7 @@ export class CoWriterSession {
                     );
                     if (this.estimateRequestTokens(this.discussCurrentMessages) / maxTokens <= compactPct) {
                         needsCompaction = false;
-                        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                        this.emitTokenEstimate(coachFullBreakdown(), maxTokens);
                     }
                 }
                 if (needsCompaction) {
@@ -1891,10 +2006,7 @@ export class CoWriterSession {
                         });
                         if (cResult) {
                             this.discussCurrentMessages = cResult.messages;
-                            this.onTokenEstimate?.(
-                                this.estimateRequestBreakdown(this.discussCurrentMessages),
-                                maxTokens
-                            );
+                            this.emitTokenEstimate(coachFullBreakdown(), maxTokens);
                         }
                     } catch (compErr: unknown) {
                         // Propagate aborts to the outer catch so the normal
@@ -2269,9 +2381,21 @@ export class CoWriterSession {
             }
         };
 
+        const loreInjectedContext: ChatMessage[] = [];
+        const loreActiveFileMsg = buildActiveFileMessage(plugin);
+        if (loreActiveFileMsg) loreInjectedContext.push(loreActiveFileMsg);
+        const loreNetworkMsg = buildNetworkToolsMessage(plugin);
+        if (loreNetworkMsg) loreInjectedContext.push(loreNetworkMsg);
+
         const compactPct = Math.max(50, Math.min(95, this.settingsOrDefault(plugin).contextCompactAtPercent)) / 100;
         const conversationTokens = this.estimateRequestTokens(this.loreCoachMessages);
-        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+        const loreFullBreakdown = () =>
+            this.estimateRequestBreakdown([
+                this.loreCoachMessages[0]!,
+                ...loreInjectedContext,
+                ...this.loreCoachMessages.slice(1)
+            ]);
+        this.emitTokenEstimate(loreFullBreakdown(), maxTokens);
 
         // Compaction: refine first (deterministic, free), then AI-summarize if still over.
         let needsCompaction = conversationTokens / maxTokens >= compactPct;
@@ -2279,7 +2403,7 @@ export class CoWriterSession {
             this.refineForBudgetIfEnabled(plugin, this.loreCoachMessages, Math.ceil(compactPct * maxTokens));
             if (this.estimateRequestTokens(this.loreCoachMessages) / maxTokens <= compactPct) {
                 needsCompaction = false;
-                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+                this.emitTokenEstimate(loreFullBreakdown(), maxTokens);
             }
         }
         if (needsCompaction) {
@@ -2288,7 +2412,7 @@ export class CoWriterSession {
                 const result = await compactConversation(chat.provider, this.loreCoachMessages, sentenceCount);
                 if (result) {
                     this.loreCoachMessages = result.messages;
-                    this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+                    this.emitTokenEstimate(loreFullBreakdown(), maxTokens);
                 }
             } catch (err: unknown) {
                 if (err instanceof Error && err.name === 'AbortError') {
@@ -2467,7 +2591,7 @@ export class CoWriterSession {
 
                 // Update token estimate so the indicator reflects tool-result
                 // growth, then sync the chat so the user sees progress.
-                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+                this.emitTokenEstimate(loreFullBreakdown(), maxTokens);
 
                 // Mid-loop compaction: refine first (deterministic, free), then
                 // AI-summarize older turns if still over the threshold.
@@ -2476,7 +2600,7 @@ export class CoWriterSession {
                     this.refineForBudgetIfEnabled(plugin, this.loreCoachMessages, Math.ceil(compactPct * maxTokens));
                     if (this.estimateRequestTokens(this.loreCoachMessages) / maxTokens <= compactPct) {
                         needsCompaction = false;
-                        this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+                        this.emitTokenEstimate(loreFullBreakdown(), maxTokens);
                     }
                 }
                 if (needsCompaction) {
@@ -2487,7 +2611,7 @@ export class CoWriterSession {
                         });
                         if (cResult) {
                             this.loreCoachMessages = cResult.messages;
-                            this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+                            this.emitTokenEstimate(loreFullBreakdown(), maxTokens);
                         }
                     } catch (compErr: unknown) {
                         // Propagate aborts to the outer catch so the normal
@@ -2518,7 +2642,7 @@ export class CoWriterSession {
             this.onDiscussFinished?.();
             this.optionsLoading = false;
             this.onOptionsLoading?.(false);
-            this.onTokenEstimate?.(this.estimateRequestBreakdown(this.loreCoachMessages), maxTokens);
+            this.emitTokenEstimate(loreFullBreakdown(), maxTokens);
             this.onChatUpdate?.();
             this.onLoreCoachUpdate?.();
         } catch (err: unknown) {
@@ -3342,7 +3466,7 @@ export class CoWriterSession {
             });
             if (result) {
                 this.discussCurrentMessages = result.messages;
-                this.onTokenEstimate?.(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+                this.emitTokenEstimate(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
                 this.onChatUpdate?.();
             }
         } catch (err: unknown) {
@@ -4059,10 +4183,76 @@ export class CoWriterSession {
         }
         this.thoughtBuffer = '';
         this.chatHistory = [];
+        this.lastTokenBreakdown = null;
+        this.reviewEngine = null;
         this.currentOptions = [];
         this.optionsLoading = false;
         this.onChatUpdate?.();
         this.onOptionsLoading?.(false);
+    }
+
+    /**
+     * Reset and seed the session for a `'review-discuss'` conversation — the
+     * entry point for v1.4.0's proactive editor chat. The system prompt and
+     * the just-completed report become the AI's opening turn: the system
+     * message at index 0 of {@link discussCurrentMessages}, the report as the
+     * first assistant message (id-stamped via {@link pushChatMessage} so it
+     * renders as a chat bubble and can anchor any subsequent change cards).
+     * The writer's follow-ups then flow through {@link sendDiscussion} as
+     * normal — sendDiscussion's "first call" system-prompt initialization is
+     * bypassed because `discussCurrentMessages` is non-empty.
+     *
+     * The optional `contextMessages` are sandwiched between the system prompt
+     * and the report — used when an engine needs to bake in engine-specific
+     * context (e.g. a compacted manuscript for the manuscript engine). For
+     * Phase 3 the call sites pass none; the model uses tools to gather
+     * context. Phase 4 may populate them when the dedicated prompt lands.
+     *
+     * Clears all chat state via {@link resetChat}. The caller is responsible
+     * for snapshotting (Phase 5) any prior co-writer chat it wants to preserve.
+     * Sets {@link reviewEngine} so saved sessions carry their engine tag into
+     * the History modal.
+     */
+    seedForReviewDiscuss(opts: {
+        engine: 'editorial' | 'critical' | 'manuscript';
+        systemPrompt: string;
+        reportText: string;
+        contextMessages?: ChatMessage[];
+    }): void {
+        this.resetChat(true);
+        // Stamp the report as the first display message so the embedded panel
+        // renders it as a chat bubble. The freshly minted id is reused as the
+        // quillAnchorId on the API-level assistant turn so rewind + anchored
+        // cards work the same as a normal turn.
+        this.pushChatMessage({ role: 'assistant', content: opts.reportText });
+        const reportId = this.chatHistory[this.chatHistory.length - 1]!.id;
+        this.discussCurrentMessages = [
+            { role: 'system', content: opts.systemPrompt },
+            ...(opts.contextMessages ?? []),
+            { role: 'assistant', content: opts.reportText, quillAnchorId: reportId }
+        ];
+        this.reviewEngine = opts.engine;
+        this.onChatUpdate?.();
+    }
+
+    /**
+     * Append a streaming chunk to the review-discuss report message (the last
+     * assistant turn seeded by {@link seedForReviewDiscuss}). Updates both the
+     * display `chatHistory` and the API-level `discussCurrentMessages`, then
+     * fires `onChatUpdate` so the embedded panel re-renders with the growing
+     * text. Used when the report streams directly into the co-writer session
+     * instead of the legacy flat-report view.
+     */
+    appendReviewDiscussChunk(text: string): void {
+        const lastDisplay = this.chatHistory[this.chatHistory.length - 1];
+        if (lastDisplay && lastDisplay.role === 'assistant') {
+            lastDisplay.content += text;
+        }
+        const lastApi = this.discussCurrentMessages[this.discussCurrentMessages.length - 1];
+        if (lastApi && lastApi.role === 'assistant') {
+            lastApi.content += text;
+        }
+        this.onChatUpdate?.();
     }
 
     /**
@@ -4081,6 +4271,7 @@ export class CoWriterSession {
     snapshotState(mode: string): SerializedCoWriterState {
         const snapshot: SerializedCoWriterState = {
             mode,
+            reviewEngine: this.reviewEngine,
             chatHistory: this.chatHistory,
             discussCurrentMessages: this.discussCurrentMessages,
             loreCoachMessages: this.loreCoachMessages,
@@ -4144,6 +4335,7 @@ export class CoWriterSession {
         this.discussCurrentMessages = stubDanglingToolCalls(state.discussCurrentMessages);
         this.loreCoachMessages = stubDanglingToolCalls(state.loreCoachMessages);
         this.manuscriptPath = state.manuscriptPath;
+        this.reviewEngine = state.reviewEngine ?? null;
         this.voiceProfile = state.voiceProfile;
         this.contextFilePaths = state.contextFilePaths;
         this.recentImages = state.recentImages;
@@ -4187,6 +4379,7 @@ export class CoWriterSession {
         this.optionsLoading = false;
         this.draftState = 'idle';
         this.thoughtBuffer = '';
+        this.lastTokenBreakdown = null;
 
         this.onChatUpdate?.();
         return state.mode;

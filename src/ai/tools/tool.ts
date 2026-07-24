@@ -217,6 +217,16 @@ export async function executeToolCall(
         if (normalized.text.length > maxChars) {
             normalized.text = `${normalized.text.slice(0, maxChars)}\n\n...[result truncated at ${tool.maxResultTokens} tokens]`;
         }
+        // Debug log: surface rejected/failed tool calls so the writer can
+        // see what went wrong (AI-ism checks, paragraph-size rejections,
+        // text-match failures, etc.) without digging through network logs.
+        if (__DEV__ && ctx.plugin?.settings?.enableDebugLogging && normalized.text.startsWith('Error')) {
+            console.warn('[Quill] Tool rejected:', {
+                tool: call.name,
+                args: parsedArgs,
+                result: normalized.text
+            });
+        }
         // Buffer image-bearing results so the model can reference them later
         // via `from_recent` in propose_entry / attach_lore_image. The model
         // can't quote bytes it has seen (they enter the conversation as image

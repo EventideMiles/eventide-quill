@@ -1,5 +1,6 @@
 import type { Tool, ToolContext } from './tool';
 import { openNoteForEdit, overlapError, pushLoreEditDiff, readNoteContent, resolveNoteFile } from './lore-edit-helpers';
+import { checkAiIsms } from '../ai-ism-detector';
 
 /**
  * Propose appending content to the end of an existing note. The note opens
@@ -12,10 +13,9 @@ import { openNoteForEdit, overlapError, pushLoreEditDiff, readNoteContent, resol
 export const appendToNoteTool: Tool = {
     id: 'append_to_note',
     description:
-        'Propose appending content to an existing note that is NOT currently open. ' +
-        'The note opens in a new tab with the new content shown as a diff. The writer ' +
-        'reviews and approves or rejects it AFTER you finish. For the file the writer ' +
-        'currently has open, recommend they use Direct or Fulfill mode instead. ' +
+        'Propose appending content to the end of any existing note. ' +
+        'The note opens as an inline diff with the new content shown. The writer ' +
+        'reviews and approves or rejects it AFTER you finish. ' +
         'When editing multiple files, batch your edits, flowing straight from one file to the next.',
     parameters: {
         type: 'object',
@@ -26,7 +26,12 @@ export const appendToNoteTool: Tool = {
             },
             content: {
                 type: 'string',
-                description: 'The content to append to the end of the note.'
+                description:
+                    'CRITICAL: Study 2-3 sentences at the end of the note before writing. Mirror ' +
+                    'the writer\u2019s exact sentence length, vocabulary level, punctuation habits, ' +
+                    'and descriptive density. The result must be indistinguishable from the ' +
+                    'writer\u2019s own prose. Common AI tells: em dashes, invented atmospheric ' +
+                    'details, words like ozone, tapestry, delve.'
             }
         },
         required: ['path', 'content']
@@ -40,6 +45,10 @@ export const appendToNoteTool: Tool = {
 
         if (!path) return 'Error: "path" is required.';
         if (!content) return 'Error: "content" is required.';
+
+        // AI-ism check: reject if the proposed text contains writing tells.
+        const aiIsmError = checkAiIsms(content);
+        if (aiIsmError) return aiIsmError;
 
         const { plugin } = ctx;
         const file = resolveNoteFile(plugin, path);

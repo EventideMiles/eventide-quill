@@ -38,6 +38,7 @@ import {
     entityFromId
 } from './utils/frontmatter';
 import { buildFeedbackMessages, getChunkedFeedback, getPersonaById, getFeedback } from './ai/feedback';
+import { getReviewDiscussSystemPrompt } from './ai/prompts';
 import {
     type FeedbackJob,
     mintJobId,
@@ -63,7 +64,7 @@ import { isValidFandomSubdomain } from './ai/tools/fandom-lookup';
 import { mediawikiArticleCount } from './ai/tools/mediawiki';
 import type { ChatMessage } from './ai/provider';
 
-import { CoWriterSession, loadAdditionalContext } from './ai/co-writer';
+import { CoWriterSession } from './ai/co-writer';
 import type { LoreDraftEntry } from './ai/co-writer';
 import { MobileStreamWatchdog, notifyMobileStreamRisk } from './ai/mobile-watchdog';
 import { resolveSessionsDir, listSessions, saveSession, loadSession, deleteSession } from './ai/conversation-store';
@@ -1631,7 +1632,6 @@ export default class EventideQuillPlugin extends Plugin {
         this.plotMapFile = active.path;
         await setPlotMap(this.app, active, path);
         this.lintPanel?.coWriterSetPlotMap(path);
-        await this.updateCoWriterPlotMapTokens();
     }
 
     /** Unlink the plot map from the active manuscript. Persists to frontmatter. */
@@ -1642,7 +1642,6 @@ export default class EventideQuillPlugin extends Plugin {
         this.plotMapFile = active.path;
         await setPlotMap(this.app, active, null);
         this.lintPanel?.coWriterSetPlotMap(null);
-        await this.updateCoWriterPlotMapTokens();
     }
 
     /** Toggle the pinned state of an entity. Persists across re-assemblies and to frontmatter. */
@@ -2686,6 +2685,55 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
+     * Begin a review-discuss conversation in the shared co-writer session.
+     * Called by the three seeding paths ({@link loadReportForDiscussion},
+     * {@link loadReportFileForDiscussion}, {@link loadManuscriptReportForDiscussion})
+     * and by the three streaming-completion paths (in {@link requestFeedback},
+     * {@link requestAnalysis}, {@link requestManuscriptAnalysis}) when
+     * `reviewSuggestedEditsEnabled` is on. Seeds the session with the
+     * dedicated review-discuss system prompt + the just-completed report as
+     * the first assistant turn, then the Review panel's finishLoading /
+     * loadReportForDiscussion path mounts the embedded CoWriterPanel into
+     * the Results sub-tab.
+     *
+     * @param engine Which review engine produced the report.
+     * @param reportText The completed report markdown (becomes the AI's
+     *     first assistant turn).
+     * @param engineLabel Human-friendly label for the engine (passed to
+     *     {@link getReviewDiscussSystemPrompt} for the opening line).
+     */
+    private beginReviewDiscuss(
+        engine: 'editorial' | 'critical' | 'manuscript',
+        reportText: string,
+        engineLabel?: string,
+        contextMessages?: ChatMessage[]
+    ): void {
+        // Persist any outgoing co-writer chat to History before the seed
+        // clears it. Fire-and-forget: snapshotState deep-clones synchronously
+        // so the async file write can't be corrupted by the reset below.
+        if (this.coWriterSession.chatHistory.length > 0) {
+            void this.snapshotCoWriterSession(false);
+            this.currentCoWriterSessionId = null;
+        }
+        const systemPrompt = getReviewDiscussSystemPrompt(engine, engineLabel);
+        this.coWriterSession.seedForReviewDiscuss({ engine, systemPrompt, reportText, contextMessages });
+    }
+
+    /**
+     * When switching to the Review tab with an active review-discuss session,
+     * tell the Review panel to re-mount the embedded CoWriterPanel. The
+     * Co-writer → Review direction is the only one that needs this explicit
+     * nudge (the Review panel doesn't otherwise know the session changed).
+     * The Review → Co-writer direction is handled inside renderCoWriterTab,
+     * which checks session.reviewEngine and sets the panel mode on every render.
+     */
+    syncReviewDiscussOnTabSwitch(targetTab: 'review' | 'cowriter'): void {
+        if (targetTab !== 'review') return;
+        if (this.coWriterSession.reviewEngine === null) return;
+        this.lintPanel?.reviewRestoreDiscussAfterSwap();
+    }
+
+    /**
      * Reset the co-writer chat while keeping manuscript and vault context.
      *
      * @param clearContext When true, also clears additional chat context files.
@@ -2709,9 +2757,6 @@ export default class EventideQuillPlugin extends Plugin {
         this.lintPanel?.coWriterSetCoachActive(false);
         this.lintPanel?.coWriterSetCoachPhase('discern');
         this.lintPanel?.coWriterSetContextTokenEstimate({ sections: [], total: 0 });
-        if (clearContext) {
-            this.lintPanel?.coWriterSetAdditionalContextTokens(0);
-        }
         this.lintPanel?.coWriterRefresh();
     }
 
@@ -3275,6 +3320,10 @@ export default class EventideQuillPlugin extends Plugin {
                     this.lintPanel?.reviewSetContextTokenEstimate(
                         estimateTokens(this.manuscriptAnalysisCurrentMessages)
                     );
+                    if (this.settings.reviewSuggestedEditsEnabled) {
+                        const label = getManuscriptAnalysisModeById(mode)?.label ?? mode;
+                        this.beginReviewDiscuss('manuscript', fullResponse, label);
+                    }
                     await this.lintPanel?.reviewFinished();
                     this.archiveInteractiveReport(
                         fullResponse,
@@ -4022,6 +4071,10 @@ export default class EventideQuillPlugin extends Plugin {
                 if (chunk.done) {
                     this.analysisCurrentMessages.push({ role: 'assistant', content: fullResponse });
                     this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.analysisCurrentMessages));
+                    if (this.settings.reviewSuggestedEditsEnabled) {
+                        const label = getAnalysisModeById(mode)?.label ?? mode;
+                        this.beginReviewDiscuss('critical', fullResponse, label);
+                    }
                     await this.lintPanel?.reviewFinished();
                     this.archiveInteractiveReport(
                         fullResponse,
@@ -4180,35 +4233,13 @@ export default class EventideQuillPlugin extends Plugin {
     /** Add a context file to the co-writer session. */
     async addCoWriterContextFile(filePath: string): Promise<void> {
         this.coWriterSession.addContextFile(filePath);
-        await this.updateCoWriterAdditionalTokens();
         this.lintPanel?.coWriterRefresh();
     }
 
     /** Remove a context file from the co-writer session. */
     async removeCoWriterContextFile(filePath: string): Promise<void> {
         this.coWriterSession.removeContextFile(filePath);
-        await this.updateCoWriterAdditionalTokens();
         this.lintPanel?.coWriterRefresh();
-    }
-
-    /**
-     * Compute token estimates for additional context files and push to the panel.
-     */
-    private async updateCoWriterAdditionalTokens(): Promise<void> {
-        const files = this.coWriterSession.getContextFiles();
-        // Mirror loadAdditionalContext's combined source (lore embeds + context
-        // files) so the emptiness check doesn't skip counting when lore is
-        // auto-injected but no manual context files are selected.
-        const lorePaths = this.settings.coWriterLoreContext ? loreFolderEmbedPaths(this.settings.lorebookFolders) : [];
-        const allPaths = [...lorePaths, ...files];
-        if (allPaths.length === 0) {
-            this.lintPanel?.coWriterSetAdditionalContextTokens(0);
-            return;
-        }
-        const activeFile = this.app.workspace.getActiveFile();
-        const documentText = activeFile ? await this.getFileText(activeFile.path) : '';
-        const messages = await loadAdditionalContext(this, files, documentText);
-        this.lintPanel?.coWriterSetAdditionalContextTokens(estimateTokens(messages));
     }
 
     /**
@@ -4225,15 +4256,6 @@ export default class EventideQuillPlugin extends Plugin {
         // Discard if the writer swapped/unlinked the plot map mid-read.
         if (path !== this.currentPlotMap) return '';
         return text;
-    }
-
-    /**
-     * Compute the linked plot map's token estimate and push it to the co-writer
-     * panel. Reads the plot map note text (capped) and estimates its token cost.
-     */
-    async updateCoWriterPlotMapTokens(): Promise<void> {
-        const text = await this.loadCurrentPlotMapText();
-        this.lintPanel?.coWriterSetPlotMapTokens(text ? estimateTokens(text) : 0);
     }
 
     /** Open the sidebar and switch to the Co-writer tab. */
@@ -5053,10 +5075,11 @@ export default class EventideQuillPlugin extends Plugin {
             for await (const chunk of stream) {
                 if (chunk.done) {
                     this.feedbackCurrentMessages.push({ role: 'assistant', content: fullResponse });
-                    // Push conversation-only tokens to the panel. The panel
-                    // adds manuscript and reference file tokens on top so the
-                    // indicator updates immediately when files change.
                     this.lintPanel?.reviewSetContextTokenEstimate(estimateTokens(this.feedbackCurrentMessages));
+                    if (this.settings.reviewSuggestedEditsEnabled) {
+                        const label = persona?.name ?? 'Editorial feedback';
+                        this.beginReviewDiscuss('editorial', fullResponse, label);
+                    }
                     await this.lintPanel?.reviewFinished();
                     this.archiveInteractiveReport(
                         fullResponse,
@@ -5610,13 +5633,14 @@ export default class EventideQuillPlugin extends Plugin {
                 narrativePreset: snapshot.narrativePreset,
                 customInstruction: job.focusPrompt
             })[0]!;
-            this.feedbackCurrentMessages = [systemMsg, { role: 'assistant', content: reportText }];
-            this.feedbackAbort = null;
-            this.lintPanel?.reviewLoadReportForDiscussion(
-                'editorial',
-                persona?.name ?? 'Editorial feedback',
-                reportText
-            );
+            const engineLabel = persona?.name ?? 'Editorial feedback';
+            if (this.settings.reviewSuggestedEditsEnabled) {
+                this.beginReviewDiscuss('editorial', reportText, engineLabel);
+            } else {
+                this.feedbackCurrentMessages = [systemMsg, { role: 'assistant', content: reportText }];
+                this.feedbackAbort = null;
+            }
+            this.lintPanel?.reviewLoadReportForDiscussion('editorial', engineLabel, reportText);
         } else if (snapshot.kind === 'critical') {
             // sendAnalysisChatMessage injects reference files only, so bake the
             // current source document into the seed as context.
@@ -5630,13 +5654,17 @@ export default class EventideQuillPlugin extends Plugin {
                 plotThreads: snapshot.plotThreads,
                 customInstruction: job.focusPrompt
             })[0]!;
-            this.analysisCurrentMessages = [
-                systemMsg,
-                { role: 'system', content: `Current manuscript (full document) — "${file.name}":\n\n${docText}` },
-                { role: 'assistant', content: reportText }
-            ];
-            this.analysisAbort = null;
             const label = getAnalysisModeById(snapshot.mode)?.label ?? snapshot.mode;
+            if (this.settings.reviewSuggestedEditsEnabled) {
+                this.beginReviewDiscuss('critical', reportText, label);
+            } else {
+                this.analysisCurrentMessages = [
+                    systemMsg,
+                    { role: 'system', content: `Current manuscript (full document) — "${file.name}":\n\n${docText}` },
+                    { role: 'assistant', content: reportText }
+                ];
+                this.analysisAbort = null;
+            }
             this.lintPanel?.reviewLoadReportForDiscussion('critical', label, reportText);
         } else {
             // manuscript: re-run compaction on the current manuscript.
@@ -5713,25 +5741,33 @@ export default class EventideQuillPlugin extends Plugin {
             const systemMsg = buildFeedbackMessages(persona, {
                 narrativePreset: this.settings.narrativeVoicePreset
             })[0]!;
-            this.feedbackCurrentMessages = [systemMsg, { role: 'assistant', content: reportText }];
-            this.feedbackAbort = null;
-            this.lintPanel?.reviewLoadReportForDiscussion(
-                'editorial',
-                persona?.name ?? 'Editorial feedback',
-                reportText
-            );
+            const engineLabel = persona?.name ?? 'Editorial feedback';
+            if (this.settings.reviewSuggestedEditsEnabled) {
+                this.beginReviewDiscuss('editorial', reportText, engineLabel);
+            } else {
+                this.feedbackCurrentMessages = [systemMsg, { role: 'assistant', content: reportText }];
+                this.feedbackAbort = null;
+            }
+            this.lintPanel?.reviewLoadReportForDiscussion('editorial', engineLabel, reportText);
         } else if (engine === 'critical') {
             // sendAnalysisChatMessage injects reference files only, so bake the
             // current source document into the seed as context.
             const docText = await this.getFileText(sourceFile.path);
             const systemMsg = buildAnalysisMessages(modeStr as AnalysisMode, { text: '', scope: 'document' })[0]!;
-            this.analysisCurrentMessages = [
-                systemMsg,
-                { role: 'system', content: `Current manuscript (full document) — "${sourceFile.name}":\n\n${docText}` },
-                { role: 'assistant', content: reportText }
-            ];
-            this.analysisAbort = null;
             const label = getAnalysisModeById(modeStr as AnalysisMode)?.label ?? modeStr ?? 'Critical analysis';
+            if (this.settings.reviewSuggestedEditsEnabled) {
+                this.beginReviewDiscuss('critical', reportText, label);
+            } else {
+                this.analysisCurrentMessages = [
+                    systemMsg,
+                    {
+                        role: 'system',
+                        content: `Current manuscript (full document) — "${sourceFile.name}":\n\n${docText}`
+                    },
+                    { role: 'assistant', content: reportText }
+                ];
+                this.analysisAbort = null;
+            }
             this.lintPanel?.reviewLoadReportForDiscussion('critical', label, reportText);
         } else {
             // manuscript: re-run compaction on the current manuscript.
@@ -5828,10 +5864,19 @@ export default class EventideQuillPlugin extends Plugin {
         // Seed: [system, ...lore, user(compacted manuscript), assistant = report].
         // The compacted manuscript is baked in; follow-up injects reference files
         // fresh via sendManuscriptAnalysisChatMessage.
-        this.manuscriptAnalysisCurrentMessages = [
-            ...prepared.existingMessages,
-            { role: 'assistant', content: reportText }
-        ];
+        if (this.settings.reviewSuggestedEditsEnabled) {
+            // Review-discuss: seed the co-writer session with the dedicated
+            // review-discuss prompt. The compacted manuscript is passed as
+            // contextMessages so the model has access to the source for editing.
+            // Route through beginReviewDiscuss to preserve any unsaved co-writer
+            // chat via the snapshot guard.
+            this.beginReviewDiscuss('manuscript', reportText, headerLabel, prepared.existingMessages);
+        } else {
+            this.manuscriptAnalysisCurrentMessages = [
+                ...prepared.existingMessages,
+                { role: 'assistant', content: reportText }
+            ];
+        }
         this.lintPanel?.reviewLoadReportForDiscussion('manuscript', headerLabel, reportText);
     }
 

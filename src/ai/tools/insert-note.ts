@@ -7,6 +7,7 @@ import {
     resolveNoteFile,
     splitFrontmatter
 } from './lore-edit-helpers';
+import { checkAiIsms } from '../ai-ism-detector';
 
 /**
  * Propose inserting content into an existing note without removing anything.
@@ -44,12 +45,11 @@ import {
 export const insertNoteTool: Tool = {
     id: 'insert_note',
     description:
-        'Propose inserting new content into a note that is NOT currently open, without ' +
-        'removing anything (it opens in a new tab as a diff; the writer approves or ' +
-        'rejects it after you finish). For the open file, recommend Direct or Fulfill ' +
-        'mode instead. This tool is the SAFE choice for any addition: it produces a ' +
-        'zero-width insertion that CANNOT delete or overwrite existing text by ' +
-        'construction. Reach for it before `edit_note` whenever you are adding content. ' +
+        'Propose inserting new content into any note, without removing anything (opens as ' +
+        'an inline diff; the writer approves or rejects it after you finish). This tool is ' +
+        'the SAFE choice for any addition: it produces a zero-width insertion that CANNOT ' +
+        'delete or overwrite existing text by construction. Reach for it before `edit_note` ' +
+        'whenever you are adding content.' +
         '\n\n' +
         'Two ways to target the insertion point:\n' +
         '1. Anchor-based (text match): pass `anchor` = a distinctive snippet that ' +
@@ -85,7 +85,13 @@ export const insertNoteTool: Tool = {
             },
             new_text: {
                 type: 'string',
-                description: 'The content to add (include any line breaks).'
+                description:
+                    'CRITICAL: Study 2-3 sentences at the insertion point before writing. Mirror ' +
+                    'the writer\u2019s exact sentence length, vocabulary level, punctuation habits, ' +
+                    'and descriptive density. Only use sensory words the writer has already ' +
+                    'established. The result must be indistinguishable from the writer\u2019s own ' +
+                    'prose. Common AI tells: em dashes, invented atmospheric details, words like ' +
+                    'ozone, tapestry, delve.'
             },
             position: {
                 type: 'string',
@@ -120,6 +126,10 @@ export const insertNoteTool: Tool = {
 
         if (!path) return 'Error: "path" is required.';
         if (!newText) return 'Error: "new_text" is required.';
+
+        // AI-ism check: reject if the proposed text contains writing tells.
+        const aiIsmError = checkAiIsms(newText);
+        if (aiIsmError) return aiIsmError;
 
         // Anchor is required only for the text-match positions. The anchor-less
         // modes (at_top, at_line) bypass matching entirely.

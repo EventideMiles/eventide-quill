@@ -28,7 +28,13 @@ import type {
 import type { ProposedEdit } from '../core/change-set';
 import type { SubagentView } from '../ai/subagent-session';
 
-export type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill' | 'lorebook';
+/**
+ * Co-writer input modes. `'review-discuss'` is a first-class mode reachable
+ * from either the Review tab's "discuss this report" entry point (Path A)
+ * or the Co-writer mode picker (Path B — manual entry, writer pastes an
+ * external review or critique as the first message).
+ */
+export type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill' | 'lorebook' | 'review-discuss';
 
 /** The co-writer modes, in cycle/picker order, with icon, label, and a one-line descriptor. */
 const COWRITER_MODES: { mode: InputMode; icon: string; label: string; desc: string }[] = [
@@ -41,6 +47,12 @@ const COWRITER_MODES: { mode: InputMode; icon: string; label: string; desc: stri
         icon: '\u{1f4d6}',
         label: 'Lorebook',
         desc: 'Develop characters and lore entries with AI tools'
+    },
+    {
+        mode: 'review-discuss',
+        icon: '\u270e',
+        label: 'Review',
+        desc: 'Discuss a review or critique and act on it with editable suggestions'
     }
 ];
 
@@ -211,7 +223,7 @@ export class CoWriterPanel extends AbstractChatPanel {
      * currently subagents. {@link pendingImages} is cleared locally since it
      * lives on the panel.
      */
-    private onModeSwitch: (() => void) | null = null;
+    private onModeSwitch: ((newMode: InputMode) => void) | null = null;
     /** Open the conversation-history switcher (saved sessions). */
     private onHistory: (() => void) | null = null;
     /** Snapshot the current conversation to disk without clearing it. */
@@ -222,9 +234,10 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onRegenerate: ((messageId: string) => void) | null = null;
 
     /**
-     * Conversation token estimate pushed from the plugin layer.
-     * Contains only system prompt + context heads + chat turns.
-     * Vault context item tokens are added separately in computeTotalTokens().
+     * Conversation token estimate pushed from the plugin layer. Covers the
+     * full request: system prompt + tool defs + injected context + chat
+     * turns. surfaced as a hover tooltip on the token indicator so writers
+     * can see where the budget is going.
      */
     private contextEstimate = 0;
     /**
@@ -234,18 +247,6 @@ export class CoWriterPanel extends AbstractChatPanel {
      * indicator so writers can see where the budget is going.
      */
     private contextBreakdown: TokenBreakdown | null = null;
-
-    /**
-     * Token estimate for additional context files (added via the ± button).
-     * Pushed from the plugin layer when files are added or removed.
-     */
-    private additionalContextTokens = 0;
-
-    /**
-     * Token estimate for the linked plot map note.
-     * Pushed from the plugin layer when the plot map link changes.
-     */
-    private plotMapTokens = 0;
 
     /** Promises from async MarkdownRenderer.render() calls during the current render cycle. */
     private renderPromises: Promise<void>[] = [];
@@ -519,7 +520,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         // chatHistory reset for stateful-mode crossings is handled above via
         // onNewChat; this only clears the subagent views.
         if (oldMode !== mode) {
-            this.onModeSwitch?.();
+            this.onModeSwitch?.(mode);
         }
         this.scheduleRender();
     }
@@ -603,8 +604,8 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.onDiscardLoreDraft = handler;
     }
 
-    /** Wire a callback fired on every co-writer mode switch (used to clear session-scoped state like subagents). */
-    setModeSwitchHandler(handler: () => void): void {
+    /** Wire a callback fired on every co-writer mode switch (used to clear session-scoped state like subagents, and to set/clear the review-engine signal). */
+    setModeSwitchHandler(handler: (newMode: InputMode) => void): void {
         this.onModeSwitch = handler;
     }
 
@@ -623,30 +624,13 @@ export class CoWriterPanel extends AbstractChatPanel {
     /**
      * Set the conversation token estimate for the token indicator.
      * Called from the plugin layer with a per-section breakdown of the
-     * request (system prompt, tool definitions, chat history, injected
-     * context sources) so the indicator's hover tooltip can show where
-     * the tokens are going. Vault context item tokens are added on top
-     * by computeTotalTokens().
+     * full request (tool definitions, system prompt, injected context
+     * sources, chat history) so the indicator's hover tooltip can show
+     * where the tokens are going.
      */
     setContextTokenEstimate(breakdown: TokenBreakdown): void {
         this.contextEstimate = breakdown.total;
         this.contextBreakdown = breakdown;
-        this.updateTokenIndicator();
-    }
-
-    /**
-     * Set the additional context file token estimate for the token indicator.
-     * Called from the plugin layer when files are added or removed.
-     */
-    setAdditionalContextTokens(tokens: number): void {
-        this.additionalContextTokens = tokens;
-        this.updateTokenIndicator();
-    }
-
-    /** Set the plot map token estimate for the token indicator.
-     *  Called from the plugin layer when the plot map link changes. */
-    setPlotMapTokens(tokens: number): void {
-        this.plotMapTokens = tokens;
         this.updateTokenIndicator();
     }
 
@@ -694,6 +678,27 @@ export class CoWriterPanel extends AbstractChatPanel {
     setDescribingImages(active: boolean): void {
         this.describingImages = active;
         this.scheduleRender();
+    }
+
+    /** Capture the current scroll state for restoration after a sidebar re-render. */
+    captureScrollState(): { scrollTop: number; atBottom: boolean } {
+        const el = this.getScrollContainer();
+        return {
+            scrollTop: el?.scrollTop ?? 0,
+            atBottom: !this.userScrolledUp
+        };
+    }
+
+    /** Restore scroll state previously captured by {@link captureScrollState}. */
+    restoreScrollState(state: { scrollTop: number; atBottom: boolean }): void {
+        if (state.atBottom) {
+            this.scrollToBottom();
+        } else if (state.scrollTop > 0) {
+            const el = this.getScrollContainer();
+            if (el) {
+                el.scrollTop = Math.min(state.scrollTop, Math.max(0, el.scrollHeight - el.clientHeight));
+            }
+        }
     }
 
     /** Mark the discuss response as starting to stream. */
@@ -1766,6 +1771,19 @@ export class CoWriterPanel extends AbstractChatPanel {
                 const timeoutId = window.setTimeout(() => this.onRunFulfill?.(''));
                 this.renderEvents.register(() => window.clearTimeout(timeoutId));
             });
+        } else if (this.inputMode === 'review-discuss') {
+            prompt.createDiv({ cls: 'quill-cowriter-panel__init-heading', text: '\u270e Review' });
+            prompt.createDiv({
+                cls: 'quill-cowriter-panel__init-desc',
+                text: 'Paste a review or critique below. The editor will help you discuss it and propose specific, reviewable edits to act on it.'
+            });
+            const startBtn = prompt.createEl('button', {
+                cls: 'quill-cowriter-panel__init-btn mod-cta',
+                text: 'Start reviewing'
+            });
+            this.renderEvents.registerDomEvent(startBtn, 'click', () => {
+                this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-panel__input')?.focus();
+            });
         } else if (this.inputMode === 'discuss') {
             prompt.createDiv({ cls: 'quill-cowriter-panel__init-heading', text: 'Discuss' });
             prompt.createDiv({
@@ -2460,53 +2478,22 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /**
      * Build the full token breakdown shown in the indicator's hover tooltip.
-     * Combines the session-side breakdown (tool defs, system prompt, chat
-     * history, injected context) with the panel-side sources (additional
-     * context files, plot map, vault context items) so the tooltip reflects
-     * the actual displayed total.
+     * Delegates to the session-side breakdown which already categorizes
+     * all injected-context sources (vault context, additional files, plot
+     * map, active document, tool advertisements) alongside tool definitions
+     * and chat history.
      */
     private computeBreakdown(): TokenBreakdown {
-        const sections = [...(this.contextBreakdown?.sections ?? [])];
-        if (this.additionalContextTokens > 0) {
-            sections.push({ label: 'Additional context files', tokens: this.additionalContextTokens });
-        }
-        if (this.plotMapTokens > 0) {
-            sections.push({ label: 'Plot map', tokens: this.plotMapTokens });
-        }
-        const assembly = this.plugin.currentAssembly;
-        if (assembly) {
-            let vaultTokens = 0;
-            let vaultCount = 0;
-            for (const item of assembly.contextItems) {
-                vaultTokens += item.tokenEstimate;
-                vaultCount++;
-            }
-            if (vaultTokens > 0) {
-                sections.push({
-                    label: 'Vault context (similarity)',
-                    tokens: vaultTokens,
-                    detail: `${vaultCount} file${vaultCount === 1 ? '' : 's'}`
-                });
-            }
-        }
-        return { sections, total: this.computeTotalTokens() };
+        return this.contextBreakdown ?? { sections: [], total: 0 };
     }
 
     /**
      * Compute the total token estimate for the context indicator.
-     * Combines conversation tokens, additional context file tokens, plot map
-     * tokens, and vault context item tokens so the full context window usage
-     * is shown.
+     * Returns the session-side total which already covers the full request
+     * (system prompt + tool defs + injected context + chat turns).
      */
     private computeTotalTokens(): number {
-        let total = this.contextEstimate + this.additionalContextTokens + this.plotMapTokens;
-        const assembly = this.plugin.currentAssembly;
-        if (assembly) {
-            for (const item of assembly.contextItems) {
-                total += item.tokenEstimate;
-            }
-        }
-        return total;
+        return this.contextEstimate;
     }
 
     /** Build the context label for the token indicator, noting a linked plot map. */
