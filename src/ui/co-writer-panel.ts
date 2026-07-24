@@ -680,6 +680,27 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.scheduleRender();
     }
 
+    /** Capture the current scroll state for restoration after a sidebar re-render. */
+    captureScrollState(): { scrollTop: number; atBottom: boolean } {
+        const el = this.getScrollContainer();
+        return {
+            scrollTop: el?.scrollTop ?? 0,
+            atBottom: !this.userScrolledUp
+        };
+    }
+
+    /** Restore scroll state previously captured by {@link captureScrollState}. */
+    restoreScrollState(state: { scrollTop: number; atBottom: boolean }): void {
+        if (state.atBottom) {
+            this.scrollToBottom();
+        } else if (state.scrollTop > 0) {
+            const el = this.getScrollContainer();
+            if (el) {
+                el.scrollTop = Math.min(state.scrollTop, Math.max(0, el.scrollHeight - el.clientHeight));
+            }
+        }
+    }
+
     /** Mark the discuss response as starting to stream. */
     discussStartStreaming(): void {
         this.discussStreaming = true;

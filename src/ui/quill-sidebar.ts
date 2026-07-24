@@ -710,14 +710,12 @@ export class QuillSidebarView extends ItemView {
 
     /** Switch to the Review tab. */
     switchToReviewTab(): void {
-        this.activeTopTab = 'review';
-        this.render();
+        this.switchTopTab('review');
     }
 
     /** Switch to the Co-writer tab. */
     switchToCoWriterTab(): void {
-        this.activeTopTab = 'cowriter';
-        this.render();
+        this.switchTopTab('cowriter');
     }
 
     /** Switch to the Dashboard tab. */
@@ -1000,9 +998,12 @@ export class QuillSidebarView extends ItemView {
             p.setRewindHandler((messageId) => {
                 this.plugin.rewindCoWriterChat(messageId);
             });
-            p.setModeSwitchHandler((newMode) => {
-                this.plugin.clearCoWriterSubagents();
-                this.syncReviewEngine(newMode);
+            p.setModeSwitchHandler((_newMode: InputMode) => {
+                // No-op: the embedded panel is always review-discuss. Mode
+                // restoration is handled by the sidebar's render path
+                // (restoreMode('review-discuss')). Clearing subagents or
+                // syncing reviewEngine here would be premature — the sidebar
+                // owns that lifecycle.
             });
             p.setApproveLoreEditHandler((filePath, id) => {
                 this.plugin.approveLoreEdit(filePath, id);
@@ -1039,6 +1040,9 @@ export class QuillSidebarView extends ItemView {
             this.embeddedCoWriterPanel.setProposedLoreImages(session.getLoreImageCardViews());
             this.embeddedCoWriterPanel.setSubagents(session.getSubagentViews());
             this.embeddedCoWriterPanel.setActiveSubagent(session.activeSubagentId);
+            if (session.lastTokenBreakdown) {
+                this.embeddedCoWriterPanel.setContextTokenEstimate(session.lastTokenBreakdown);
+            }
         }
 
         const chat = this.plugin.getDefaultChatProvider();
@@ -1219,7 +1223,15 @@ export class QuillSidebarView extends ItemView {
     /** Trigger a full refresh of the Co-writer panel (e.g., after context file changes). */
     coWriterRefresh(): void {
         if (this.activeTopTab === 'cowriter' || (this.activeTopTab === 'review' && this.reviewPanel?.isDiscussMode())) {
+            // Capture scroll state before render() tears down and rebuilds the DOM.
+            // The panel's own save/restore operates on the old (detached) container,
+            // so scroll and draft-aware auto-follow state would be lost without this.
+            const panel = this.activeCoWriterPanel;
+            const scrollState = panel?.captureScrollState?.() ?? null;
             this.render();
+            if (scrollState && panel) {
+                panel.restoreScrollState(scrollState);
+            }
         }
     }
 
