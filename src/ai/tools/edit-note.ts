@@ -21,7 +21,7 @@ import type { TFile } from 'obsidian';
  * Returns the paragraph's character range [from, to), or null if no
  * paragraph matches above the threshold.
  */
-function findParagraphByStart(content: string, startPhrase: string): { from: number; to: number } | null {
+export function findParagraphByStart(content: string, startPhrase: string): { from: number; to: number } | null {
     const phraseWords = [
         ...new Set(
             startPhrase
@@ -78,7 +78,7 @@ function findParagraphByStart(content: string, startPhrase: string): { from: num
  * Extracted so it can be called from both the old_text path and the
  * paragraph_start path.
  */
-async function stageEdit(
+export async function stageEdit(
     file: TFile,
     content: string,
     oldText: string,
