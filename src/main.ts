@@ -2705,7 +2705,8 @@ export default class EventideQuillPlugin extends Plugin {
     private beginReviewDiscuss(
         engine: 'editorial' | 'critical' | 'manuscript',
         reportText: string,
-        engineLabel?: string
+        engineLabel?: string,
+        contextMessages?: ChatMessage[]
     ): void {
         // Persist any outgoing co-writer chat to History before the seed
         // clears it. Fire-and-forget: snapshotState deep-clones synchronously
@@ -2715,7 +2716,7 @@ export default class EventideQuillPlugin extends Plugin {
             this.currentCoWriterSessionId = null;
         }
         const systemPrompt = getReviewDiscussSystemPrompt(engine, engineLabel);
-        this.coWriterSession.seedForReviewDiscuss({ engine, systemPrompt, reportText });
+        this.coWriterSession.seedForReviewDiscuss({ engine, systemPrompt, reportText, contextMessages });
     }
 
     /**
@@ -5867,12 +5868,9 @@ export default class EventideQuillPlugin extends Plugin {
             // Review-discuss: seed the co-writer session with the dedicated
             // review-discuss prompt. The compacted manuscript is passed as
             // contextMessages so the model has access to the source for editing.
-            this.coWriterSession.seedForReviewDiscuss({
-                engine: 'manuscript',
-                systemPrompt: getReviewDiscussSystemPrompt('manuscript', headerLabel),
-                reportText,
-                contextMessages: prepared.existingMessages
-            });
+            // Route through beginReviewDiscuss to preserve any unsaved co-writer
+            // chat via the snapshot guard.
+            this.beginReviewDiscuss('manuscript', reportText, headerLabel, prepared.existingMessages);
         } else {
             this.manuscriptAnalysisCurrentMessages = [
                 ...prepared.existingMessages,
