@@ -17,6 +17,11 @@ import { splitFrontmatter } from './lore-edit-helpers';
  * a clear error string so the model can recover (e.g., ask the user for the
  * correct path).
  *
+ * Pagination: long files are returned in chunks. When a result is truncated,
+ * the message includes the next `offset` to pass for the remaining content.
+ * The model should use `offset` to page through the file rather than
+ * re-reading from the beginning.
+ *
  * IMPORTANT: vault_lookup returns the verbatim body so the model can quote
  * distinctive snippets as `anchor` arguments to `insert_note` / `edit_note`.
  * Stripping or rewriting the body here breaks the editing flow — the model
@@ -31,6 +36,8 @@ import { splitFrontmatter } from './lore-edit-helpers';
  * (AGENTS.md: "Always normalizePath() on user-defined or constructed file
  * paths").
  */
+const MAX_RESULT_TOKENS = 4000;
+
 export const vaultLookupTool: Tool = {
     id: 'vault_lookup',
     description:
@@ -38,20 +45,28 @@ export const vaultLookupTool: Tool = {
         'path (e.g., "Lore/Characters/Sarah Connor.md") or a note name ' +
         '(e.g., "Sarah Connor"). Returns the body text WITHOUT frontmatter, ' +
         'verbatim — quote distinctive snippets from the result as the `anchor` ' +
-        'for insert_note / edit_note. IMPORTANT: results stay in context for ' +
-        'ALL subsequent turns — read files judiciously, especially during ' +
-        'multi-file edits. Read one file, make your edit, then move to the next.',
+        'for insert_note / edit_note. For long files, use the `offset` ' +
+        'parameter (character position) to page through the remaining content; ' +
+        'a truncation message tells you the next offset to use. IMPORTANT: ' +
+        'results stay in context for ALL subsequent turns — read files ' +
+        'judiciously, especially during multi-file edits. Read one file, ' +
+        'make your edit, then move to the next.',
     parameters: {
         type: 'object',
         properties: {
             path: {
                 type: 'string',
                 description: 'Vault-relative file path or note name to look up.'
+            },
+            offset: {
+                type: 'number',
+                description:
+                    'Character offset to start reading from, for paging through long files. Default 0. When a result is truncated, the message includes the next offset value to pass.'
             }
         },
         required: ['path']
     },
-    maxResultTokens: 1500,
+    maxResultTokens: MAX_RESULT_TOKENS,
     requiresNetwork: false,
 
     async execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
@@ -77,7 +92,30 @@ export const vaultLookupTool: Tool = {
         // fail against the actual file. Embed text is small and harmless in
         // this context; the token-budget stripping happens at chunk time
         // and top-K injection time, which don't feed the editing tools.
-        return splitFrontmatter(raw).body;
+        const body = splitFrontmatter(raw).body;
+
+        const offset = typeof args.offset === 'number' && args.offset > 0 ? Math.floor(args.offset) : 0;
+        const maxChars = MAX_RESULT_TOKENS * 4;
+
+        if (offset >= body.length) {
+            return offset > 0
+                ? `Offset ${offset} is past the end of the file (length ${body.length} chars). The file has been fully read.`
+                : body;
+        }
+
+        const slice = body.slice(offset);
+
+        if (slice.length <= maxChars) {
+            return offset > 0 ? `[Continuing from offset ${offset}]\n\n${slice}` : slice;
+        }
+
+        // Truncate at maxChars, reserving room for the continuation hint so
+        // executeToolCall's own truncation guard doesn't strip our message.
+        const nextOffset = offset + maxChars;
+        const hint = `\n\n...[truncated — call vault_lookup again with path="${query}" and offset=${nextOffset} to read the rest]`;
+        const usable = maxChars - hint.length;
+        const prefix = offset > 0 ? `[Continuing from offset ${offset}]\n\n` : '';
+        return prefix + slice.slice(0, usable) + hint;
     }
 };
 
