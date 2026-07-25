@@ -656,6 +656,17 @@ export default class EventideQuillPlugin extends Plugin {
             })
         );
 
+        // Listen for file renames so the co-writer can update its path
+        // references and inform the agent. Without this, edit_note calls
+        // targeting the old path fail after the writer renames a file.
+        this.registerEvent(
+            this.app.vault.on('rename', (file: TAbstractFile, oldPath: string) => {
+                if (file instanceof TFile && file.extension === 'md') {
+                    this.coWriterSession.handleFileRename(oldPath, file.path);
+                }
+            })
+        );
+
         // Periodic dashboard auto-refresh. Uses registerInterval for automatic
         // teardown on plugin unload. 0 disables the timer entirely.
         if (this.settings.dashboardAutoRefreshMinutes > 0) {

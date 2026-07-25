@@ -4075,6 +4075,37 @@ export class CoWriterSession {
         return [...this.contextFilePaths];
     }
 
+    /**
+     * Handle a vault file rename. Updates internal path references
+     * (manuscriptPath, contextFilePaths) and injects a system message into
+     * the conversation so the agent knows about the new path. Without this,
+     * subsequent edit_note / insert_note calls referencing the old path fail
+     * because the file no longer exists there.
+     */
+    handleFileRename(oldPath: string, newPath: string): void {
+        let changed = false;
+
+        if (this.manuscriptPath === oldPath) {
+            this.manuscriptPath = newPath;
+            changed = true;
+        }
+
+        if (this.contextFilePaths.includes(oldPath)) {
+            this.contextFilePaths = this.contextFilePaths.map((p) => (p === oldPath ? newPath : p));
+            changed = true;
+        }
+
+        if (!changed) return;
+
+        const notice = `[System note: The file "${oldPath}" has been renamed to "${newPath}". Use the new path for all future operations.]`;
+        const msg: ChatMessage = { role: 'system', content: notice };
+        this.discussCurrentMessages.push(msg);
+        if (this.loreCoachMessages.length > 0) {
+            this.loreCoachMessages.push(msg);
+        }
+        this.onChatUpdate?.();
+    }
+
     /** Clear voice profile cache (e.g., on document change). */
     clearVoiceProfile(): void {
         this.voiceProfile = null;
