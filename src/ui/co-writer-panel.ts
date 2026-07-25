@@ -1021,7 +1021,9 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (models.length > 0) {
             const currentKey = this.plugin.settings.aiDefaultChatProvider;
             const current = models.find((m) => m.key === currentKey);
-            const shortName = current ? (current.name.split(' \u2014 ').pop() ?? current.name) : 'Select model';
+            const shortName = current
+                ? shortenModelName(current.name.split(' \u2014 ').pop() ?? current.name)
+                : 'Select model';
             const modelBtn = header.createEl('button', {
                 cls: 'quill-cowriter-panel__chat-header-btn quill-cowriter-panel__model-btn',
                 text: shortName,
@@ -2615,4 +2617,42 @@ export class CoWriterPanel extends AbstractChatPanel {
 /** Shorten `s` to `max` chars with an ellipsis (for compact card/preview text). */
 function truncateText(s: string, max: number): string {
     return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+/**
+ * Shorten a model name for display in the chat header button. Strips common
+ * verbose suffixes (date stamps, quantization, instruct/chat tags, org
+ * prefixes) and truncates the middle if the result is still too long.
+ *
+ * Examples:
+ *   gpt-4o-mini-2024-07-18           → gpt-4o-mini
+ *   meta-llama-3.1-70b-instruct      → llama-3.1-70b
+ *   qwen2.5-72b-instruct-q4_K_M      → qwen2.5-72b
+ *   deepseek-r1-distill-qwen-32b     → deepseek-r1-distill-qwen-32b (short enough)
+ *   claude-3-5-sonnet-20241022       → claude-3-5-sonnet
+ */
+function shortenModelName(raw: string): string {
+    let name = raw;
+
+    // Strip org prefix before the first slash (HF-style: org/model → model)
+    name = name.replace(/^[^/]+\//, '');
+
+    // Strip trailing date stamps: -2024-07-18 or -20241022
+    name = name.replace(/-(?:\d{4}-\d{2}-\d{2}|\d{8})$/i, '');
+
+    // Strip trailing quantization suffixes: -q4, -q4_K_M, -Q4_0, -iq4_xs, etc.
+    name = name.replace(/-i?q\d[_a-z0-9]*$/i, '');
+
+    // Strip -instruct / -chat suffix
+    name = name.replace(/-(?:instruct|chat)$/i, '');
+
+    // Strip org-name prefix for known providers: meta-llama- → llama-
+    name = name.replace(/^meta-llama-/i, 'llama-');
+    name = name.replace(/^mistralai-/i, 'mistral-');
+
+    // If still too long, truncate the middle (preserves start + end)
+    const MAX = 22;
+    if (name.length <= MAX) return name;
+    const half = Math.floor((MAX - 1) / 2);
+    return name.slice(0, half) + '\u2026' + name.slice(name.length - half);
 }
