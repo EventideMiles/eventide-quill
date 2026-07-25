@@ -680,8 +680,19 @@ function getAnalysisBasePrompt(options?: AnalysisBasePromptOptions): string[] {
         '',
         'Output format:',
         '- Markdown bullet list, one bullet per finding.',
-        '- Start each bullet with the line number as "L{n}", then the quoted phrase, then your explanation.',
-        '- Report only genuine issues you can ground in the text; if a section is clean, say so explicitly rather than padding.',
+        '- Tag EACH finding with a confidence level so the writer can triage at a glance.',
+        '  Use exactly one of these bold tags at the start of the bullet, before the line number:',
+        '  - **[Issue]** — a genuine problem that should be addressed (contradiction, broken timeline,',
+        '    inconsistent characterization, factual error in the world).',
+        '  - **[Potential]** — something that MIGHT be an issue but could be intentional or explained',
+        '    elsewhere. Worth the writer\u2019s attention but not necessarily a fix.',
+        '  - **[Note]** — informational observation (e.g., a recurring motif, a stylistic pattern,',
+        '    a detail that is consistent). NOT a problem — included for the writer\u2019s awareness.',
+        '- Format: `- **[Issue]** L{n} "quoted phrase": explanation.`',
+        '- Be conservative with the **[Issue]** tag. Reserve it for things you are confident are',
+        '  problems. When in doubt, use **[Potential]**.',
+        '- Report only genuine findings you can ground in the text; if a section is clean, say so',
+        '  explicitly rather than padding with **[Note]** items.',
         '- End with a one-paragraph overall assessment.'
     );
 
