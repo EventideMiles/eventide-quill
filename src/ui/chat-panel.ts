@@ -60,8 +60,11 @@ export abstract class AbstractChatPanel {
     protected userScrolledUp = false;
     protected maxAllowedTokens = 0;
     protected onCancelGeneration: (() => void) | null = null;
-    protected onCompact: (() => void) | null = null;
+    protected onCompact: (() => void | Promise<void>) | null = null;
     protected onNewChat: ((clearContext: boolean) => void) | null = null;
+
+    /** True while a manual compaction is in progress — disables the compact button. */
+    protected compacting = false;
 
     /** Stored keydown handler so we can remove it from a previous container. */
     protected keydownHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -180,7 +183,7 @@ export abstract class AbstractChatPanel {
         this.onCancelGeneration = handler;
     }
 
-    setCompactHandler(handler: () => void): void {
+    setCompactHandler(handler: () => void | Promise<void>): void {
         this.onCompact = handler;
     }
 

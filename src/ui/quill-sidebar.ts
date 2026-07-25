@@ -643,13 +643,13 @@ export class QuillSidebarView extends ItemView {
                     this.plugin.cancelAnalysisGeneration();
                 }
             });
-            this.reviewPanel.setCompactHandler(() => {
+            this.reviewPanel.setCompactHandler(async () => {
                 if (this.reviewPanel?.activeEngine === 'editorial') {
-                    void this.plugin.compactFeedback();
+                    await this.plugin.compactFeedback();
                 } else if (this.reviewPanel?.activeEngine === 'manuscript') {
-                    void this.plugin.compactManuscriptAnalysis();
+                    await this.plugin.compactManuscriptAnalysis();
                 } else {
-                    void this.plugin.compactAnalysis();
+                    await this.plugin.compactAnalysis();
                 }
             });
             this.reviewPanel.setNewChatHandler(() => {
@@ -797,8 +797,8 @@ export class QuillSidebarView extends ItemView {
             this.coWriterPanel.setCancelGenerationHandler(() => {
                 this.plugin.coWriterSession.cancelGeneration();
             });
-            this.coWriterPanel.setCompactHandler(() => {
-                void this.plugin.compactCoWriter();
+            this.coWriterPanel.setCompactHandler(async () => {
+                await this.plugin.compactCoWriter();
             });
             this.coWriterPanel.setNewChatHandler((clearContext: boolean) => {
                 this.plugin.resetCoWriterChat(clearContext);
@@ -978,8 +978,8 @@ export class QuillSidebarView extends ItemView {
             p.setCancelGenerationHandler(() => {
                 this.plugin.coWriterSession.cancelGeneration();
             });
-            p.setCompactHandler(() => {
-                void this.plugin.compactCoWriter();
+            p.setCompactHandler(async () => {
+                await this.plugin.compactCoWriter();
             });
             p.setNewChatHandler((_clearContext: boolean) => {
                 // Review-discuss "new chat" returns to the Review Create subtab

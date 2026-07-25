@@ -2681,7 +2681,6 @@ export default class EventideQuillPlugin extends Plugin {
      */
     async compactCoWriter(): Promise<void> {
         await this.coWriterSession.compactNow(this);
-        await this.sendCoWriterOptions('');
     }
 
     /**

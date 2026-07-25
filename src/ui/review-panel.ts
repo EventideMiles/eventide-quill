@@ -508,6 +508,11 @@ export class ReviewPanel extends AbstractChatPanel {
 
     async finishLoading(): Promise<void> {
         this.resultsState = 'complete';
+        // Exit discuss mode defensively — if a prior review's discuss session
+        // was active, rerenderResultsTab() would bail on it and leave the old
+        // embedded panel DOM (with its own chat input) alongside the new
+        // flat-report view.
+        this.exitDiscussMode();
         // The session has been seeded by beginReviewDiscuss (if the toggle
         // is on). Keep the flat-report view — the writer reads the report here.
         // The swap to the co-writer panel happens when the writer sends their
@@ -1463,6 +1468,11 @@ export class ReviewPanel extends AbstractChatPanel {
         }
         this.discussMode = false;
         this.embeddedPanelMounted = false;
+        // Detach the embedded panel so its ResizeObserver and keydown handler
+        // stop listening on the (soon-to-be-removed) mount div. The panel
+        // instance survives (owned by the sidebar) and re-mounts via
+        // setContainer on the next enterDiscussMode / restoreDiscussAfterSwap.
+        this.embeddedPanelProvider?.()?.detach();
     }
 
     /**
@@ -1501,10 +1511,10 @@ export class ReviewPanel extends AbstractChatPanel {
         // flat-report view would wipe its host and lose streaming state.
         if (this.discussMode) return;
         if (!this.containerEl) return;
-        this.renderToken++;
+        const token = ++this.renderToken;
         this.unloadAndClearContainer();
         this.renderSubtabBar();
-        await this.renderResultsTab(this.renderToken);
+        await this.renderResultsTab(token);
     }
 
     private async renderResultsTab(token: number): Promise<void> {
@@ -1671,9 +1681,19 @@ export class ReviewPanel extends AbstractChatPanel {
             text: '\u00bb\u00bb',
             title: 'Compact conversation'
         });
-        compactBtn.disabled = disabled;
-        this.renderEvents.registerDomEvent(compactBtn, 'click', () => {
-            if (!disabled) this.onCompact?.();
+        compactBtn.disabled = disabled || this.compacting;
+        this.renderEvents.registerDomEvent(compactBtn, 'click', async () => {
+            if (disabled || this.compacting) return;
+            this.compacting = true;
+            compactBtn.disabled = true;
+            compactBtn.textContent = '\u2026';
+            compactBtn.title = 'Compacting\u2026';
+            try {
+                await this.onCompact?.();
+            } finally {
+                this.compacting = false;
+                this.scheduleRender();
+            }
         });
         const newChatBtn = btnRow.createEl('button', {
             cls: 'quill-chat-panel__action-btn',

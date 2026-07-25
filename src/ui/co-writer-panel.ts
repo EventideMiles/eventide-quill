@@ -979,9 +979,18 @@ export class CoWriterPanel extends AbstractChatPanel {
             title: 'Compact conversation'
         });
         this.setHeaderIcon(compactBtn, 'minimize-2', 'Compact');
-        if (generating) compactBtn.disabled = true;
-        this.renderEvents.registerDomEvent(compactBtn, 'click', () => {
-            this.onCompact?.();
+        if (generating || this.compacting) compactBtn.disabled = true;
+        this.renderEvents.registerDomEvent(compactBtn, 'click', async () => {
+            if (this.compacting) return;
+            this.compacting = true;
+            compactBtn.disabled = true;
+            compactBtn.title = 'Compacting\u2026';
+            try {
+                await this.onCompact?.();
+            } finally {
+                this.compacting = false;
+                this.scheduleRender();
+            }
         });
 
         const saveBtn = header.createEl('button', {
