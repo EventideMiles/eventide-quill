@@ -16,7 +16,8 @@ import {
     ollamaNdjsonLineToChunk,
     ollamaNdjsonToChunks,
     parseNdjsonStream,
-    processChunksWithThoughts
+    processChunksWithThoughts,
+    StreamRepetitionGuard
 } from './streaming';
 import {
     isStreamingSupported,
@@ -138,6 +139,7 @@ export class OllamaProvider implements AiProvider {
 
             let lastChunkDone = false;
             let pendingThought = '';
+            const repGuard = new StreamRepetitionGuard();
             for await (const rawLine of parseNdjsonStream(reader, options.signal)) {
                 const chunk = ollamaNdjsonLineToChunk(rawLine);
                 if (chunk.text) {
@@ -147,6 +149,10 @@ export class OllamaProvider implements AiProvider {
                         chunk.thought = extracted.thought;
                     }
                     pendingThought = extracted.pendingThought;
+                }
+                if (chunk.text && repGuard.check(chunk.text)) {
+                    yield { text: '\n\n[Stream stopped: repetitive output detected.]', done: true };
+                    return;
                 }
                 if (chunk.done) lastChunkDone = true;
                 yield chunk;

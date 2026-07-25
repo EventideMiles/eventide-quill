@@ -19,7 +19,8 @@ import {
     OpenAiSseData,
     parseSseEvents,
     parseSseStream,
-    processChunksWithThoughts
+    processChunksWithThoughts,
+    StreamRepetitionGuard
 } from './streaming';
 import {
     isStreamingSupported,
@@ -167,6 +168,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
             });
 
             let pendingThought = '';
+            const repGuard = new StreamRepetitionGuard();
             for await (const event of parseSseStream(reader, options.signal)) {
                 if (event.data === '[DONE]') {
                     yield { text: '', done: true };
@@ -187,6 +189,23 @@ export class OpenAiCompatibleProvider implements AiProvider {
                                 chunk.thought = extracted.thought;
                             }
                             pendingThought = extracted.pendingThought;
+                        }
+                        // Repetition detection: cut off loops before they waste
+                        // the entire token budget. Only checks response text,
+                        // not reasoning (thinking models legitimately restate).
+                        if (chunk.text && repGuard.check(chunk.text)) {
+                            yield {
+                                text: '\n\n[Stream stopped: repetitive output detected.]',
+                                done: true
+                            };
+                            return;
+                        }
+                        // Surface length-limit truncation so the writer knows
+                        // the response is incomplete (common when reasoning eats
+                        // the token budget before the actual answer starts).
+                        if (chunk.done && parsed.choices?.[0]?.finish_reason === 'length') {
+                            chunk.text =
+                                '\n\n[Output truncated: maximum token limit reached. Increase max output tokens in settings or try a shorter prompt.]';
                         }
                         yield chunk;
                     }
