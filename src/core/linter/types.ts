@@ -123,5 +123,11 @@ export const RULE_INFO: Record<string, RuleInfo> = {
             'Flags non-printing Unicode format characters (zero-width spaces, soft hyphens, variation selectors, etc.) that may be AI watermarks or copy-paste artifacts.',
         example:
             'Remove invisible characters that serve no purpose in prose — they can interfere with editing and introduce hidden tracking.'
+    },
+    'duplicate-text': {
+        name: 'Duplicate paragraphs',
+        description:
+            'Flags consecutive paragraphs that are identical — a common artifact when AI edits accidentally duplicate text.',
+        example: 'Check whether the duplicate was left behind by an AI edit and remove the redundant copy.'
     }
 };

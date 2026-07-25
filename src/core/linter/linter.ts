@@ -9,6 +9,7 @@ import {
     checkAiWrapUps,
     checkComplexWords,
     checkDialogueTags,
+    checkDuplicateText,
     checkEchoes,
     checkGremlins,
     checkLongSentences,
@@ -41,6 +42,7 @@ export interface LintOptions {
     enableAiWrapUps?: boolean;
     enableGremlins?: boolean;
     enableAggressiveGremlins?: boolean;
+    enableDuplicateText?: boolean;
 }
 
 /** Run all enabled lint rules against `text` and return the combined results. */
@@ -119,6 +121,10 @@ export function lint(text: string, options?: LintOptions): LintResult[] {
 
     if (opts.enableGremlins ?? true) {
         run(() => checkGremlins(text, opts.enableAggressiveGremlins), 'gremlins');
+    }
+
+    if (opts.enableDuplicateText ?? true) {
+        run(() => checkDuplicateText(text), 'duplicate-text');
     }
 
     results.sort((a, b) => a.line - b.line || a.column - b.column);

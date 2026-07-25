@@ -628,3 +628,51 @@ export function checkAiEmDashes(text: string): LintResult[] {
 
     return results;
 }
+
+/**
+ * Flag consecutive duplicate paragraphs — a common artifact when AI edits
+ * accidentally duplicate text (the new_text overlaps with surrounding
+ * content that wasn't removed). Compares each paragraph's trimmed,
+ * lowercased text against the previous paragraph's. Skips very short
+ * paragraphs (under 40 chars) to avoid false positives from formatting
+ * lines, single-word lines, or dialogue attribution.
+ */
+export function checkDuplicateText(text: string): LintResult[] {
+    const results: LintResult[] = [];
+    const MIN_LEN = 40;
+
+    // Split into paragraphs with their character offsets.
+    const paragraphs: { text: string; from: number }[] = [];
+    let start = 0;
+    for (let i = 0; i < text.length; i++) {
+        if (text[i] === '\n' && i + 1 < text.length && text[i + 1] === '\n') {
+            const para = text.slice(start, i);
+            if (para.trim()) paragraphs.push({ text: para, from: start });
+            start = i + 2;
+            i++;
+        }
+    }
+    const last = text.slice(start);
+    if (last.trim()) paragraphs.push({ text: last, from: start });
+
+    for (let i = 1; i < paragraphs.length; i++) {
+        const prev = paragraphs[i - 1]!.text.trim().toLowerCase();
+        const curr = paragraphs[i]!.text.trim().toLowerCase();
+
+        if (curr.length < MIN_LEN || prev.length < MIN_LEN) continue;
+
+        if (curr === prev) {
+            const pos = posAtOffset(text, paragraphs[i]!.from);
+            results.push({
+                line: pos.line,
+                column: pos.column,
+                length: paragraphs[i]!.text.length,
+                message: 'Duplicate paragraph — this text appears identically in the preceding paragraph.',
+                severity: 'warning',
+                rule: 'duplicate-text'
+            });
+        }
+    }
+
+    return results;
+}
