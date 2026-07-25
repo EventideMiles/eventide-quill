@@ -63,7 +63,7 @@ import {
 import { SubagentSession, type SubagentView, type SubagentConfig } from './subagent-session';
 import { resolveNoteFile } from './tools/lore-edit-helpers';
 import { CACHE_HIT_MARKER } from './tools/fandom-lookup';
-import { tryNudgeTextToolLeak } from './tools';
+import { tryNudgeTextToolLeak, createProposeEntryTool } from './tools';
 import { buildInternalToolsMessage, buildNetworkToolsMessage } from './co-writer-tool-prompts';
 import { streamToolAwareRound } from './co-writer-streaming';
 import {
@@ -1255,7 +1255,16 @@ export class CoWriterSession {
 
         // Build the tool registry up front so its fixed per-request overhead
         // (the serialized `tools` field) is known before the budget math below.
+        // In review-discuss mode, add propose_entry + attach_lore_image so the
+        // editor can draft new lore entries surfaced via the review queue —
+        // without dropping any of the full internal tools the lorebook coach
+        // path would omit (manuscript_mentions, grep_notes, refresh_dashboard).
         const registry = createToolRegistry(plugin, false, true);
+        if (this.reviewEngine !== null && registry) {
+            const allowImages = plugin.settings.loreEntryImageAttachments;
+            registry.register(createProposeEntryTool(allowImages));
+            if (allowImages) registry.register(attachLoreImageTool);
+        }
         const toolDefs = registry?.toToolDefinitions();
         this.toolTokenOverhead = registry?.estimateTokens() ?? 0;
 
