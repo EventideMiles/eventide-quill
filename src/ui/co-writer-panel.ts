@@ -1041,6 +1041,14 @@ export class CoWriterPanel extends AbstractChatPanel {
                         }
                         item.onClick(async () => {
                             await this.plugin.setDefaultChatModel(m.key);
+                            // Immediately sync the indicator with the new
+                            // provider's context window — don't wait for the
+                            // next send or the debounced re-render.
+                            const chat = this.plugin.getDefaultChatProvider();
+                            if (chat.provider) {
+                                this.maxAllowedTokens = chat.provider.config.maxContextTokens;
+                            }
+                            this.updateTokenIndicator();
                             this.scheduleRender();
                         });
                     });

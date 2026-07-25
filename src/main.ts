@@ -2081,8 +2081,8 @@ export default class EventideQuillPlugin extends Plugin {
             this.lintPanel?.coWriterSetDescribingImages(active);
         };
         session.onTokenEstimate = (breakdown: TokenBreakdown, maxTokens: number) => {
-            this.lintPanel?.coWriterSetContextTokenEstimate(breakdown);
             this.lintPanel?.coWriterSetMaxAllowedTokens(maxTokens);
+            this.lintPanel?.coWriterSetContextTokenEstimate(breakdown);
         };
         session.onDiscussStartStreaming = () => {
             this.lintPanel?.coWriterDiscussStartStreaming();
