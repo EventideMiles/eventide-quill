@@ -413,7 +413,54 @@ function findFuzzyParagraphMatch(content: string, oldText: string): TextMatchRes
     // similarly. Falls back to the raw threshold when there's only one candidate.
     const margin = secondBestScore > 0 ? bestScore / secondBestScore : Infinity;
     if (bestPara && bestScore >= FUZZY_MATCH_THRESHOLD && (secondBestScore === 0 || margin >= 1.15)) {
-        return { from: bestPara.from, to: bestPara.to, exact: false };
+        // Refine: the model's old_text might only cover part of the paragraph.
+        // Narrow the range by locating the opening and closing distinctive
+        // words of oldText within the paragraph, instead of returning the
+        // whole paragraph (which would cut off earlier/later sentences the
+        // model didn't intend to change).
+        const refined = refineFuzzyRange(content, bestPara, oldText);
+        return { from: refined.from, to: refined.to, exact: false };
     }
     return null;
+}
+
+/**
+ * Narrow a fuzzy paragraph match to the actual word range the model's
+ * `oldText` covers. Finds the first distinctive word from `oldText`'s
+ * opening and the last from its closing within the matched paragraph,
+ * and returns the tighter range. Falls back to the full paragraph range
+ * if refinement fails or produces too small a range.
+ */
+function refineFuzzyRange(
+    content: string,
+    para: { from: number; to: number },
+    oldText: string
+): { from: number; to: number } {
+    const paraText = content.slice(para.from, para.to).toLowerCase();
+    const oldTokens = oldText
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((w) => w.length > 3);
+    if (oldTokens.length < 2) return para;
+
+    // Find the opening position: the first distinctive word in oldText that
+    // appears in the paragraph. Search from the start of the paragraph.
+    const firstWord = oldTokens[0]!;
+    const openIdx = paraText.indexOf(firstWord);
+    const from = openIdx !== -1 ? para.from + openIdx : para.from;
+
+    // Find the closing position: the last distinctive word in oldText that
+    // appears in the paragraph. Search backwards for its last occurrence.
+    const lastWord = oldTokens[oldTokens.length - 1]!;
+    const closeIdx = paraText.lastIndexOf(lastWord);
+    const closeEnd = closeIdx !== -1 ? para.from + closeIdx + lastWord.length : para.to;
+
+    // Guard: the refined range must be valid and reasonably sized. A tiny
+    // range (e.g., when first and last word are the same single occurrence)
+    // would slice the paragraph at the wrong point. Fall back to the full
+    // paragraph range in that case.
+    if (from < closeEnd && closeEnd - from >= Math.min(50, oldText.length / 2)) {
+        return { from, to: closeEnd };
+    }
+    return para;
 }
