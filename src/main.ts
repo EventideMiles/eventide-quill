@@ -20,7 +20,7 @@ import { FIXES } from './core/linter/fixes';
 import { applyReplacement } from './core/linter/apply-fix';
 import { findEditorView } from './utils/find-editor';
 import { extractScene, stripFrontmatter } from './utils/text-analysis';
-import { AiProvider } from './ai/provider';
+import { AiProvider, roleSatisfies } from './ai/provider';
 import { createProvider, parseProviderKey } from './ai/provider-registry';
 import { applyTransformation, TRANSFORM_ACTIONS } from './ai/transform';
 import { DEFAULT_SPLIT_BY_HEADING, DEFAULT_INCLUDE_SUBFOLDERS } from './core/dashboard/presets';
@@ -1382,6 +1382,30 @@ export default class EventideQuillPlugin extends Plugin {
         if (!key) return { provider: null };
         const provider = this.getProvider(key.providerId);
         return { provider, modelId: key.modelId || undefined };
+    }
+
+    /**
+     * List all chat-capable models across all configured providers. Each entry
+     * is a `{ key, name }` pair where `key` is the `"providerId/modelId"`
+     * composite used by {@link aiDefaultChatProvider}. Used by the co-writer's
+     * in-chat model selector.
+     */
+    listChatModels(): { key: string; name: string }[] {
+        const models: { key: string; name: string }[] = [];
+        for (const provider of this.settings.aiProviders) {
+            for (const model of provider.models) {
+                if (roleSatisfies(model.role, 'chat')) {
+                    models.push({ key: `${provider.id}/${model.id}`, name: `${provider.name} \u2014 ${model.model}` });
+                }
+            }
+        }
+        return models;
+    }
+
+    /** Update the default chat model setting and persist. */
+    async setDefaultChatModel(key: string): Promise<void> {
+        this.settings.aiDefaultChatProvider = key;
+        await this.saveSettings();
     }
 
     /** Get the default embed provider based on settings. Returns null if not configured. */

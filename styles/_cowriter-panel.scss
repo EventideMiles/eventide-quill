@@ -954,6 +954,18 @@
         }
     }
 
+    // Model selector button — text-based (not icon), needs truncation on
+    // narrow widths. Uses a flex layout that pushes it to the header's left
+    // side via margin-left: auto so it sits apart from the session actions.
+    &__model-btn {
+        max-width: 160px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        padding: $space-xs $space-sm;
+        margin-left: auto;
+    }
+
     /* Paperclip attach-image button. Same dimensions as the other secondary
        buttons; always visible (does not collapse under compact mode). */
     &__attach-btn {

@@ -1013,6 +1013,39 @@ export class CoWriterPanel extends AbstractChatPanel {
             if (generating) return;
             this.onHistory?.();
         });
+
+        // Model selector — shows the current chat model name; opens a dropdown
+        // to switch without going to settings. Positioned at the right edge of
+        // the header so it doesn't crowd the session-action buttons.
+        const models = this.plugin.listChatModels();
+        if (models.length > 0) {
+            const currentKey = this.plugin.settings.aiDefaultChatProvider;
+            const current = models.find((m) => m.key === currentKey);
+            const shortName = current ? (current.name.split(' \u2014 ').pop() ?? current.name) : 'Select model';
+            const modelBtn = header.createEl('button', {
+                cls: 'quill-cowriter-panel__chat-header-btn quill-cowriter-panel__model-btn',
+                text: shortName,
+                title: current?.name ?? 'Select chat model'
+            });
+            if (generating) modelBtn.disabled = true;
+            this.renderEvents.registerDomEvent(modelBtn, 'click', (evt: MouseEvent) => {
+                if (generating) return;
+                const menu = new Menu();
+                for (const m of models) {
+                    menu.addItem((item) => {
+                        item.setTitle(m.name);
+                        if (m.key === this.plugin.settings.aiDefaultChatProvider) {
+                            item.setChecked(true);
+                        }
+                        item.onClick(async () => {
+                            await this.plugin.setDefaultChatModel(m.key);
+                            this.scheduleRender();
+                        });
+                    });
+                }
+                menu.showAtMouseEvent(evt);
+            });
+        }
     }
 
     /**
