@@ -1406,6 +1406,11 @@ export default class EventideQuillPlugin extends Plugin {
     async setDefaultChatModel(key: string): Promise<void> {
         this.settings.aiDefaultChatProvider = key;
         await this.saveSettings();
+        // Refresh the token indicator so it reflects the new model's context
+        // window immediately (a 4K local model vs a 200K cloud model have
+        // vastly different budgets — the indicator shouldn't wait for the
+        // next send to update).
+        this.coWriterSession.refreshTokenBudget(this);
     }
 
     /** Get the default embed provider based on settings. Returns null if not configured. */

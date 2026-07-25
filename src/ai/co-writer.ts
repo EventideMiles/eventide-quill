@@ -1068,6 +1068,19 @@ export class CoWriterSession {
     }
 
     /**
+     * Re-emit the token estimate against the CURRENT default chat provider's
+     * context window. Called after the writer switches models via the in-chat
+     * selector so the token indicator and compaction math update immediately
+     * instead of waiting for the next send.
+     */
+    refreshTokenBudget(plugin: EventideQuillPlugin): void {
+        const chat = plugin.getDefaultChatProvider();
+        if (!chat.provider) return;
+        const maxTokens = chat.provider.config.maxContextTokens;
+        this.emitTokenEstimate(this.estimateRequestBreakdown(this.discussCurrentMessages), maxTokens);
+    }
+
+    /**
      * Annotate the last assistant message's toolUses with error info for
      * failed tool calls, so the panel can render them red and show the
      * reason on hover / right-click copy. Called after the execution loop
