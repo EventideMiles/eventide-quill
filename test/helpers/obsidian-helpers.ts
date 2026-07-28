@@ -46,8 +46,11 @@ export class AssistantWaitError extends Error {
 /** Active Obsidian App, untyped — its API is huge and we only touch a tiny slice. */
 type ObsidianApp = {
     vault: {
-        getAbstractFileByPath: (path: string) => unknown;
+        /** Returns only files (null for folders / missing). Safer than getAbstractFileByPath for our use. */
+        getFileByPath: (path: string) => unknown;
         read: (file: unknown) => Promise<string>;
+        create: (path: string, content: string) => Promise<unknown>;
+        modify: (file: unknown, content: string) => Promise<unknown>;
         adapter: { write: (path: string, content: string) => Promise<void> };
     };
     workspace: {
@@ -59,13 +62,17 @@ type ObsidianApp = {
 
 /** Open a file by vault path. When `newLeaf` is true (default false) the file
  *  opens in a fresh leaf; otherwise it opens in the active leaf. Throws if the
- *  path doesn't resolve — matches `readVaultFile`'s missing-file behavior so a
- *  typo in a fixture path surfaces immediately rather than silently no-oping. */
+ *  path doesn't resolve to a file (missing, or resolves to a folder) — matches
+ *  `readVaultFile`'s missing-file behavior so a typo in a fixture path
+ *  surfaces immediately rather than silently no-oping. */
 export async function openFile(path: string, newLeaf = false): Promise<void> {
     const opened = await browser.execute(
         async (p, n) => {
             const app = (window as unknown as { app: ObsidianApp }).app;
-            const file = app.vault.getAbstractFileByPath(p);
+            // getFileByPath returns null for both missing paths AND folders —
+            // a folder path flowing into openFile would fail confusingly
+            // otherwise.
+            const file = app.vault.getFileByPath(p);
             if (!file) return false;
             await app.workspace.getLeaf(n).openFile(file);
             return true;
@@ -76,12 +83,28 @@ export async function openFile(path: string, newLeaf = false): Promise<void> {
     if (!opened) throw new VaultPathError(path, 'openFile');
 }
 
-/** Overwrite a vault file's contents (creates the file if missing). */
+/**
+ * Overwrite a vault file's contents, creating it if missing. Uses the Vault
+ * API (create / modify) rather than `adapter.write` so Vault events fire and
+ * the metadata cache stays in sync — important when a subsequent assertion
+ * relies on the plugin noticing the change through its normal vault-event
+ * listeners.
+ *
+ * NOTE: this only works for tracked markdown files. For `.obsidian/` config
+ * paths (e.g. plugin `data.json`), which the Vault doesn't track, call
+ * `app.vault.adapter.write` directly inside a `browser.execute` callback —
+ * `settings.e2e.ts` does this for its data.json persistence check.
+ */
 export async function writeVaultFile(path: string, content: string): Promise<void> {
     await browser.execute(
         async (p, c) => {
             const app = (window as unknown as { app: ObsidianApp }).app;
-            await app.vault.adapter.write(p, c);
+            const existing = app.vault.getFileByPath(p);
+            if (existing) {
+                await app.vault.modify(existing, c);
+            } else {
+                await app.vault.create(p, c);
+            }
         },
         path,
         content
@@ -90,7 +113,7 @@ export async function writeVaultFile(path: string, content: string): Promise<voi
 
 /**
  * Read a vault file's contents as a string. Throws {@link VaultPathError} (in
- * the worker, not the renderer) if the path doesn't resolve — the
+ * the worker, not the renderer) if the path doesn't resolve to a file — the
  * `browser.execute` callback returns a sentinel so the custom class identity
  * survives (renderer-thrown errors serialize to plain `Error`).
  */
@@ -98,7 +121,8 @@ export async function readVaultFile(path: string): Promise<string> {
     const result = await browser.execute(
         async (p) => {
             const app = (window as unknown as { app: ObsidianApp }).app;
-            const file = app.vault.getAbstractFileByPath(p);
+            // getFileByPath rejects folders too — see openFile for rationale.
+            const file = app.vault.getFileByPath(p);
             if (!file) return null;
             return app.vault.read(file);
         },
@@ -156,9 +180,16 @@ export async function assistantBubbleCount(): Promise<number> {
 }
 
 /**
- * Wait until the next assistant chat bubble appears after a send. Returns the
- * bubble element. Uses `waitUntil` rather than `waitForDisplayed` because the
- * bubble doesn't exist in the DOM until the assistant starts streaming.
+ * Wait until the next assistant chat bubble appears after a send AND has
+ * rendered non-empty response text. Returns the bubble element. Uses
+ * `waitUntil` rather than `waitForDisplayed` because the bubble doesn't exist
+ * in the DOM until the assistant starts streaming.
+ *
+ * The non-empty-text requirement is what proves the response actually rendered
+ * — the previous version checked the bubble's `--streaming` class as a proxy,
+ * which had a fallthrough bug: a bubble that ended streaming with no text
+ * (empty response, race between stream-end and text-paint) would satisfy the
+ * wait. Requiring text directly is the strongest signal.
  *
  * Pass the {@link sendCoWriterMessage}-returned `baseline` so the wait ignores
  * stale non-empty bubbles from prior turns. Without it, the wait returns as
@@ -174,13 +205,12 @@ export async function waitForAssistantBubble(timeoutMs = 20_000, baseline = 0): 
             // prior turns must not satisfy the wait.
             if (bubbles.length <= baseline) return false;
             const last = bubbles[bubbles.length - 1]!;
+            // Require non-empty text. The bubble is added to the DOM the
+            // moment streaming starts but starts empty; an empty bubble that
+            // has finished streaming is a real failure case (empty response),
+            // not a success.
             const text = await last.getText();
-            if (text.length === 0) {
-                // Streaming bubble starts empty — wait for either text or the
-                // streaming flag to clear.
-                const cls = await last.getAttribute('class');
-                if (cls?.includes('streaming')) return false;
-            }
+            if (text.length === 0) return false;
             found = last;
             return true;
         },
