@@ -165,6 +165,11 @@ export abstract class AbstractChatPanel {
      * clears or reuses the shared content container. Called by the sidebar
      * before every tab switch; {@link setContainer} re-establishes everything
      * when the panel's tab is re-activated.
+     *
+     * Clears {@link containerEl} so a stale-scheduled {@link scheduleRender}
+     * (e.g. from an {@link onChatUpdate} push during a review-completion
+     * seed) cannot paint the inactive panel's DOM into the shared container
+     * and overwrite the active panel's UI.
      */
     detach(): void {
         this.teardownResponsiveObserver();
@@ -172,6 +177,7 @@ export abstract class AbstractChatPanel {
             this.containerEl.removeEventListener('keydown', this.keydownHandler);
             this.keydownHandler = null;
         }
+        this.containerEl = null;
     }
 
     /** Each subclass defines its own render logic. */
