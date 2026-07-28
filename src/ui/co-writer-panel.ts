@@ -2287,7 +2287,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         btnRow.createDiv({ cls: 'quill-cowriter-panel__btn-spacer' });
 
         const actionBtn = btnRow.createEl('button', {
-            cls: `quill-cowriter-panel__send-btn mod-cta${generating ? ' quill-cowriter-panel__send-btn--stop' : ''}`,
+            cls: `quill-cowriter-panel__send-btn mod-cta${generating && !this.compacting ? ' quill-cowriter-panel__send-btn--stop' : ''}`,
             text: this.compacting
                 ? 'Compacting\u2026'
                 : noActiveFile
@@ -2302,7 +2302,8 @@ export class CoWriterPanel extends AbstractChatPanel {
                       ? 'Run'
                       : 'Send'
         });
-        if (noActiveFile) actionBtn.disabled = false;
+        if (this.compacting) actionBtn.disabled = true;
+        else if (noActiveFile) actionBtn.disabled = false;
 
         // Textarea row — below the buttons, ~10 lines tall
         const taRow = container.createDiv({ cls: 'quill-cowriter-panel__ta-row' });
