@@ -9,8 +9,13 @@
  *   node scripts/setup-test-vault.mjs --check        # validate only, don't write
  *
  * What it does:
- *   - Loads `DEFAULT_SETTINGS` directly from `src/settings.ts` via jiti so the
- *     validation tracks schema changes automatically (no manual sync).
+ *   - Extracts the set of top-level keys defined in `DEFAULT_SETTINGS` by
+ *     reading `src/settings.ts` and brace-matching the object literal (no
+ *     runtime import — the module pulls in Obsidian UI classes that don't
+ *     resolve under Node). The extraction walks the literal tracking brace /
+ *     bracket / string depth so only depth-1 `identifier:` keys outside
+ *     strings are collected. This keeps the validation in sync with schema
+ *     changes automatically (no manual sync).
  *   - Compares the keys in `data.json.example` against `DEFAULT_SETTINGS`:
  *       * missing keys → warning (template will inherit defaults at runtime,
  *         but the template should be self-describing so this is flagged)

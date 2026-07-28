@@ -31,22 +31,33 @@ async function lmStudioReachable(): Promise<boolean> {
 }
 
 describe('Live LM Studio smoke', () => {
+    let liveAvailable = false;
+
     before(async function () {
-        // `this.skip()` marks the suite as pending (exit 0) rather than failed.
-        const reachable = await lmStudioReachable();
-        if (!reachable) {
+        // Probe once and cache the result. `this.skip()` in `before` marks
+        // the whole suite as pending (exit 0) so CI without a model stays
+        // green; each `it()` re-checks so a model killed mid-suite still
+        // produces a skip rather than a network-error failure.
+        liveAvailable = await lmStudioReachable();
+        if (!liveAvailable) {
             console.warn(`[live] LM Studio not reachable at ${LM_STUDIO_URL} — skipping live smoke suite`);
             this.skip();
-            return;
         }
+    });
+
+    beforeEach(async () => {
+        if (!liveAvailable) return;
+        // Each test gets a clean vault + a fresh manuscript open + the sidebar
+        // visible. resetVault restores files in-place without an Obsidian
+        // reboot, so it's cheap enough to run per-test even on the slow live
+        // path.
         await obsidianPage.resetVault();
         await openFile('manuscript/Chapter 01.md');
         await openQuillSidebar();
     });
 
     it('streams a discuss-mode reply from the real local model', async function () {
-        const reachable = await lmStudioReachable();
-        if (!reachable) return this.skip();
+        if (!liveAvailable) return this.skip();
 
         await browser.executeObsidianCommand('eventide-quill:quill-cowriter-open');
         await sendCoWriterMessage('In one short sentence, who arrives at the harbour?');
@@ -61,13 +72,22 @@ describe('Live LM Studio smoke', () => {
     });
 
     it('handles a follow-up turn using the same chat session', async function () {
-        const reachable = await lmStudioReachable();
-        if (!reachable) return this.skip();
+        if (!liveAvailable) return this.skip();
 
+        // Open a FRESH chat for this test rather than relying on the prior
+        // test's session — keeps the test independent (the suite can run a
+        // single `it` in isolation via WDIO's --spec filter without breaking).
+        await browser.executeObsidianCommand('eventide-quill:quill-cowriter-open');
+        await sendCoWriterMessage('In one short sentence, who arrives at the harbour?');
+        await waitForAssistantDone(120_000);
+
+        // Now send the actual follow-up the test is verifying.
         await sendCoWriterMessage('And in one word, where did she come from?');
         await waitForAssistantDone(120_000);
-        // The follow-up proves the session retained the prior turn in its API
-        // array (otherwise the model has no context to be "follow-up" about).
+
+        // Two assistant bubbles proves the session retained the first turn in
+        // its API array (otherwise the model has no context to be "follow-up"
+        // about).
         const bubbles = (await browser.$$('.quill-cowriter-panel__chat-bubble--assistant')) as unknown as WebdriverIO.Element[];
         expect(bubbles.length).to.be.greaterThan(1);
     });

@@ -33,35 +33,51 @@ describe('CodeMirror decorations', () => {
         await browser.pause(500); // let the active-leaf-change event settle
         await browser.executeObsidianCommand('eventide-quill:lint-active-document');
 
-        // The linter debounces (~300ms); wait for at least one gutter marker
-        // OR a linter-panel result row. Either proves the decorations landed.
-        // The selector list is intentionally broad — class names live in
-        // `core/linter/decorations.ts` and may shift; the substring match on
-        // "quill-lint" is the stable anchor.
+        // Wait for either (a) a CodeMirror inline decoration, or (b) at least
+        // one result row in the linter panel. The fixture manuscript
+        // deliberately triggers every linter rule (long sentences, passive
+        // voice, adverbs, AI clichés, em dashes, etc. — see
+        // `manuscript/Chapter 01.md`), so a clean lint would itself be the
+        // regression.
+        //
+        // Selectors: `.quill-linter__rule` is the CodeMirror mark class
+        // applied by `core/linter/decorations.ts:127` (`Decoration.mark`).
+        // `.quill-linter__item` is the panel result-row class
+        // (`ui/quill-sidebar.ts:1480`). Both are concrete — the previous
+        // broad `[class*="quill-lint"]` matched the empty panel chrome.
+        let detected: 'gutter' | 'panel' | null = null;
         await browser.waitUntil(
             async () => {
-                const markers = (await browser.$$(
-                    '.cm-linter-marker, .quill-lint-marker, [class*="quill-lint"]'
-                )) as unknown as WebdriverIO.Element[];
-                if (markers.length > 0) return true;
+                const markers = (await browser.$$('.quill-linter__rule')) as unknown as WebdriverIO.Element[];
+                if (markers.length > 0) {
+                    detected = 'gutter';
+                    return true;
+                }
 
-                // Fall back to the linter panel — switch to it via the tab and
-                // check for any rendered result row.
-                const linterTab = await browser.$('.quill-sidebar__tab[title="Linter"]');
-                if (await linterTab.isExisting()) {
-                    await linterTab.click();
-                    await browser.pause(300);
-                    const rows = (await browser.$$(
-                        '.quill-linter__result, .quill-linter-panel__result, [class*="quill-linter"]'
-                    )) as unknown as WebdriverIO.Element[];
-                    if (rows.length > 0) return true;
+                // Fall back to the linter panel. Clicking the Linter tab via
+                // WDIO can be intercepted by Obsidian's Notice toasts (the
+                // lint command may post a "Quill: linting…" notice that
+                // briefly overlays the tab). Dispatch the tab click via DOM
+                // to sidestep the overlay, then check for a concrete result row.
+                await browser.execute(() => {
+                    const tab = document.querySelector<HTMLElement>('.quill-sidebar__tab[title="Linter"]');
+                    tab?.click();
+                });
+                await browser.pause(300);
+                const rows = (await browser.$$('.quill-linter__item')) as unknown as WebdriverIO.Element[];
+                if (rows.length > 0) {
+                    detected = 'panel';
+                    return true;
                 }
                 return false;
             },
-            { timeout: 15_000, timeoutMsg: 'no linter decorations or result rows appeared on the manuscript' }
+            { timeout: 15_000, timeoutMsg: 'no linter markers or panel result rows appeared on the manuscript' }
         );
 
-        // Reaching this line means at least one decoration landed.
-        expect(true).to.equal(true);
+        // Concrete assertion — `waitUntil` returning truthy means we saw one
+        // of the two paths; `detected` records which. Without this assertion
+        // the test would trivially pass even if waitUntil's timeout were
+        // accidentally raised to infinity.
+        expect(detected).to.be.oneOf(['gutter', 'panel']);
     });
 });

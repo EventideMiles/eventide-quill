@@ -19,12 +19,17 @@ import { enqueueMock, clearMocks, getMockStats, sseChatBody } from '../helpers/m
  * not test logic — fix it before chasing spec-specific failures.
  */
 describe('Harness smoke', () => {
-    before(async () => {
+    // Each test gets a clean Obsidian + vault + mock queue. reloadObsidian is
+    // slower than `obsidianPage.resetVault()` (it reboots the app rather than
+    // just touching files), but the smoke suite is small (3 tests) and
+    // isolation matters more than wall-clock here — a leftover sidebar state
+    // from one test shouldn't influence the next.
+    beforeEach(async () => {
         await clearMocks();
         await browser.reloadObsidian({ vault: 'test/vaults/simple' });
     });
 
-    after(async () => {
+    afterEach(async () => {
         await clearMocks();
     });
 

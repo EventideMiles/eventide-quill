@@ -154,13 +154,19 @@ export function jsonEmbeddingsBody(inputTokens: string[], dims = 8): string {
 
 /**
  * Start the mock server on the given port. Resolves once listening. Idempotent
- * — calling twice without `stopMockServer` throws.
+ * — calling twice without `stopMockServer` throws. Rejects on listen error
+ * (typically `EADDRINUSE`) so `onPrepare` fails promptly with an actionable
+ * message instead of hanging waiting for a listening callback that never fires.
  */
 export function startMockServer(port: number): Promise<void> {
     if (server) throw new Error('mock-server: already started; call stopMockServer first');
     server = createServer(handleRequest);
-    return new Promise((resolveListen) => {
-        server!.listen(port, '127.0.0.1', resolveListen);
+    return new Promise((resolveListen, rejectListen) => {
+        server!.once('error', rejectListen);
+        server!.listen(port, '127.0.0.1', () => {
+            server!.off('error', rejectListen);
+            resolveListen();
+        });
     });
 }
 
@@ -176,14 +182,15 @@ export function stopMockServer(): Promise<void> {
     });
 }
 
-/** Read the body of an incoming request as a string. */
+/** Read the body of an incoming request as a string. Rejects on a stream error. */
 function readBody(req: IncomingMessage): Promise<string> {
-    return new Promise((resolveBody) => {
+    return new Promise((resolveBody, rejectBody) => {
         let data = '';
         req.setEncoding('utf8');
         req.on('data', (chunk: string) => {
             data += chunk;
         });
+        req.on('error', rejectBody);
         req.on('end', () => resolveBody(data));
     });
 }

@@ -376,7 +376,7 @@ The Review tab's embedded `CoWriterPanel` and the Co-writer tab's `CoWriterPanel
 
 **Callback routing** — the sidebar's 31 `coWriter*` passthrough methods route through `activeCoWriterPanel` (a getter that returns the embedded panel when the Review tab is in discuss mode, else the Co-writer-tab panel). Both panels' setter methods store state without rendering; render only fires on `setContainer`, so the non-mounted panel stays in sync silently and renders with the latest state when the writer switches tabs.
 
-**Persistence limitation (v1.5.0):** background snapshots are in-memory only — `onunload` snapshots just the foreground (active) chat, matching the pre-1.5.0 contract. Writers who care about preserving a background chat should switch to that tab before closing Obsidian. Per-slot sidecar persistence is a v1.4.x follow-on.
+**Persistence limitation (v1.5.0):** background snapshots are in-memory only — `onunload` snapshots just the foreground (active) chat, matching the pre-1.5.0 contract. Writers who care about preserving a background chat should switch to that tab before closing Obsidian. Per-slot sidecar persistence is a planned follow-on.
 
 ## Chat rewind
 

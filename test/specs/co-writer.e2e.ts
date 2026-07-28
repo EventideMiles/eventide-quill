@@ -75,25 +75,6 @@ describe('Co-writer chat', () => {
         expect(text).to.match(/coach|tighten|sentence/i);
     });
 
-    it('appends a newline after the assistant reply when coWriterAppendNewline is on', async () => {
-        // The default-settings test vault has coWriterAppendNewline: true. The
-        // behaviour is observable in the chat input — after the assistant
-        // turn ends, the input should contain a leading newline so the writer
-        // starts their next message on a fresh line. (Verifying the actual
-        // cursor position via WebdriverIO is brittle; checking that the input
-        // is focused after the turn is the proxy.)
-        await enqueueMock({ body: sseChatBody(['Short reply.']) });
-
-        await browser.executeObsidianCommand('eventide-quill:quill-cowriter-open');
-        await sendCoWriterMessage('Hi.');
-        await waitForAssistantDone();
-
-        // The input should remain present and interactable after the turn.
-        const input = await browser.$('.quill-cowriter-panel__input');
-        expect(await input.isExisting()).to.equal(true);
-        expect(await input.isDisplayed()).to.equal(true);
-    });
-
     it('preserves chat history across a sidebar close + reopen', async () => {
         await enqueueMock({ body: sseChatBody(['First reply.']) });
 

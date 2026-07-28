@@ -61,22 +61,29 @@ describe('Settings UI', () => {
 
     /**
      * Find a `.setting-item` row whose visible text matches `namePattern`,
-     * click its toggle, and return whether the click landed. Returns false
-     * if no matching row was found (callers decide whether to skip or fail).
+     * scroll it into view (settings below the fold aren't clickable), and
+     * click its toggle by dispatching a click event on the checkbox-container
+     * directly. Returns whether the click landed. The click is dispatched via
+     * `execute` rather than WDIO's `.click()` because Obsidian's Notice toasts
+     * can briefly overlay the settings area and intercept WDIO's
+     * scroll-then-click action — a direct DOM dispatch sidesteps the overlay.
      */
     async function toggleSettingByName(namePattern: RegExp): Promise<boolean> {
-        const items = (await browser.$$('.setting-item')) as unknown as WebdriverIO.Element[];
-        for (const item of items) {
-            const text = await item.getText();
-            if (namePattern.test(text)) {
-                const toggle = await item.$('input[type="checkbox"], .checkbox-container');
-                if (await toggle.isExisting()) {
-                    await toggle.click();
-                    return true;
-                }
-            }
-        }
-        return false;
+        return browser.execute(
+            (patternSource: string) => {
+                const pattern = new RegExp(patternSource, 'i');
+                const items = Array.from(document.querySelectorAll<HTMLElement>('.setting-item'));
+                const match = items.find((el) => pattern.test(el.textContent ?? ''));
+                if (!match) return false;
+                match.scrollIntoView({ block: 'center' });
+                const toggle = match.querySelector<HTMLElement>('.checkbox-container') ??
+                    match.querySelector<HTMLInputElement>('input[type="checkbox"]');
+                if (!toggle) return false;
+                toggle.click();
+                return true;
+            },
+            namePattern.source
+        );
     }
 
     it('opens the Eventide Quill settings tab', async () => {
@@ -96,14 +103,10 @@ describe('Settings UI', () => {
         const before = await readSettings<{ enableLongSentences: boolean }>();
         const beforeValue = before.enableLongSentences;
 
+        // Fail (don't silently skip) when the toggle isn't found — selector
+        // drift IS a regression worth catching, not a footnote.
         const toggled = await toggleSettingByName(/long sentence/i);
-        if (!toggled) {
-            // Skip on selector drift rather than failing — the assertion is
-            // about state flipping, not selector rigidity.
-            console.warn('[settings.e2e] could not locate the Long sentences toggle — skipping');
-            await closeSettings();
-            return;
-        }
+        expect(toggled).to.equal(true, 'could not locate the Long sentences toggle — selector drift');
 
         const after = await readSettings<{ enableLongSentences: boolean }>();
         expect(after.enableLongSentences).to.equal(!beforeValue);
@@ -119,11 +122,8 @@ describe('Settings UI', () => {
         const beforeValue = before.reviewSuggestedEditsEnabled;
 
         const toggled = await toggleSettingByName(/proactive editor chat|review.?discuss|suggested edits/i);
-        if (!toggled) {
-            console.warn('[settings.e2e] could not locate the reviewSuggestedEdits toggle — skipping');
-            await closeSettings();
-            return;
-        }
+        expect(toggled).to.equal(true, 'could not locate the reviewSuggestedEdits toggle — selector drift');
+
         const after = await readSettings<{ reviewSuggestedEditsEnabled: boolean }>();
         expect(after.reviewSuggestedEditsEnabled).to.equal(!beforeValue);
 
@@ -134,11 +134,7 @@ describe('Settings UI', () => {
     it('persists settings changes to disk (the data.json sidecar)', async () => {
         await openPluginSettings();
         const toggled = await toggleSettingByName(/co-writer tool/i);
-        if (!toggled) {
-            console.warn('[settings.e2e] could not locate the coWriterToolsEnabled toggle — skipping');
-            await closeSettings();
-            return;
-        }
+        expect(toggled).to.equal(true, 'could not locate the coWriterToolsEnabled toggle — selector drift');
         // Wait for the debounced save (Obsidian's saveData fires ~immediately
         // for plugin settings, but the disk write goes through the vault
         // adapter which is async).

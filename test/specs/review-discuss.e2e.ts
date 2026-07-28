@@ -49,13 +49,17 @@ describe('Review-tab discussion (review-discuss)', () => {
             },
             { timeout: 15_000, timeoutMsg: 'mock server never saw the review chat-completions call' }
         );
-        // Give the streaming text a moment to render into the report container.
-        await browser.pause(800);
+        // Give the streaming text a moment to render into the report container,
+        // then assert the canned mock text actually landed. waitForDisplayed
+        // fails the test if the report container never appears (previously
+        // `if (isExisting)` silently passed when the panel didn't render).
         const report = await browser.$('.quill-review-panel__report, .quill-review-panel__report-rendered');
-        if (await report.isExisting()) {
-            const text = await report.getText();
-            expect(text).to.match(/solid opening chapter|/);
-        }
+        await report.waitForDisplayed({ timeout: 10_000 });
+        const text = await report.getText();
+        // The mock body enqueued above streams "A solid opening chapter." — the
+        // previous regex `/solid opening chapter|/` had an empty alternative
+        // and matched anything. Drop the `|` so the assertion is real.
+        expect(text).to.match(/solid opening chapter/);
     });
 
     it('mounts the embedded co-writer panel after a report completes', async () => {

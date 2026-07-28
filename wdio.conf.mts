@@ -144,7 +144,10 @@ export const config: WebdriverIO.Config = {
         console.log(`[wdio.conf] mock SSE/NDJSON server listening on http://localhost:${port}/v1`);
     },
 
-    onComplete() {
-        if (!isLive) stopMockServer();
+    async onComplete() {
+        // Await shutdown so WDIO waits for the server close to finish (and
+        // propagates any close error) before the process exits. No-op in
+        // live mode where the mock server was never started.
+        if (!isLive) await stopMockServer();
     }
 };

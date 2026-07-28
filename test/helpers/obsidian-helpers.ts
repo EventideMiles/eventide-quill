@@ -24,24 +24,22 @@ type ObsidianApp = {
     commands: { executeCommandById: (id: string) => void };
 };
 
-/** Read the live Obsidian App instance from the renderer's global scope. */
-export async function getApp(): Promise<ObsidianApp> {
-    return (await browser.execute(() => {
-        return (window as unknown as { app: ObsidianApp }).app;
-    })) as ObsidianApp;
-}
-
-/** Open a file by vault path in a new leaf. No-op if the path doesn't exist. */
+/** Open a file by vault path in a new leaf. Throws if the path doesn't resolve
+ *  — matches `readVaultFile`'s missing-file behavior so a typo in a fixture
+ *  path surfaces immediately rather than silently no-oping. */
 export async function openFile(path: string, newLeaf = false): Promise<void> {
-    await browser.execute(
+    const opened = await browser.execute(
         async (p, n) => {
             const app = (window as unknown as { app: ObsidianApp }).app;
             const file = app.vault.getAbstractFileByPath(p);
-            if (file) await app.workspace.getLeaf(n).openFile(file);
+            if (!file) return false;
+            await app.workspace.getLeaf(n).openFile(file);
+            return true;
         },
         path,
         newLeaf
     );
+    if (!opened) throw new Error(`openFile: vault path does not resolve: ${path}`);
 }
 
 /** Overwrite a vault file's contents (creates the file if missing). */
