@@ -167,8 +167,7 @@ export class ReviewPanel extends AbstractChatPanel {
     private onEditorialQueue: ((personaId: string, customInstruction?: string) => Promise<void> | void) | null = null;
     /** Queued-critical handler (mirrors onCriticalGenerate but routes to the queue). */
     private onCriticalQueue:
-        | ((mode: AnalysisMode, scope: ScopeChoice, customInstruction?: string) => Promise<void> | void)
-        | null = null;
+        ((mode: AnalysisMode, scope: ScopeChoice, customInstruction?: string) => Promise<void> | void) | null = null;
     /** Queued-manuscript handler (mirrors onManuscriptGenerate but routes to the queue). */
     private onManuscriptQueue:
         | ((

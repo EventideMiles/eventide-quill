@@ -735,8 +735,7 @@ export class AnthropicStreamAggregator {
                 // Carry input usage if Anthropic included it (lets the token
                 // indicator reflect input cost even on stream cancellation).
                 const message = parsed.message as
-                    | { usage?: { input_tokens?: number; output_tokens?: number } }
-                    | undefined;
+                    { usage?: { input_tokens?: number; output_tokens?: number } } | undefined;
                 const usage = message?.usage;
                 if (usage && typeof usage.input_tokens === 'number') {
                     return [
@@ -756,8 +755,7 @@ export class AnthropicStreamAggregator {
             case 'content_block_start': {
                 const idx = parsed.index as number;
                 const block = parsed.content_block as
-                    | { type?: string; id?: string; name?: string; text?: string; data?: string }
-                    | undefined;
+                    { type?: string; id?: string; name?: string; text?: string; data?: string } | undefined;
                 this.blockIndex = idx;
                 this.currentToolCallId = undefined;
                 this.currentToolCallName = undefined;

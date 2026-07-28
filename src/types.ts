@@ -15,12 +15,7 @@ export interface VoiceProfile {
 }
 
 export type NarrativeVoicePreset =
-    | 'third-limited'
-    | 'third-multiple'
-    | 'third-omniscient'
-    | 'first-person'
-    | 'second-person'
-    | 'custom';
+    'third-limited' | 'third-multiple' | 'third-omniscient' | 'first-person' | 'second-person' | 'custom';
 
 export interface NarrativeVoiceDefinition {
     id: NarrativeVoicePreset;
