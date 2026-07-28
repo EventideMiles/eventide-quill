@@ -1599,6 +1599,21 @@ export class CoWriterSession {
                     }
                 }
 
+                // If propose_entry was called this round, attach the draft to
+                // the last assistant message so the panel renders the review
+                // card. In the lorebook coach this is handled in its own
+                // post-round block; the discuss path (including review-discuss)
+                // needs it here. The draft card renders via onChatUpdate below
+                // (onLoreDraftReady is a no-op — the panel reads loreDraft off
+                // the chat message during setChatHistory).
+                if (result.toolCalls.some((c) => c.name === 'propose_entry') && this.currentLoreDraft) {
+                    const draftIdx = this.chatHistory.length - 1;
+                    if (draftIdx >= 0 && this.chatHistory[draftIdx]?.role === 'assistant') {
+                        this.chatHistory[draftIdx].loreDraft = this.currentLoreDraft;
+                    }
+                    this.onLoreDraftReady?.();
+                }
+
                 // Sync chat so the user sees the response + tool indicators.
                 this.onChatUpdate?.();
             }
