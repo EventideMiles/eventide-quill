@@ -2144,7 +2144,8 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the input row with mode toggle, textarea, and send button. */
     private renderInputRow(container: HTMLElement): void {
-        const generating = this.optionsLoading || this.draftState === 'generating' || this.fulfillActive;
+        const generating =
+            this.optionsLoading || this.draftState === 'generating' || this.fulfillActive || this.compacting;
         // Direct and Fulfill need an active file. When none is open, disable
         // text entry and submission but leave the mode picker enabled so the
         // user can switch to a mode that doesn't need a file.
@@ -2287,17 +2288,19 @@ export class CoWriterPanel extends AbstractChatPanel {
 
         const actionBtn = btnRow.createEl('button', {
             cls: `quill-cowriter-panel__send-btn mod-cta${generating ? ' quill-cowriter-panel__send-btn--stop' : ''}`,
-            text: noActiveFile
-                ? 'Open a file'
-                : generating
-                  ? this.inputMode === 'fulfill'
-                      ? 'Running\u2026'
-                      : this.describingImages
-                        ? 'Describing\u2026'
-                        : 'Stop'
-                  : this.inputMode === 'fulfill'
-                    ? 'Run'
-                    : 'Send'
+            text: this.compacting
+                ? 'Compacting\u2026'
+                : noActiveFile
+                  ? 'Open a file'
+                  : generating
+                    ? this.inputMode === 'fulfill'
+                        ? 'Running\u2026'
+                        : this.describingImages
+                          ? 'Describing\u2026'
+                          : 'Stop'
+                    : this.inputMode === 'fulfill'
+                      ? 'Run'
+                      : 'Send'
         });
         if (noActiveFile) actionBtn.disabled = false;
 
@@ -2341,7 +2344,7 @@ export class CoWriterPanel extends AbstractChatPanel {
                         ? 'Describe an entry to develop (e.g. "a character named Sarah")\u2026'
                         : 'Discuss the scene, ask questions, brainstorm\u2026'
         });
-        if (this.inputMode === 'fulfill' || noActiveFile) {
+        if (this.inputMode === 'fulfill' || noActiveFile || this.compacting) {
             input.disabled = true;
         } else {
             input.value = this.inputValue;
@@ -2401,7 +2404,8 @@ export class CoWriterPanel extends AbstractChatPanel {
         }
 
         const doSend = () => {
-            if (this.optionsLoading || this.draftState === 'generating' || this.fulfillActive) return;
+            if (this.optionsLoading || this.draftState === 'generating' || this.fulfillActive || this.compacting)
+                return;
             let text = input.value.trim();
             // Fulfill runs the sweep; an empty instruction is allowed.
             if (text.length === 0 && this.inputMode !== 'fulfill') return;
