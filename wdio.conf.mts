@@ -1,6 +1,7 @@
 import * as path from 'node:path';
+import * as fs from 'node:fs';
 import { env } from 'node:process';
-import { parseObsidianVersions, obsidianBetaAvailable } from 'wdio-obsidian-service';
+import { parseObsidianVersions } from 'wdio-obsidian-service';
 import { startMockServer, writeMockedDataJson, stopMockServer } from './test/helpers/mock-server.js';
 
 /**
@@ -34,12 +35,56 @@ if (env.CI) {
 
 const vault = 'test/vaults/simple';
 
+/**
+ * Live mode: when `--spec test/specs/live/**` (or `E2E_LIVE=1`) is in play,
+ * skip the mock server entirely and rewrite `data.json` to point at the real
+ * LM Studio at localhost:1234 using whatever model is actually loaded.
+ *
+ * The mocked suite MUST stay hermetic; the live suite is the only place real
+ * network calls are allowed. Detecting live mode here (rather than via a
+ * separate wdio config) keeps the runner surface to a single file.
+ */
+const isLive = env.E2E_LIVE === '1' || process.argv.some((a) => a.includes('test/specs/live'));
+
+async function resolveLmStudioModel(): Promise<string> {
+    const res = await fetch('http://localhost:1234/v1/models');
+    if (!res.ok) throw new Error(`LM Studio /v1/models returned ${res.status}`);
+    const body = (await res.json()) as { data?: Array<{ id: string }> };
+    const first = body.data?.[0]?.id;
+    if (!first) throw new Error('LM Studio /v1/models returned no models');
+    return first;
+}
+
+function rewriteDataJsonForLive(modelId: string): void {
+    // Read the committed example, swap the endpoint + model id to point at the
+    // real LM Studio with the actually-loaded model, then write the working
+    // `data.json` (gitignored).
+    const pluginDir = path.join(vault, '.obsidian', 'plugins', 'eventide-quill');
+    const examplePath = path.join(pluginDir, 'data.json.example');
+    const dataPath = path.join(pluginDir, 'data.json');
+    const template = JSON.parse(fs.readFileSync(examplePath, 'utf8')) as Record<string, unknown>;
+    const providers = Array.isArray(template.aiProviders)
+        ? [...(template.aiProviders as object[])]
+        : [];
+    providers[0] = {
+        ...(providers[0] as object),
+        name: 'LM Studio (live E2E)',
+        endpoint: 'http://localhost:1234/v1',
+        models: [{ id: modelId, role: 'both', model: modelId }]
+    };
+    template.aiProviders = providers;
+    const providerId = (providers[0] as { id: string }).id;
+    template.aiDefaultChatProvider = `${providerId}/${modelId}`;
+    template.aiDefaultEmbedProvider = `${providerId}/${modelId}`;
+    fs.writeFileSync(dataPath, JSON.stringify(template, null, 4) + '\n', 'utf8');
+}
+
 export const config: WebdriverIO.Config = {
     runner: 'local',
     framework: 'mocha',
 
-    specs: ['./test/specs/**/*.e2e.ts'],
-    exclude: ['./test/specs/live/**/*.e2e.ts'],
+    specs: isLive ? ['./test/specs/live/**/*.e2e.ts'] : ['./test/specs/**/*.e2e.ts'],
+    exclude: isLive ? [] : ['./test/specs/live/**/*.e2e.ts'],
 
     // Sequential by default: the mocked suite shares one mock server and one
     // vault, so parallel instances would race on response registration. CI
@@ -78,8 +123,19 @@ export const config: WebdriverIO.Config = {
      * the test vault's `data.json` so the plugin's configured provider points
      * at it. The port is published via `E2E_MOCK_PORT` so specs (and the live
      * suite's reachability probe) can read it. Stopped in `onComplete`.
+     *
+     * In live mode (E2E_LIVE=1 or --spec test/specs/live/**), skip the mock
+     * entirely and instead rewrite data.json to point at the real LM Studio
+     * with whatever model is currently loaded (queried via /v1/models).
      */
     async onPrepare() {
+        if (isLive) {
+            const modelId = await resolveLmStudioModel();
+            rewriteDataJsonForLive(modelId);
+            // eslint-disable-next-line no-console
+            console.log(`[wdio.conf] live mode — data.json pointed at LM Studio model "${modelId}"`);
+            return;
+        }
         const port = Number(env.E2E_MOCK_PORT ?? 43194);
         await startMockServer(port);
         env.E2E_MOCK_PORT = String(port);
@@ -89,10 +145,6 @@ export const config: WebdriverIO.Config = {
     },
 
     onComplete() {
-        stopMockServer();
+        if (!isLive) stopMockServer();
     }
 };
-
-// Keep `obsidianBetaAvailable` referenced so the import isn't elided in case a
-// future revision wants to gate beta testing on credentials being available.
-void obsidianBetaAvailable;

@@ -1,7 +1,6 @@
 import { browser } from '@wdio/globals';
 import { expect } from 'chai';
 import { obsidianPage } from 'wdio-obsidian-service';
-import { clearMocks } from '../../helpers/mock-server.js';
 import { openFile, sendCoWriterMessage, waitForAssistantDone, openQuillSidebar } from '../../helpers/obsidian-helpers.js';
 
 /**
@@ -40,7 +39,6 @@ describe('Live LM Studio smoke', () => {
             this.skip();
             return;
         }
-        await clearMocks(); // defensive: live suite doesn't use the mock server
         await obsidianPage.resetVault();
         await openFile('manuscript/Chapter 01.md');
         await openQuillSidebar();

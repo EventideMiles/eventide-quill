@@ -25,7 +25,7 @@
 		"test:coverage": "vitest run --coverage",
 		"test:all": "npm run test && npm run test:e2e",
 		"test:e2e": "npm run build && wdio run ./wdio.conf.mts",
-		"test:e2e:live": "npm run build && wdio run ./wdio.conf.mts --spec ./test/specs/live/**/*.e2e.ts",
+		"test:e2e:live": "npm run build && wdio run ./wdio.conf.mts --spec ./test/specs/live/lm-studio-smoke.e2e.ts",
 		"typecheck:e2e": "tsc -noEmit -skipLibCheck -p tsconfig.e2e.json",
 		"dev:obsidian": "obsidian-launcher watch --copy --plugin . test/vaults/simple",
 		"dev:full": "npm run setup:test-vault && npm-run-all --parallel dev dev:obsidian",

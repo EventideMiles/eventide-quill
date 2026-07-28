@@ -192,6 +192,24 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     const url = req.url ?? '/';
     const method = req.method ?? 'GET';
 
+    // CORS preflight: the plugin's desktop path uses `window.fetch` with
+    // `content-type: application/json`, which triggers an OPTIONS preflight
+    // because the request crosses an origin boundary (app://obsidian.md →
+    // http://127.0.0.1). Without a valid preflight response, Chromium blocks
+    // the actual POST and `window.fetch` rejects with the opaque "Failed to
+    // fetch" — the plugin surfaces that as the assistant bubble text. Reply
+    // with the headers Chromium needs and short-circuit before reading a body.
+    if (method === 'OPTIONS') {
+        res.writeHead(204, {
+            'access-control-allow-origin': '*',
+            'access-control-allow-methods': 'GET, POST, OPTIONS',
+            'access-control-allow-headers': 'content-type, authorization, accept',
+            'access-control-max-age': '86400'
+        });
+        res.end();
+        return;
+    }
+
     // Control plane: /__mocks__[/...]
     if (url.startsWith('/__mocks__')) {
         const body = await readBody(req);

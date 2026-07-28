@@ -43,26 +43,30 @@ describe('Co-writer chat', () => {
         await enqueueMock({ body: sseChatBody(['Coach suggestion: tighten the long sentence in paragraph one.']) });
 
         await browser.executeObsidianCommand('eventide-quill:quill-cowriter-open');
-        // Click the mode picker and choose "Coach". The mode row labels come
-        // from AI_MODE_CONFIGS in src/ai/modes.ts.
-        const coachRow = await browser.$('.quill-cowriter-panel__mode-row[data-mode="coach"]');
-        if (await coachRow.isExisting()) {
-            await coachRow.click();
-        } else {
-            // Fallback: the mode picker opens via a button — click any row
-            // whose text contains "Coach".
-            const picker = await browser.$('.quill-cowriter-panel__mode-picker');
-            await picker.click();
-            await browser.pause(200);
-            const rows = await browser.$$('.quill-cowriter-panel__mode-row');
-            for (const row of rows) {
-                const txt = await row.getText();
-                if (/coach/i.test(txt)) {
-                    await row.click();
-                    break;
+        // Wait for the panel's button row to render, then click the mode
+        // toggle button (`.quill-cowriter-panel__mode-btn`) to open the picker.
+        // The picker itself only exists while `modePickerOpen` is true on the
+        // panel — it's a popover, not a persistent element.
+        const modeBtn = await browser.$('.quill-cowriter-panel__mode-btn');
+        await modeBtn.waitForDisplayed({ timeout: 10_000 });
+        await modeBtn.click();
+        // Now the picker rows are visible. Each row's text is the mode label
+        // ("Discuss", "Coach", etc.). Click the Coach row by text match.
+        await browser.waitUntil(
+            async () => {
+                const rows = (await browser.$$('.quill-cowriter-panel__mode-row')) as unknown as WebdriverIO.Element[];
+                if (rows.length === 0) return false;
+                for (const row of rows) {
+                    const txt = await row.getText();
+                    if (/coach/i.test(txt)) {
+                        await row.click();
+                        return true;
+                    }
                 }
-            }
-        }
+                return false;
+            },
+            { timeout: 5_000, timeoutMsg: 'coach mode row never appeared in the picker' }
+        );
 
         await sendCoWriterMessage('Coach me on the opening paragraph.');
         const bubble = await waitForAssistantBubble();
