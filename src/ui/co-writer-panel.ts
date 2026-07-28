@@ -2344,7 +2344,7 @@ export class CoWriterPanel extends AbstractChatPanel {
                         ? 'Describe an entry to develop (e.g. "a character named Sarah")\u2026'
                         : 'Discuss the scene, ask questions, brainstorm\u2026'
         });
-        if (this.inputMode === 'fulfill' || noActiveFile || this.compacting) {
+        if (this.inputMode === 'fulfill' || noActiveFile) {
             input.disabled = true;
         } else {
             input.value = this.inputValue;
