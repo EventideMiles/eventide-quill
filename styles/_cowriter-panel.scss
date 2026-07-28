@@ -278,12 +278,17 @@
         border-radius: 3px;
         padding: 2px $space-sm;
         max-width: 180px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+
+        > span {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
     }
 
     &__ctx-remove {
+        flex-shrink: 0;
         cursor: pointer;
         border: none;
         background: transparent;
@@ -947,6 +952,18 @@
             opacity: 0.5;
             cursor: default;
         }
+    }
+
+    // Model selector button — text-based (not icon), needs truncation on
+    // narrow widths. Uses a flex layout that pushes it to the header's left
+    // side via margin-left: auto so it sits apart from the session actions.
+    &__model-btn {
+        max-width: 160px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        padding: $space-xs $space-sm;
+        margin-left: auto;
     }
 
     /* Paperclip attach-image button. Same dimensions as the other secondary

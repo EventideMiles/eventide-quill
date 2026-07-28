@@ -123,6 +123,57 @@ export function extractThoughtContent(
     return { text: clean, thought, pendingThought: inThoughtBlock ? pendingContent : '' };
 }
 
+/**
+ * Streaming repetition guard. Detects when a model loops — emitting the
+ * same passage repeatedly — and signals the consumer to stop early. Only
+ * checks response text (`content`), NOT reasoning (`thought`): thinking
+ * models legitimately re-derive and restate during reasoning, and cutting
+ * that off would harm output quality.
+ *
+ * Uses a sliding-window approach: maintains a ring buffer of recent text
+ * and checks whether the tail (last ~120 chars) appears 3+ times within
+ * the buffer. The window is large enough to avoid false positives from
+ * dialogue or stylistic repetition, but small enough to catch loops
+ * within a few hundred tokens.
+ */
+export class StreamRepetitionGuard {
+    private buffer = '';
+    private static readonly MAX_BUFFER = 6000;
+    private static readonly MIN_PHRASE = 120;
+    private static readonly MAX_REPEATS = 3;
+
+    /**
+     * Feed a chunk's text to the guard. Returns `true` when repetition is
+     * detected and the stream should be cut off.
+     */
+    check(text: string): boolean {
+        if (!text) return false;
+        this.buffer += text;
+        if (this.buffer.length > StreamRepetitionGuard.MAX_BUFFER) {
+            this.buffer = this.buffer.slice(-StreamRepetitionGuard.MAX_BUFFER);
+        }
+        const minTotal = StreamRepetitionGuard.MIN_PHRASE * StreamRepetitionGuard.MAX_REPEATS;
+        if (this.buffer.length < minTotal) return false;
+
+        const tail = this.buffer.slice(-StreamRepetitionGuard.MIN_PHRASE);
+        if (tail.trim().length < 20) return false;
+
+        let count = 0;
+        let from = 0;
+        while (count < StreamRepetitionGuard.MAX_REPEATS) {
+            const idx = this.buffer.indexOf(tail, from);
+            if (idx === -1) break;
+            count++;
+            from = idx + tail.length;
+        }
+        return count >= StreamRepetitionGuard.MAX_REPEATS;
+    }
+
+    reset(): void {
+        this.buffer = '';
+    }
+}
+
 /** A single SSE event parsed from a stream. */
 export interface SseEvent {
     data: string;

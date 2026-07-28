@@ -628,3 +628,124 @@ export function checkAiEmDashes(text: string): LintResult[] {
 
     return results;
 }
+
+/**
+ * Minimum word-overlap percentage for a fuzzy duplicate match. At 70%,
+ * two paragraphs sharing ~2 of 3 identical sentences would flag. Tuned
+ * to catch AI-edit duplication artifacts without false-positiving on
+ * intentional thematic repetition or dialogue callbacks.
+ */
+const DUPLICATE_OVERLAP_THRESHOLD = 0.7;
+
+/**
+ * Extract the set of distinctive words (length > 3, lowercased) from a
+ * string. Used for fuzzy paragraph comparison so common words like
+ * "the", "and", "said" don't inflate the overlap score.
+ */
+function distinctiveWords(s: string): Set<string> {
+    return new Set(s.split(/\s+/).filter((w) => w.length > 3));
+}
+
+/**
+ * Compute the overlap coefficient between two word sets:
+ * |intersection| / min(|a|, |b|). Better than Jaccard for duplicate
+ * detection because it scores high when one set is a near-subset of
+ * the other (the common AI-edit case: the duplicate is slightly
+ * shorter or longer than the original).
+ */
+function wordOverlap(a: Set<string>, b: Set<string>): number {
+    if (a.size === 0 || b.size === 0) return 0;
+    const [smaller, larger] = a.size <= b.size ? [a, b] : [b, a];
+    let shared = 0;
+    for (const word of smaller) {
+        if (larger.has(word)) shared++;
+    }
+    return shared / smaller.size;
+}
+
+/**
+ * Flag duplicate paragraphs — a common artifact when AI edits accidentally
+ * duplicate text. Uses fuzzy word-overlap matching (not exact) so paraphrased
+ * duplicates are caught. Checks both single-paragraph pairs (para i vs i+1)
+ * and two-paragraph windows ([i, i+1] vs [i+2, i+3]) to catch multi-paragraph
+ * duplications.
+ *
+ * Skips very short paragraphs (under 40 chars) to avoid false positives from
+ * formatting lines, single-word lines, or dialogue attribution.
+ */
+export function checkDuplicateText(text: string): LintResult[] {
+    const results: LintResult[] = [];
+    const MIN_LEN = 40;
+
+    // Split into paragraphs with their character offsets.
+    const paragraphs: { text: string; from: number }[] = [];
+    let start = 0;
+    for (let i = 0; i < text.length; i++) {
+        if (text[i] === '\n' && i + 1 < text.length && text[i + 1] === '\n') {
+            const para = text.slice(start, i);
+            if (para.trim()) paragraphs.push({ text: para, from: start });
+            start = i + 2;
+            i++;
+        } else if (
+            text[i] === '\r' &&
+            i + 3 < text.length &&
+            text[i + 1] === '\n' &&
+            text[i + 2] === '\r' &&
+            text[i + 3] === '\n'
+        ) {
+            const para = text.slice(start, i);
+            if (para.trim()) paragraphs.push({ text: para, from: start });
+            start = i + 4;
+            i += 3;
+        }
+    }
+    const last = text.slice(start);
+    if (last.trim()) paragraphs.push({ text: last, from: start });
+
+    // Pre-compute distinctive word sets for eligible paragraphs.
+    const wordSets = paragraphs.map((p) => {
+        const trimmed = p.text.trim().toLowerCase();
+        return trimmed.length >= MIN_LEN ? distinctiveWords(trimmed) : null;
+    });
+
+    const reportAt = (idx: number, pct: number, scope: string): void => {
+        const pos = posAtOffset(text, paragraphs[idx]!.from);
+        results.push({
+            line: pos.line,
+            column: pos.column,
+            length: paragraphs[idx]!.text.length,
+            message: `Duplicate text (${scope}, ~${Math.round(pct * 100)}% overlap with the preceding ${scope}).`,
+            severity: 'warning',
+            rule: 'duplicate-text'
+        });
+    };
+
+    // Single-paragraph comparison: para i vs i+1.
+    for (let i = 1; i < paragraphs.length; i++) {
+        const a = wordSets[i - 1];
+        const b = wordSets[i];
+        if (!a || !b) continue;
+        const overlap = wordOverlap(a, b);
+        if (overlap >= DUPLICATE_OVERLAP_THRESHOLD) {
+            reportAt(i, overlap, 'paragraph');
+        }
+    }
+
+    // Multi-paragraph comparison: [i, i+1] vs [i+2, i+3].
+    for (let i = 0; i + 3 < paragraphs.length; i++) {
+        const aWords = wordSets[i];
+        const bWords = wordSets[i + 1];
+        const cWords = wordSets[i + 2];
+        const dWords = wordSets[i + 3];
+        if (!aWords || !bWords || !cWords || !dWords) continue;
+
+        const groupA = new Set([...aWords, ...bWords]);
+        const groupB = new Set([...cWords, ...dWords]);
+        const overlap = wordOverlap(groupA, groupB);
+        if (overlap >= DUPLICATE_OVERLAP_THRESHOLD) {
+            reportAt(i + 2, overlap, 'passage');
+        }
+    }
+
+    return results;
+}

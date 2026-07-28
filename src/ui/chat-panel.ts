@@ -60,8 +60,11 @@ export abstract class AbstractChatPanel {
     protected userScrolledUp = false;
     protected maxAllowedTokens = 0;
     protected onCancelGeneration: (() => void) | null = null;
-    protected onCompact: (() => void) | null = null;
+    protected onCompact: (() => void | Promise<void>) | null = null;
     protected onNewChat: ((clearContext: boolean) => void) | null = null;
+
+    /** True while a manual compaction is in progress — disables the compact button. */
+    protected compacting = false;
 
     /** Stored keydown handler so we can remove it from a previous container. */
     protected keydownHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -162,6 +165,11 @@ export abstract class AbstractChatPanel {
      * clears or reuses the shared content container. Called by the sidebar
      * before every tab switch; {@link setContainer} re-establishes everything
      * when the panel's tab is re-activated.
+     *
+     * Clears {@link containerEl} so a stale-scheduled {@link scheduleRender}
+     * (e.g. from an {@link onChatUpdate} push during a review-completion
+     * seed) cannot paint the inactive panel's DOM into the shared container
+     * and overwrite the active panel's UI.
      */
     detach(): void {
         this.teardownResponsiveObserver();
@@ -169,6 +177,7 @@ export abstract class AbstractChatPanel {
             this.containerEl.removeEventListener('keydown', this.keydownHandler);
             this.keydownHandler = null;
         }
+        this.containerEl = null;
     }
 
     /** Each subclass defines its own render logic. */
@@ -180,7 +189,7 @@ export abstract class AbstractChatPanel {
         this.onCancelGeneration = handler;
     }
 
-    setCompactHandler(handler: () => void): void {
+    setCompactHandler(handler: () => void | Promise<void>): void {
         this.onCompact = handler;
     }
 

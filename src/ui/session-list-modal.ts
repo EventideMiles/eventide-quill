@@ -8,6 +8,12 @@ import type { SessionIndexEntry } from '../ai/conversation-store';
  * back for {@link restoreCoWriterSession}; deleting removes it via
  * {@link deleteSession} and the row is removed in place.
  */
+/** A short, human label for the stored mode string (used in the list sub-line). */
+function modeLabel(mode: string): string {
+    if (mode === 'review-discuss') return 'Review';
+    return mode;
+}
+
 export class SessionListModal extends Modal {
     private entries: SessionIndexEntry[];
     private readonly onSelect: (id: string) => void;
@@ -43,7 +49,7 @@ export class SessionListModal extends Modal {
             const meta = row.createDiv({ cls: 'quill-session-list__meta' });
             meta.createDiv({ cls: 'quill-session-list__title', text: entry.title });
             const sub = meta.createDiv({ cls: 'quill-session-list__sub' });
-            sub.createSpan({ cls: 'quill-session-list__mode', text: entry.mode });
+            sub.createSpan({ cls: 'quill-session-list__mode', text: modeLabel(entry.mode) });
             sub.createSpan({ text: '\u00b7' });
             sub.createSpan({ text: `${entry.messageCount} message${entry.messageCount === 1 ? '' : 's'}` });
             sub.createSpan({ text: '\u00b7' });

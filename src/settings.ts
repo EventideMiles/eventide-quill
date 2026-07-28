@@ -120,7 +120,7 @@ export interface EventideQuillSettings {
      * markers (keeping `quillAnchorId` so rewind still works), and a free
      * refinement pass runs before the AI compaction fallback when a
      * conversation approaches the threshold. Off = pure AI compaction only
-     * (the pre-1.3.2 behavior). See `src/ai/context-refinement.ts`.
+     * (the pre-1.4.0 behavior). See `src/ai/context-refinement.ts`.
      */
     contextRefinementEnabled: boolean;
     contextIncludeVaultContext: boolean;
@@ -253,9 +253,24 @@ export interface EventideQuillSettings {
      * returns a length-aware message routing the model to `edit_note` /
      * `insert_note` / `append_to_note` instead. Prevents duplicate notes that
      * strand [[wikilinks]] pointing at the original. Off = unconditional
-     * create (the pre-1.3.2 behavior) — escape hatch.
+     * create (the pre-1.4.0 behavior) — escape hatch.
      */
     lorePreferEditOverCreate: boolean;
+    /**
+     * When on, follow-up discussion of a review report runs through the
+     * co-writer session machinery with editing tools enabled, so the editor
+     * can propose specific, reviewable inline-diff edits (not just advisory
+     * prose). Off preserves the pre-1.4.0 text-only chat behavior. Default:
+     * on.
+     */
+    reviewSuggestedEditsEnabled: boolean;
+    /**
+     * Free-form world-building rules injected into the review-discuss context
+     * so the model follows them when writing or editing prose. Examples:
+     * "This world uses magic based on sound. Swords are called 'blades'
+     * regardless of shape." Default: empty.
+     */
+    reviewWorldRules: string;
     /** Master toggle for the async feedback queue. Off hides the Queue tab and the Review handoff. Default: on. */
     enableFeedbackQueue: boolean;
     /** Max queue jobs retained on disk (sidecar blobs). Older completed jobs are LRU-evicted; the vault report note is never touched by LRU. Default 20. */
@@ -388,6 +403,8 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     loreEntryImageAttachments: true,
     loreEntryImageAttachmentFolder: '',
     lorePreferEditOverCreate: true,
+    reviewSuggestedEditsEnabled: true,
+    reviewWorldRules: '',
     enableFeedbackQueue: true,
     feedbackQueueLimit: 20,
     feedbackQueueAutoRun: true,
@@ -3257,6 +3274,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.feedbackQueueAutoRun = DEFAULT_SETTINGS.feedbackQueueAutoRun;
                         this.plugin.settings.autoSaveFeedbackReports = DEFAULT_SETTINGS.autoSaveFeedbackReports;
                         this.plugin.settings.feedbackReportFolder = DEFAULT_SETTINGS.feedbackReportFolder;
+                        this.plugin.settings.reviewSuggestedEditsEnabled = DEFAULT_SETTINGS.reviewSuggestedEditsEnabled;
+                        this.plugin.settings.reviewWorldRules = DEFAULT_SETTINGS.reviewWorldRules;
                         await this.plugin.saveSettings();
                         this.display();
                     })
@@ -3271,6 +3290,43 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 })
             );
+
+        new Setting(containerEl)
+            .setName('Proactive editor chat')
+            .setDesc(
+                'After a report finishes, the follow-up discussion runs through the co-writer session ' +
+                    'with editing tools enabled, so the editor can propose specific, reviewable inline-diff ' +
+                    'edits (not just advisory prose). Every proposed edit still requires your approval before ' +
+                    'it reaches the vault. Turn off to keep the pre-1.4.0 text-only chat behavior. Default: on.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.reviewSuggestedEditsEnabled).onChange(async (value) => {
+                    this.plugin.settings.reviewSuggestedEditsEnabled = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+        new Setting(containerEl)
+            .setName('World rules')
+            .setDesc(
+                'World-building rules the editor follows when writing or editing prose in review-discuss. ' +
+                    'Describe how your world works so edits use the right vocabulary and details. ' +
+                    'Example: "Magic is visible as blue light. Swords are called blades regardless of shape. ' +
+                    'The setting is a tropical archipelago."'
+            )
+            .addTextArea((text) => {
+                text.setPlaceholder(
+                    'Magic is visible as blue light...\n' +
+                        'The setting is a tropical archipelago...\n' +
+                        'Swords are called blades regardless of shape...'
+                )
+                    .setValue(this.plugin.settings.reviewWorldRules)
+                    .onChange(async (value) => {
+                        this.plugin.settings.reviewWorldRules = value;
+                        await this.plugin.saveSettings();
+                    });
+                text.inputEl.rows = 5;
+            });
 
         new Setting(containerEl)
             .setName('Run queued jobs automatically')
@@ -3601,6 +3657,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.feedbackQueueAutoRun = DEFAULT_SETTINGS.feedbackQueueAutoRun;
                     this.plugin.settings.autoSaveFeedbackReports = DEFAULT_SETTINGS.autoSaveFeedbackReports;
                     this.plugin.settings.feedbackReportFolder = DEFAULT_SETTINGS.feedbackReportFolder;
+                    this.plugin.settings.reviewSuggestedEditsEnabled = DEFAULT_SETTINGS.reviewSuggestedEditsEnabled;
+                    this.plugin.settings.reviewWorldRules = DEFAULT_SETTINGS.reviewWorldRules;
                     await this.plugin.saveSettings();
                     this.display();
                 })

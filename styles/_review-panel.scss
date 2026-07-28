@@ -497,3 +497,16 @@
         opacity: 0.45;
     }
 }
+
+// Host element for the embedded CoWriterPanel in `'review-discuss'` mode.
+// Fills the available Results sub-tab area so the embedded panel's own flex
+// column layout (chat scroll area + pinned bottom bar) can take over the
+// surface exactly as it does in the Co-writer tab. min-height: 0 keeps the
+// inner scroll container honest inside a flex parent.
+.quill-review-panel__discuss-mount {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}

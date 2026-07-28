@@ -147,15 +147,15 @@ export class ChangeSet {
         this.nextId = 0;
     }
 
-    /** Serialized form of a ChangeSet for persistence (see conversation-store). */
+    /** Serialized form of a ChangeSet for persistence (see conversation-store). Rejected edits are dropped — they serve no purpose after the writer says no. */
     toJSON(): ChangeSetJSON {
-        return { edits: this.edits, nextId: this.nextId };
+        return { edits: this.edits.filter((e) => e.state !== 'rejected'), nextId: this.nextId };
     }
 
-    /** Reconstruct a ChangeSet from its serialized form. */
+    /** Reconstruct a ChangeSet from its serialized form. Filters out any rejected edits that slipped through from older saves. */
     static fromJSON(data: ChangeSetJSON): ChangeSet {
         const cs = new ChangeSet();
-        cs.edits = data.edits;
+        cs.edits = data.edits.filter((e) => e.state !== 'rejected');
         cs.nextId = data.nextId;
         return cs;
     }

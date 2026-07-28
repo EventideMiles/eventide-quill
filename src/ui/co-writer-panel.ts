@@ -28,7 +28,13 @@ import type {
 import type { ProposedEdit } from '../core/change-set';
 import type { SubagentView } from '../ai/subagent-session';
 
-export type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill' | 'lorebook';
+/**
+ * Co-writer input modes. `'review-discuss'` is a first-class mode reachable
+ * from either the Review tab's "discuss this report" entry point (Path A)
+ * or the Co-writer mode picker (Path B — manual entry, writer pastes an
+ * external review or critique as the first message).
+ */
+export type InputMode = 'direct' | 'discuss' | 'coach' | 'fulfill' | 'lorebook' | 'review-discuss';
 
 /** The co-writer modes, in cycle/picker order, with icon, label, and a one-line descriptor. */
 const COWRITER_MODES: { mode: InputMode; icon: string; label: string; desc: string }[] = [
@@ -41,6 +47,12 @@ const COWRITER_MODES: { mode: InputMode; icon: string; label: string; desc: stri
         icon: '\u{1f4d6}',
         label: 'Lorebook',
         desc: 'Develop characters and lore entries with AI tools'
+    },
+    {
+        mode: 'review-discuss',
+        icon: '\u270e',
+        label: 'Review',
+        desc: 'Discuss a review or critique and act on it with editable suggestions'
     }
 ];
 
@@ -211,7 +223,7 @@ export class CoWriterPanel extends AbstractChatPanel {
      * currently subagents. {@link pendingImages} is cleared locally since it
      * lives on the panel.
      */
-    private onModeSwitch: (() => void) | null = null;
+    private onModeSwitch: ((newMode: InputMode) => void) | null = null;
     /** Open the conversation-history switcher (saved sessions). */
     private onHistory: (() => void) | null = null;
     /** Snapshot the current conversation to disk without clearing it. */
@@ -222,9 +234,10 @@ export class CoWriterPanel extends AbstractChatPanel {
     private onRegenerate: ((messageId: string) => void) | null = null;
 
     /**
-     * Conversation token estimate pushed from the plugin layer.
-     * Contains only system prompt + context heads + chat turns.
-     * Vault context item tokens are added separately in computeTotalTokens().
+     * Conversation token estimate pushed from the plugin layer. Covers the
+     * full request: system prompt + tool defs + injected context + chat
+     * turns. surfaced as a hover tooltip on the token indicator so writers
+     * can see where the budget is going.
      */
     private contextEstimate = 0;
     /**
@@ -234,18 +247,6 @@ export class CoWriterPanel extends AbstractChatPanel {
      * indicator so writers can see where the budget is going.
      */
     private contextBreakdown: TokenBreakdown | null = null;
-
-    /**
-     * Token estimate for additional context files (added via the ± button).
-     * Pushed from the plugin layer when files are added or removed.
-     */
-    private additionalContextTokens = 0;
-
-    /**
-     * Token estimate for the linked plot map note.
-     * Pushed from the plugin layer when the plot map link changes.
-     */
-    private plotMapTokens = 0;
 
     /** Promises from async MarkdownRenderer.render() calls during the current render cycle. */
     private renderPromises: Promise<void>[] = [];
@@ -519,7 +520,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         // chatHistory reset for stateful-mode crossings is handled above via
         // onNewChat; this only clears the subagent views.
         if (oldMode !== mode) {
-            this.onModeSwitch?.();
+            this.onModeSwitch?.(mode);
         }
         this.scheduleRender();
     }
@@ -603,8 +604,8 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.onDiscardLoreDraft = handler;
     }
 
-    /** Wire a callback fired on every co-writer mode switch (used to clear session-scoped state like subagents). */
-    setModeSwitchHandler(handler: () => void): void {
+    /** Wire a callback fired on every co-writer mode switch (used to clear session-scoped state like subagents, and to set/clear the review-engine signal). */
+    setModeSwitchHandler(handler: (newMode: InputMode) => void): void {
         this.onModeSwitch = handler;
     }
 
@@ -623,30 +624,13 @@ export class CoWriterPanel extends AbstractChatPanel {
     /**
      * Set the conversation token estimate for the token indicator.
      * Called from the plugin layer with a per-section breakdown of the
-     * request (system prompt, tool definitions, chat history, injected
-     * context sources) so the indicator's hover tooltip can show where
-     * the tokens are going. Vault context item tokens are added on top
-     * by computeTotalTokens().
+     * full request (tool definitions, system prompt, injected context
+     * sources, chat history) so the indicator's hover tooltip can show
+     * where the tokens are going.
      */
     setContextTokenEstimate(breakdown: TokenBreakdown): void {
         this.contextEstimate = breakdown.total;
         this.contextBreakdown = breakdown;
-        this.updateTokenIndicator();
-    }
-
-    /**
-     * Set the additional context file token estimate for the token indicator.
-     * Called from the plugin layer when files are added or removed.
-     */
-    setAdditionalContextTokens(tokens: number): void {
-        this.additionalContextTokens = tokens;
-        this.updateTokenIndicator();
-    }
-
-    /** Set the plot map token estimate for the token indicator.
-     *  Called from the plugin layer when the plot map link changes. */
-    setPlotMapTokens(tokens: number): void {
-        this.plotMapTokens = tokens;
         this.updateTokenIndicator();
     }
 
@@ -694,6 +678,27 @@ export class CoWriterPanel extends AbstractChatPanel {
     setDescribingImages(active: boolean): void {
         this.describingImages = active;
         this.scheduleRender();
+    }
+
+    /** Capture the current scroll state for restoration after a sidebar re-render. */
+    captureScrollState(): { scrollTop: number; atBottom: boolean } {
+        const el = this.getScrollContainer();
+        return {
+            scrollTop: el?.scrollTop ?? 0,
+            atBottom: !this.userScrolledUp
+        };
+    }
+
+    /** Restore scroll state previously captured by {@link captureScrollState}. */
+    restoreScrollState(state: { scrollTop: number; atBottom: boolean }): void {
+        if (state.atBottom) {
+            this.scrollToBottom();
+        } else if (state.scrollTop > 0) {
+            const el = this.getScrollContainer();
+            if (el) {
+                el.scrollTop = Math.min(state.scrollTop, Math.max(0, el.scrollHeight - el.clientHeight));
+            }
+        }
     }
 
     /** Mark the discuss response as starting to stream. */
@@ -974,9 +979,18 @@ export class CoWriterPanel extends AbstractChatPanel {
             title: 'Compact conversation'
         });
         this.setHeaderIcon(compactBtn, 'minimize-2', 'Compact');
-        if (generating) compactBtn.disabled = true;
-        this.renderEvents.registerDomEvent(compactBtn, 'click', () => {
-            this.onCompact?.();
+        if (generating || this.compacting) compactBtn.disabled = true;
+        this.renderEvents.registerDomEvent(compactBtn, 'click', async () => {
+            if (this.compacting) return;
+            this.compacting = true;
+            compactBtn.disabled = true;
+            compactBtn.title = 'Compacting\u2026';
+            try {
+                await this.onCompact?.();
+            } finally {
+                this.compacting = false;
+                this.scheduleRender();
+            }
         });
 
         const saveBtn = header.createEl('button', {
@@ -999,6 +1013,49 @@ export class CoWriterPanel extends AbstractChatPanel {
             if (generating) return;
             this.onHistory?.();
         });
+
+        // Model selector — shows the current chat model name; opens a dropdown
+        // to switch without going to settings. Positioned at the right edge of
+        // the header so it doesn't crowd the session-action buttons.
+        const models = this.plugin.listChatModels();
+        if (models.length > 0) {
+            const currentKey = this.plugin.settings.aiDefaultChatProvider;
+            const current = models.find((m) => m.key === currentKey);
+            const shortName = current
+                ? shortenModelName(current.name.split(' \u2014 ').pop() ?? current.name)
+                : 'Select model';
+            const modelBtn = header.createEl('button', {
+                cls: 'quill-cowriter-panel__chat-header-btn quill-cowriter-panel__model-btn',
+                text: shortName,
+                title: current?.name ?? 'Select chat model'
+            });
+            if (generating) modelBtn.disabled = true;
+            this.renderEvents.registerDomEvent(modelBtn, 'click', (evt: MouseEvent) => {
+                if (generating) return;
+                const menu = new Menu();
+                for (const m of models) {
+                    menu.addItem((item) => {
+                        item.setTitle(m.name);
+                        if (m.key === this.plugin.settings.aiDefaultChatProvider) {
+                            item.setChecked(true);
+                        }
+                        item.onClick(async () => {
+                            await this.plugin.setDefaultChatModel(m.key);
+                            // Immediately sync the indicator with the new
+                            // provider's context window — don't wait for the
+                            // next send or the debounced re-render.
+                            const chat = this.plugin.getDefaultChatProvider();
+                            if (chat.provider) {
+                                this.maxAllowedTokens = chat.provider.config.maxContextTokens;
+                            }
+                            this.updateTokenIndicator();
+                            this.scheduleRender();
+                        });
+                    });
+                }
+                menu.showAtMouseEvent(evt);
+            });
+        }
     }
 
     /**
@@ -1766,6 +1823,19 @@ export class CoWriterPanel extends AbstractChatPanel {
                 const timeoutId = window.setTimeout(() => this.onRunFulfill?.(''));
                 this.renderEvents.register(() => window.clearTimeout(timeoutId));
             });
+        } else if (this.inputMode === 'review-discuss') {
+            prompt.createDiv({ cls: 'quill-cowriter-panel__init-heading', text: '\u270e Review' });
+            prompt.createDiv({
+                cls: 'quill-cowriter-panel__init-desc',
+                text: 'Paste a review or critique below. The editor will help you discuss it and propose specific, reviewable edits to act on it.'
+            });
+            const startBtn = prompt.createEl('button', {
+                cls: 'quill-cowriter-panel__init-btn mod-cta',
+                text: 'Start reviewing'
+            });
+            this.renderEvents.registerDomEvent(startBtn, 'click', () => {
+                this.containerEl?.querySelector<HTMLTextAreaElement>('.quill-cowriter-panel__input')?.focus();
+            });
         } else if (this.inputMode === 'discuss') {
             prompt.createDiv({ cls: 'quill-cowriter-panel__init-heading', text: 'Discuss' });
             prompt.createDiv({
@@ -2074,7 +2144,8 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /** Render the input row with mode toggle, textarea, and send button. */
     private renderInputRow(container: HTMLElement): void {
-        const generating = this.optionsLoading || this.draftState === 'generating' || this.fulfillActive;
+        const generating =
+            this.optionsLoading || this.draftState === 'generating' || this.fulfillActive || this.compacting;
         // Direct and Fulfill need an active file. When none is open, disable
         // text entry and submission but leave the mode picker enabled so the
         // user can switch to a mode that doesn't need a file.
@@ -2216,20 +2287,23 @@ export class CoWriterPanel extends AbstractChatPanel {
         btnRow.createDiv({ cls: 'quill-cowriter-panel__btn-spacer' });
 
         const actionBtn = btnRow.createEl('button', {
-            cls: `quill-cowriter-panel__send-btn mod-cta${generating ? ' quill-cowriter-panel__send-btn--stop' : ''}`,
-            text: noActiveFile
-                ? 'Open a file'
-                : generating
-                  ? this.inputMode === 'fulfill'
-                      ? 'Running\u2026'
-                      : this.describingImages
-                        ? 'Describing\u2026'
-                        : 'Stop'
-                  : this.inputMode === 'fulfill'
-                    ? 'Run'
-                    : 'Send'
+            cls: `quill-cowriter-panel__send-btn mod-cta${generating && !this.compacting ? ' quill-cowriter-panel__send-btn--stop' : ''}`,
+            text: this.compacting
+                ? 'Compacting\u2026'
+                : noActiveFile
+                  ? 'Open a file'
+                  : generating
+                    ? this.inputMode === 'fulfill'
+                        ? 'Running\u2026'
+                        : this.describingImages
+                          ? 'Describing\u2026'
+                          : 'Stop'
+                    : this.inputMode === 'fulfill'
+                      ? 'Run'
+                      : 'Send'
         });
-        if (noActiveFile) actionBtn.disabled = false;
+        if (this.compacting) actionBtn.disabled = true;
+        else if (noActiveFile) actionBtn.disabled = false;
 
         // Textarea row — below the buttons, ~10 lines tall
         const taRow = container.createDiv({ cls: 'quill-cowriter-panel__ta-row' });
@@ -2331,7 +2405,8 @@ export class CoWriterPanel extends AbstractChatPanel {
         }
 
         const doSend = () => {
-            if (this.optionsLoading || this.draftState === 'generating' || this.fulfillActive) return;
+            if (this.optionsLoading || this.draftState === 'generating' || this.fulfillActive || this.compacting)
+                return;
             let text = input.value.trim();
             // Fulfill runs the sweep; an empty instruction is allowed.
             if (text.length === 0 && this.inputMode !== 'fulfill') return;
@@ -2460,53 +2535,22 @@ export class CoWriterPanel extends AbstractChatPanel {
 
     /**
      * Build the full token breakdown shown in the indicator's hover tooltip.
-     * Combines the session-side breakdown (tool defs, system prompt, chat
-     * history, injected context) with the panel-side sources (additional
-     * context files, plot map, vault context items) so the tooltip reflects
-     * the actual displayed total.
+     * Delegates to the session-side breakdown which already categorizes
+     * all injected-context sources (vault context, additional files, plot
+     * map, active document, tool advertisements) alongside tool definitions
+     * and chat history.
      */
     private computeBreakdown(): TokenBreakdown {
-        const sections = [...(this.contextBreakdown?.sections ?? [])];
-        if (this.additionalContextTokens > 0) {
-            sections.push({ label: 'Additional context files', tokens: this.additionalContextTokens });
-        }
-        if (this.plotMapTokens > 0) {
-            sections.push({ label: 'Plot map', tokens: this.plotMapTokens });
-        }
-        const assembly = this.plugin.currentAssembly;
-        if (assembly) {
-            let vaultTokens = 0;
-            let vaultCount = 0;
-            for (const item of assembly.contextItems) {
-                vaultTokens += item.tokenEstimate;
-                vaultCount++;
-            }
-            if (vaultTokens > 0) {
-                sections.push({
-                    label: 'Vault context (similarity)',
-                    tokens: vaultTokens,
-                    detail: `${vaultCount} file${vaultCount === 1 ? '' : 's'}`
-                });
-            }
-        }
-        return { sections, total: this.computeTotalTokens() };
+        return this.contextBreakdown ?? { sections: [], total: 0 };
     }
 
     /**
      * Compute the total token estimate for the context indicator.
-     * Combines conversation tokens, additional context file tokens, plot map
-     * tokens, and vault context item tokens so the full context window usage
-     * is shown.
+     * Returns the session-side total which already covers the full request
+     * (system prompt + tool defs + injected context + chat turns).
      */
     private computeTotalTokens(): number {
-        let total = this.contextEstimate + this.additionalContextTokens + this.plotMapTokens;
-        const assembly = this.plugin.currentAssembly;
-        if (assembly) {
-            for (const item of assembly.contextItems) {
-                total += item.tokenEstimate;
-            }
-        }
-        return total;
+        return this.contextEstimate;
     }
 
     /** Build the context label for the token indicator, noting a linked plot map. */
@@ -2586,4 +2630,42 @@ export class CoWriterPanel extends AbstractChatPanel {
 /** Shorten `s` to `max` chars with an ellipsis (for compact card/preview text). */
 function truncateText(s: string, max: number): string {
     return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+/**
+ * Shorten a model name for display in the chat header button. Strips common
+ * verbose suffixes (date stamps, quantization, instruct/chat tags, org
+ * prefixes) and truncates the middle if the result is still too long.
+ *
+ * Examples:
+ *   gpt-4o-mini-2024-07-18           → gpt-4o-mini
+ *   meta-llama-3.1-70b-instruct      → llama-3.1-70b
+ *   qwen2.5-72b-instruct-q4_K_M      → qwen2.5-72b
+ *   deepseek-r1-distill-qwen-32b     → deepseek-r1-distill-qwen-32b (short enough)
+ *   claude-3-5-sonnet-20241022       → claude-3-5-sonnet
+ */
+function shortenModelName(raw: string): string {
+    let name = raw;
+
+    // Strip org prefix before the first slash (HF-style: org/model → model)
+    name = name.replace(/^[^/]+\//, '');
+
+    // Strip trailing date stamps: -2024-07-18 or -20241022
+    name = name.replace(/-(?:\d{4}-\d{2}-\d{2}|\d{8})$/i, '');
+
+    // Strip trailing quantization suffixes: -q4, -q4_K_M, -Q4_0, -iq4_xs, etc.
+    name = name.replace(/-i?q\d[_a-z0-9]*$/i, '');
+
+    // Strip -instruct / -chat suffix
+    name = name.replace(/-(?:instruct|chat)$/i, '');
+
+    // Strip org-name prefix for known providers: meta-llama- → llama-
+    name = name.replace(/^meta-llama-/i, 'llama-');
+    name = name.replace(/^mistralai-/i, 'mistral-');
+
+    // If still too long, truncate the middle (preserves start + end)
+    const MAX = 22;
+    if (name.length <= MAX) return name;
+    const half = Math.floor((MAX - 1) / 2);
+    return name.slice(0, half) + '\u2026' + name.slice(name.length - half);
 }
