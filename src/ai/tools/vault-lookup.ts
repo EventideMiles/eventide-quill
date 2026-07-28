@@ -112,11 +112,15 @@ export const vaultLookupTool: Tool = {
         // Truncate at maxChars, reserving room for both the continuation
         // prefix (when offset > 0) and the truncation hint so
         // executeToolCall's own truncation guard doesn't strip our message.
-        const nextOffset = offset + maxChars;
+        // nextOffset must advance by the ACTUAL body length returned (usable),
+        // not maxChars — otherwise the model skips content it never saw.
         const prefix = offset > 0 ? `[Continuing from offset ${offset}]\n\n` : '';
-        const hint = `\n\n...[truncated — call vault_lookup again with path="${query}" and offset=${nextOffset} to read the rest]`;
-        const usable = maxChars - prefix.length - hint.length;
-        return prefix + slice.slice(0, usable) + hint;
+        const hint = (next: number): string =>
+            `\n\n...[truncated — call vault_lookup again with path="${query}" and offset=${next} to read the rest]`;
+        // Trial with the upper-bound offset to get worst-case hint length.
+        const usable = maxChars - prefix.length - hint(offset + maxChars).length;
+        const nextOffset = offset + usable;
+        return prefix + slice.slice(0, usable) + hint(nextOffset);
     }
 };
 
