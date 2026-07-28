@@ -4105,10 +4105,14 @@ export class CoWriterSession {
 
     /**
      * Handle a vault file rename. Updates internal path references
-     * (manuscriptPath, contextFilePaths) and injects a system message into
-     * the conversation so the agent knows about the new path. Without this,
-     * subsequent edit_note / insert_note calls referencing the old path fail
-     * because the file no longer exists there.
+     * (manuscriptPath, contextFilePaths), rewrites old path occurrences in
+     * the API message arrays so the model doesn't default back to the stale
+     * path from its context history, and injects a system message as a
+     * final reminder. Without this, subsequent edit_note / insert_note calls
+     * referencing the old path fail because the file no longer exists there.
+     *
+     * Messages carrying Anthropic {@link thinkingBlocks} are skipped — signed
+     * reasoning must replay verbatim.
      */
     handleFileRename(oldPath: string, newPath: string): void {
         let changed = false;
@@ -4125,7 +4129,41 @@ export class CoWriterSession {
 
         if (!changed) return;
 
-        const notice = `[System note: The file "${oldPath}" has been renamed to "${newPath}". Use the new path for all future operations.]`;
+        // Rewrite old path references in the API message arrays so the model
+        // doesn't fall back to the old path from its tool-call history / prior
+        // results. Replace both the full path and the basename (the model often
+        // uses just the filename).
+        const oldBasename = oldPath.split('/').pop()!;
+        const newBasename = newPath.split('/').pop()!;
+
+        const rewriteMessages = (messages: ChatMessage[]) => {
+            for (const msg of messages) {
+                if (msg.thinkingBlocks && msg.thinkingBlocks.length > 0) continue;
+
+                if (typeof msg.content === 'string' && msg.content) {
+                    msg.content = msg.content.split(oldPath).join(newPath);
+                    if (oldBasename !== newBasename) {
+                        msg.content = msg.content.split(oldBasename).join(newBasename);
+                    }
+                }
+
+                if (msg.toolCalls) {
+                    for (const tc of msg.toolCalls) {
+                        if (tc.arguments) {
+                            tc.arguments = tc.arguments.split(oldPath).join(newPath);
+                            if (oldBasename !== newBasename) {
+                                tc.arguments = tc.arguments.split(oldBasename).join(newBasename);
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        rewriteMessages(this.discussCurrentMessages);
+        rewriteMessages(this.loreCoachMessages);
+
+        const notice = `[System note: The file "${oldPath}" has been renamed to "${newPath}". All prior references have been updated to the new path. Use "${newPath}" for all future operations.]`;
         const msg: ChatMessage = { role: 'system', content: notice };
         this.discussCurrentMessages.push(msg);
         if (this.loreCoachMessages.length > 0) {
