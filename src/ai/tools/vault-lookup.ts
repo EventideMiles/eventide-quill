@@ -109,12 +109,13 @@ export const vaultLookupTool: Tool = {
             return offset > 0 ? `[Continuing from offset ${offset}]\n\n${slice}` : slice;
         }
 
-        // Truncate at maxChars, reserving room for the continuation hint so
+        // Truncate at maxChars, reserving room for both the continuation
+        // prefix (when offset > 0) and the truncation hint so
         // executeToolCall's own truncation guard doesn't strip our message.
         const nextOffset = offset + maxChars;
-        const hint = `\n\n...[truncated — call vault_lookup again with path="${query}" and offset=${nextOffset} to read the rest]`;
-        const usable = maxChars - hint.length;
         const prefix = offset > 0 ? `[Continuing from offset ${offset}]\n\n` : '';
+        const hint = `\n\n...[truncated — call vault_lookup again with path="${query}" and offset=${nextOffset} to read the rest]`;
+        const usable = maxChars - prefix.length - hint.length;
         return prefix + slice.slice(0, usable) + hint;
     }
 };

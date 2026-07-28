@@ -1071,9 +1071,18 @@ export class QuillSidebarView extends ItemView {
             // reviewEngine was null — set it to 'generic' for Path B.
             if (session.reviewEngine === null) {
                 session.reviewEngine = 'generic';
+                // Reset discuss API messages so sendDiscussion's init block
+                // re-seeds with the review-discuss system prompt (approval-gate
+                // + editing-tool instructions) on the next send. Without this,
+                // stale discuss messages keep the generic system prompt and the
+                // init block is skipped because the array is non-empty.
+                session.discussCurrentMessages = [];
             }
-        } else {
+        } else if (session.reviewEngine !== null) {
             session.reviewEngine = null;
+            // Symmetric reset when leaving review-discuss so the next plain
+            // discuss call re-seeds the generic discuss system prompt.
+            session.discussCurrentMessages = [];
         }
     }
 

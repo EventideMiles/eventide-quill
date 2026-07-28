@@ -686,6 +686,17 @@ export function checkDuplicateText(text: string): LintResult[] {
             if (para.trim()) paragraphs.push({ text: para, from: start });
             start = i + 2;
             i++;
+        } else if (
+            text[i] === '\r' &&
+            i + 3 < text.length &&
+            text[i + 1] === '\n' &&
+            text[i + 2] === '\r' &&
+            text[i + 3] === '\n'
+        ) {
+            const para = text.slice(start, i);
+            if (para.trim()) paragraphs.push({ text: para, from: start });
+            start = i + 4;
+            i += 3;
         }
     }
     const last = text.slice(start);
