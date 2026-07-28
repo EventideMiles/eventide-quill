@@ -121,7 +121,7 @@ describe('saveSession + loadSession round-trip', () => {
 
     it('still loads older sidecars that omit reviewEngine', async () => {
         const vault = makeMemoryVault();
-        // Hand-write a sidecar shaped like a pre-1.4.0 save (no reviewEngine field).
+        // Hand-write a sidecar shaped like a pre-1.5.0 save (no reviewEngine field).
         const state = makeState('legacy chat') as SerializedCoWriterState & { reviewEngine?: unknown };
         delete state.reviewEngine;
         const entry = await saveSession(vault, dir, state);
