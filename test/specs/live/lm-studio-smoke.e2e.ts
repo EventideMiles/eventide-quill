@@ -60,13 +60,13 @@ describe('Live LM Studio smoke', () => {
         if (!liveAvailable) return this.skip();
 
         await browser.executeObsidianCommand('eventide-quill:quill-cowriter-open');
-        await sendCoWriterMessage('In one short sentence, who arrives at the harbour?');
+        const baseline = await sendCoWriterMessage('In one short sentence, who arrives at the harbour?');
 
         // The real model is slow and timing varies wildly — give it generous
         // room. The assertion is just that SOME assistant text arrives.
-        await waitForAssistantDone(120_000);
+        await waitForAssistantDone(120_000, baseline);
         const bubbles = (await browser.$$('.quill-cowriter-panel__chat-bubble--assistant')) as unknown as WebdriverIO.Element[];
-        expect(bubbles.length).to.be.greaterThan(0);
+        expect(bubbles.length).to.be.greaterThan(baseline);
         const lastText = await bubbles[bubbles.length - 1]!.getText();
         expect(lastText.length).to.be.greaterThan(0);
     });
@@ -78,17 +78,17 @@ describe('Live LM Studio smoke', () => {
         // test's session — keeps the test independent (the suite can run a
         // single `it` in isolation via WDIO's --spec filter without breaking).
         await browser.executeObsidianCommand('eventide-quill:quill-cowriter-open');
-        await sendCoWriterMessage('In one short sentence, who arrives at the harbour?');
-        await waitForAssistantDone(120_000);
+        const baselineOne = await sendCoWriterMessage('In one short sentence, who arrives at the harbour?');
+        await waitForAssistantDone(120_000, baselineOne);
 
         // Now send the actual follow-up the test is verifying.
-        await sendCoWriterMessage('And in one word, where did she come from?');
-        await waitForAssistantDone(120_000);
+        const baselineTwo = await sendCoWriterMessage('And in one word, where did she come from?');
+        await waitForAssistantDone(120_000, baselineTwo);
 
-        // Two assistant bubbles proves the session retained the first turn in
-        // its API array (otherwise the model has no context to be "follow-up"
-        // about).
+        // Two assistant bubbles beyond this test's starting baseline proves
+        // the session retained the first turn in its API array (otherwise the
+        // model has no context to be "follow-up" about).
         const bubbles = (await browser.$$('.quill-cowriter-panel__chat-bubble--assistant')) as unknown as WebdriverIO.Element[];
-        expect(bubbles.length).to.be.greaterThan(1);
+        expect(bubbles.length).to.be.greaterThan(baselineOne + 1);
     });
 });

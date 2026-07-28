@@ -25,10 +25,10 @@ describe('Co-writer chat', () => {
         await enqueueMock({ body: sseChatBody(['The chapter opens with the traveller arriving by ship.']) });
 
         await browser.executeObsidianCommand('eventide-quill:quill-cowriter-open');
-        await sendCoWriterMessage('Summarise the opening in one sentence.');
+        const baseline = await sendCoWriterMessage('Summarise the opening in one sentence.');
 
-        const bubble = await waitForAssistantBubble();
-        await waitForAssistantDone();
+        const bubble = await waitForAssistantBubble(20_000, baseline);
+        await waitForAssistantDone(30_000, baseline);
         const text = await bubble.getText();
         expect(text).to.match(/traveller|arrives|ship/i);
 
@@ -68,9 +68,9 @@ describe('Co-writer chat', () => {
             { timeout: 5_000, timeoutMsg: 'coach mode row never appeared in the picker' }
         );
 
-        await sendCoWriterMessage('Coach me on the opening paragraph.');
-        const bubble = await waitForAssistantBubble();
-        await waitForAssistantDone();
+        const baseline = await sendCoWriterMessage('Coach me on the opening paragraph.');
+        const bubble = await waitForAssistantBubble(20_000, baseline);
+        await waitForAssistantDone(30_000, baseline);
         const text = await bubble.getText();
         expect(text).to.match(/coach|tighten|sentence/i);
     });
@@ -79,8 +79,8 @@ describe('Co-writer chat', () => {
         await enqueueMock({ body: sseChatBody(['First reply.']) });
 
         await browser.executeObsidianCommand('eventide-quill:quill-cowriter-open');
-        await sendCoWriterMessage('Hello.');
-        await waitForAssistantDone();
+        const baseline = await sendCoWriterMessage('Hello.');
+        await waitForAssistantDone(30_000, baseline);
 
         // Count bubbles before close. There should be at least one user and
         // one assistant bubble.
