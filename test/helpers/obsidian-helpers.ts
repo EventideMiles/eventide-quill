@@ -10,6 +10,39 @@
  */
 import { browser } from '@wdio/globals';
 
+/**
+ * Thrown by {@link openFile} / {@link readVaultFile} when a vault path doesn't
+ * resolve to a file. Distinct from a generic Error so a future spec can catch
+ * path failures specifically (e.g. to retry against a fallback fixture) without
+ * matching on message text. Mirrors the production codebase's typed-error
+ * convention (AGENTS.md "Error handling") — kept out of that doc's enumeration
+ * because these are test infra, not production control-flow.
+ *
+ * Note: the throw sites are all in the WDIO worker process, NOT inside
+ * `browser.execute` callbacks. Custom class identity does not survive WDIO's
+ * serialization of renderer-thrown errors, so any new throw added inside an
+ * `execute` callback should return a sentinel and throw from the worker
+ * instead (see {@link readVaultFile}'s pattern).
+ */
+export class VaultPathError extends Error {
+    constructor(path: string, operation: string) {
+        super(`${operation}: vault path does not resolve: ${path}`);
+        this.name = 'VaultPathError';
+    }
+}
+
+/**
+ * Thrown by {@link waitForAssistantBubble} when its internal `found` invariant
+ * is violated (waitUntil reported success but no bubble was captured). Should
+ * never fire in practice — when it does, it's a helper bug, not a test bug.
+ */
+export class AssistantWaitError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'AssistantWaitError';
+    }
+}
+
 /** Active Obsidian App, untyped — its API is huge and we only touch a tiny slice. */
 type ObsidianApp = {
     vault: {
@@ -40,7 +73,7 @@ export async function openFile(path: string, newLeaf = false): Promise<void> {
         path,
         newLeaf
     );
-    if (!opened) throw new Error(`openFile: vault path does not resolve: ${path}`);
+    if (!opened) throw new VaultPathError(path, 'openFile');
 }
 
 /** Overwrite a vault file's contents (creates the file if missing). */
@@ -55,17 +88,24 @@ export async function writeVaultFile(path: string, content: string): Promise<voi
     );
 }
 
-/** Read a vault file's contents as a string. */
+/**
+ * Read a vault file's contents as a string. Throws {@link VaultPathError} (in
+ * the worker, not the renderer) if the path doesn't resolve — the
+ * `browser.execute` callback returns a sentinel so the custom class identity
+ * survives (renderer-thrown errors serialize to plain `Error`).
+ */
 export async function readVaultFile(path: string): Promise<string> {
-    return browser.execute(
+    const result = await browser.execute(
         async (p) => {
             const app = (window as unknown as { app: ObsidianApp }).app;
             const file = app.vault.getAbstractFileByPath(p);
-            if (!file) throw new Error(`vault file not found: ${p}`);
+            if (!file) return null;
             return app.vault.read(file);
         },
         path
     );
+    if (result === null) throw new VaultPathError(path, 'readVaultFile');
+    return result;
 }
 
 /**
@@ -146,7 +186,7 @@ export async function waitForAssistantBubble(timeoutMs = 20_000, baseline = 0): 
         },
         { timeout: timeoutMs, timeoutMsg: 'assistant bubble never produced text' }
     );
-    if (!found) throw new Error('waitForAssistantBubble: internal error — found unset after waitUntil succeeded');
+    if (!found) throw new AssistantWaitError('waitForAssistantBubble: internal error — found unset after waitUntil succeeded');
     return found;
 }
 
