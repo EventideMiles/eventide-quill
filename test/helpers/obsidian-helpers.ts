@@ -205,11 +205,13 @@ export async function waitForAssistantBubble(timeoutMs = 20_000, baseline = 0): 
             // prior turns must not satisfy the wait.
             if (bubbles.length <= baseline) return false;
             const last = bubbles[bubbles.length - 1]!;
-            // Require non-empty text. The bubble is added to the DOM the
-            // moment streaming starts but starts empty; an empty bubble that
-            // has finished streaming is a real failure case (empty response),
-            // not a success.
-            const text = await last.getText();
+            // Require non-empty (non-whitespace) text. The bubble is added to
+            // the DOM the moment streaming starts but starts empty; an empty
+            // bubble that has finished streaming is a real failure case (empty
+            // response), not a success. Trim before the emptiness check so a
+            // stray newline or padding whitespace from rendering doesn't
+            // satisfy the wait prematurely.
+            const text = (await last.getText()).trim();
             if (text.length === 0) return false;
             found = last;
             return true;
