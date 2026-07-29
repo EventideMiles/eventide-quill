@@ -31,7 +31,7 @@
             "models": [
                 { "id": "local-model", "role": "both", "model": "local-model" }
             ],
-            "maxContextTokens": 32768,
+            "maxContextTokens": 200000,
             "maxOutputTokens": 4096
         }
     ],

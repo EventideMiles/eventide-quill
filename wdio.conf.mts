@@ -92,15 +92,37 @@ export const config: WebdriverIO.Config = {
     // suite is excluded.
     maxInstances: Number(env.WDIO_MAX_INSTANCES ?? 1),
 
-    capabilities: desktopVersions.map(([appVersion, installerVersion]) => ({
-        browserName: 'obsidian',
-        'wdio:obsidianOptions': {
-            appVersion,
-            installerVersion,
-            plugins: ['.'],
-            vault
-        }
-    })) as WebdriverIO.Capabilities[],
+    capabilities: [
+        ...desktopVersions.map(([appVersion, installerVersion]) => ({
+            browserName: 'obsidian',
+            'wdio:obsidianOptions': {
+                appVersion,
+                installerVersion,
+                plugins: ['.'],
+                vault
+            }
+        })),
+        // Mobile emulation: uses Obsidian's `app.emulateMobile` to test the
+        // responsive UI (button-row collapse, viewport width) without a real
+        // Android device. The real mobile app runs on Capacitor (not Electron)
+        // so this is imperfect but catches the most common CSS/layout
+        // regressions. See AGENTS.md "Mobile as a first-class target".
+        ...desktopVersions.map(([appVersion, installerVersion]) => ({
+            browserName: 'obsidian',
+            'wdio:obsidianOptions': {
+                appVersion,
+                installerVersion,
+                emulateMobile: true,
+                plugins: ['.'],
+                vault
+            },
+            'goog:chromeOptions': {
+                mobileEmulation: {
+                    deviceMetrics: { width: 390, height: 844 }
+                }
+            }
+        }))
+    ] as WebdriverIO.Capabilities[],
 
     services: ['obsidian'],
 

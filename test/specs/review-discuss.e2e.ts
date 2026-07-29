@@ -2,7 +2,7 @@ import { browser } from '@wdio/globals';
 import { expect } from 'chai';
 import { obsidianPage } from 'wdio-obsidian-service';
 import { enqueueMock, clearMocks, getMockStats, sseChatBody, sseToolCallBody } from '../helpers/mock-server.js';
-import { openFile, sendCoWriterMessage, openQuillSidebar } from '../helpers/obsidian-helpers.js';
+import { openFile, sendCoWriterMessage, openQuillSidebar, isMobileEmulation } from '../helpers/obsidian-helpers.js';
 
 /**
  * Review-tab discussion (the v1.4.0 review-discuss mode). After a report
@@ -17,6 +17,7 @@ import { openFile, sendCoWriterMessage, openQuillSidebar } from '../helpers/obsi
  * round surface a change card?) without coupling to brittle button selectors.
  */
 describe('Review-tab discussion (review-discuss)', () => {
+    beforeEach(function () { if (isMobileEmulation()) return this.skip(); });
     beforeEach(async () => {
         await clearMocks();
         await obsidianPage.resetVault();

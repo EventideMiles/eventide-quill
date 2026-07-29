@@ -1,7 +1,7 @@
 import { browser } from '@wdio/globals';
 import { expect } from 'chai';
 import { obsidianPage } from 'wdio-obsidian-service';
-import { openFile, openQuillSidebar } from '../helpers/obsidian-helpers.js';
+import { openFile, openQuillSidebar, isMobileEmulation } from '../helpers/obsidian-helpers.js';
 
 /**
  * CodeMirror decorations — the linter's gutter markers and the inline diff
@@ -21,6 +21,7 @@ import { openFile, openQuillSidebar } from '../helpers/obsidian-helpers.js';
  * — a more meaningful coverage than a synthetic dispatch here.
  */
 describe('CodeMirror decorations', () => {
+    beforeEach(function () { if (isMobileEmulation()) return this.skip(); });
     beforeEach(async () => {
         await obsidianPage.resetVault();
         await openQuillSidebar();

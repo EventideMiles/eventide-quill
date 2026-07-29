@@ -2,7 +2,7 @@ import { browser } from '@wdio/globals';
 import { expect } from 'chai';
 import { obsidianPage } from 'wdio-obsidian-service';
 import { enqueueMock, clearMocks, getMockStats, sseChatBody } from '../helpers/mock-server.js';
-import { openFile, sendCoWriterMessage, waitForAssistantBubble, waitForAssistantDone, openQuillSidebar } from '../helpers/obsidian-helpers.js';
+import { openFile, sendCoWriterMessage, waitForAssistantBubble, waitForAssistantDone, openQuillSidebar, isMobileEmulation } from '../helpers/obsidian-helpers.js';
 
 /**
  * Co-writer core — discuss / coach / lorebook modes. Each mode has its own
@@ -14,6 +14,7 @@ import { openFile, sendCoWriterMessage, waitForAssistantBubble, waitForAssistant
  *      test vault always has the mock provider pre-configured.
  */
 describe('Co-writer chat', () => {
+    beforeEach(function () { if (isMobileEmulation()) return this.skip(); });
     beforeEach(async () => {
         await clearMocks();
         await obsidianPage.resetVault();

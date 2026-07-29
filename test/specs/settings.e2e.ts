@@ -1,7 +1,7 @@
 import { browser } from '@wdio/globals';
 import { expect } from 'chai';
 import { obsidianPage } from 'wdio-obsidian-service';
-import { openFile, openQuillSidebar } from '../helpers/obsidian-helpers.js';
+import { openFile, openQuillSidebar, isMobileEmulation } from '../helpers/obsidian-helpers.js';
 
 /**
  * Settings UI flows — open the settings tab, toggle a feature, verify the
@@ -16,6 +16,7 @@ import { openFile, openQuillSidebar } from '../helpers/obsidian-helpers.js';
  * visible name text match.
  */
 describe('Settings UI', () => {
+    beforeEach(function () { if (isMobileEmulation()) return this.skip(); });
     beforeEach(async () => {
         await obsidianPage.resetVault();
         await openQuillSidebar();

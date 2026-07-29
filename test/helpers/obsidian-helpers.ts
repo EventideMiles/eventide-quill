@@ -151,6 +151,24 @@ export async function openQuillSidebar(): Promise<void> {
 }
 
 /**
+ * Returns true when running under the mobile-emulation capability
+ * (`emulateMobile: true` in `wdio:obsidianOptions`). Used by specs that test
+ * desktop-specific UI flows (mode-picker popovers, right-click context menus
+ * with desktop layout assumptions) to skip on mobile — the `mobile-smoke`
+ * spec covers mobile validation separately.
+ */
+export function isMobileEmulation(): boolean {
+    // WDIO 9 stores the requested capabilities (as-specified in wdio.conf.mts)
+    // on `browser.requestedCapabilities`, NOT on `browser.capabilities` (which
+    // holds the Chromium session caps after launch — the obsidian options are
+    // stripped during session negotiation). Read `emulateMobile` from the
+    // requested caps to detect the mobile-emulation capability.
+    const reqCaps = (browser as unknown as { requestedCapabilities?: Record<string, unknown> }).requestedCapabilities;
+    const opts = reqCaps?.['wdio:obsidianOptions'] as { emulateMobile?: boolean } | undefined;
+    return opts?.emulateMobile === true;
+}
+
+/**
  * Type into the co-writer chat input and press Enter to send. Returns the
  * count of assistant bubbles present BEFORE the send — pass this to
  * {@link waitForAssistantBubble} / {@link waitForAssistantDone} so they wait
