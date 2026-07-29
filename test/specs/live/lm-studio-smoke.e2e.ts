@@ -89,6 +89,8 @@ describe('Live LM Studio smoke', () => {
         const bubbles = (await browser.$$('.quill-cowriter-panel__chat-bubble--assistant')) as unknown as WebdriverIO.Element[];
         expect(bubbles.length).to.be.greaterThan(baseline);
         const lastText = await bubbles[bubbles.length - 1]!.getText();
+        // Log the model's actual reply for wire-format debugging.
+        console.log('[live] Model reply: ' + lastText.slice(0, 200));
         expect(lastText.trim().length).to.be.greaterThan(0);
     });
 
