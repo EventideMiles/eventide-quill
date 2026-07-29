@@ -42,15 +42,14 @@ describe('Live LM Studio smoke', () => {
         if (!liveAvailable) {
             console.warn(`[live] LM Studio not reachable at ${LM_STUDIO_URL} — skipping live smoke suite`);
             this.skip();
+            return;
         }
-    });
-
-    beforeEach(async () => {
-        if (!liveAvailable) return;
-        // Each test gets a clean vault + a fresh manuscript open + the sidebar
-        // visible. resetVault restores files in-place without an Obsidian
-        // reboot, so it's cheap enough to run per-test even on the slow live
-        // path.
+        // One-time setup: vault + manuscript + sidebar. Moved here from
+        // beforeEach because on mobile the resetVault + openFile sequence
+        // disrupts the sidebar (Obsidian's mobile leaf management blanks
+        // the panel and it doesn't recover within the sidebar wait timeout).
+        // The live suite tests wire format against a real model — it doesn't
+        // need a pristine vault per test, just the manuscript open for context.
         await obsidianPage.resetVault();
         await openFile('manuscript/Chapter 01.md');
         await openQuillSidebar();
@@ -79,6 +78,11 @@ describe('Live LM Studio smoke', () => {
     it('streams a discuss-mode reply from the real local model', async function () {
         if (!liveAvailable) return this.skip();
 
+        // Reset any chat left from a prior test so this test starts clean.
+        await browser.execute(() => {
+            const plugin = (window as any).app?.plugins?.plugins?.['eventide-quill'];
+            plugin?.resetCoWriterChat?.(true);
+        });
         await browser.executeObsidianCommand('eventide-quill:quill-cowriter-open');
         await switchToDiscussMode();
         const baseline = await sendCoWriterMessage('In one short sentence, who arrives at the harbour?');
@@ -100,6 +104,10 @@ describe('Live LM Studio smoke', () => {
         // Open a FRESH chat for this test rather than relying on the prior
         // test's session — keeps the test independent (the suite can run a
         // single `it` in isolation via WDIO's --spec filter without breaking).
+        await browser.execute(() => {
+            const plugin = (window as any).app?.plugins?.plugins?.['eventide-quill'];
+            plugin?.resetCoWriterChat?.(true);
+        });
         await browser.executeObsidianCommand('eventide-quill:quill-cowriter-open');
         await switchToDiscussMode();
         const baselineOne = await sendCoWriterMessage('In one short sentence, who arrives at the harbour?');
