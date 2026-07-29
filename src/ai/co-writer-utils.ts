@@ -310,8 +310,12 @@ export function proseBeforeCursorOrDoc(editor: Editor, tail: number): string {
     // (truthy but not prose). The model sees the raw YAML and reports an
     // "empty" document. Stripping it lets the fallback to `full` fire
     // correctly so the model gets actual prose context.
-    const proseOnly = beforeCursor.replace(/^---\n[\s\S]*?\n---\n?/, '').trim();
-    return (proseOnly || full).slice(-tail);
+    const strip = /^---\n[\s\S]*?\n---\n?/;
+    const proseOnly = beforeCursor.replace(strip, '').trim();
+    // Also strip frontmatter from the fallback so the model never sees
+    // raw YAML even when the full document is used as context.
+    const fullProse = full.replace(strip, '').trim();
+    return (proseOnly || fullProse).slice(-tail);
 }
 
 /**
