@@ -7,6 +7,7 @@ export default defineConfig(
 		'node_modules',
 		'dist',
 		'.planning', // gitignored local-only scratch (PR scope docs, sizing scripts, etc.)
+		'.obsidian-cache', // wdio-obsidian-service's downloaded Obsidian bundle (~100MB, cached in CI)
 		'esbuild.config.mjs',
 		'prettier.config.mjs',
 		'version-bump.mjs',
@@ -17,8 +18,13 @@ export default defineConfig(
 		'package.json',
 		'package-lock.json',
 		'tsconfig.json',
+		'tsconfig.e2e.json',
 		'vitest.config.ts', // Node.js config file (uses node:path, __dirname)
+		'wdio.conf.mts', // WDIO E2E config (top-level await, WDIO globals)
 		'scripts/live-linter-ai.mts', // dev-only LM Studio harness, not part of the plugin build
+		'scripts/setup-test-vault.mjs', // dev-only chore script (Function() eval, Node built-ins)
+		'test/**/*.ts', // WDIO E2E specs + helpers — type-checked via `npm run typecheck:e2e`, not ESLint (projectService friction not worth it for one-off infra)
+		'test/**/*.mts'
 	]),
 	{
 		languageOptions: {
@@ -28,7 +34,10 @@ export default defineConfig(
 			},
 			parserOptions: {
 				projectService: {
-					allowDefaultProject: ['eslint.config.mts', 'manifest.json'],
+					allowDefaultProject: [
+						'eslint.config.mts',
+						'manifest.json'
+					],
 				},
 				tsconfigRootDir: import.meta.dirname,
 				extraFileExtensions: ['.json'],

@@ -36,3 +36,28 @@ dashboards/
 
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
+
+# --- Test harness -----------------------------------------------------------
+# Sandboxed test vaults: never commit Obsidian's runtime state. The committed
+# vault ships with placeholder content + a `data.json.example` template; the
+# working `data.json`, copied plugin build outputs, and per-run workspace
+# state are all gitignored. See `.planning/test-harness-methodology.md` and
+# the "Sandboxed testing" section in AGENTS.md.
+test/vaults/*/.obsidian/plugins/eventide-quill/data.json
+test/vaults/*/.obsidian/plugins/eventide-quill/main.js
+test/vaults/*/.obsidian/plugins/eventide-quill/styles.css
+test/vaults/*/.obsidian/workspace*
+test/vaults/*/.obsidian/cache
+test/vaults/*/.obsidian/app.json
+test/vaults/*/.obsidian/appearance.json
+test/vaults/*/.obsidian/community-plugins.json
+test/vaults/*/.obsidian/graph.json
+test/vaults/*/.obsidian/hotkeys.json
+
+# wdio-obsidian-service caches the downloaded Obsidian app bundle here.
+# ~100MB per platform; cached in CI via actions/cache, never committed.
+.obsidian-cache/
+
+# wdio-obsidian-service output (screenshots on failure, etc.)
+webdriverio-debug.log
+errorShots/

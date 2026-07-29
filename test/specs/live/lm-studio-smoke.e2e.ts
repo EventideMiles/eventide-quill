@@ -1,0 +1,126 @@
+import { browser } from '@wdio/globals';
+import { expect } from 'chai';
+import { obsidianPage } from 'wdio-obsidian-service';
+import { openFile, sendCoWriterMessage, waitForAssistantDone, openQuillSidebar } from '../../helpers/obsidian-helpers.js';
+
+/**
+ * Live LM Studio smoke — exercises the real wire format against a real local
+ * model. NOT part of the mocked suite (these specs hit localhost:1234 directly
+ * and don't use the mock server for chat completions).
+ *
+ * Run with:
+ *   npm run test:e2e:live
+ *
+ * Auto-skips if LM Studio is unreachable at http://localhost:1234/v1/models so
+ * CI (which doesn't run a model) doesn't fail. Skipped tests in Mocha exit 0,
+ * keeping the suite green when LM Studio is off.
+ *
+ * The mocked suite covers behaviour; this suite catches wire-format drift
+ * (new required fields, response shape changes, etc.) that a mock server
+ * can't catch by definition.
+ */
+const LM_STUDIO_URL = 'http://localhost:1234/v1/models';
+
+async function lmStudioReachable(): Promise<boolean> {
+    try {
+        const res = await fetch(LM_STUDIO_URL, { method: 'GET', signal: AbortSignal.timeout(2000) });
+        return res.ok;
+    } catch {
+        return false;
+    }
+}
+
+describe('Live LM Studio smoke', () => {
+    let liveAvailable = false;
+
+    before(async function () {
+        // Probe once and cache the result. `this.skip()` in `before` marks
+        // the whole suite as pending (exit 0) so CI without a model stays
+        // green; each `it()` re-checks so a model killed mid-suite still
+        // produces a skip rather than a network-error failure.
+        liveAvailable = await lmStudioReachable();
+        if (!liveAvailable) {
+            console.warn(`[live] LM Studio not reachable at ${LM_STUDIO_URL} — skipping live smoke suite`);
+            this.skip();
+            return;
+        }
+        // One-time setup: vault + manuscript + sidebar. Moved here from
+        // beforeEach because on mobile the resetVault + openFile sequence
+        // disrupts the sidebar (Obsidian's mobile leaf management blanks
+        // the panel and it doesn't recover within the sidebar wait timeout).
+        // The live suite tests wire format against a real model — it doesn't
+        // need a pristine vault per test, just the manuscript open for context.
+        await obsidianPage.resetVault();
+        await openFile('manuscript/Chapter 01.md');
+        await openQuillSidebar();
+    });
+
+    /** Switch to discuss mode (the panel default is coach). */
+    async function switchToDiscussMode(): Promise<void> {
+        const modeBtn = await browser.$('.quill-cowriter-panel__mode-btn');
+        await modeBtn.waitForDisplayed({ timeout: 10_000 });
+        await modeBtn.click();
+        await browser.waitUntil(
+            async () => {
+                const rows = (await browser.$$('.quill-cowriter-panel__mode-row')) as unknown as WebdriverIO.Element[];
+                for (const row of rows) {
+                    if (/discuss/i.test(await row.getText())) {
+                        await row.click();
+                        return true;
+                    }
+                }
+                return false;
+            },
+            { timeout: 5_000 }
+        );
+    }
+
+    it('streams a discuss-mode reply from the real local model', async function () {
+        if (!liveAvailable) return this.skip();
+
+        // Reset any chat left from a prior test so this test starts clean.
+        await browser.execute(() => {
+            const plugin = (window as any).app?.plugins?.plugins?.['eventide-quill'];
+            plugin?.resetCoWriterChat?.(true);
+        });
+        await browser.executeObsidianCommand('eventide-quill:quill-cowriter-open');
+        await switchToDiscussMode();
+        const baseline = await sendCoWriterMessage('In one short sentence, who arrives at the harbour?');
+
+        // The real model is slow and timing varies wildly — give it generous
+        // room. The assertion is just that SOME assistant text arrives.
+        await waitForAssistantDone(120_000, baseline);
+        const bubbles = (await browser.$$('.quill-cowriter-panel__chat-bubble--assistant')) as unknown as WebdriverIO.Element[];
+        expect(bubbles.length).to.be.greaterThan(baseline);
+        const lastText = await bubbles[bubbles.length - 1]!.getText();
+        // Log the model's actual reply for wire-format debugging.
+        console.log('[live] Model reply: ' + lastText.slice(0, 200));
+        expect(lastText.trim().length).to.be.greaterThan(0);
+    });
+
+    it('handles a follow-up turn using the same chat session', async function () {
+        if (!liveAvailable) return this.skip();
+
+        // Open a FRESH chat for this test rather than relying on the prior
+        // test's session — keeps the test independent (the suite can run a
+        // single `it` in isolation via WDIO's --spec filter without breaking).
+        await browser.execute(() => {
+            const plugin = (window as any).app?.plugins?.plugins?.['eventide-quill'];
+            plugin?.resetCoWriterChat?.(true);
+        });
+        await browser.executeObsidianCommand('eventide-quill:quill-cowriter-open');
+        await switchToDiscussMode();
+        const baselineOne = await sendCoWriterMessage('In one short sentence, who arrives at the harbour?');
+        await waitForAssistantDone(120_000, baselineOne);
+
+        // Now send the actual follow-up the test is verifying.
+        const baselineTwo = await sendCoWriterMessage('And in one word, where did she come from?');
+        await waitForAssistantDone(120_000, baselineTwo);
+
+        // Two assistant bubbles beyond this test's starting baseline proves
+        // the session retained the first turn in its API array (otherwise the
+        // model has no context to be "follow-up" about).
+        const bubbles = (await browser.$$('.quill-cowriter-panel__chat-bubble--assistant')) as unknown as WebdriverIO.Element[];
+        expect(bubbles.length).to.be.greaterThan(baselineOne + 1);
+    });
+});

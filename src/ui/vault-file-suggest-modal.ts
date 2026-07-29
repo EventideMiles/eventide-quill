@@ -3,8 +3,7 @@ import { buildEmbedFolderPath, embedFolderLabel, findEmbeddedFolders } from '../
 
 /** A selectable item in the vault file picker. */
 export type VaultSuggestionItem =
-    | { kind: 'file'; file: TFile }
-    | { kind: 'folder'; folderPath: string; folderName: string; mode: 'top-k' | 'full' };
+    { kind: 'file'; file: TFile } | { kind: 'folder'; folderPath: string; folderName: string; mode: 'top-k' | 'full' };
 
 /**
  * Suggest modal for picking vault markdown files or embedded folders, with exclusion support.

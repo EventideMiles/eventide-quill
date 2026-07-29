@@ -27,3 +27,4 @@ jobs:
             - run: npm test --if-present
             - run: npm run lint
             - run: npm run lint:dup
+            - run: npm run lint:orphans

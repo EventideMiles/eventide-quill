@@ -305,7 +305,17 @@ export function editorCursorOffset(editor: Editor): number {
 export function proseBeforeCursorOrDoc(editor: Editor, tail: number): string {
     const full = editor.getValue();
     const beforeCursor = full.slice(0, editorCursorOffset(editor));
-    return (beforeCursor || full).slice(-tail);
+    // Strip frontmatter before the truthiness check. When the cursor sits
+    // inside or just past the YAML block, beforeCursor is only metadata
+    // (truthy but not prose). The model sees the raw YAML and reports an
+    // "empty" document. Stripping it lets the fallback to `full` fire
+    // correctly so the model gets actual prose context.
+    const strip = /^---\n[\s\S]*?\n---\n?/;
+    const proseOnly = beforeCursor.replace(strip, '').trim();
+    // Also strip frontmatter from the fallback so the model never sees
+    // raw YAML even when the full document is used as context.
+    const fullProse = full.replace(strip, '').trim();
+    return (proseOnly || fullProse).slice(-tail);
 }
 
 /**

@@ -1,0 +1,89 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: E2E tests
+
+on:
+    push:
+        branches: ['main']
+    pull_request:
+        branches: ['**']
+    workflow_dispatch:
+
+permissions: {}
+
+jobs:
+    e2e:
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                shell: bash
+
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  persist-credentials: false
+
+            - name: Use Node.js 22.x
+              uses: actions/setup-node@v6
+              with:
+                  node-version: '22.x'
+                  cache: 'npm'
+
+            - run: npm ci
+
+            # Resolve the Obsidian cache key up front. Running wdio.conf.mts
+            # directly logs the resolved versions (see the `if (process.env.CI)`
+            # block in wdio.conf.mts); we capture that line and use it as a
+            # cache key so the ~100MB Obsidian bundle is restored between runs.
+            - name: Resolve Obsidian cache key
+              run: |
+                  npx tsx wdio.conf.mts | grep 'obsidian-cache-key:' > obsidian-versions-lock.txt
+                  # Wipe the cache created by wdio.conf.mts so actions/cache
+                  # restore below doesn't conflict with the just-created dir.
+                  rm -rf .obsidian-cache
+              env:
+                  CI: '1'
+
+            - name: Cache Obsidian bundle
+              uses: actions/cache@v4
+              with:
+                  path: .obsidian-cache
+                  key: obsidian-cache-ubuntu-latest-${{ hashFiles('obsidian-versions-lock.txt') }}
+
+            # Linux runners need a virtual display for Electron apps. xvfb is
+            # the virtual X server; herbstluftwm is the window manager (some
+            # Obsidian features misbehave without one). Same setup as the
+            # wdio-obsidian-service sample plugin's CI.
+            - name: Set up virtual graphics (xvfb + herbstluftwm)
+              run: |
+                  sudo rm -rf /etc/apt/sources.list.d/*.list
+                  echo "set man-db/auto-update false" | sudo debconf-communicate
+                  sudo dpkg-reconfigure man-db
+                  sudo apt-get update -q
+                  sudo apt-get install -q herbstluftwm dzen2 x11-xserver-utils
+                  export DISPLAY=:99
+                  echo "DISPLAY=$DISPLAY" >> "$GITHUB_ENV"
+                  Xvfb $DISPLAY -screen 0 1280x1024x24 +extension GLX -noreset &
+                  sleep 1
+                  herbstluftwm &
+                  sleep 1
+
+            # Build + seed before running WDIO. The build step is folded into
+            # `npm run test:e2e` already (it runs `npm run build` first), but
+            # the setup-test-vault step has to run separately because WDIO's
+            # onPrepare rewrites the seeded data.json to point at the mock
+            # server (so the seed has to exist first).
+            - name: Seed test vault
+              run: npm run setup:test-vault
+
+            - name: Run mocked E2E suite
+              run: npm run test:e2e
+              env:
+                  # Single instance keeps the mock-server response queue
+                  # deterministic (parallel workers would race on it).
+                  WDIO_MAX_INSTANCES: '1'
+                  # Keep noise down in CI logs.
+                  WDIO_LOG_LEVEL: 'warn'
+
+            # The live suite is intentionally NOT in CI — it requires a real
+            # LM Studio running on the runner, which we don't set up. It runs
+            # locally via `npm run test:e2e:live`.
