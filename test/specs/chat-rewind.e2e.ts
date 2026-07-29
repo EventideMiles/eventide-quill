@@ -24,6 +24,11 @@ describe('Chat rewind', () => {
         if (isMobileEmulation()) return this.skip();
         await clearMocks();
         await obsidianPage.resetVault();
+        await browser.execute(() => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const plugin = (window as any).app.plugins.plugins['eventide-quill'];
+            plugin?.resetCoWriterChat?.(true);
+        });
         await openFile('manuscript/Chapter 01.md');
         await openQuillSidebar();
     });

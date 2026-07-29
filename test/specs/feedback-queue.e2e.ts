@@ -2,8 +2,7 @@ import { browser } from '@wdio/globals';
 import { expect } from 'chai';
 import { obsidianPage } from 'wdio-obsidian-service';
 import { enqueueMock, clearMocks, sseChatBody } from '../helpers/mock-server.js';
-import { openFile, openQuillSidebar } from '../helpers/obsidian-helpers.js';
-import { isMobileEmulation } from '../helpers/obsidian-helpers.js';
+import { openFile, openQuillSidebar, isMobileEmulation } from '../helpers/obsidian-helpers.js';
 
 /**
  * Async feedback queue — submit a review (editorial / beta-reader persona)

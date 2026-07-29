@@ -2,8 +2,7 @@ import { browser } from '@wdio/globals';
 import { expect } from 'chai';
 import { obsidianPage } from 'wdio-obsidian-service';
 import { enqueueMock, clearMocks, sseChatBody } from '../helpers/mock-server.js';
-import { openFile, sendCoWriterMessage, waitForAssistantDone, openQuillSidebar } from '../helpers/obsidian-helpers.js';
-import { isMobileEmulation } from '../helpers/obsidian-helpers.js';
+import { openFile, sendCoWriterMessage, waitForAssistantDone, openQuillSidebar, isMobileEmulation } from '../helpers/obsidian-helpers.js';
 
 /**
  * Conversation persistence — snapshot the co-writer session to a sidecar,
@@ -54,15 +53,20 @@ describe('Conversation persistence', () => {
         expect(ok).to.equal(true);
         expect(id).to.be.a('string');
 
-        // 3. Start a new chat — the display should clear.
+        // 3. Start a new chat — the display should clear. Poll until the
+        // assistant bubbles are gone rather than a fixed pause.
         await browser.execute(() => {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const plugin = (window as any).app.plugins.plugins['eventide-quill'];
             plugin?.resetCoWriterChat?.(true);
         });
-        await browser.pause(500);
-        bubbles = (await browser.$$('.quill-cowriter-panel__chat-bubble--assistant')) as unknown as WebdriverIO.Element[];
-        expect(bubbles.length).to.equal(0);
+        await browser.waitUntil(
+            async () => {
+                const remaining = (await browser.$$('.quill-cowriter-panel__chat-bubble--assistant')) as unknown as WebdriverIO.Element[];
+                return remaining.length === 0;
+            },
+            { timeout: 10_000, timeoutMsg: 'chat was not cleared after resetCoWriterChat' }
+        );
 
         // 4. Restore the saved session.
         const restored = await browser.execute(async (restoreId: string) => {
@@ -72,10 +76,16 @@ describe('Conversation persistence', () => {
         }, id);
         expect(restored).to.equal(true);
 
-        // 5. The chat should reappear with the restored content.
-        await browser.pause(500);
+        // 5. The chat should reappear with the restored content. Poll until
+        // at least one assistant bubble is present rather than a fixed pause.
+        await browser.waitUntil(
+            async () => {
+                const restored = (await browser.$$('.quill-cowriter-panel__chat-bubble--assistant')) as unknown as WebdriverIO.Element[];
+                return restored.length > 0;
+            },
+            { timeout: 10_000, timeoutMsg: 'chat did not reappear after restoreCoWriterSession' }
+        );
         bubbles = (await browser.$$('.quill-cowriter-panel__chat-bubble--assistant')) as unknown as WebdriverIO.Element[];
-        expect(bubbles.length).to.be.greaterThan(0);
         const restoredText = await bubbles[bubbles.length - 1]!.getText();
         expect(restoredText).to.include('42');
     });

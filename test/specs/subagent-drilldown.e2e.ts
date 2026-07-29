@@ -2,8 +2,7 @@ import { browser } from '@wdio/globals';
 import { expect } from 'chai';
 import { obsidianPage } from 'wdio-obsidian-service';
 import { enqueueMock, clearMocks, sseToolCallBody, sseChatBody } from '../helpers/mock-server.js';
-import { openFile, sendCoWriterMessage, openQuillSidebar } from '../helpers/obsidian-helpers.js';
-import { isMobileEmulation } from '../helpers/obsidian-helpers.js';
+import { openFile, sendCoWriterMessage, openQuillSidebar, isMobileEmulation } from '../helpers/obsidian-helpers.js';
 
 /**
  * Subagent drill-down — when the co-writer calls `run_lorebook_batch`, a
@@ -86,10 +85,14 @@ describe('Subagent drill-down', () => {
         await backBtn.waitForDisplayed({ timeout: 10_000 });
         expect(await backBtn.isDisplayed()).to.equal(true);
 
-        // The subagent's conversation should be rendering (chat bubbles in
-        // the drill-down scroll container).
-        const subagentScroll = await browser.$('.quill-cowriter-panel__subagent-view, [class*="subagent"]');
-        expect(await subagentScroll.isExisting()).to.equal(true);
+        // The subagent's conversation should be rendering. The drill-down
+        // replaces the parent chat content, so any chat bubbles visible
+        // alongside the back button are the subagent's. Assert on the
+        // bubble count rather than a broad `[class*="subagent"]` match
+        // (which would also match the status card / View button in the
+        // parent view).
+        const drillDownBubbles = (await browser.$$('.quill-cowriter-panel__chat-bubble')) as unknown as WebdriverIO.Element[];
+        expect(drillDownBubbles.length).to.be.greaterThan(0);
 
         // Click "← Back" and verify the parent chat is preserved.
         await backBtn.click();

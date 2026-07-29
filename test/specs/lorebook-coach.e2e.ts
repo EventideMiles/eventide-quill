@@ -2,8 +2,7 @@ import { browser } from '@wdio/globals';
 import { expect } from 'chai';
 import { obsidianPage } from 'wdio-obsidian-service';
 import { enqueueMock, clearMocks, sseToolCallBody, sseChatBody } from '../helpers/mock-server.js';
-import { openFile, sendCoWriterMessage, waitForAssistantDone, openQuillSidebar } from '../helpers/obsidian-helpers.js';
-import { isMobileEmulation } from '../helpers/obsidian-helpers.js';
+import { openFile, sendCoWriterMessage, waitForAssistantDone, openQuillSidebar, isMobileEmulation } from '../helpers/obsidian-helpers.js';
 
 /**
  * Lorebook coach + `propose_entry` — the coach mode drafts lore entries from
@@ -133,21 +132,20 @@ describe('Lorebook coach (propose_entry)', () => {
         await saveBtn.click();
 
         // After Save, the note should land in the vault (the lorebook folder
-        // for characters is `lore/characters/`). The save is async — wait for
-        // the file to appear.
-        const saved = await browser.waitUntil(
+        // for characters is `lore/characters/`). The save is async — poll
+        // until the file appears and capture its content in the same pass,
+        // so there's no second read.
+        const content = await browser.waitUntil(
             async () => {
                 const text = await readVaultOrNull('lore/characters/The Cartographer.md');
-                return text !== null;
+                return text !== null ? text : false;
             },
             { timeout: 10_000, timeoutMsg: 'draft was not saved to the vault on approval' }
         );
-        expect(saved).to.equal(true);
 
         // Verify the content + frontmatter. The plugin adds the `quill-type`
         // frontmatter on save; the body is the draft content (the name
         // becomes the filename, not part of the body).
-        const content = await readVaultOrNull('lore/characters/The Cartographer.md');
         expect(content).to.match(/quill-type:\s*character/);
         expect(content).to.match(/quiet figure.*maps the city/i);
     });
