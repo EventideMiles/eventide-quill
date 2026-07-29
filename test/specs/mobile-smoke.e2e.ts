@@ -47,7 +47,22 @@ describe('Mobile emulation smoke', () => {
         await browser.executeObsidianCommand('eventide-quill:quill-cowriter-open');
 
         const input = await browser.$('.quill-cowriter-panel__input');
-        const found = await input.waitForDisplayed({ timeout: 15_000 }).catch(() => false);
+        // Only a genuine timeout/not-visible should return false (triggering
+        // the mobile skip). Stale-element, invalid-session, and other
+        // infrastructure errors must propagate — swallowing them would mask
+        // real failures as "input not visible on mobile."
+        let found: boolean;
+        try {
+            await input.waitForDisplayed({ timeout: 15_000 });
+            found = true;
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (/timeout|not.*display|still not displayed/i.test(msg)) {
+                found = false;
+            } else {
+                throw e;
+            }
+        }
         if (!found) {
             if (isMobileEmulation()) {
                 console.warn('[mobile-smoke] co-writer input not visible on mobile — responsive layout may need a tap');

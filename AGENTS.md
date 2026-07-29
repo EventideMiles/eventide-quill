@@ -360,23 +360,17 @@ Saved / resumable co-writer conversations live as per-session JSON sidecars unde
 
 `ChangeSet`/`ChangeSetJSON` round-trip via `ChangeSet.toJSON`/`ChangeSet.fromJSON` (the class is pure logic but has private fields + a `nextId` counter).
 
-### Snapshot-on-tab-switch (v1.5.0)
+### Review-discuss session lifecycle (sequential, not parallel)
 
-The Review tab's embedded `CoWriterPanel` and the Co-writer tab's `CoWriterPanel` share the single `plugin.coWriterSession`. Without intervention they would clobber each other — switching tabs would wipe the prior conversation. The `swapSessionForTab(targetTab)` method on the plugin (`main.ts`) handles the hand-off via two in-memory snapshot slots:
+The Review tab's embedded `CoWriterPanel` and the Co-writer tab's `CoWriterPanel` share the single `plugin.coWriterSession`. There is **no snapshot-on-tab-switch** — the two panels don't carry independent parallel conversations. Instead, the model is sequential:
 
-- `coWriterBackgroundSnapshot: SerializedCoWriterState | null` — the Co-writer-tab chat, captured when the writer enters review-discuss (or swaps Review → Co-writer with an active review-discuss in the background).
-- `reviewBackgroundSnapshot: SerializedCoWriterState | null` — the Review-tab review-discuss chat, captured when the writer swaps Review → Co-writer.
+1. **`beginReviewDiscuss`** saves the outgoing co-writer chat to **History** (sidecar) before `seedForReviewDiscuss` clears it — so a writer on the Co-writer tab who clicks Discuss on a queued report doesn't lose their existing chat.
+2. The review-discuss session runs as a heavyweight co-writer mode (editing tools enabled, `reviewEngine` set).
+3. When the writer is done with the review-discuss, they either **start a new chat** (`resetCoWriterChat`) or **restore a prior chat from History** (the "History" button opens `SessionListModal`). Recovery is through the sidecar persistence layer, not in-memory snapshot slots.
 
-**Tab-switch protocol** (hooked into the sidebar's `switchTopTab` for Review ↔ Co-writer transitions only — other tabs are no-ops):
-
-- **Review → Co-writer with active review-discuss** (`session.reviewEngine !== null`): snapshot the review-discuss state → `reviewBackgroundSnapshot`; restore `coWriterBackgroundSnapshot` if any (else start a fresh chat).
-- **Co-writer → Review with a saved review-discuss** (`reviewBackgroundSnapshot !== null`): snapshot the co-writer chat → `coWriterBackgroundSnapshot`; restore the review-discuss state; tell the Review panel to re-enter discuss mode via `restoreDiscussAfterSwap` so the embedded panel re-mounts.
-
-**`beginReviewDiscuss` also snapshots outgoing chat** before `seedForReviewDiscuss` clears it — so a writer on the Co-writer tab who clicks Discuss on a queued report doesn't lose their existing chat. The snapshot is restored when they switch back to the Co-writer tab.
+**`syncReviewDiscussOnTabSwitch`** (hooked into the sidebar's `switchTopTab` for Review ↔ Co-writer transitions only) handles just one direction: Co-writer → Review with an active review-discuss session. It calls `reviewRestoreDiscussAfterSwap()` on the Review panel, which re-enters discuss mode and re-mounts the embedded `CoWriterPanel`. The Review → Co-writer direction is a no-op — the Co-writer panel renders whatever session state exists (which is the review-discuss conversation if one is active).
 
 **Callback routing** — the sidebar's 31 `coWriter*` passthrough methods route through `activeCoWriterPanel` (a getter that returns the embedded panel when the Review tab is in discuss mode, else the Co-writer-tab panel). Both panels' setter methods store state without rendering; render only fires on `setContainer`, so the non-mounted panel stays in sync silently and renders with the latest state when the writer switches tabs.
-
-**Persistence limitation (v1.5.0):** background snapshots are in-memory only — `onunload` snapshots just the foreground (active) chat, matching the pre-1.5.0 contract. Writers who care about preserving a background chat should switch to that tab before closing Obsidian. Per-slot sidecar persistence is a planned follow-on.
 
 ## Chat rewind
 
