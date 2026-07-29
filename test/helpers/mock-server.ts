@@ -125,8 +125,8 @@ export function sseToolCallBody(
     return lines.map((line) => `data: ${line}\n\n`).join('') + 'data: [DONE]\n\n';
 }
 
-/** Build a non-streaming OpenAI-compatible JSON completion body. */
-export function jsonChatBody(text: string, opts: { model?: string } = {}): string {
+/** Build a non-streaming OpenAI-compatible JSON completion body (internal). */
+function jsonChatBody(text: string, opts: { model?: string } = {}): string {
     return JSON.stringify({
         id: 'mock-chat-completion',
         object: 'chat.completion',
@@ -138,8 +138,8 @@ export function jsonChatBody(text: string, opts: { model?: string } = {}): strin
     });
 }
 
-/** Build a non-streaming embeddings response. */
-export function jsonEmbeddingsBody(inputTokens: string[], dims = 8): string {
+/** Build a non-streaming embeddings response (internal). */
+function jsonEmbeddingsBody(inputTokens: string[], dims = 8): string {
     return JSON.stringify({
         object: 'list',
         model: 'local-model',

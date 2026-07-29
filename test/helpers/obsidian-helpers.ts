@@ -11,20 +11,17 @@
 import { browser } from '@wdio/globals';
 
 /**
- * Thrown by {@link openFile} / {@link readVaultFile} when a vault path doesn't
- * resolve to a file. Distinct from a generic Error so a future spec can catch
- * path failures specifically (e.g. to retry against a fallback fixture) without
- * matching on message text. Mirrors the production codebase's typed-error
- * convention (AGENTS.md "Error handling") — kept out of that doc's enumeration
- * because these are test infra, not production control-flow.
+ * Thrown by {@link openFile} when a vault path doesn't resolve to a file.
+ * Distinct from a generic Error so a future spec can catch path failures
+ * specifically (e.g. to retry against a fallback fixture) without matching
+ * on message text. Mirrors the production codebase's typed-error convention
+ * (AGENTS.md "Error handling") — kept out of that doc's enumeration because
+ * this is test infra, not production control-flow.
  *
- * Note: the throw sites are all in the WDIO worker process, NOT inside
- * `browser.execute` callbacks. Custom class identity does not survive WDIO's
- * serialization of renderer-thrown errors, so any new throw added inside an
- * `execute` callback should return a sentinel and throw from the worker
- * instead (see {@link readVaultFile}'s pattern).
+ * Not exported — currently thrown internally only. Add `export` if a future
+ * spec needs to `instanceof`-check it.
  */
-export class VaultPathError extends Error {
+class VaultPathError extends Error {
     constructor(path: string, operation: string) {
         super(`${operation}: vault path does not resolve: ${path}`);
         this.name = 'VaultPathError';
@@ -35,8 +32,11 @@ export class VaultPathError extends Error {
  * Thrown by {@link waitForAssistantBubble} when its internal `found` invariant
  * is violated (waitUntil reported success but no bubble was captured). Should
  * never fire in practice — when it does, it's a helper bug, not a test bug.
+ *
+ * Not exported — currently thrown internally only. Add `export` if a future
+ * spec needs to `instanceof`-check it.
  */
-export class AssistantWaitError extends Error {
+class AssistantWaitError extends Error {
     constructor(message: string) {
         super(message);
         this.name = 'AssistantWaitError';
@@ -61,10 +61,9 @@ type ObsidianApp = {
 };
 
 /** Open a file by vault path. When `newLeaf` is true (default false) the file
- *  opens in a fresh leaf; otherwise it opens in the active leaf. Throws if the
- *  path doesn't resolve to a file (missing, or resolves to a folder) — matches
- *  `readVaultFile`'s missing-file behavior so a typo in a fixture path
- *  surfaces immediately rather than silently no-oping. */
+ *  opens in a fresh leaf; otherwise it opens in the active leaf. Throws
+ *  {@link VaultPathError} if the path doesn't resolve to a file (missing, or
+ *  resolves to a folder) so a typo in a fixture path surfaces immediately. */
 export async function openFile(path: string, newLeaf = false): Promise<void> {
     const opened = await browser.execute(
         async (p, n) => {
@@ -81,66 +80,6 @@ export async function openFile(path: string, newLeaf = false): Promise<void> {
         newLeaf
     );
     if (!opened) throw new VaultPathError(path, 'openFile');
-}
-
-/**
- * Overwrite a vault file's contents, creating it if missing. Uses the Vault
- * API (create / modify) rather than `adapter.write` so Vault events fire and
- * the metadata cache stays in sync — important when a subsequent assertion
- * relies on the plugin noticing the change through its normal vault-event
- * listeners.
- *
- * NOTE: this only works for tracked markdown files. For `.obsidian/` config
- * paths (e.g. plugin `data.json`), which the Vault doesn't track, call
- * `app.vault.adapter.write` directly inside a `browser.execute` callback —
- * `settings.e2e.ts` does this for its data.json persistence check.
- */
-export async function writeVaultFile(path: string, content: string): Promise<void> {
-    await browser.execute(
-        async (p, c) => {
-            const app = (window as unknown as { app: ObsidianApp }).app;
-            const existing = app.vault.getFileByPath(p);
-            if (existing) {
-                await app.vault.modify(existing, c);
-            } else {
-                await app.vault.create(p, c);
-            }
-        },
-        path,
-        content
-    );
-}
-
-/**
- * Read a vault file's contents as a string. Throws {@link VaultPathError} (in
- * the worker, not the renderer) if the path doesn't resolve to a file — the
- * `browser.execute` callback returns a sentinel so the custom class identity
- * survives (renderer-thrown errors serialize to plain `Error`).
- */
-export async function readVaultFile(path: string): Promise<string> {
-    const result = await browser.execute(
-        async (p) => {
-            const app = (window as unknown as { app: ObsidianApp }).app;
-            // getFileByPath rejects folders too — see openFile for rationale.
-            const file = app.vault.getFileByPath(p);
-            if (!file) return null;
-            return app.vault.read(file);
-        },
-        path
-    );
-    if (result === null) throw new VaultPathError(path, 'readVaultFile');
-    return result;
-}
-
-/**
- * Click the sidebar tab whose button title matches `label` (e.g., 'Review',
- * 'Co-writer'). More robust than relying on icon classes since the tab order
- * isn't load-bearing.
- */
-export async function clickSidebarTab(label: string): Promise<void> {
-    const tab = await browser.$(`.quill-sidebar__tab[title="${label}"]`);
-    await tab.waitForDisplayed({ timeout: 5_000 });
-    await tab.click();
 }
 
 /** Open the Quill sidebar view via command, then wait for the tab bar. */
@@ -184,17 +123,6 @@ export async function sendCoWriterMessage(text: string): Promise<number> {
     await input.setValue(text);
     await browser.keys('Enter');
     return baselineCount;
-}
-
-/**
- * Count the assistant chat bubbles currently in the DOM. Exposed so specs that
- * need to wait on a turn triggered by something other than
- * {@link sendCoWriterMessage} (e.g. clicking a UI button) can capture the same
- * baseline the message helper returns.
- */
-export async function assistantBubbleCount(): Promise<number> {
-    const bubbles = (await browser.$$('.quill-cowriter-panel__chat-bubble--assistant')) as unknown as WebdriverIO.Element[];
-    return bubbles.length;
 }
 
 /**

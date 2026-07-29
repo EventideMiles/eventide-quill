@@ -23,7 +23,7 @@ export async function drain(stream: AsyncGenerator<ChatChunk>): Promise<ChatChun
 }
 
 /** Build a `ReadableStream<Uint8Array>` from string chunks (SSE / NDJSON bytes). */
-export function byteStreamFromChunks(chunks: string[]): ReadableStream<Uint8Array> {
+function byteStreamFromChunks(chunks: string[]): ReadableStream<Uint8Array> {
     const enc = new TextEncoder();
     return new ReadableStream<Uint8Array>({
         start(controller) {

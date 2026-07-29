@@ -1,7 +1,7 @@
 import { browser } from '@wdio/globals';
 import { expect } from 'chai';
 import { obsidianPage } from 'wdio-obsidian-service';
-import { enqueueMock, clearMocks, sseToolCallBody, sseChatBody } from '../helpers/mock-server.js';
+import { enqueueMock, clearMocks, sseToolCallBody } from '../helpers/mock-server.js';
 import { openFile, sendCoWriterMessage, waitForAssistantDone, openQuillSidebar, isMobileEmulation } from '../helpers/obsidian-helpers.js';
 
 /**

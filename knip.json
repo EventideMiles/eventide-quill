@@ -1,0 +1,19 @@
+{
+    "entry": [
+        "tests/**/*.test.ts",
+        "test/specs/**/*.e2e.ts"
+    ],
+    "project": [
+        "tests/**/*.ts",
+        "test/**/*.ts"
+    ],
+    "ignoreDependencies": [
+        "@types/mocha",
+        "@wdio/local-runner",
+        "@wdio/mocha-framework",
+        "@wdio/spec-reporter",
+        "mocha",
+        "tslib",
+        "wdio-obsidian-reporter"
+    ]
+}
