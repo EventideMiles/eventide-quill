@@ -40,8 +40,12 @@ describe('Co-writer chat', () => {
         expect(last?.body).to.include('"stream":true');
     });
 
-    it('switches to coach mode and produces a different mode-picker state', async () => {
-        await enqueueMock({ body: sseChatBody(['Coach suggestion: tighten the long sentence in paragraph one.']) });
+    it('switches to coach mode and responds with a Socratic guiding question', async () => {
+        // Coach mode uses the Socratic method — the AI asks questions to
+        // help the writer develop the scene, rather than writing prose
+        // directly. The test sends a scene prompt and asserts the mock
+        // response (a Socratic question) renders correctly.
+        await enqueueMock({ body: sseChatBody(['What is the traveller feeling as she steps off the ship? Is she confident about finding the scholar, or does she have doubts?']) });
 
         await browser.executeObsidianCommand('eventide-quill:quill-cowriter-open');
         // Wait for the panel's button row to render, then click the mode
@@ -69,11 +73,13 @@ describe('Co-writer chat', () => {
             { timeout: 5_000, timeoutMsg: 'coach mode row never appeared in the picker' }
         );
 
-        const baseline = await sendCoWriterMessage('Coach me on the opening paragraph.');
+        const baseline = await sendCoWriterMessage('Help me develop the next scene where the traveller arrives at the harbour.');
         const bubble = await waitForAssistantBubble(20_000, baseline);
         await waitForAssistantDone(30_000, baseline);
         const text = await bubble.getText();
-        expect(text).to.match(/coach|tighten|sentence/i);
+        // Coach mode response should be a guiding question (Socratic method).
+        expect(text).to.include('?');
+        expect(text).to.match(/traveller|feeling|confident|doubt|harbour/i);
     });
 
     it('preserves chat history across a sidebar close + reopen', async () => {

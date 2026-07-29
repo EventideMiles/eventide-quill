@@ -120,6 +120,13 @@ export async function sendCoWriterMessage(text: string): Promise<number> {
     await input.waitForDisplayed({ timeout: 10_000 });
     const baseline = (await browser.$$('.quill-cowriter-panel__chat-bubble--assistant')) as unknown as WebdriverIO.Element[];
     const baselineCount = baseline.length;
+    // On mobile the input may be below the fold or behind the tab bar.
+    // Scroll it into view via native DOM (WDIO's scrollIntoView uses the
+    // Actions API which the Obsidian CDP bridge doesn't support).
+    await browser.execute(() => {
+        document.querySelector('.quill-cowriter-panel__input')?.scrollIntoView({ block: 'center' });
+    });
+    await input.click();
     await input.setValue(text);
     await browser.keys('Enter');
     return baselineCount;

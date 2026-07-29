@@ -56,10 +56,31 @@ describe('Live LM Studio smoke', () => {
         await openQuillSidebar();
     });
 
+    /** Switch to discuss mode (the panel default is coach). */
+    async function switchToDiscussMode(): Promise<void> {
+        const modeBtn = await browser.$('.quill-cowriter-panel__mode-btn');
+        await modeBtn.waitForDisplayed({ timeout: 10_000 });
+        await modeBtn.click();
+        await browser.waitUntil(
+            async () => {
+                const rows = (await browser.$$('.quill-cowriter-panel__mode-row')) as unknown as WebdriverIO.Element[];
+                for (const row of rows) {
+                    if (/discuss/i.test(await row.getText())) {
+                        await row.click();
+                        return true;
+                    }
+                }
+                return false;
+            },
+            { timeout: 5_000 }
+        );
+    }
+
     it('streams a discuss-mode reply from the real local model', async function () {
         if (!liveAvailable) return this.skip();
 
         await browser.executeObsidianCommand('eventide-quill:quill-cowriter-open');
+        await switchToDiscussMode();
         const baseline = await sendCoWriterMessage('In one short sentence, who arrives at the harbour?');
 
         // The real model is slow and timing varies wildly — give it generous
@@ -68,7 +89,7 @@ describe('Live LM Studio smoke', () => {
         const bubbles = (await browser.$$('.quill-cowriter-panel__chat-bubble--assistant')) as unknown as WebdriverIO.Element[];
         expect(bubbles.length).to.be.greaterThan(baseline);
         const lastText = await bubbles[bubbles.length - 1]!.getText();
-        expect(lastText.length).to.be.greaterThan(0);
+        expect(lastText.trim().length).to.be.greaterThan(0);
     });
 
     it('handles a follow-up turn using the same chat session', async function () {
@@ -78,6 +99,7 @@ describe('Live LM Studio smoke', () => {
         // test's session — keeps the test independent (the suite can run a
         // single `it` in isolation via WDIO's --spec filter without breaking).
         await browser.executeObsidianCommand('eventide-quill:quill-cowriter-open');
+        await switchToDiscussMode();
         const baselineOne = await sendCoWriterMessage('In one short sentence, who arrives at the harbour?');
         await waitForAssistantDone(120_000, baselineOne);
 
