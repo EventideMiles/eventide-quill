@@ -129,8 +129,10 @@ export function computeStreak(state: WritingGoalsState, goal: number, now: numbe
     let cursor = dateKey(now);
     if (state.todayWords >= goal) {
         streak++;
-        cursor = addDays(cursor, -1);
     }
+    // Walk consecutive met days back from today (or yesterday, if today isn't
+    // met yet — an in-progress day doesn't break the streak).
+    cursor = addDays(cursor, -1);
     for (;;) {
         const v = state.days[cursor];
         if (v === undefined || v < goal) break;
