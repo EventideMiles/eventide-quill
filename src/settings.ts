@@ -1060,39 +1060,64 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             text: 'A feedback-first writing assistant for novelists.'
         });
 
-        // --- Getting started ---
+        // --- Set up Quill (live checklist — reflects current configuration) ---
 
-        new Setting(content).setName('Getting started').setHeading();
+        new Setting(content).setName('Getting set up').setHeading();
 
-        const steps = content.createDiv({ cls: 'quill-settings__welcome-steps' });
-        const stepItems = [
-            {
-                num: '1',
-                title: 'Configure an AI provider',
-                desc: 'Go to the "AI providers" tab and set up Ollama, LM Studio, or an OpenAI-compatible endpoint.'
-            },
-            {
-                num: '2',
-                title: 'Open the sidebar',
-                desc: 'Click the feather icon in the left ribbon to open the Quill sidebar.'
-            },
-            {
-                num: '3',
-                title: 'Configure your manuscript',
-                desc: 'Open the Dashboard tab in the sidebar, click Settings, and pick your manuscript type.'
-            },
-            {
-                num: '4',
-                title: 'Start writing',
-                desc: 'Use the linter, co-writer, feedback engine, and dashboard as you draft.'
+        const hasProviders = this.plugin.settings.aiProviders.length > 0;
+        const hasChatModel = !!this.plugin.settings.aiDefaultChatProvider;
+        const hasManuscript = !!this.plugin.currentManuscriptFolder;
+        const hasGoal = this.plugin.settings.writingDailyGoal > 0;
+
+        const setupSteps: { done: boolean; label: string; hint: string; actionLabel?: string; action?: () => void }[] =
+            [
+                {
+                    done: hasProviders,
+                    label: 'Add an AI provider',
+                    hint: 'Ollama, LM Studio, or any OpenAI-compatible endpoint. (AI providers page)',
+                    actionLabel: hasProviders ? undefined : 'Add',
+                    action: hasProviders
+                        ? undefined
+                        : () => new AddProviderModal(this.app, (t, ep) => this.addProvider(t, ep)).open()
+                },
+                {
+                    done: hasChatModel,
+                    label: 'Pick a default chat model',
+                    hint: 'The model used for chat, feedback, and the co-writer. (Default models page)'
+                },
+                {
+                    done: hasManuscript,
+                    label: 'Open your manuscript',
+                    hint: 'Open a chapter file and refresh the dashboard so Quill can scan its context.'
+                },
+                {
+                    done: hasGoal,
+                    label: 'Set a daily writing goal',
+                    hint: 'Track a writing streak on the dashboard. (General page)'
+                }
+            ];
+        const completed = setupSteps.filter((s) => s.done).length;
+        content.createDiv({
+            cls: 'quill-settings__welcome-progress',
+            text: `${completed} of ${setupSteps.length} setup steps complete`
+        });
+        const checklist = content.createDiv({ cls: 'quill-settings__welcome-checklist' });
+        for (const step of setupSteps) {
+            const row = checklist.createDiv({ cls: 'quill-settings__welcome-checklist-row' });
+            row.createSpan({
+                cls: `quill-settings__welcome-checklist-mark${step.done ? ' is-done' : ''}`,
+                text: step.done ? '\u2713' : '\u25CB'
+            });
+            const body = row.createDiv({ cls: 'quill-settings__welcome-checklist-body' });
+            body.createDiv({ cls: 'quill-settings__welcome-checklist-label', text: step.label });
+            body.createDiv({ cls: 'quill-settings__welcome-checklist-hint', text: step.hint });
+            if (step.action && step.actionLabel) {
+                const btn = row.createEl('button', {
+                    cls: 'quill-settings__welcome-checklist-btn',
+                    text: step.actionLabel
+                });
+                btn.addEventListener('click', step.action);
             }
-        ];
-        for (const step of stepItems) {
-            const row = steps.createDiv({ cls: 'quill-settings__welcome-step' });
-            row.createDiv({ cls: 'quill-settings__welcome-step-num', text: step.num });
-            const body = row.createDiv({ cls: 'quill-settings__welcome-step-body' });
-            body.createDiv({ cls: 'quill-settings__welcome-step-title', text: step.title });
-            body.createDiv({ cls: 'quill-settings__welcome-step-desc', text: step.desc });
         }
 
         // --- Features ---
@@ -1123,6 +1148,55 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             const row = features.createDiv({ cls: 'quill-settings__welcome-feature' });
             row.createSpan({ cls: 'quill-settings__welcome-feature-icon', text: item.icon });
             row.createSpan({ cls: 'quill-settings__welcome-feature-text', text: item.text });
+        }
+
+        // --- What are you writing? (genre-tailored guidance) ---
+
+        new Setting(content).setName('What are you writing?').setHeading();
+        const genreTip = content.createDiv({
+            cls: 'quill-settings__welcome-genre-tip',
+            text: 'Pick the closest genre for guidance on which features to try first.'
+        });
+        const genreChips = content.createDiv({ cls: 'quill-settings__welcome-genre-chips' });
+        const genres: { label: string; tip: string }[] = [
+            {
+                label: 'Fantasy',
+                tip: 'Worldbuilding-heavy: set up a Lorebook folder (Lorebook page) and try the Lorebook Coach to draft entries from your manuscript.'
+            },
+            {
+                label: 'Science fiction',
+                tip: 'Track systems and canon in a Lorebook, and run Critical analysis to catch continuity gaps in the worldbuilding.'
+            },
+            {
+                label: 'Romance',
+                tip: 'The developmental-editor persona (Review tab) gives relationship-focused feedback; the line editor refines voice.'
+            },
+            {
+                label: 'Mystery',
+                tip: 'Use Critical analysis (plot logic + continuity) to track clues and red herrings across chapters.'
+            },
+            {
+                label: 'Thriller',
+                tip: 'Critical analysis flags pacing and continuity; the dashboard pacing heatmap shows where tension drags.'
+            },
+            {
+                label: 'Literary',
+                tip: 'The line-editor persona and the AI-prose linter rules sharpen sentence-level craft.'
+            },
+            {
+                label: 'Historical',
+                tip: 'A Lorebook keeps period detail consistent; network research tools (Wikipedia) help verify references.'
+            },
+            {
+                label: 'Other',
+                tip: 'Start with the co-writer (discuss mode) to brainstorm, and the Review tab for editorial feedback.'
+            }
+        ];
+        for (const g of genres) {
+            const chip = genreChips.createEl('button', { cls: 'quill-settings__welcome-genre-chip', text: g.label });
+            chip.addEventListener('click', () => {
+                genreTip.textContent = g.tip;
+            });
         }
 
         // --- Privacy & network tools ---
