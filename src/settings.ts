@@ -1,4 +1,13 @@
-import { App, Menu, Modal, Notice, PluginSettingTab, Setting, SuggestModal } from 'obsidian';
+import {
+    App,
+    Modal,
+    Notice,
+    PluginSettingTab,
+    Setting,
+    SettingDefinitionItem,
+    SettingPage,
+    SuggestModal
+} from 'obsidian';
 import EventideQuillPlugin from './main';
 import { ModelCapability, ModelInfo, ModelRole, ProviderConfig, ProviderType, roleSatisfies } from './ai/provider';
 import { createProvider, generateModelId, generateProviderId } from './ai/provider-registry';
@@ -14,19 +23,8 @@ import { formatLocalDate } from './ai/tools/fandom-cache';
 import { isValidWikipediaLang } from './ai/tools/wikipedia-lookup';
 
 export type LinterMode = 'all' | 'prose' | 'ai';
-export type SettingsTab = 'welcome' | 'general' | 'lorebook' | 'linter' | 'ai-providers' | 'model-behaviors';
 /** Which sidebar tab opens by default. Mirrors the dropdown options in the General settings. */
 export type DefaultTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard' | 'lorebook';
-
-/**
- * Below this settings-pane width (px), the six top-level tab buttons collapse
- * into a single "active tab" button that opens a native Obsidian {@link Menu}
- * listing all tabs. Six text-only tabs (the longest label is "Model behaviors")
- * need ~520px to sit comfortably without truncation; phones in portrait (~360
- * dp) and narrow tablets fall under this threshold. Mirrors the ResizeObserver
- * hamburger pattern in the sidebar (`quill-sidebar.ts`) and co-writer panel.
- */
-const COMPACT_TABS_THRESHOLD = 520;
 
 /**
  * A user-defined slash command for the co-writer chat input. Typing `/`
@@ -640,33 +638,16 @@ function formatFandomCacheStats(stats: WikiStats): string {
 
 export class EventideQuillSettingTab extends PluginSettingTab {
     plugin: EventideQuillPlugin;
-    private activeTab: SettingsTab = 'welcome';
-
     /**
-     * Single source of truth for the six top-level tabs and their labels.
-     * Consumed by {@link renderTabBar} (button text + compact menu items),
-     * {@link showActiveTab} (compact-mode label sync), and the ResizeObserver
-     * compact-mode toggle. Add a tab here and it propagates everywhere.
+     * The currently-open imperative bridge page (Phase 1 of the declarative
+     * migration). Each former tab renders through a `SettingPage` whose
+     * `display()` records itself here so mutation handlers can trigger an
+     * in-place re-render via {@link refreshBridge} — the framework's
+     * `update()` re-runs `getSettingDefinitions()` but does not re-invoke an
+     * already-open imperative page's factory. This field goes away as each tab
+     * is converted to declarative `items` (Phases 2–6).
      */
-    private static readonly TABS: { id: SettingsTab; label: string }[] = [
-        { id: 'welcome', label: 'Welcome' },
-        { id: 'general', label: 'General' },
-        { id: 'lorebook', label: 'Lorebook' },
-        { id: 'linter', label: 'Linter' },
-        { id: 'ai-providers', label: 'AI providers' },
-        { id: 'model-behaviors', label: 'Model behaviors' }
-    ];
-
-    /**
-     * Whether the settings pane is narrow enough that the tab bar has
-     * collapsed into the compact dropdown. Toggled by {@link resizeObserver}
-     * and read by CSS via the `quill-settings-root--compact-tabs` modifier
-     * on the root element (no full re-render — avoids scroll disruption).
-     */
-    private compactTabs = false;
-
-    /** Observes the settings pane width to toggle {@link compactTabs}. */
-    private resizeObserver: ResizeObserver | null = null;
+    private activeBridgePage: { containerEl: HTMLElement; render: (content: HTMLElement) => void } | null = null;
 
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app, plugin);
@@ -674,195 +655,118 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 
     /**
-     * Clean up the {@link resizeObserver} when the settings tab is hidden.
-     *
-     * `SettingTab` is not a `Component`, so the observer can't be registered
-     * via `register()`. Obsidian calls `hide()` when the writer navigates away
-     * from the plugin's settings (closes settings, switches to another plugin's
-     * tab, etc.), making it the right teardown point. `display()` also
-     * disconnects defensively at the top of each redraw in case Obsidian
-     * re-renders without first calling `hide()`.
+     * Declarative settings root (Obsidian 1.13+). Returns the six former tabs
+     * as navigable {@link SettingDefinitionPage}s. Until each tab is converted
+     * to declarative controls (Phases 2–6), its page renders imperatively via
+     * {@link bridgePage} — a thin `SettingPage` subclass that calls the
+     * pre-existing `renderXxxTab` method into the page's container. The
+     * framework renders the page entries (with navigation and unified search
+     * at the page level) and calls each page's `display()` on open.
      */
-    hide(): void {
-        this.resizeObserver?.disconnect();
-        this.resizeObserver = null;
-        super.hide();
+    getSettingDefinitions(): SettingDefinitionItem[] {
+        return [
+            {
+                type: 'page',
+                name: 'Welcome',
+                desc: 'Getting started, features, and privacy.',
+                page: () => this.bridgePage((el) => this.renderWelcomeTab(el))
+            },
+            {
+                type: 'page',
+                name: 'General',
+                desc: 'Sidebar, features, dashboard, embeddings.',
+                page: () => this.bridgePage((el) => this.renderGeneralTab(el))
+            },
+            {
+                type: 'page',
+                name: 'Lorebook',
+                desc: 'Lore scanning, coaches, fandom, images.',
+                page: () => this.bridgePage((el) => this.renderLorebookTab(el))
+            },
+            {
+                type: 'page',
+                name: 'Linter',
+                desc: 'Prose linter rules and AI fixes.',
+                page: () => this.bridgePage((el) => this.renderLinterTab(el))
+            },
+            {
+                type: 'page',
+                name: 'AI providers',
+                desc: 'Providers, models, defaults.',
+                page: () => this.bridgePage((el) => this.renderAiProvidersTab(el))
+            },
+            {
+                type: 'page',
+                name: 'Model behaviors',
+                desc: 'Voice, style, co-writer, review.',
+                page: () => this.bridgePage((el) => this.renderModelBehaviorsTab(el))
+            }
+        ];
     }
 
     /**
-     * Build and display the full settings UI.
-     *
-     * Called on initial open AND on every save that needs a structural
-     * redraw (provider add/remove, toggle reveal/hide, slash-command
-     * add/remove, etc.). To preserve scroll position across in-tab
-     * redraws, the scroll area's scrollTop is captured before the DOM is
-     * torn down and restored after rebuild. Tab switches reset to the top
-     * (the tab-bar click handler passes no `scrollTop` arg, defaulting
-     * to 0; the initial open path finds no previous scroll area and
-     * falls back to 0 too).
+     * Build an imperative bridge {@link SettingPage} for one former tab. Its
+     * `display()` records the page on {@link activeBridgePage} (so mutation
+     * handlers can re-render it in place via {@link refreshBridge}) and renders
+     * the tab's content through {@link renderBridgeContent}; `hide()` clears
+     * the tracking. Returned from each `page` factory in
+     * {@link getSettingDefinitions}; goes away when the tab is converted to
+     * declarative `items`.
      */
-    display(): void {
-        const { containerEl } = this;
+    private bridgePage(render: (content: HTMLElement) => void): SettingPage {
+        return new BridgeSettingPage(this, render);
+    }
 
-        // Disconnect any prior observer before re-observing. Obsidian may call
-        // display() multiple times (provider add/remove, toggle redraws) without
-        // first calling hide(); without this, stale observers would pile up.
-        this.resizeObserver?.disconnect();
+    /**
+     * Called by a {@link BridgeSettingPage} when it opens: record it as the
+     * active bridge page (so {@link refreshBridge} can re-render it in place)
+     * and render its content.
+     */
+    enterBridgePage(containerEl: HTMLElement, render: (content: HTMLElement) => void): void {
+        this.activeBridgePage = { containerEl, render };
+        this.renderBridgeContent(containerEl, render);
+    }
 
-        // Capture scroll position before teardown so we can restore it after
-        // a redraw triggered by an in-tab action (toggle, add/remove row,
-        // card field edit). Without this, `showActiveTab()` resets to 0 on
-        // every redraw and the writer is bounced back to the top after
-        // clicking anything inside the tab. Only tab switches should reset.
-        const prevScrollArea = containerEl.querySelector('.quill-settings__scroll-area');
-        const savedScrollTop = prevScrollArea instanceof HTMLElement ? prevScrollArea.scrollTop : 0;
+    /**
+     * Called by a {@link BridgeSettingPage} when it closes: clear the active
+     * bridge page tracking if it still points at this page.
+     */
+    exitBridgePage(containerEl: HTMLElement): void {
+        if (this.activeBridgePage?.containerEl === containerEl) this.activeBridgePage = null;
+    }
 
+    /**
+     * Render one bridge page's content: the root styling class, the tab's
+     * existing render method, the heading-grouped visual sections, and the
+     * footer. Idempotent — emptying `containerEl` first makes it safe to call
+     * repeatedly from {@link refreshBridge}.
+     */
+    private renderBridgeContent(containerEl: HTMLElement, render: (content: HTMLElement) => void): void {
         containerEl.empty();
         containerEl.addClass('quill-settings-root');
-        // Re-apply the compact modifier if a prior observer measurement set it
-        // (containerEl.empty() preserves classes on the root itself, but this
-        // is defensive in case a future change clears them).
-        containerEl.toggleClass('quill-settings-root--compact-tabs', this.compactTabs);
-
-        this.renderTabBar(containerEl);
-
-        // All tab content lives inside a scrollable wrapper so that only
-        // the area between the tab bar (header) and the footer scrolls.
-        const scrollArea = containerEl.createDiv({ cls: 'quill-settings__scroll-area' });
-        this.renderWelcomeTab(scrollArea);
-        this.renderGeneralTab(scrollArea);
-        this.renderLorebookTab(scrollArea);
-        this.renderLinterTab(scrollArea);
-        this.renderAiProvidersTab(scrollArea);
-        this.renderModelBehaviorsTab(scrollArea);
-
-        // Wrap runs of settings under each heading into visually distinct
-        // groups (background + border) so tabs don't read as a flat list.
-        const tabContents = scrollArea.querySelectorAll<HTMLElement>('[class*="quill-settings-content-"]');
-        tabContents.forEach((c) => this.groupSettingsByHeading(c));
-
-        this.renderFooter(containerEl);
-
-        this.showActiveTab(savedScrollTop);
-
-        // Toggle compact mode when the settings pane narrows. Below the
-        // threshold the horizontal tab bar hides and a single "active tab"
-        // dropdown button takes its place. Mirrors the sidebar's own
-        // ResizeObserver at quill-sidebar.ts:101 (the only other responsive
-        // tab pattern in the repo).
-        this.resizeObserver = new ResizeObserver((entries) => {
-            for (const entry of entries) {
-                const compact = entry.contentRect.width < COMPACT_TABS_THRESHOLD;
-                if (compact !== this.compactTabs) {
-                    this.compactTabs = compact;
-                    containerEl.toggleClass('quill-settings-root--compact-tabs', compact);
-                }
-            }
-        });
-        this.resizeObserver.observe(containerEl);
+        render(containerEl);
+        // Wrap runs of settings under each heading into bordered sections,
+        // matching the pre-2.0.0 grouped look. Each tab renders into a single
+        // `.quill-settings-content-*` div created by its render method.
+        const content = containerEl.querySelector<HTMLElement>('[class*="quill-settings-content-"]');
+        if (content) this.groupSettingsByHeading(content);
+        containerEl.createDiv({ cls: 'quill-settings__footer' });
     }
 
     /**
-     * Render the tab bar at the top of the settings panel.
-     *
-     * Two sibling bars are built on every render; CSS toggles which one is
-     * visible based on the `quill-settings-root--compact-tabs` modifier
-     * (flipped by {@link resizeObserver}). Building both up front avoids a
-     * full re-render when crossing the width threshold mid-session — only a
-     * class flips, so the writer's scroll position and form inputs survive.
+     * Re-render the currently-open bridge page in place after a mutation
+     * (add/remove provider, slash command, folder override, etc.). Replaces the
+     * pre-2.0.0 `this.refreshBridge()` full re-render. Falls back to `update()` when
+     * no bridge page is active (e.g. at the root definition list). As tabs
+     * convert to declarative controls (Phases 2–6), their mutation handlers
+     * switch to `this.update()` / `this.refreshDomState()` and this method is
+     * removed.
      */
-    private renderTabBar(containerEl: HTMLElement): void {
-        const tabs = EventideQuillSettingTab.TABS;
-
-        // --- Standard horizontal tab bar (hidden under compact mode) ---
-        const tabBar = containerEl.createDiv({ cls: 'quill-settings__tab-bar' });
-        for (const tab of tabs) {
-            const btn = tabBar.createEl('button', {
-                cls: `quill-settings__tab${this.activeTab === tab.id ? ' quill-settings__tab--active' : ''}`,
-                text: tab.label,
-                attr: { 'data-tab': tab.id }
-            });
-            btn.addEventListener('click', () => {
-                this.activeTab = tab.id;
-                this.showActiveTab();
-            });
-        }
-
-        // --- Compact dropdown bar (shown under compact mode) ---
-        // A single button echoes the active tab's label with a caret; clicking
-        // opens a native Obsidian Menu listing all tabs with a checkmark on the
-        // active one. Same pattern as the co-writer panel's overflow hamburger
-        // (co-writer-panel.ts:2127).
-        const compactBar = containerEl.createDiv({ cls: 'quill-settings__compact-bar' });
-        const compactBtn = compactBar.createEl('button', {
-            cls: `quill-settings__compact-tab${' quill-settings__compact-tab--active'}`,
-            attr: { type: 'button', 'aria-label': 'Switch settings tab' }
-        });
-        const compactLabel = compactBtn.createSpan({ cls: 'quill-settings__compact-tab-label' });
-        compactLabel.textContent = tabs.find((t) => t.id === this.activeTab)?.label ?? '';
-        compactBtn.createSpan({ cls: 'quill-settings__compact-tab-caret' });
-        compactBtn.addEventListener('click', (e: MouseEvent) => {
-            const menu = new Menu();
-            for (const tab of tabs) {
-                menu.addItem((item) =>
-                    item
-                        .setTitle(tab.label)
-                        .setChecked(this.activeTab === tab.id)
-                        .onClick(() => {
-                            this.activeTab = tab.id;
-                            this.showActiveTab();
-                        })
-                );
-            }
-            menu.showAtMouseEvent(e);
-        });
-    }
-
-    /**
-     * Toggle visibility of tab content sections and scroll the panel.
-     *
-     * @param scrollTop  Scroll position to restore after redraw. The
-     *                   tab-bar click handler passes nothing (default 0) so
-     *                   switching tabs starts at the top; {@link display}
-     *                   passes the previously captured scrollTop so an
-     *                   in-tab redraw (add/remove/field edit) preserves the
-     *                   writer's place. The initial-open path finds no
-     *                   previous scroll area and also falls back to 0.
-     */
-    private showActiveTab(scrollTop = 0): void {
-        const tabIds = EventideQuillSettingTab.TABS.map((t) => t.id);
-        const tabs = this.containerEl.querySelectorAll('.quill-settings__tab');
-
-        for (const id of tabIds) {
-            const content = this.containerEl.querySelector(`.quill-settings-content-${id}`);
-            if (content) {
-                content.toggleClass('is-hidden', this.activeTab !== id);
-            }
-        }
-
-        tabs.forEach((tab) => {
-            const el = tab as HTMLElement;
-            if (el.dataset.tab === this.activeTab) {
-                el.addClass('quill-settings__tab--active');
-            } else {
-                el.removeClass('quill-settings__tab--active');
-            }
-        });
-
-        // Reflect the new active tab in the compact-mode dropdown button label.
-        // The compact bar is rebuilt on every display(), so a querySelector is
-        // sufficient — no cached reference to invalidate across redraws.
-        const compactLabel = this.containerEl.querySelector('.quill-settings__compact-tab-label');
-        if (compactLabel instanceof HTMLElement) {
-            const match = EventideQuillSettingTab.TABS.find((t) => t.id === this.activeTab);
-            if (match) compactLabel.textContent = match.label;
-        }
-
-        const scrollArea = this.containerEl.querySelector('.quill-settings__scroll-area');
-        if (scrollArea instanceof HTMLElement) {
-            // 0 (tab switch or first open) starts at the top; a preserved
-            // scrollTop (in-tab redraw) restores the writer's place.
-            scrollArea.scrollTop = scrollTop;
+    private refreshBridge(): void {
+        if (this.activeBridgePage) {
+            this.renderBridgeContent(this.activeBridgePage.containerEl, this.activeBridgePage.render);
+        } else {
+            this.update();
         }
     }
 
@@ -974,7 +878,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
      * uniqueness-checked via Notice), Description (one-line, optional),
      * and Body (multi-line textarea). Per-field edits mutate the object
      * in place and save; structural changes (add/remove) do a full
-     * `this.display()` redraw, mirroring the `aiProviders` card pattern.
+     * `this.refreshBridge()` redraw, mirroring the `aiProviders` card pattern.
      */
     private renderSlashCommands(container: HTMLElement): void {
         container.empty();
@@ -1002,7 +906,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             button.setButtonText('Remove').onClick(async () => {
                 this.plugin.settings.slashCommands.splice(index, 1);
                 await this.plugin.saveSettings();
-                this.display();
+                this.refreshBridge();
             })
         );
 
@@ -1039,7 +943,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         cmd.name = trimmed;
                         void this.plugin.saveSettings();
                         // Refresh the heading so it shows the new "/name" instead of the placeholder.
-                        this.display();
+                        this.refreshBridge();
                     })
             );
 
@@ -1229,7 +1133,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.coWriterToolsEnabled).onChange(async (value) => {
                     this.plugin.settings.coWriterToolsEnabled = value;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshBridge();
                 })
             );
 
@@ -1240,7 +1144,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.lorebookNetworkTools).onChange(async (value) => {
                     this.plugin.settings.lorebookNetworkTools = value;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshBridge();
                 })
             );
 
@@ -1254,7 +1158,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.lorebookImageTools).onChange(async (value) => {
                     this.plugin.settings.lorebookImageTools = value;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshBridge();
                 })
             );
 
@@ -1271,7 +1175,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.loreEntryImageAttachments).onChange(async (value) => {
                     this.plugin.settings.loreEntryImageAttachments = value;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshBridge();
                 })
             );
 
@@ -1565,19 +1469,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         DEFAULT_SETTINGS.loreEntryImageAttachmentFolder;
                     this.plugin.settings.slashCommands = [...DEFAULT_SETTINGS.slashCommands];
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshBridge();
                 })
             );
-    }
-
-    /**
-     * Render the footer area. Currently empty and collapsed to 0 height in
-     * `_settings.scss` so it occupies no space. Reserved for a future donation /
-     * support ask — restore the footer sizing there (rules are commented out)
-     * when adding content here.
-     */
-    private renderFooter(containerEl: HTMLElement): void {
-        containerEl.createDiv({ cls: 'quill-settings__footer' });
     }
 
     /** Render the Embeddings settings block into `content` (retrieval index config). */
@@ -1776,7 +1670,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.coWriterToolsEnabled).onChange(async (value) => {
                     this.plugin.settings.coWriterToolsEnabled = value;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshBridge();
                 })
             );
 
@@ -1792,7 +1686,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.lorebookNetworkTools).onChange(async (value) => {
                     this.plugin.settings.lorebookNetworkTools = value;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshBridge();
                 })
             );
 
@@ -1842,7 +1736,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.lorebookFandomCacheEnabled).onChange(async (value) => {
                     this.plugin.settings.lorebookFandomCacheEnabled = value;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshBridge();
                 })
             );
 
@@ -1876,7 +1770,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             .onClick(async () => {
                                 btn.setButtonText('Clearing…').setDisabled(true);
                                 await this.plugin.clearFandomWikiCache(wiki);
-                                this.display();
+                                this.refreshBridge();
                             })
                     );
                     void this.plugin.fandomCache?.getWikiStats(wiki).then((stats) => {
@@ -1942,7 +1836,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.lorebookImageTools).onChange(async (value) => {
                     this.plugin.settings.lorebookImageTools = value;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshBridge();
                 })
             );
 
@@ -2134,7 +2028,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         new Setting(content).addButton((button) =>
             button.setButtonText('+ add command').onClick(() => {
                 this.plugin.settings.slashCommands.push({ name: '', description: '', body: '' });
-                void this.plugin.saveSettings().then(() => this.display());
+                void this.plugin.saveSettings().then(() => this.refreshBridge());
             })
         );
 
@@ -2413,7 +2307,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.enableGremlins = value;
                     if (!value) this.plugin.settings.enableAggressiveGremlins = false;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshBridge();
                 })
             );
 
@@ -2461,7 +2355,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.enableGremlins = DEFAULT_SETTINGS.enableGremlins;
                     this.plugin.settings.enableAggressiveGremlins = DEFAULT_SETTINGS.enableAggressiveGremlins;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshBridge();
                 })
             );
     }
@@ -2506,7 +2400,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 this.plugin.settings.aiProviders.splice(index, 1);
                 this.validateDefaultProviders();
                 await this.plugin.saveSettings();
-                this.display();
+                this.refreshBridge();
             })
         );
 
@@ -2543,7 +2437,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             this.openAnthropicBanRiskWarning(() => {
                                 provider.type = newType;
                                 provider.endpoint = 'https://api.anthropic.com/v1';
-                                void this.plugin.saveSettings().then(() => this.display());
+                                void this.plugin.saveSettings().then(() => this.refreshBridge());
                             });
                             // Revert the dropdown visually so a dismissed warning
                             // doesn't leave the type half-changed.
@@ -2560,7 +2454,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             provider.endpoint = 'https://generativelanguage.googleapis.com/v1beta';
                         }
                         await this.plugin.saveSettings();
-                        this.display();
+                        this.refreshBridge();
                     })
             );
 
@@ -2633,7 +2527,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             const n = parseInt(customVal, 10);
                             if (!isNaN(n) && n > 0) {
                                 provider.maxContextTokens = n;
-                                void this.plugin.saveSettings().then(() => this.display());
+                                void this.plugin.saveSettings().then(() => this.refreshBridge());
                             } else {
                                 new Notice('Value must be a positive number');
                             }
@@ -2697,7 +2591,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             model.role = value as ModelRole;
                             this.validateDefaultProviders();
                             await this.plugin.saveSettings();
-                            this.display();
+                            this.refreshBridge();
                         })
                 );
 
@@ -2730,7 +2624,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         provider.models.splice(idx, 1);
                         this.validateDefaultProviders();
                         await this.plugin.saveSettings();
-                        this.display();
+                        this.refreshBridge();
                     }
                 })
             );
@@ -2747,7 +2641,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     model: ''
                 });
                 await this.plugin.saveSettings();
-                this.display();
+                this.refreshBridge();
             })
         );
     }
@@ -2955,7 +2849,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.transformMaxOutputTokens = DEFAULT_SETTINGS.transformMaxOutputTokens;
                         this.plugin.settings.wikiLinkBehavior = DEFAULT_SETTINGS.wikiLinkBehavior;
                         await this.plugin.saveSettings();
-                        this.display();
+                        this.refreshBridge();
                     })
             );
 
@@ -3059,7 +2953,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;
                         this.plugin.settings.enableInlineDirectives = DEFAULT_SETTINGS.enableInlineDirectives;
                         await this.plugin.saveSettings();
-                        this.display();
+                        this.refreshBridge();
                     })
             );
 
@@ -3223,7 +3117,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.analysisTemperature = DEFAULT_SETTINGS.analysisTemperature;
                         this.plugin.settings.analysisMaxOutputTokens = DEFAULT_SETTINGS.analysisMaxOutputTokens;
                         await this.plugin.saveSettings();
-                        this.display();
+                        this.refreshBridge();
                     })
             );
 
@@ -3277,7 +3171,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.reviewSuggestedEditsEnabled = DEFAULT_SETTINGS.reviewSuggestedEditsEnabled;
                         this.plugin.settings.reviewWorldRules = DEFAULT_SETTINGS.reviewWorldRules;
                         await this.plugin.saveSettings();
-                        this.display();
+                        this.refreshBridge();
                     })
             );
 
@@ -3404,7 +3298,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.contextMaxCharsPerFile = DEFAULT_SETTINGS.contextMaxCharsPerFile;
                         this.plugin.settings.contextAutoScan = DEFAULT_SETTINGS.contextAutoScan;
                         await this.plugin.saveSettings();
-                        this.display();
+                        this.refreshBridge();
                     })
             );
 
@@ -3547,7 +3441,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
                         this.plugin.settings.wikiLinkBehavior = DEFAULT_SETTINGS.wikiLinkBehavior;
                         await this.plugin.saveSettings();
-                        this.display();
+                        this.refreshBridge();
                     })
             );
 
@@ -3660,7 +3554,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     this.plugin.settings.reviewSuggestedEditsEnabled = DEFAULT_SETTINGS.reviewSuggestedEditsEnabled;
                     this.plugin.settings.reviewWorldRules = DEFAULT_SETTINGS.reviewWorldRules;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshBridge();
                 })
             );
     }
@@ -3682,7 +3576,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
             new ModelFetchModal(this.app, models, (modelId) => {
                 modelConfig.model = modelId;
-                void this.plugin.saveSettings().then(() => this.display());
+                void this.plugin.saveSettings().then(() => this.refreshBridge());
             }).open();
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -3801,7 +3695,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             maxOutputTokens: 4096
         };
         this.plugin.settings.aiProviders.push(newProvider);
-        void this.plugin.saveSettings().then(() => this.display());
+        void this.plugin.saveSettings().then(() => this.refreshBridge());
     }
 
     /**
@@ -3824,6 +3718,33 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
             onConfirm();
         }).open();
+    }
+}
+
+/**
+ * Imperative bridge page for one former settings tab (Phase 1 of the
+ * declarative migration). Routes `display()`/`hide()` back into the owning
+ * {@link EventideQuillSettingTab} so mutation handlers can re-render the open
+ * page in place via `refreshBridge()`. Replaced by declarative `items` as each
+ * tab is converted (Phases 2–6).
+ */
+class BridgeSettingPage extends SettingPage {
+    private readonly tab: EventideQuillSettingTab;
+    private readonly render: (content: HTMLElement) => void;
+
+    constructor(tab: EventideQuillSettingTab, render: (content: HTMLElement) => void) {
+        super();
+        this.tab = tab;
+        this.render = render;
+    }
+
+    display(): void {
+        this.tab.enterBridgePage(this.containerEl, this.render);
+    }
+
+    hide(): void {
+        this.tab.exitBridgePage(this.containerEl);
+        super.hide();
     }
 }
 
