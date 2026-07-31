@@ -73,5 +73,12 @@
 	"dependencies": {
 		"@codemirror/state": "6.5.0",
 		"@codemirror/view": "6.38.6"
+	},
+	"allowScripts": {
+		"esbuild@0.28.1": true,
+		"@parcel/watcher@2.6.0": true,
+		"classic-level@3.0.0": true,
+		"edgedriver": false,
+		"geckodriver": false
 	}
 }
