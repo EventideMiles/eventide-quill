@@ -1083,7 +1083,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 {
                     done: hasChatModel,
                     label: 'Pick a default chat model',
-                    hint: 'The model used for chat, feedback, and the co-writer. (Default models page)'
+                    hint: 'The model used for chat, feedback, and the co-writer. (Default models page)',
+                    actionLabel: hasChatModel ? undefined : 'Open',
+                    action: hasChatModel ? undefined : () => this.openSettingsPage('AI providers')
                 },
                 {
                     done: hasManuscript,
@@ -1093,7 +1095,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 {
                     done: hasGoal,
                     label: 'Set a daily writing goal',
-                    hint: 'Track a writing streak on the dashboard. (General page)'
+                    hint: 'Track a writing streak on the dashboard. (General page)',
+                    actionLabel: hasGoal ? undefined : 'Open',
+                    action: hasGoal ? undefined : () => this.openSettingsPage('General')
                 }
             ];
         const completed = setupSteps.filter((s) => s.done).length;
@@ -2038,7 +2042,37 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         };
     }
 
-    /** Display value for the AI providers page entry (provider count). */
+    /**
+     * Deep-link into a top-level settings sub-page by name (e.g. "AI providers",
+     * "General"). Uses Obsidian's internal settings-nav API — `openTabById` is
+     * the long-standing convention; `getNavigableSettingItems`/`activateSettingItem`
+     * are its 1.13 declarative counterparts. Feature-detected: if the internal
+     * API is unavailable (renamed/removed in a future build), falls back to just
+     * opening the plugin tab so the writer can pick the page themselves.
+     */
+    openSettingsPage(pageName: string): void {
+        const app = this.app as unknown as {
+            setting?: {
+                open?: () => void;
+                openTabById?: (id: string) => void;
+                getNavigableSettingItems?: () => HTMLElement[];
+                activateSettingItem?: (el: HTMLElement) => void;
+            };
+        };
+        const setting = app.setting;
+        if (!setting?.open || !setting.openTabById) return;
+        setting.open();
+        setting.openTabById(this.plugin.manifest.id);
+        const items = typeof setting.getNavigableSettingItems === 'function' ? setting.getNavigableSettingItems() : [];
+        const target = items.find((el) => {
+            const name = el.querySelector('.setting-item-name')?.textContent?.trim() ?? '';
+            return name === pageName || (el.textContent ?? '').trim().startsWith(pageName);
+        });
+        if (target && typeof setting.activateSettingItem === 'function') {
+            setting.activateSettingItem(target);
+        }
+    }
+
     private aiProviderDisplayValue(): string {
         const n = this.plugin.settings.aiProviders.length;
         return n === 0 ? 'Not configured' : `${n} provider${n === 1 ? '' : 's'}`;
