@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage } from '../../src/ai/provider';
+import type { Editor } from 'obsidian';
 import {
     buildVaultContext,
+    editorCursorOffset,
     mergeContextPaths,
+    moveCursorToEndIfEarly,
     parseStoppingPoint,
+    proseBeforeCursorOrDoc,
     respectsStoppingPoint,
     sanitizeProse,
     stubDanglingToolCalls,
@@ -144,5 +148,52 @@ describe('co-writer-utils — stubDanglingToolCalls', () => {
         expect(stubDanglingToolCalls(user)).to.equal(user);
         const assistantNoCalls = [msg({ role: 'user', content: 'hi' }), msg({ role: 'assistant', content: 'ok' })];
         expect(stubDanglingToolCalls(assistantNoCalls)).to.equal(assistantNoCalls);
+    });
+});
+
+describe('co-writer-utils — editor cursor helpers', () => {
+    function makeEditor(value: string, cursor: number, opts: { withCm?: boolean; setCursor?: (pos: unknown) => void } = {}): Editor {
+        const withCm = opts.withCm ?? true;
+        return {
+            getValue: () => value,
+            cm: withCm ? { state: { selection: { main: { head: cursor } } } } : undefined,
+            getCursor: () => ({ line: 0, ch: 0 }),
+            posToOffset: () => cursor,
+            offsetToPos: (n: number) => ({ line: 0, ch: n }),
+            setCursor: opts.setCursor ?? (() => {})
+        } as unknown as Editor;
+    }
+
+    it('editorCursorOffset reads the CM6 selection head when cm is present', () => {
+        expect(editorCursorOffset(makeEditor('abc', 2))).to.equal(2);
+    });
+
+    it('editorCursorOffset falls back to posToOffset(getCursor()) without cm', () => {
+        expect(editorCursorOffset(makeEditor('abc', 5, { withCm: false }))).to.equal(5);
+    });
+
+    it('proseBeforeCursorOrDoc returns prose before the cursor, capped to the tail length', () => {
+        expect(proseBeforeCursorOrDoc(makeEditor('hello world', 5), 100)).to.equal('hello');
+        expect(proseBeforeCursorOrDoc(makeEditor('hello world', 5), 3)).to.equal('llo');
+    });
+
+    it('proseBeforeCursorOrDoc falls back to the full document when the cursor is at 0', () => {
+        expect(proseBeforeCursorOrDoc(makeEditor('hello world', 0), 100)).to.equal('hello world');
+    });
+
+    it('proseBeforeCursorOrDoc strips frontmatter before measuring prose', () => {
+        const value = '---\ntitle: X\n---\nactual prose here';
+        expect(proseBeforeCursorOrDoc(makeEditor(value, value.length), 100)).to.equal('actual prose here');
+    });
+
+    it('moveCursorToEndIfEarly moves the cursor to the end only when at 0 in a non-empty doc', () => {
+        let movedTo: unknown = null;
+        const ed = makeEditor('hello', 0, { setCursor: (pos: unknown) => (movedTo = pos) });
+        expect(moveCursorToEndIfEarly(ed)).to.equal(true);
+        expect(movedTo).to.not.equal(null);
+        // Non-zero cursor -> no move.
+        expect(moveCursorToEndIfEarly(makeEditor('hello', 2))).to.equal(false);
+        // Empty doc -> no move.
+        expect(moveCursorToEndIfEarly(makeEditor('', 0))).to.equal(false);
     });
 });
