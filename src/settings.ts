@@ -682,7 +682,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 type: 'page',
                 name: 'Lorebook',
                 desc: 'Lore scanning, coaches, fandom, images.',
-                page: () => this.bridgePage((el) => this.renderLorebookTab(el))
+                items: this.lorebookItems()
             },
             {
                 type: 'page',
@@ -789,6 +789,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         // Turning embedding cache warming on kicks off a warming pass.
         if (key === 'enableEmbeddingWarming' && value === true) {
             void this.plugin.warmAllEmbeddingCaches();
+        }
+        // "Allow any wiki" is a footgun — surface a notice when it's enabled.
+        if (key === 'lorebookFandomAllowAllWikis' && value === true) {
+            new Notice('Quill: Fandom is now unrestricted — the co-writer can query any wiki it chooses.');
         }
         // Re-evaluate disabled/visible predicates so cascaded controls update
         // (e.g. the custom narrative-rules textarea shows only for the custom
@@ -1450,438 +1454,247 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 
     /** Render the Lorebook tab — lorebook config, cached wikis, lore entry images, lore folders. */
-    private renderLorebookTab(containerEl: HTMLElement): void {
-        const content = containerEl.createDiv({ cls: 'quill-settings-content-lorebook' });
-        this.renderLorebookSettings(content);
-    }
-
-    /** Render the lorebook settings block into `content`. */
-    private renderLorebookSettings(content: HTMLElement): void {
-        new Setting(content).setName('Lorebook').setHeading();
-
-        new Setting(content)
-            .setName('Feed lore into co-writer')
-            .setDesc(
-                'Automatically include relevant lore entries as context when generating with the co-writer. Retrieved via the embedding cache. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.coWriterLoreContext).onChange(async (value) => {
-                    this.plugin.settings.coWriterLoreContext = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Feed lore into review engines')
-            .setDesc(
-                'Automatically include relevant lore entries as context for editorial feedback, critical analysis, and manuscript analysis. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.reviewLoreContext).onChange(async (value) => {
-                    this.plugin.settings.reviewLoreContext = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Co-writer tool use')
-            .setDesc(
-                'Let the co-writer (discuss, coach, and lorebook modes) call tools ' +
-                    '(manuscript mentions, lore siblings, vault lookup) via the model\u2019s native ' +
-                    'tool-calling API so it can look up details mid-conversation. Turn off if your ' +
-                    'model doesn\u2019t support tool calling or to avoid the extra turn consumption. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.coWriterToolsEnabled).onChange(async (value) => {
-                    this.plugin.settings.coWriterToolsEnabled = value;
-                    await this.plugin.saveSettings();
-                    this.refreshBridge();
-                })
-            );
-
-        new Setting(content)
-            .setName('Network tools')
-            .setDesc(
-                'Allow the co-writer to call network tools (fetch_url, fandom_lookup, ' +
-                    'wikipedia_lookup). These send requests to external sites — disable only ' +
-                    'if you want to restrict the AI from researching canon, references, or web ' +
-                    'pages. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.lorebookNetworkTools).onChange(async (value) => {
-                    this.plugin.settings.lorebookNetworkTools = value;
-                    await this.plugin.saveSettings();
-                    this.refreshBridge();
-                })
-            );
-
-        new Setting(content)
-            .setName('Fandom wikis')
-            .setDesc(
-                'Comma-separated Fandom wiki subdomains the AI may query ' +
-                    '(e.g., "starwars, memory-alpha, lotr"). Leave empty to disable Fandom lookups.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(this.plugin.settings.lorebookFandomWikis.join(', '))
-                    .inputEl.addEventListener('blur', () => {
-                        const wikis = text.inputEl.value
-                            .split(',')
-                            .map((s) => s.trim().toLowerCase())
-                            .filter((s) => s.length > 0);
-                        this.plugin.settings.lorebookFandomWikis = wikis;
-                        void this.plugin.saveSettings();
-                    })
-            );
-
-        new Setting(content)
-            .setName('Allow any wiki')
-            .setDesc(
-                'Caution: lets the co-writer query ANY Fandom wiki subdomain it chooses, ' +
-                    'not just the allowlist above. Prefer the allowlist unless you specifically need this.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.lorebookFandomAllowAllWikis).onChange(async (value) => {
-                    this.plugin.settings.lorebookFandomAllowAllWikis = value;
-                    await this.plugin.saveSettings();
-                    if (value) {
-                        new Notice('Quill: Fandom is now unrestricted — the co-writer can query any wiki it chooses.');
+    /**
+     * Declarative items for the Lorebook page. Scalar settings are native
+     * controls; the dynamic collections (slash commands, lorebook folders,
+     * fandom wiki allowlist, gallery section headings) and the conditional
+     * cached-wikis manager are SettingDefinitionRender items (their elements
+     * are dynamic arrays that don't map to fixed control keys, and the
+     * cached-wikis view loads stats asynchronously). Providers on the AI
+     * providers tab (Phase 6) are the one collection that benefits from a
+     * SettingDefinitionList-of-pages.
+     */
+    private lorebookItems(): SettingDefinitionItem[] {
+        return [
+            {
+                type: 'group',
+                heading: 'Lorebook',
+                items: [
+                    {
+                        name: 'Feed lore into co-writer',
+                        desc: 'Automatically include relevant lore entries as context when generating with the co-writer. Retrieved via the embedding cache. Default: on.',
+                        control: { type: 'toggle', key: 'coWriterLoreContext' }
+                    },
+                    {
+                        name: 'Feed lore into review engines',
+                        desc: 'Automatically include relevant lore entries as context for editorial feedback, critical analysis, and manuscript analysis. Default: on.',
+                        control: { type: 'toggle', key: 'reviewLoreContext' }
+                    },
+                    {
+                        name: 'Co-writer tool use',
+                        desc: 'Let the co-writer (discuss, coach, and lorebook modes) call tools (manuscript mentions, lore siblings, vault lookup) via the model’s native tool-calling API so it can look up details mid-conversation. Turn off if your model doesn’t support tool calling or to avoid the extra turn consumption. Default: on.',
+                        control: { type: 'toggle', key: 'coWriterToolsEnabled' }
+                    },
+                    {
+                        name: 'Network tools',
+                        desc: 'Allow the co-writer to call network tools (fetch_url, fandom_lookup, wikipedia_lookup). These send requests to external sites — disable only if you want to restrict the AI from researching canon, references, or web pages. Default: on.',
+                        control: { type: 'toggle', key: 'lorebookNetworkTools' }
+                    },
+                    {
+                        name: 'Fandom wikis',
+                        desc: 'Comma-separated Fandom wiki subdomains the AI may query (e.g., "starwars, memory-alpha, lotr"). Leave empty to disable Fandom lookups.',
+                        render: (setting) => this.renderFandomWikisField(setting)
+                    },
+                    {
+                        name: 'Allow any wiki',
+                        desc: 'Caution: lets the co-writer query ANY Fandom wiki subdomain it chooses, not just the allowlist above. Prefer the allowlist unless you specifically need this.',
+                        control: { type: 'toggle', key: 'lorebookFandomAllowAllWikis' }
+                    },
+                    {
+                        name: 'Fandom page cache',
+                        desc: 'Save lookups to a local cache so repeats skip the network — more private, and works offline once cached. Once populated, cached pages answer even with network tools off (consent is at sync time). Lives in the plugin data folder, not your vault.',
+                        control: { type: 'toggle', key: 'lorebookFandomCacheEnabled' }
+                    },
+                    {
+                        name: 'Sync fandom wiki cache',
+                        desc: 'Download every page from an allowlisted wiki into the local cache. Fair-rate and cancelable (via the cancel command). Useful before going offline.',
+                        action: () => {
+                            this.plugin.pickFandomWikiForSync();
+                        }
+                    },
+                    {
+                        name: 'Cached wikis',
+                        desc: 'Per-wiki cache size, page/image counts, and last-sync time, with a clear-cache action.',
+                        visible: () => this.plugin.settings.lorebookFandomCacheEnabled,
+                        render: (setting) => this.renderFandomCachedWikis(setting)
+                    },
+                    {
+                        name: 'Wikipedia language',
+                        desc: 'Wikipedia language subdomain (e.g., "en", "fr", "de", "simple"). Default: en.',
+                        control: {
+                            type: 'text',
+                            key: 'lorebookWikipediaLang',
+                            validate: (v) =>
+                                isValidWikipediaLang(v)
+                                    ? undefined
+                                    : 'Use a language subdomain like "en", "fr", or "simple".'
+                        }
+                    },
+                    {
+                        name: 'Network tool result limit (tokens)',
+                        desc: 'Maximum tokens returned per network tool call. Default: 2000.',
+                        control: {
+                            type: 'number',
+                            key: 'lorebookToolMaxTokens',
+                            min: 100,
+                            validate: (v) => (v >= 100 ? undefined : 'Value must be a number >= 100')
+                        }
+                    },
+                    {
+                        name: 'Image tools',
+                        desc: 'Allow the co-writer to call image-fetching tools — fetch_image_url (download any image URL), fandom_image (Fandom lead/gallery images), and wikipedia_image (Wikipedia lead portraits). Images are downscaled before delivery. Requires a vision-capable chat model (role "Chat + image") or a dedicated image model (role "Image") to have any effect. Default: on.',
+                        control: { type: 'toggle', key: 'lorebookImageTools' }
+                    },
+                    {
+                        name: 'Image max dimension (px)',
+                        desc: 'Longest-side cap before downscale. Smaller values save context budget. Default: 512.',
+                        control: {
+                            type: 'number',
+                            key: 'lorebookImageMaxDimension',
+                            min: 64,
+                            max: 2048,
+                            validate: (v) => (v >= 64 && v <= 2048 ? undefined : 'Value must be between 64 and 2048')
+                        }
+                    },
+                    {
+                        name: 'Image description token budget',
+                        desc: 'Max output tokens for the Regime B image-description call. Higher values let the model describe every character in a group image; lower values are faster on local hardware. The model stops early when it finishes — this is a ceiling, not a target. Default: 2048.',
+                        control: {
+                            type: 'number',
+                            key: 'lorebookImageMaxDescriptionTokens',
+                            min: 256,
+                            max: 8192,
+                            validate: (v) => (v >= 256 && v <= 8192 ? undefined : 'Value must be between 256 and 8192')
+                        }
+                    },
+                    {
+                        name: 'Image proxy prompt',
+                        desc: 'When your chat model is text-only and a separate image model is configured, this tells the image model how to describe images into text. Edit to focus on what matters for your fiction (clothing, architecture, mood, etc.).',
+                        control: { type: 'textarea', key: 'lorebookImageProxyPrompt', rows: 4 }
+                    },
+                    {
+                        name: 'Two-pass image description',
+                        desc: 'When your chat model is text-only and a separate image model is configured, describe multi-image batches in two passes: the image model first counts and labels each visible character, then describes each with that list as grounding. Helps weaker vision models keep per-character descriptions coherent across a group. Only applies when more than one image is attached — single images skip the count pass.',
+                        control: { type: 'toggle', key: 'lorebookImageTwoPassDescription' }
                     }
-                })
-            );
-
-        new Setting(content)
-            .setName('Fandom page cache')
-            .setDesc(
-                'Save lookups to a local cache so repeats skip the network — more private, and works offline once cached. ' +
-                    'Once populated, cached pages answer even with network tools off (consent is at sync time). ' +
-                    'Lives in the plugin data folder, not your vault.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.lorebookFandomCacheEnabled).onChange(async (value) => {
-                    this.plugin.settings.lorebookFandomCacheEnabled = value;
-                    await this.plugin.saveSettings();
-                    this.refreshBridge();
-                })
-            );
-
-        new Setting(content)
-            .setName('Sync fandom wiki cache')
-            .setDesc(
-                'Download every page from an allowlisted wiki into the local cache. Fair-rate and cancelable (via the cancel command). Useful before going offline.'
-            )
-            .addButton((btn) =>
-                btn.setButtonText('Sync now').onClick(() => {
-                    this.plugin.pickFandomWikiForSync();
-                })
-            );
-
-        // Per-wiki cache management (Stage 4) — size/pages/images/last-synced +
-        // Clear. Rendered only when the cache is enabled; stats load async.
-        if (this.plugin.settings.lorebookFandomCacheEnabled) {
-            new Setting(content).setName('Cached wikis').setHeading();
-            const cachedWikis = this.plugin.settings.lorebookFandomWikis;
-            if (cachedWikis.length === 0) {
-                new Setting(content).setDesc(
-                    'No allowlisted wikis to show. Add a wiki subdomain above to manage its cache.'
-                );
-            } else {
-                for (const wiki of cachedWikis) {
-                    const row = new Setting(content).setName(wiki).setDesc('Loading cache stats…');
-                    row.addButton((btn) =>
-                        btn
-                            .setButtonText('Clear')
-                            .setDestructive()
-                            .onClick(async () => {
-                                btn.setButtonText('Clearing…').setDisabled(true);
-                                await this.plugin.clearFandomWikiCache(wiki);
-                                this.refreshBridge();
-                            })
-                    );
-                    void this.plugin.fandomCache?.getWikiStats(wiki).then((stats) => {
-                        row.setDesc(formatFandomCacheStats(stats));
-                    });
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Lore entry images',
+                items: [
+                    {
+                        name: 'Image gallery section headings',
+                        desc: "Comma-separated headings that mark a lore entry's image-gallery section (case-insensitive). The scanner parses image embeds (e.g., `![[file.png]]`) under any matching heading and surfaces them to the AI via the get_lore_image tool. Subheadings within the gallery section become per-image labels (useful for multi-form characters). Example headings: 'Reference', 'Gallery', 'Forms', 'Appearance'.",
+                        render: (setting) => this.renderStringListField(setting, 'loreEntryImageSectionHeaders')
+                    },
+                    {
+                        name: 'Max images per lore entry',
+                        desc: 'Soft cap on the number of images the scanner extracts per entry. Overflow is silently dropped — the cap is a budget tool, not a content rule. The writer can still place more embeds in the note body. Default: 4.',
+                        control: {
+                            type: 'number',
+                            key: 'loreEntryImageMaxPerEntry',
+                            min: 1,
+                            max: 20,
+                            validate: (v) => (v >= 1 && v <= 20 ? undefined : 'Value must be between 1 and 20')
+                        }
+                    },
+                    {
+                        name: 'Agent image attachments',
+                        desc: 'Allow the lorebook coach and batch tools to propose image attachments for your review. On: the coach can attach images when drafting an entry, and the batch tool can attach images to existing entries. Every attachment flows through the review queue — nothing is written without your approval. Off: the agent cannot attach images, but you can still add them manually via ![[file]] embeds. Does not affect other tools. Default: on.',
+                        control: { type: 'toggle', key: 'loreEntryImageAttachments' }
+                    },
+                    {
+                        name: 'Attachment folder',
+                        desc: 'Where agent-attached images are written on approval. Empty uses Obsidian’s configured attachment folder. Vault-relative path (e.g., "Attachments/Lore").',
+                        control: { type: 'text', key: 'loreEntryImageAttachmentFolder' }
+                    },
+                    {
+                        name: 'Prefer editing existing lore',
+                        desc: 'When the lorebook coach drafts a new entry whose exact name already matches a note in your vault, refuse the draft and point it at edit_note / insert_note / append_to_note instead. Avoids duplicate notes that strand [[wikilinks]] pointing at the original. Off = allow unconditional creation. Default: on.',
+                        control: { type: 'toggle', key: 'lorePreferEditOverCreate' }
+                    }
+                ]
+            },
+            {
+                name: 'Slash commands',
+                desc: 'Shortcut snippets for the co-writer chat input. Typing "/" at the start of a line opens a picker listing matching commands; choosing one inserts the body into the input, fully editable before sending. Empty list (the default) disables the picker. Names must be kebab-case (lowercase letters, digits, hyphens; must start with a letter).',
+                render: (setting) => {
+                    const container = setting.controlEl.createDiv({ cls: 'quill-slash-command-list' });
+                    this.renderSlashCommands(container);
+                }
+            },
+            {
+                name: 'Lorebook folders',
+                desc: 'Folders scanned for lore entries. Any Markdown file under one of these folders is treated as a lore entry. Set a per-folder type default so every file inherits it without frontmatter; leave as mixed to type files individually via the quill-type key.',
+                render: (setting) => {
+                    const container = setting.controlEl.createDiv({ cls: 'quill-folder-overrides-list' });
+                    this.renderLorebookFolders(container);
                 }
             }
-        }
+        ];
+    }
 
-        new Setting(content)
-            .setName('Wikipedia language')
-            .setDesc('Wikipedia language subdomain (e.g., "en", "fr", "de", "simple"). Default: en.')
-            .addText((text) =>
-                text.setValue(this.plugin.settings.lorebookWikipediaLang).inputEl.addEventListener('blur', () => {
-                    const lang = text.inputEl.value.trim().toLowerCase();
-                    if (!lang) {
-                        this.plugin.settings.lorebookWikipediaLang = 'en';
-                        void this.plugin.saveSettings();
-                        // Keep the visible field in sync with the reverted default.
-                        text.inputEl.value = 'en';
-                        return;
-                    }
-                    if (!isValidWikipediaLang(lang)) {
-                        new Notice(
-                            `Quill: "${lang}" is not a valid Wikipedia language code (use a subdomain like "en", "fr", or "simple").`
-                        );
-                        text.inputEl.value = this.plugin.settings.lorebookWikipediaLang;
-                        return;
-                    }
-                    this.plugin.settings.lorebookWikipediaLang = lang;
-                    void this.plugin.saveSettings();
-                })
-            );
+    /** Comma-separated text field bound to a string[] settings field (fandom wikis). */
+    private renderFandomWikisField(setting: Setting): void {
+        const input = setting.controlEl.createEl('input', {
+            type: 'text',
+            cls: 'quill-fandom-wikis-input',
+            attr: { placeholder: 'Starwars, memory-alpha, lotr' }
+        });
+        input.value = this.plugin.settings.lorebookFandomWikis.join(', ');
+        input.addEventListener('blur', () => {
+            this.plugin.settings.lorebookFandomWikis = input.value
+                .split(',')
+                .map((s) => s.trim().toLowerCase())
+                .filter((s) => s.length > 0);
+            void this.plugin.saveSettings();
+            input.value = this.plugin.settings.lorebookFandomWikis.join(', ');
+        });
+    }
 
-        new Setting(content)
-            .setName('Network tool result limit (tokens)')
-            .setDesc('Maximum tokens returned per network tool call. Default: 2000.')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.lorebookToolMaxTokens))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 100) {
-                            this.plugin.settings.lorebookToolMaxTokens = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.lorebookToolMaxTokens));
-                            new Notice('Value must be a number ≥ 100');
-                        }
-                    })
-            );
+    /** Comma-separated text field bound to a generic string[] settings field. */
+    private renderStringListField(setting: Setting, key: 'loreEntryImageSectionHeaders'): void {
+        const input = setting.controlEl.createEl('input', { type: 'text', cls: 'quill-stringlist-input' });
+        input.value = this.plugin.settings[key].join(', ');
+        input.addEventListener('blur', () => {
+            this.plugin.settings[key] = input.value
+                .split(',')
+                .map((s) => s.trim())
+                .filter((s) => s.length > 0);
+            void this.plugin.saveSettings();
+            input.value = this.plugin.settings[key].join(', ');
+        });
+    }
 
-        new Setting(content)
-            .setName('Image tools')
-            .setDesc(
-                'Allow the co-writer to call image-fetching tools — fetch_image_url (download any ' +
-                    'image URL), fandom_image (Fandom lead/gallery images), and wikipedia_image ' +
-                    '(Wikipedia lead portraits). Images are downscaled before delivery. Requires a ' +
-                    'vision-capable chat model (role "Chat + image") or a dedicated image model ' +
-                    '(role "Image") to have any effect. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.lorebookImageTools).onChange(async (value) => {
-                    this.plugin.settings.lorebookImageTools = value;
-                    await this.plugin.saveSettings();
-                    this.refreshBridge();
-                })
-            );
-
-        new Setting(content)
-            .setName('Image max dimension (px)')
-            .setDesc('Longest-side cap before downscale. Smaller values save context budget. Default: 512.')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.lorebookImageMaxDimension))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 64 && n <= 2048) {
-                            this.plugin.settings.lorebookImageMaxDimension = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.lorebookImageMaxDimension));
-                            new Notice('Value must be a number between 64 and 2048');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Image description token budget')
-            .setDesc(
-                'Max output tokens for the Regime B image-description call. Higher values let the model ' +
-                    'describe every character in a group image; lower values are faster on local hardware. ' +
-                    'The model stops early when it finishes — this is a ceiling, not a target. Default: 2048.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.lorebookImageMaxDescriptionTokens))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 256 && n <= 8192) {
-                            this.plugin.settings.lorebookImageMaxDescriptionTokens = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.lorebookImageMaxDescriptionTokens));
-                            new Notice('Value must be a number between 256 and 8192');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Image proxy prompt')
-            .setDesc(
-                'When your chat model is text-only and a separate image model is configured, ' +
-                    'this tells the image model how to describe images into text. Edit to focus ' +
-                    'on what matters for your fiction (clothing, architecture, mood, etc.).'
-            )
-            .addTextArea((text) =>
-                text.setValue(this.plugin.settings.lorebookImageProxyPrompt).inputEl.addEventListener('blur', () => {
-                    const value = text.inputEl.value.trim();
-                    if (value.length > 0) {
-                        this.plugin.settings.lorebookImageProxyPrompt = value;
-                    } else {
-                        // Restore the default and keep the visible input in
-                        // sync so the displayed text matches the saved setting.
-                        this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_IMAGE_PROXY_PROMPT;
-                        text.inputEl.value = DEFAULT_IMAGE_PROXY_PROMPT;
-                    }
-                    void this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Two-pass image description')
-            .setDesc(
-                'When your chat model is text-only and a separate image model is configured, describe ' +
-                    'multi-image batches in two passes: the image model first counts and labels each ' +
-                    'visible character, then describes each with that list as grounding. Helps weaker ' +
-                    'vision models keep per-character descriptions coherent across a group. Only ' +
-                    'applies when more than one image is attached — single images skip the count pass.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.lorebookImageTwoPassDescription).onChange((value) => {
-                    this.plugin.settings.lorebookImageTwoPassDescription = value;
-                    void this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content).setName('Lore entry images').setHeading();
-        new Setting(content)
-            .setName('Image gallery section headings')
-            .setDesc(
-                "Comma-separated headings that mark a lore entry's image-gallery section (case-insensitive). " +
-                    'The scanner parses image embeds (e.g., `![[file.png]]`) under any matching heading and ' +
-                    'surfaces them to the AI via the get_lore_image tool. Subheadings within the gallery ' +
-                    'section become per-image labels (useful for multi-form characters). Example headings: ' +
-                    "'Reference', 'Gallery', 'Forms', 'Appearance'."
-            )
-            .addText((text) =>
-                text
-                    .setValue(this.plugin.settings.loreEntryImageSectionHeaders.join(', '))
-                    .inputEl.addEventListener('blur', () => {
-                        const value = text.inputEl.value
-                            .split(',')
-                            .map((s) => s.trim())
-                            .filter((s) => s.length > 0);
-                        this.plugin.settings.loreEntryImageSectionHeaders = value;
-                        void this.plugin.saveSettings();
-                    })
-            );
-
-        new Setting(content)
-            .setName('Max images per lore entry')
-            .setDesc(
-                'Soft cap on the number of images the scanner extracts per entry. Overflow is silently ' +
-                    'dropped — the cap is a budget tool, not a content rule. The writer can still place ' +
-                    'more embeds in the note body. Default: 4.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.loreEntryImageMaxPerEntry))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1 && n <= 20) {
-                            this.plugin.settings.loreEntryImageMaxPerEntry = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.loreEntryImageMaxPerEntry));
-                            new Notice('Value must be a number between 1 and 20');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Agent image attachments')
-            .setDesc(
-                'Allow the lorebook coach and batch tools to propose image attachments for your review. ' +
-                    'On: the coach can attach images when drafting an entry, and the batch tool can attach ' +
-                    'images to existing entries. Every attachment flows through the review queue — nothing ' +
-                    'is written without your approval. Off: the agent cannot attach images, but you can ' +
-                    'still add them manually via ![[file]] embeds. Does not affect other tools. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.loreEntryImageAttachments).onChange(async (value) => {
-                    this.plugin.settings.loreEntryImageAttachments = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Attachment folder')
-            .setDesc(
-                'Where agent-attached images are written on approval. Empty uses Obsidian’s configured ' +
-                    'attachment folder. Vault-relative path (e.g., "Attachments/Lore").'
-            )
-            .addText((text) =>
-                text
-                    .setValue(this.plugin.settings.loreEntryImageAttachmentFolder)
-                    .inputEl.addEventListener('blur', () => {
-                        const value = text.inputEl.value.trim();
-                        this.plugin.settings.loreEntryImageAttachmentFolder = value;
-                        void this.plugin.saveSettings();
-                    })
-            );
-
-        new Setting(content)
-            .setName('Prefer editing existing lore')
-            .setDesc(
-                'When the lorebook coach drafts a new entry whose exact name already matches a note in ' +
-                    'your vault, refuse the draft and point it at edit_note / insert_note / append_to_note ' +
-                    'instead. Avoids duplicate notes that strand [[wikilinks]] pointing at the original. ' +
-                    'Off = allow unconditional creation. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.lorePreferEditOverCreate).onChange(async (value) => {
-                    this.plugin.settings.lorePreferEditOverCreate = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        // --- Slash commands (co-writer input shortcuts) ---
-        new Setting(content)
-            .setName('Slash commands')
-            .setDesc(
-                'Shortcut snippets for the co-writer chat input. Typing "/" at the start of a line ' +
-                    'opens a picker listing matching commands; choosing one inserts the body into ' +
-                    'the input, fully editable before sending. Empty list (the default) disables ' +
-                    'the picker. Names must be kebab-case (lowercase letters, digits, hyphens; ' +
-                    'must start with a letter).'
-            )
-            .setHeading();
-
-        const slashCmdContainer = content.createDiv({ cls: 'quill-slash-command-list' });
-        this.renderSlashCommands(slashCmdContainer);
-
-        new Setting(content).addButton((button) =>
-            button.setButtonText('+ add command').onClick(() => {
-                this.plugin.settings.slashCommands.push({ name: '', description: '', body: '' });
-                void this.plugin.saveSettings().then(() => this.refreshBridge());
-            })
-        );
-
-        new Setting(content)
-            .setName('Lorebook folders')
-            .setDesc(
-                'Folders scanned for lore entries. Any Markdown file under one of these folders is treated as a lore entry. Set a per-folder type default so every file inherits it without frontmatter; leave as mixed to type files individually via the quill-type key.'
-            )
-            .setHeading();
-
-        const loreFoldersContainer = content.createDiv({ cls: 'quill-folder-overrides-list' });
-        this.renderLorebookFolders(loreFoldersContainer);
-
-        new Setting(content).addButton((button) =>
-            button.setButtonText('+ add folder').onClick(() => {
-                const folders = this.getVaultFolders().filter((f) => !this.plugin.settings.lorebookFolders.includes(f));
-                new FolderSuggestModal(this.app, folders, (folder) => {
-                    if (this.plugin.settings.lorebookFolders.includes(folder)) {
-                        new Notice('Folder already in lorebook.');
-                        return;
-                    }
-                    this.plugin.settings.lorebookFolders.push(folder);
-                    this.plugin.settings.lorebookFolders.sort((a, b) => a.localeCompare(b));
-                    void this.plugin.saveSettings();
-                    this.renderLorebookFolders(loreFoldersContainer);
-                }).open();
-            })
-        );
+    /** Per-wiki cache stats + clear-cache buttons (async stats load). */
+    private renderFandomCachedWikis(setting: Setting): void {
+        const wrap = setting.controlEl.createDiv({ cls: 'quill-fandom-cached-wikis' });
+        const draw = () => {
+            wrap.empty();
+            const wikis = this.plugin.settings.lorebookFandomWikis;
+            if (wikis.length === 0) {
+                wrap.createDiv({ cls: 'quill-settings__empty-hint', text: 'No allowlisted wikis to show.' });
+                return;
+            }
+            for (const wiki of wikis) {
+                const row = new Setting(wrap).setName(wiki).setDesc('Loading cache stats…');
+                row.addButton((btn) =>
+                    btn
+                        .setButtonText('Clear')
+                        .setDestructive()
+                        .onClick(async () => {
+                            btn.setButtonText('Clearing…').setDisabled(true);
+                            await this.plugin.clearFandomWikiCache(wiki);
+                            this.update();
+                        })
+                );
+                void this.plugin.fandomCache?.getWikiStats(wiki).then((stats) => {
+                    row.setDesc(formatFandomCacheStats(stats));
+                });
+            }
+        };
+        draw();
     }
 
     /** Declarative items for the Linter page (prose + AI-detection + gremlins rules). */
