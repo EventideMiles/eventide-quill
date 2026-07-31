@@ -6,6 +6,7 @@ import {
     PluginSettingTab,
     Setting,
     SettingDefinitionItem,
+    SettingDefinitionPage,
     SettingPage,
     SuggestModal
 } from 'obsidian';
@@ -670,7 +671,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 type: 'page',
                 name: 'Welcome',
                 desc: 'Getting started, features, and privacy.',
-                page: () => this.bridgePage((el) => this.renderWelcomeTab(el))
+                items: this.welcomeItems()
             },
             {
                 type: 'page',
@@ -694,7 +695,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 type: 'page',
                 name: 'AI providers',
                 desc: 'Providers, models, defaults.',
-                page: () => this.bridgePage((el) => this.renderAiProvidersTab(el))
+                items: this.aiProvidersItems()
             },
             {
                 type: 'page',
@@ -706,22 +707,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 
     /**
-     * Build an imperative bridge {@link SettingPage} for one former tab. Its
-     * `display()` records the page on {@link activeBridgePage} (so mutation
-     * handlers can re-render it in place via {@link refreshBridge}) and renders
-     * the tab's content through {@link renderBridgeContent}; `hide()` clears
-     * the tracking. Returned from each `page` factory in
-     * {@link getSettingDefinitions}; goes away when the tab is converted to
-     * declarative `items`.
-     */
-    private bridgePage(render: (content: HTMLElement) => void): SettingPage {
-        return new BridgeSettingPage(this, render);
-    }
-
-    /**
-     * Called by a {@link BridgeSettingPage} when it opens: record it as the
-     * active bridge page (so {@link refreshBridge} can re-render it in place)
-     * and render its content.
+     * Called by an imperative detail {@link SettingPage} (provider or
+     * default-models) when it opens: record it as the active page so mutation
+     * handlers can re-render it in place via {@link refreshBridge}, and render
+     * its content.
      */
     enterBridgePage(containerEl: HTMLElement, render: (content: HTMLElement) => void): void {
         this.activeBridgePage = { containerEl, render };
@@ -1033,6 +1022,27 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 
     /** Render the welcome tab (onboarding + feature overview). */
+    /**
+     * Declarative items for the Welcome page. The onboarding content (hero,
+     * getting-started, features, privacy/network-tool inventory, notes) is
+     * rendered imperatively into a single setting row via {@link renderWelcomeTab};
+     * the four tool-gating toggles inside it are duplicates of settings that
+     * are native controls on the General and Lorebook pages (so they're
+     * individually searchable there). Toggle changes call refreshBridge(), which
+     * re-renders the page (the render re-runs on update()).
+     */
+    private welcomeItems(): SettingDefinitionItem[] {
+        return [
+            {
+                name: 'Welcome',
+                render: (setting) => {
+                    setting.settingEl.empty();
+                    this.renderWelcomeTab(setting.settingEl);
+                }
+            }
+        ];
+    }
+
     private renderWelcomeTab(containerEl: HTMLElement): void {
         const content = containerEl.createDiv({ cls: 'quill-settings-content-welcome' });
 
@@ -1892,51 +1902,63 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 
     /** Render the AI providers configuration section. */
-    private renderAiProvidersTab(containerEl: HTMLElement): void {
-        const content = containerEl.createDiv({ cls: 'quill-settings-content-ai-providers' });
-
-        new Setting(content).setName('AI providers').setHeading();
-
-        // Render each provider card
-        const providers = this.plugin.settings.aiProviders;
-        for (const [pIdx, provider] of providers.entries()) {
-            this.renderProviderCard(content, provider, pIdx);
-        }
-
-        // Add provider button
-        new Setting(content)
-            .setName('Add provider')
-            .setDesc('Add a new AI provider endpoint.')
-            .addButton((button) =>
-                button.setButtonText('Add provider').onClick(() => {
-                    new AddProviderModal(this.app, (type, defaultEndpoint) => {
-                        this.addProvider(type, defaultEndpoint);
-                    }).open();
-                })
-            );
-
-        // Default model dropdowns
-        this.renderDefaultModelSettings(content);
+    /** Declarative items for the AI providers page: a list of navigable provider pages + a default-models page. */
+    private aiProvidersItems(): SettingDefinitionItem[] {
+        return [
+            {
+                type: 'list',
+                heading: 'AI providers',
+                emptyState: 'No providers configured. Click "Add provider" to set one up.',
+                items: this.plugin.settings.aiProviders.map((p) => this.providerPageDefinition(p)),
+                onDelete: (index) => {
+                    this.plugin.settings.aiProviders.splice(index, 1);
+                    this.validateDefaultProviders();
+                    void this.plugin.saveSettings().then(() => this.update());
+                },
+                addItem: {
+                    name: 'Add provider',
+                    action: () => {
+                        new AddProviderModal(this.app, (type, defaultEndpoint) =>
+                            this.addProvider(type, defaultEndpoint)
+                        ).open();
+                    }
+                }
+            },
+            {
+                type: 'page',
+                name: 'Default models',
+                desc: 'Default chat, embed, and image models across all providers.',
+                page: () => new DefaultModelsSettingPage(this)
+            }
+        ];
     }
 
-    /** Render a single provider card. */
-    private renderProviderCard(containerEl: HTMLElement, provider: ProviderConfig, index: number): void {
-        const card = containerEl.createDiv({ cls: 'quill-provider-card' });
+    private providerPageDefinition(provider: ProviderConfig): SettingDefinitionPage {
+        const count = provider.models.length;
+        return {
+            type: 'page',
+            name: provider.name || 'Unnamed provider',
+            desc: `${provider.type} • ${count} model${count === 1 ? '' : 's'}`,
+            page: () => new ProviderSettingPage(this, provider)
+        };
+    }
 
-        // Provider heading row
-        const headingRow = card.createDiv({ cls: 'quill-provider-card__heading' });
+    /**
+     * Render a full provider detail page (fields + model list + test buttons).
+     * Public so {@link ProviderSettingPage} can call it; reuses the private
+     * card renderers. Mutation handlers inside call refreshBridge(), which
+     * re-renders the open provider page in place (via the bridge machinery).
+     */
+    renderProviderPage(containerEl: HTMLElement, provider: ProviderConfig): void {
+        this.renderProviderFields(containerEl, provider);
+        this.renderModelList(containerEl, provider);
+        this.renderTestButtons(containerEl, provider);
+    }
 
-        new Setting(headingRow).setName(provider.name || 'Unnamed provider').addButton((button) =>
-            button.setButtonText('Remove').onClick(async () => {
-                this.plugin.settings.aiProviders.splice(index, 1);
-                this.validateDefaultProviders();
-                await this.plugin.saveSettings();
-                this.refreshBridge();
-            })
-        );
-
+    /** Render a provider's editable fields (everything except the list-managed delete affordance). */
+    private renderProviderFields(containerEl: HTMLElement, provider: ProviderConfig): void {
         // Name
-        new Setting(card)
+        new Setting(containerEl)
             .setName('Name')
             .setDesc('A display name for this provider.')
             .addText((text) =>
@@ -1947,7 +1969,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         // Type
-        new Setting(card)
+        new Setting(containerEl)
             .setName('Type')
             .setDesc('The API format this provider uses.')
             .addDropdown((dropdown) =>
@@ -1990,7 +2012,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         // Endpoint URL
-        new Setting(card)
+        new Setting(containerEl)
             .setName('Endpoint URL')
             .setDesc('The full base URL of the API endpoint. Used as-is with no path manipulation.')
             .addText((text) =>
@@ -2014,7 +2036,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                       : 'Optional. Leave blank for local providers.';
             const apiKeyPlaceholder =
                 provider.type === 'anthropic' ? 'sk-ant-...' : provider.type === 'gemini' ? 'AIza...' : 'E.g., sk-...';
-            new Setting(card)
+            new Setting(containerEl)
                 .setName('API key')
                 .setDesc(apiKeyDesc)
                 .addText((text) =>
@@ -2034,7 +2056,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         }
 
         // Context window
-        new Setting(card)
+        new Setting(containerEl)
             .setName('Context window')
             .setDesc('Maximum context tokens for models on this endpoint.')
             .addDropdown((dropdown) => {
@@ -2047,7 +2069,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     dropdown.setValue(current);
                 } else {
                     dropdown.setValue('custom');
-                    card.createDiv({
+                    containerEl.createDiv({
                         cls: 'quill-provider-card__setting-extra',
                         text: `Custom value: ${current}`
                     });
@@ -2071,7 +2093,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             });
 
         // Max output tokens
-        new Setting(card)
+        new Setting(containerEl)
             .setName('Max output tokens')
             .setDesc('Maximum tokens per response for all models on this endpoint.')
             .addText((text) =>
@@ -2086,12 +2108,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }
                 })
             );
-
-        // Models sub-list
-        this.renderModelList(card, provider);
-
-        // Test buttons
-        this.renderTestButtons(card, provider);
     }
 
     /** Render the model list for a provider. */
@@ -2226,8 +2242,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
     }
 
-    /** Render the default chat/embed/image model dropdowns. */
-    private renderDefaultModelSettings(containerEl: HTMLElement): void {
+    /** Render the default chat/embed/image model dropdowns. Public so {@link DefaultModelsSettingPage} can call it. */
+    renderDefaultModelSettings(containerEl: HTMLElement): void {
         // Collect chat-, embed-, and image-capable models across providers.
         // Image models may live on a different provider than chat — the proxy
         // caption call is fully isolated, so cross-provider routing is fine.
@@ -3061,24 +3077,49 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 }
 
 /**
- * Imperative bridge page for one former settings tab (Phase 1 of the
- * declarative migration). Routes `display()`/`hide()` back into the owning
- * {@link EventideQuillSettingTab} so mutation handlers can re-render the open
- * page in place via `refreshBridge()`. Replaced by declarative `items` as each
- * tab is converted (Phases 2–6).
+ * Navigable detail page for one AI provider (Phase 6). Renders the provider's
+ * fields, model list, and test buttons via {@link EventideQuillSettingTab.renderProviderPage},
+ * and registers with the bridge machinery so mutation handlers that call
+ * refreshBridge() (type cascades, model add/remove/role changes, custom
+ * context) re-render this page in place.
  */
-class BridgeSettingPage extends SettingPage {
+class ProviderSettingPage extends SettingPage {
     private readonly tab: EventideQuillSettingTab;
-    private readonly render: (content: HTMLElement) => void;
+    private readonly provider: ProviderConfig;
 
-    constructor(tab: EventideQuillSettingTab, render: (content: HTMLElement) => void) {
+    constructor(tab: EventideQuillSettingTab, provider: ProviderConfig) {
         super();
         this.tab = tab;
-        this.render = render;
+        this.provider = provider;
+        this.title = provider.name || 'Unnamed provider';
     }
 
     display(): void {
-        this.tab.enterBridgePage(this.containerEl, this.render);
+        this.tab.enterBridgePage(this.containerEl, (el) => this.tab.renderProviderPage(el, this.provider));
+    }
+
+    hide(): void {
+        this.tab.exitBridgePage(this.containerEl);
+        super.hide();
+    }
+}
+
+/**
+ * Navigable page for the default chat/embed/image model pickers. Renders via
+ * {@link EventideQuillSettingTab.renderDefaultModelSettings} (the embed picker
+ * has a cache-invalidation confirmation modal that doesn't need a re-render).
+ */
+class DefaultModelsSettingPage extends SettingPage {
+    private readonly tab: EventideQuillSettingTab;
+
+    constructor(tab: EventideQuillSettingTab) {
+        super();
+        this.tab = tab;
+        this.title = 'Default models';
+    }
+
+    display(): void {
+        this.tab.enterBridgePage(this.containerEl, (el) => this.tab.renderDefaultModelSettings(el));
     }
 
     hide(): void {
