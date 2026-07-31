@@ -156,6 +156,8 @@ export interface EventideQuillSettings {
     dashboardAutoSnapshotOnSave: boolean;
     dashboardMaxSnapshots: number;
     readabilityFormula: ReadabilityFormula;
+    /** Daily writing word goal (0 disables goals/streak). Default 500. */
+    writingDailyGoal: number;
     /**
      * User-defined slash commands for the co-writer chat input. Typing
      * `/` at the start of a line opens a picker of matching commands;
@@ -381,6 +383,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     dashboardAutoSnapshotOnSave: false,
     dashboardMaxSnapshots: 100,
     readabilityFormula: 'reweighted-flesch',
+    writingDailyGoal: 500,
     slashCommands: [],
     lorebookFolders: [],
     lorebookFolderTypes: {},
@@ -1403,6 +1406,17 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             max: 1000,
                             validate: (v) => (v >= 10 && v <= 1000 ? undefined : 'Value must be between 10 and 1000')
                         }
+                    },
+                    {
+                        name: 'Daily writing goal',
+                        desc: 'Target words per day for the dashboard goals card and streak (0 disables). Default: 500.',
+                        control: {
+                            type: 'number',
+                            key: 'writingDailyGoal',
+                            min: 0,
+                            max: 100000,
+                            validate: (v) => (v >= 0 ? undefined : 'Value must be a number >= 0')
+                        }
                     }
                 ]
             },
@@ -1438,6 +1452,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         s.dashboardAutoSnapshotOnSave = d.dashboardAutoSnapshotOnSave;
         s.dashboardMaxSnapshots = d.dashboardMaxSnapshots;
         s.readabilityFormula = d.readabilityFormula;
+        s.writingDailyGoal = d.writingDailyGoal;
         s.lorebookFolders = [...d.lorebookFolders];
         s.lorebookFolderTypes = { ...d.lorebookFolderTypes };
         s.coWriterLoreContext = d.coWriterLoreContext;
