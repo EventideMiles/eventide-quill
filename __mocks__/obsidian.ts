@@ -480,3 +480,19 @@ export class Modal {
     onOpen(): void {}
     onClose(): void {}
 }
+
+/** Minimal SuggestModal stub — enough for subclasses to compile + instantiate. */
+export class SuggestModal<T> {
+    limit = Infinity;
+    setPlaceholder(_p: string): this {
+        return this;
+    }
+    getSuggestions(_query: string): T[] {
+        return [];
+    }
+    renderSuggestion(_item: T, _el: HTMLElement): void {}
+    onChooseSuggestion(_item: T): void {}
+    constructor(_app?: App) {}
+    open(): void {}
+    close(): void {}
+}
