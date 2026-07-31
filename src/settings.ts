@@ -698,7 +698,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 type: 'page',
                 name: 'AI providers',
                 desc: 'Providers, models, defaults.',
-                items: this.aiProvidersItems()
+                items: this.aiProvidersItems(),
+                displayValue: this.aiProviderDisplayValue(),
+                status: this.aiProviderStatus()
             },
             {
                 type: 'page',
@@ -1943,7 +1945,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 type: 'page',
                 name: 'Default models',
                 desc: 'Default chat, embed, and image models across all providers.',
-                page: () => new DefaultModelsSettingPage(this)
+                page: () => new DefaultModelsSettingPage(this),
+                displayValue: this.defaultModelDisplayValue(),
+                status: this.plugin.settings.aiDefaultChatProvider ? null : 'warning'
             }
         ];
     }
@@ -1954,8 +1958,40 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             type: 'page',
             name: provider.name || 'Unnamed provider',
             desc: `${provider.type} • ${count} model${count === 1 ? '' : 's'}`,
-            page: () => new ProviderSettingPage(this, provider)
+            page: () => new ProviderSettingPage(this, provider),
+            displayValue: `${count} model${count === 1 ? '' : 's'}`,
+            status: count === 0 ? 'warning' : null
         };
+    }
+
+    /** Display value for the AI providers page entry (provider count). */
+    private aiProviderDisplayValue(): string {
+        const n = this.plugin.settings.aiProviders.length;
+        return n === 0 ? 'Not configured' : `${n} provider${n === 1 ? '' : 's'}`;
+    }
+
+    /**
+     * Warning status for the AI providers page entry. Flags the two states that
+     * silently break every AI feature: no providers configured, or no default
+     * chat model picked.
+     */
+    private aiProviderStatus(): 'warning' | null {
+        return this.plugin.settings.aiProviders.length === 0 || !this.plugin.settings.aiDefaultChatProvider
+            ? 'warning'
+            : null;
+    }
+
+    /** Display value for the Default models page entry (resolved chat model, or "Not set"). */
+    private defaultModelDisplayValue(): string {
+        const key = this.plugin.settings.aiDefaultChatProvider;
+        if (!key) return 'Not set';
+        const slash = key.indexOf('/');
+        if (slash < 0) return 'Not set';
+        const pid = key.slice(0, slash);
+        const mid = key.slice(slash + 1);
+        const provider = this.plugin.settings.aiProviders.find((p) => p.id === pid);
+        const model = provider?.models.find((m) => m.id === mid);
+        return provider && model ? `${provider.name} — ${model.model}` : 'Not set';
     }
 
     /**
@@ -2303,6 +2339,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 dropdown.onChange(async (value) => {
                     this.plugin.settings.aiDefaultChatProvider = value;
                     await this.plugin.saveSettings();
+                    // Refresh the AI-providers / Default-models entry status indicators.
+                    this.update();
                 });
             });
 
