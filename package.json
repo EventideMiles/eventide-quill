@@ -50,6 +50,7 @@
 		"eslint": "^9.39.4",
 		"eslint-plugin-obsidianmd": "^0.4.1",
 		"globals": "^17.6.0",
+		"happy-dom": "^20.11.1",
 		"jiti": "^2.6.1",
 		"jscpd": "^5.0.11",
 		"knip": "^6.29.0",

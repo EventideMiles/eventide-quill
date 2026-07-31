@@ -24,7 +24,9 @@ export default defineConfig(
 		'scripts/live-linter-ai.mts', // dev-only LM Studio harness, not part of the plugin build
 		'scripts/setup-test-vault.mjs', // dev-only chore script (Function() eval, Node built-ins)
 		'test/**/*.ts', // WDIO E2E specs + helpers — type-checked via `npm run typecheck:e2e`, not ESLint (projectService friction not worth it for one-off infra)
-		'test/**/*.mts'
+		'test/**/*.mts',
+		'__mocks__/**', // Obsidian module mock — intentionally loose (class stubs, DOM polyfills)
+		'tests/helpers/**' // Test infrastructure (DOM polyfills, in-memory vaults, mock-http)
 	]),
 	{
 		languageOptions: {
