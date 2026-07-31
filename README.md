@@ -10,6 +10,8 @@ MIT license. Built from scratch. Mobile-targeted. Local-model first.
 
 Eventide Quill is an Obsidian plugin that reads like a thoughtful editor, not a text generator. It helps novelists write better prose through deterministic linting, AI-powered feedback, a lorebook with an AI coach, and co-writer collaboration — all without leaving your editor.
 
+Requires Obsidian 1.13.0 or later.
+
 It runs locally by default (Ollama, or any OpenAI-compatible local server such as LM Studio) and never sends your manuscript anywhere you didn't explicitly configure.
 
 ## Features
@@ -22,7 +24,7 @@ It runs locally by default (Ollama, or any OpenAI-compatible local server such a
 
 **Manuscript intelligence**
 - **Manuscript Context Engine** — automatically builds working context from your open document: extracts characters, locations, and plot threads on the fly, and profiles your narrative voice.
-- **Manuscript Dashboard** — chapter word counts, pacing analysis, dialogue vs. description ratios, and per-character appearance tracking.
+- **Manuscript Dashboard** — chapter word counts, pacing analysis, dialogue vs. description ratios, per-character appearance tracking, and a **Writing goals** card (daily word goal, writing streak, and a focus-session timer) to build a steady writing habit.
 - **AI Review Engine** — a single Review tab with persona-driven editorial feedback and critical analysis (plot logic, character consistency, continuity, voice drift), with line-referenced findings.
 - **Async Feedback Queue** — drop a chapter at 3 AM, get a structured report when it's ready.
 
@@ -63,7 +65,7 @@ Styles are authored in SCSS and compiled to `styles.css` — edit the sources un
 
 - **Deterministic first, AI second.** Prose linter, character extraction, and metrics run locally without AI cost or latency.
 - **Async by default.** No operation blocks the editor.
-- **Pluggable providers.** Ollama by default, plus any OpenAI-compatible endpoint (LM Studio is the primary local test target; OpenAI and other compatible servers work too).
+- **Pluggable providers.** Ollama by default, plus any OpenAI-compatible endpoint (LM Studio is the primary local test target; OpenAI and other compatible servers work too). Anthropic Claude and Google Gemini ship native provider implementations (prompt caching + extended thinking on Anthropic; safety-filter reporting on Gemini) — though their OpenAI-compatible endpoints work too if you prefer.
 - **Capability-based model roles.** Models declare a role (`chat`, `embed`, `image`, or `chat-image`); the right model is resolved per task — a non-vision model never receives pixels.
 - **Subagents for context isolation.** Heavy batch tasks run in a fresh context and return a summary, so the main conversation stays lean and responsive — local-model friendly (one inference at a time).
 - **Mobile as a first-class target.** The plugin ships with `isDesktopOnly: false`, `requestUrl` transport, and touch-target sizing — but it has not yet been smoke-tested on a real mobile device. A Capacitor install + on-device pass is scheduled for immediately after the 2.0.0 release; report mobile issues against the `2.0.0` milestone.

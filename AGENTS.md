@@ -232,6 +232,7 @@ src/
     dashboard/            # Manuscript dashboard + lorebook
       index.ts (barrel), manuscript-file.ts, metrics.ts, readability.ts,
       presets.ts, types.ts, dale-chall-words.json (data asset),
+      writing-goals.ts (2.0.0 daily words-written ledger + streak + focus-session core; pure logic + sidecar persistence),
       lorebook-scanner.ts (gallery-section image extraction + relationship computation), lorebook-types.ts (LORE_ENTRY_TYPES, LoreEntryImage, coverage, relationships)
     linter/               # Prose linter (Novelist Edition)
       apply-fix.ts, decorations.ts (CodeMirror decorations + debounced timers),
@@ -551,7 +552,7 @@ Each row = one JSDoc + two `setDesc(...)` copies to keep aligned. The authoritat
 ## Key feature areas
 
 1. **Manuscript Context Engine** — auto-builds working context from open document.
-2. **Manuscript Dashboard** — chapter word counts, pacing analysis, dialogue ratios, readability, and a deterministic narrative-flow score (0-100 composite of sentence-length variety, paragraph-length rhythm, pacing-flag density, and dialogue balance).
+2. **Manuscript Dashboard** — chapter word counts, pacing analysis, dialogue ratios, readability, and a deterministic narrative-flow score (0-100 composite of sentence-length variety, paragraph-length rhythm, pacing-flag density, and dialogue balance). 2.0.0 adds **Writing goals & sessions** (`src/core/dashboard/writing-goals.ts`): a daily words-written goal (default 500), a writing streak derived from a per-date ledger of manuscript word-count deltas, a best-ever streak, and a focus-session timer — all deterministic (no AI), persisted to `<pluginDataDir>/writing-goals.json`.
 3. **Prose Linter (Novelist Edition)** — deterministic rules for narrative prose.
 4. **AI Feedback Engine** — reads like a thoughtful editor, not a text generator. Manuscripts that exceed the model's context window are handled via chunked map-reduce (`getChunkedFeedback` in `ai/feedback.ts`): the text is split into paragraph-aware chunks, each gets its own feedback pass, then a synthesis call combines the per-section notes into a cohesive report that streams to the UI — full coverage without overflow.
 5. **Async Feedback Queue** — submit any review (editorial / critical / manuscript) to run unattended via the Review tab's "Queue instead of running" toggle; single-slot FIFO scheduler, per-job snapshots (isolated from live edits), and a durable vault archive of every report. See "Async feedback queue".

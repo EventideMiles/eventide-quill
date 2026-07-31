@@ -15,13 +15,15 @@ import { openFile, openQuillSidebar, isMobileEmulation } from '../helpers/obsidi
  * `app.setting.openTabById(pluginId)` API. Toggle clicks identify rows by
  * visible name text match.
  */
-// TODO(phase-7): re-enable once the declarative settings conversion
-// (Phases 2-6) is complete and page-navigation helpers are added. The
-// Phase-1 bridge renders each former tab behind a navigable
-// SettingDefinitionPage, which Obsidian 1.13 expresses with a different DOM
-// than the classic flat .setting-item plugin-tab model these tests assumed.
-// The smoke spec still verifies the plugin loads (getSettingDefinitions()
-// indexes without error) on every E2E run in the meantime.
+// TODO(phase-7): re-enable with page-navigation helpers. All six settings
+// pages are now declarative (getSettingDefinitions), so individual settings
+// live behind navigable SettingDefinitionPage entries, which Obsidian 1.13
+// renders with a DOM the classic `.setting-item`-flat model didn't match.
+// Navigating to a page (clicking its entry) + toggling needs the 1.13
+// declarative-settings selectors — easiest to capture with a live session.
+// The smoke spec verifies the plugin loads (getSettingDefinitions indexes
+// without error) on every E2E run in the meantime; settings behavior is
+// covered by unit tests + manual spot-check.
 describe.skip('Settings UI', () => {
     beforeEach(function () { if (isMobileEmulation()) return this.skip(); });
     beforeEach(async () => {
