@@ -496,3 +496,20 @@ export class SuggestModal<T> {
     open(): void {}
     close(): void {}
 }
+
+/** Minimal FuzzySuggestModal stub. */
+export class FuzzySuggestModal<T> {
+    getItems(): T[] {
+        return [];
+    }
+    getItemText(_item: T): string {
+        return '';
+    }
+    onChooseItem(_item: T, _evt: MouseEvent | KeyboardEvent): void {}
+    constructor(_app?: App) {}
+    open(): void {}
+    close(): void {}
+    setPlaceholder(_p: string): this {
+        return this;
+    }
+}
