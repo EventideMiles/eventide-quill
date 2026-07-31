@@ -187,4 +187,31 @@ describe('Settings UI', () => {
         const parsed = JSON.parse(persisted) as { coWriterToolsEnabled: boolean };
         expect(parsed.coWriterToolsEnabled).to.equal(false);
     });
+
+    it('disabling gremlins cascades to disable aggressive scanning', async () => {
+        await openPluginSettings();
+        await openSettingsPage('Linter');
+        const orig = await readSettings<{ enableGremlins: boolean; enableAggressiveGremlins: boolean }>();
+
+        // Ensure both are on first (aggressive can only be toggled while gremlins is on).
+        if (!orig.enableGremlins) await toggleSettingByName(/invisible character/i);
+        if (!(await readSettings<{ enableAggressiveGremlins: boolean }>()).enableAggressiveGremlins) {
+            await toggleSettingByName(/aggressive scan/i);
+        }
+        await browser.pause(150);
+
+        // Disabling gremlins must cascade-set aggressive scanning off (setControlValue).
+        await toggleSettingByName(/invisible character/i);
+        await browser.pause(150);
+        const after = await readSettings<{ enableGremlins: boolean; enableAggressiveGremlins: boolean }>();
+        expect(after.enableGremlins).to.equal(false);
+        expect(after.enableAggressiveGremlins).to.equal(false);
+
+        // Restore original state.
+        if (orig.enableGremlins) await toggleSettingByName(/invisible character/i);
+        if (orig.enableAggressiveGremlins && (await readSettings<{ enableAggressiveGremlins: boolean }>()).enableAggressiveGremlins === false) {
+            await toggleSettingByName(/aggressive scan/i);
+        }
+        await closeSettings();
+    });
 });

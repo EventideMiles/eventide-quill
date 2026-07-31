@@ -150,8 +150,8 @@ export function respectsStoppingPoint(content: string, instruction: string): boo
 export function truncateToStoppingPoint(content: string, instruction: string): string {
     const lower = content.toLowerCase();
 
-        // Handle paragraph count constraint
-        const paraMatch = instruction.match(/write\s+exactly\s+(\d+)\s+paragraph/i);
+    // Handle paragraph count constraint
+    const paraMatch = instruction.match(/write\s+exactly\s+(\d+)\s+paragraph/i);
     if (paraMatch?.[1]) {
         const expectedCount = parseInt(paraMatch[1], 10);
         const paragraphs = content.split(/\n\s*\n/);
