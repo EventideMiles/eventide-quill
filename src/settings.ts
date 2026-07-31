@@ -1,5 +1,6 @@
 import {
     App,
+    ExtraButtonComponent,
     Modal,
     Notice,
     PluginSettingTab,
@@ -699,7 +700,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 type: 'page',
                 name: 'Model behaviors',
                 desc: 'Voice, style, co-writer, review.',
-                page: () => this.bridgePage((el) => this.renderModelBehaviorsTab(el))
+                items: this.modelBehaviorsItems()
             }
         ];
     }
@@ -785,7 +786,13 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             this.plugin.settings.enableAggressiveGremlins = false;
             void this.plugin.saveSettings();
         }
-        // Re-evaluate disabled/visible predicates so cascaded controls update.
+        // Turning embedding cache warming on kicks off a warming pass.
+        if (key === 'enableEmbeddingWarming' && value === true) {
+            void this.plugin.warmAllEmbeddingCaches();
+        }
+        // Re-evaluate disabled/visible predicates so cascaded controls update
+        // (e.g. the custom narrative-rules textarea shows only for the custom
+        // preset, and aggressive scanning disables when gremlins is off).
         this.refreshDomState();
         return result;
     }
@@ -1440,156 +1447,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         s.slashCommands = [...d.slashCommands];
         await this.plugin.saveSettings();
         this.update();
-    }
-
-    /** Render the Embeddings settings block into `content` (retrieval index config). */
-    private renderEmbeddingsSettings(content: HTMLElement): void {
-        new Setting(content).setName('Embeddings').setHeading();
-
-        new Setting(content)
-            .setName('Embedding top-k chunks')
-            .setDesc(
-                'Number of chunks (paragraphs) retrieved from embedded folders. Higher = more context but more tokens; lower = tighter focus, less window pressure. Recommended: 8–12 for most use cases. 3–5 keeps overhead minimal. 15+ may crowd the context window.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.embeddingsTopKChunks))
-                    // settings.ts - no Component lifecycle available; raw addEventListener is required
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1 && n <= 100) {
-                            this.plugin.settings.embeddingsTopKChunks = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.embeddingsTopKChunks));
-                            new Notice('Value must be a number between 1 and 100');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Embedding cache warming')
-            .setDesc(
-                'Automatically pre-compute and cache embeddings for each folder containing Markdown files (cast notes, lore, outlines, manuscript chapters). Enables instant semantic retrieval. Root folder is excluded.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableEmbeddingWarming).onChange((value) => {
-                    this.plugin.settings.enableEmbeddingWarming = value;
-                    void this.plugin.saveSettings();
-                    if (value) {
-                        void this.plugin.warmAllEmbeddingCaches();
-                    }
-                })
-            );
-
-        new Setting(content)
-            .setName('Embedding warming debounce (seconds)')
-            .setDesc(
-                'How long to wait after the last file save before warming embeddings. Higher reduces API calls during active writing; lower keeps caches fresher. Default: 30.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.embeddingWarmingDebounceSeconds))
-                    // settings.ts - no Component lifecycle available; raw addEventListener is required
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 5 && n <= 600) {
-                            this.plugin.settings.embeddingWarmingDebounceSeconds = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.embeddingWarmingDebounceSeconds));
-                            new Notice('Value must be a number between 5 and 600');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Build embeddings now')
-            .setDesc(
-                'Immediately pre-compute and cache embeddings for all folders with Markdown files. ' +
-                    'Useful after adding new material or when warming is turned off.'
-            )
-            .addButton((button) =>
-                button.setButtonText('Build').onClick(() => {
-                    button.setDisabled(true);
-                    button.setButtonText('Building\u2026');
-                    void this.plugin
-                        .warmAllEmbeddingCaches()
-                        .then(() => {
-                            new Notice('Quill: Embedding caches rebuilt.');
-                        })
-                        .catch((err: unknown) => {
-                            const msg = err instanceof Error ? err.message : String(err);
-                            new Notice(`Quill: Embedding build failed. ${msg}`);
-                        })
-                        .finally(() => {
-                            button.setDisabled(false);
-                            button.setButtonText('Build');
-                        });
-                })
-            );
-
-        new Setting(content)
-            .setName('Embedding chunk size (tokens)')
-            .setDesc(
-                "Target tokens per chunk when embedding. Must not exceed your embedding model's context window. Many local embedding models (e.g. Nomic-embed-text) support 512; cloud models may support more. Default: 512."
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.embeddingChunkTokenSize))
-                    // settings.ts - no Component lifecycle available; raw addEventListener is required
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 128 && n <= 8192) {
-                            this.plugin.settings.embeddingChunkTokenSize = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.embeddingChunkTokenSize));
-                            new Notice('Value must be a number between 128 and 8192');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Show full embed in file picker')
-            .setDesc(
-                'When enabled, file pickers show a "{Folder name} full embed" option alongside "{Folder name} embedded" (top-K). Full embed sends all chunk texts from the folder; top-K sends only the most relevant. Default: off.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableFullEmbedPickerOption).onChange((value) => {
-                    this.plugin.settings.enableFullEmbedPickerOption = value;
-                    void this.plugin.saveSettings();
-                })
-            );
-
-        // --- Folder-specific top-K overrides ---
-        new Setting(content)
-            .setName('Folder-specific chunk overrides')
-            .setDesc(
-                'Set a custom top-k chunk count for specific embedded folders. Use a higher number for folders that are more important to your writing (e.g., plot maps), and a lower number for auxiliary lore. Folders without an override use the global setting above.'
-            )
-            .setHeading();
-
-        const overridesContainer = content.createDiv({ cls: 'quill-folder-overrides-list' });
-
-        this.renderFolderOverrides(overridesContainer);
-
-        new Setting(content).addButton((button) =>
-            button.setButtonText('+ add folder').onClick(() => {
-                const folders = this.getVaultFolders();
-                new FolderSuggestModal(this.app, folders, (folder) => {
-                    if (this.plugin.settings.folderTopKOverrides[folder]) {
-                        new Notice('Folder already has an override.');
-                        return;
-                    }
-                    this.plugin.settings.folderTopKOverrides[folder] = this.plugin.settings.embeddingsTopKChunks;
-                    void this.plugin.saveSettings();
-                    this.renderFolderOverrides(overridesContainer);
-                }).open();
-            })
-        );
-
-        // --- Lorebook ---
     }
 
     /** Render the Lorebook tab — lorebook config, cached wikis, lore entry images, lore folders. */
@@ -2688,736 +2545,580 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 
     /** Render the Model behaviors settings tab. */
-    private renderModelBehaviorsTab(containerEl: HTMLElement): void {
-        const content = containerEl.createDiv({ cls: 'quill-settings-content-model-behaviors' });
-        this.renderModelBehaviorsSettings(content);
+    /**
+     * Declarative items for the Model behaviors page. Native controls for every
+     * simple setting; each section's restore-defaults is the group's
+     * `extraButtons` (a small "reset" icon in the heading). The narrative-voice
+     * preset is a dropdown; its custom-rules textarea is a separate control
+     * visible only for the `custom` preset (setControlValue re-evaluates
+     * visibility via refreshDomState). Embedding warming's kick-off side-effect
+     * lives in setControlValue. Folder-specific chunk overrides are a render
+     * item (a dynamic-key map that doesn't fit the fixed-key control model).
+     */
+    private modelBehaviorsItems(): SettingDefinitionItem[] {
+        const restore = (tooltip: string, fn: () => Promise<void>) => ({
+            extraButtons: [
+                (btn: ExtraButtonComponent) =>
+                    btn
+                        .setIcon('rotate-ccw')
+                        .setTooltip(tooltip)
+                        .onClick(() => void fn())
+            ]
+        });
+        return [
+            {
+                type: 'group',
+                heading: 'Selection transformations',
+                ...restore('Restore transformation defaults', () => this.restoreTransformDefaults()),
+                items: [
+                    {
+                        name: 'Narrative voice',
+                        desc: 'The narrative perspective and tense used when generating text.',
+                        control: {
+                            type: 'dropdown',
+                            key: 'narrativeVoicePreset',
+                            options: Object.fromEntries(NARRATIVE_VOICE_PRESETS.map((p) => [p.id, p.label]))
+                        }
+                    },
+                    {
+                        name: 'Custom narrative voice rules',
+                        desc: 'Rules for your custom narrative voice (only used when the preset is "Custom").',
+                        visible: () => this.plugin.settings.narrativeVoicePreset === 'custom',
+                        control: { type: 'textarea', key: 'customNarrativeVoiceRules', rows: 6 }
+                    },
+                    {
+                        name: 'Temperature',
+                        desc: 'Higher values produce more creative output. Range: 0.0 – 2.0.',
+                        control: {
+                            type: 'number',
+                            key: 'transformTemperature',
+                            min: 0,
+                            max: 2,
+                            step: 0.1,
+                            validate: (v) => (v >= 0 && v <= 2 ? undefined : 'Value must be between 0.0 and 2.0')
+                        }
+                    },
+                    {
+                        name: 'Vault context',
+                        desc: 'Include cross-document vault context (character notes, worldbuilding, etc.) in transformation prompts.',
+                        control: { type: 'toggle', key: 'transformVaultContext' }
+                    },
+                    {
+                        name: 'Max output tokens',
+                        desc: 'Maximum tokens per transformation response. Higher values allow longer rewrites.',
+                        control: {
+                            type: 'number',
+                            key: 'transformMaxOutputTokens',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
+                    },
+                    {
+                        name: 'Wiki link handling',
+                        desc: 'How AI should handle Obsidian wiki links ([[...]]) when rewriting or generating prose. "preserve" keeps them exactly as-is. "adaptive" allows the AI to adapt the display text after the pipe (|) to fit the prose while keeping the page name and heading intact.',
+                        control: {
+                            type: 'dropdown',
+                            key: 'wikiLinkBehavior',
+                            options: { preserve: 'Preserve exactly', adaptive: 'Adaptive (smart display text)' }
+                        }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Co-writer',
+                ...restore('Restore co-writer defaults', () => this.restoreCoWriterDefaults()),
+                items: [
+                    {
+                        name: 'Temperature',
+                        desc: 'Higher values produce more creative continuations. Range: 0.0 – 2.0.',
+                        control: {
+                            type: 'number',
+                            key: 'coWriterTemperature',
+                            min: 0,
+                            max: 2,
+                            step: 0.1,
+                            validate: (v) => (v >= 0 && v <= 2 ? undefined : 'Value must be between 0.0 and 2.0')
+                        }
+                    },
+                    {
+                        name: 'Max output tokens',
+                        desc: 'Maximum tokens per continuation. Higher values allow longer passages.',
+                        control: {
+                            type: 'number',
+                            key: 'coWriterMaxOutputTokens',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
+                    },
+                    {
+                        name: 'Max tool rounds',
+                        desc: 'Maximum number of tool-calling rounds per response. Set to 0 for unlimited — the model will call as many rounds as it needs (use Stop to cancel). Set a specific number to cap turn consumption. Default: 0 (unlimited).',
+                        control: {
+                            type: 'number',
+                            key: 'coWriterMaxToolRounds',
+                            min: 0,
+                            validate: (v) => (v >= 0 ? undefined : 'Value must be a number >= 0')
+                        }
+                    },
+                    {
+                        name: 'Saved conversation limit',
+                        desc: 'How many co-writer conversations to keep on disk. Starting a new chat saves the current one; older sessions are deleted (newest-first) once this limit is exceeded. Set to 0 to keep all. Default: 25.',
+                        control: {
+                            type: 'number',
+                            key: 'coWriterSessionHistoryLimit',
+                            min: 0,
+                            validate: (v) => (v >= 0 ? undefined : 'Value must be a number >= 0')
+                        }
+                    },
+                    {
+                        name: 'Auto-save after each turn',
+                        desc: 'Snapshot the active conversation to its saved-session file after every completed turn, so it survives a crash or restart without an explicit save. Off by default — the snapshot copies the full conversation state, so it adds some overhead on long sessions. De-bounced so a turn followed immediately by auto-options collapses to one write.',
+                        control: { type: 'toggle', key: 'coWriterAutoSavePerTurn' }
+                    },
+                    {
+                        name: 'Vault context',
+                        desc: 'Include cross-document vault context (character notes, worldbuilding, etc.) in co-writer prompts.',
+                        control: { type: 'toggle', key: 'coWriterVaultContext' }
+                    },
+                    {
+                        name: 'Append trailing newline',
+                        desc: 'Add a blank line after the continuation so you can keep writing without pressing enter twice.',
+                        control: { type: 'toggle', key: 'coWriterAppendNewline' }
+                    },
+                    {
+                        name: 'Show AI reasoning',
+                        desc: "Display the AI's thought process in the co-writer panel. Disable for a cleaner interface.",
+                        control: { type: 'toggle', key: 'enableCoWriterThought' }
+                    },
+                    {
+                        name: 'Voice matching',
+                        desc: 'Analyze the voice of your prose before generating to produce more consistent continuations. Adds a small delay before generation starts.',
+                        control: { type: 'toggle', key: 'coWriterVoiceMatch' }
+                    },
+                    {
+                        name: 'Inline directives',
+                        desc: 'Parse `<!-- quill: ... -->` comments immediately preceding the cursor and feed them to the co-writer as steering. Disable to ignore directives entirely.',
+                        control: { type: 'toggle', key: 'enableInlineDirectives' }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Analysis',
+                ...restore('Restore analysis defaults', () => this.restoreAnalysisDefaults()),
+                items: [
+                    {
+                        name: 'Analysis temperature',
+                        desc: 'Temperature for AI analysis and feedback responses (companion mode). Range: 0.0 – 2.0.',
+                        control: {
+                            type: 'number',
+                            key: 'analysisTemperature',
+                            min: 0,
+                            max: 2,
+                            step: 0.1,
+                            validate: (v) => (v >= 0 && v <= 2 ? undefined : 'Value must be between 0.0 and 2.0')
+                        }
+                    },
+                    {
+                        name: 'Analysis max output tokens',
+                        desc: 'Maximum tokens per analysis response.',
+                        control: {
+                            type: 'number',
+                            key: 'analysisMaxOutputTokens',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Feedback queue',
+                ...restore('Restore feedback queue defaults', () => this.restoreFeedbackQueueDefaults()),
+                items: [
+                    {
+                        name: 'Enable feedback queue',
+                        desc: 'Show the queue sub-tab and allow queueing reviews to run unattended. Default: on.',
+                        control: { type: 'toggle', key: 'enableFeedbackQueue' }
+                    },
+                    {
+                        name: 'Proactive editor chat',
+                        desc: 'After a report finishes, the follow-up discussion runs through the co-writer session with editing tools enabled, so the editor can propose specific, reviewable inline-diff edits (not just advisory prose). Every proposed edit still requires your approval before it reaches the vault. Turn off to keep the pre-2.0.0 text-only chat behavior. Default: on.',
+                        control: { type: 'toggle', key: 'reviewSuggestedEditsEnabled' }
+                    },
+                    {
+                        name: 'World rules',
+                        desc: 'World-building rules the editor follows when writing or editing prose in review-discuss. Describe how your world works so edits use the right vocabulary and details. Example: "Magic is visible as blue light. Swords are called blades regardless of shape. The setting is a tropical archipelago."',
+                        control: { type: 'textarea', key: 'reviewWorldRules', rows: 5 }
+                    },
+                    {
+                        name: 'Run queued jobs automatically',
+                        desc: 'Run queued jobs automatically while Obsidian is open. Turn off to queue jobs without running them until you trigger one manually. Default: on.',
+                        control: { type: 'toggle', key: 'feedbackQueueAutoRun' }
+                    },
+                    {
+                        name: 'Auto-save feedback reports',
+                        desc: 'Save every completed feedback report (async queue + interactive Review) to the vault as dated markdown. When off, no report is written anywhere — the report is held in-memory for the session only. Default: on.',
+                        control: { type: 'toggle', key: 'autoSaveFeedbackReports' }
+                    },
+                    {
+                        name: 'Feedback report folder',
+                        desc: 'Vault folder for auto-saved feedback reports. Created on first write.',
+                        control: {
+                            type: 'text',
+                            key: 'feedbackReportFolder',
+                            placeholder: DEFAULT_SETTINGS.feedbackReportFolder
+                        }
+                    },
+                    {
+                        name: 'Feedback queue limit',
+                        desc: 'Maximum number of queue jobs retained on disk. Older completed jobs are removed first. Default: 20.',
+                        control: {
+                            type: 'number',
+                            key: 'feedbackQueueLimit',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Embeddings',
+                items: [
+                    {
+                        name: 'Embedding top-k chunks',
+                        desc: 'Number of chunks (paragraphs) retrieved from embedded folders. Higher = more context but more tokens; lower = tighter focus, less window pressure. Recommended: 8–12 for most use cases. 3–5 keeps overhead minimal. 15+ may crowd the context window.',
+                        control: {
+                            type: 'number',
+                            key: 'embeddingsTopKChunks',
+                            min: 1,
+                            max: 100,
+                            validate: (v) =>
+                                v >= 1 && v <= 100 ? undefined : 'Value must be a number between 1 and 100'
+                        }
+                    },
+                    {
+                        name: 'Embedding cache warming',
+                        desc: 'Automatically pre-compute and cache embeddings for each folder containing Markdown files (cast notes, lore, outlines, manuscript chapters). Enables instant semantic retrieval. Root folder is excluded.',
+                        control: { type: 'toggle', key: 'enableEmbeddingWarming' }
+                    },
+                    {
+                        name: 'Embedding warming debounce (seconds)',
+                        desc: 'How long to wait after the last file save before warming embeddings. Higher reduces API calls during active writing; lower keeps caches fresher. Default: 30.',
+                        control: {
+                            type: 'number',
+                            key: 'embeddingWarmingDebounceSeconds',
+                            min: 5,
+                            max: 600,
+                            validate: (v) => (v >= 5 && v <= 600 ? undefined : 'Value must be between 5 and 600')
+                        }
+                    },
+                    {
+                        name: 'Build embeddings now',
+                        desc: 'Immediately pre-compute and cache embeddings for all folders with Markdown files. Useful after adding new material or when warming is turned off.',
+                        action: (el: HTMLElement) => {
+                            void this.plugin
+                                .warmAllEmbeddingCaches()
+                                .then(() => new Notice('Quill: Embedding caches rebuilt.'))
+                                .catch((err: unknown) => {
+                                    const msg = err instanceof Error ? err.message : String(err);
+                                    new Notice(`Quill: Embedding build failed. ${msg}`);
+                                });
+                        }
+                    },
+                    {
+                        name: 'Embedding chunk size (tokens)',
+                        desc: "Target tokens per chunk when embedding. Must not exceed your embedding model's context window. Many local embedding models (e.g. Nomic-embed-text) support 512; cloud models may support more. Default: 512.",
+                        control: {
+                            type: 'number',
+                            key: 'embeddingChunkTokenSize',
+                            min: 128,
+                            max: 8192,
+                            validate: (v) => (v >= 128 && v <= 8192 ? undefined : 'Value must be between 128 and 8192')
+                        }
+                    },
+                    {
+                        name: 'Show full embed in file picker',
+                        desc: 'When enabled, file pickers show a "{Folder name} full embed" option alongside "{Folder name} embedded" (top-K). Full embed sends all chunk texts from the folder; top-K sends only the most relevant. Default: off.',
+                        control: { type: 'toggle', key: 'enableFullEmbedPickerOption' }
+                    },
+                    {
+                        name: 'Folder-specific chunk overrides',
+                        desc: 'Set a custom top-k chunk count for specific embedded folders. Use a higher number for folders that are more important to your writing (e.g., plot maps), and a lower number for auxiliary lore. Folders without an override use the global setting above.',
+                        render: (setting) => this.renderFolderOverridesDefinition(setting)
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Context engine',
+                ...restore('Restore context engine defaults', () => this.restoreContextEngineDefaults()),
+                items: [
+                    {
+                        name: 'Token budget',
+                        desc: 'Maximum tokens for assembled context. Higher values use more context window.',
+                        control: {
+                            type: 'dropdown',
+                            key: 'contextTokenBudget',
+                            options: Object.fromEntries([4096, 8192, 16384, 32768].map((n) => [String(n), String(n)]))
+                        }
+                    },
+                    {
+                        name: 'Compaction threshold',
+                        desc: 'Percentage of token budget at which context is compacted (50-95).',
+                        control: {
+                            type: 'number',
+                            key: 'contextCompactAtPercent',
+                            min: 50,
+                            max: 95,
+                            validate: (v) => (v >= 50 && v <= 95 ? undefined : 'Value must be between 50 and 95')
+                        }
+                    },
+                    {
+                        name: 'Compact summary length',
+                        desc: 'Number of sentences in the AI-generated compaction summary (1-20).',
+                        control: {
+                            type: 'number',
+                            key: 'compactSummarySentences',
+                            min: 1,
+                            max: 20,
+                            validate: (v) => (v >= 1 && v <= 20 ? undefined : 'Value must be between 1 and 20')
+                        }
+                    },
+                    {
+                        name: 'Refine accepted edits out of context',
+                        desc: 'Before AI-compacting, surgically compress bulky or now-stale tool content in the model’s history: accepted/discarded lore drafts become compact outcome markers, stale vault reads are marked for re-lookup, and big reads are trimmed oldest-first when nearing the threshold. Cheaper and more faithful than a full AI summary (the model can always re-look-up current text), and stops a long-context model from re-outputting an entry it already drafted. Rewind still works. Default: on.',
+                        control: { type: 'toggle', key: 'contextRefinementEnabled' }
+                    },
+                    {
+                        name: 'Include vault context',
+                        desc: 'Search the vault for related notes when assembling context.',
+                        control: { type: 'toggle', key: 'contextIncludeVaultContext' }
+                    },
+                    {
+                        name: 'Max vault files',
+                        desc: 'Maximum number of vault files to examine for context (1-100).',
+                        control: {
+                            type: 'number',
+                            key: 'contextMaxVaultFiles',
+                            min: 1,
+                            max: 100,
+                            validate: (v) => (v >= 1 && v <= 100 ? undefined : 'Value must be between 1 and 100')
+                        }
+                    },
+                    {
+                        name: 'Max chars per file',
+                        desc: 'Maximum characters to read from each vault file (500-10000).',
+                        control: {
+                            type: 'number',
+                            key: 'contextMaxCharsPerFile',
+                            min: 500,
+                            max: 10000,
+                            validate: (v) =>
+                                v >= 500 && v <= 10000 ? undefined : 'Value must be between 500 and 10000'
+                        }
+                    },
+                    {
+                        name: 'Auto-scan on open',
+                        desc: 'Automatically scan documents for context when opened.',
+                        control: { type: 'toggle', key: 'contextAutoScan' }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Linter AI',
+                ...restore('Restore linter AI defaults', () => this.restoreLinterAiDefaults()),
+                items: [
+                    {
+                        name: 'Enable AI-powered lint fixes',
+                        desc: 'Show "fix with AI" buttons in the linter sidebar and editor tooltips for intelligent fixes.',
+                        control: { type: 'toggle', key: 'enableLinterAiFixes' }
+                    },
+                    {
+                        name: 'Linter AI temperature',
+                        desc: 'Lower values produce more conservative, precise fixes. Range: 0.0 – 2.0.',
+                        control: {
+                            type: 'number',
+                            key: 'linterTemperature',
+                            min: 0,
+                            max: 2,
+                            step: 0.1,
+                            validate: (v) => (v >= 0 && v <= 2 ? undefined : 'Value must be between 0.0 and 2.0')
+                        }
+                    },
+                    {
+                        name: 'Linter AI max output tokens',
+                        desc: 'Maximum tokens per AI lint fix response.',
+                        control: {
+                            type: 'number',
+                            key: 'linterMaxOutputTokens',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
+                    }
+                ]
+            },
+            {
+                name: 'Restore defaults',
+                desc: 'Reset every setting on this tab. Use the per-section reset buttons above for targeted resets.',
+                action: () => {
+                    void this.restoreModelBehaviorsDefaults();
+                }
+            }
+        ];
     }
 
-    /** Render model behavior settings. */
-    private renderModelBehaviorsSettings(containerEl: HTMLElement): void {
-        new Setting(containerEl)
-            .setName('Selection transformations')
-            .setHeading()
-            .addExtraButton((btn) =>
-                btn
-                    .setIcon('rotate-ccw')
-                    .setTooltip('Restore transformation defaults')
-                    .onClick(async () => {
-                        this.plugin.settings.narrativeVoicePreset = DEFAULT_SETTINGS.narrativeVoicePreset;
-                        this.plugin.settings.customNarrativeVoiceRules = DEFAULT_SETTINGS.customNarrativeVoiceRules;
-                        this.plugin.settings.transformTemperature = DEFAULT_SETTINGS.transformTemperature;
-                        this.plugin.settings.transformVaultContext = DEFAULT_SETTINGS.transformVaultContext;
-                        this.plugin.settings.transformMaxOutputTokens = DEFAULT_SETTINGS.transformMaxOutputTokens;
-                        this.plugin.settings.wikiLinkBehavior = DEFAULT_SETTINGS.wikiLinkBehavior;
-                        await this.plugin.saveSettings();
-                        this.refreshBridge();
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Narrative voice')
-            .setDesc('The narrative perspective and tense used when generating text.')
-            .addDropdown((dropdown) => {
-                for (const preset of NARRATIVE_VOICE_PRESETS) {
-                    dropdown.addOption(preset.id, preset.label);
-                }
-                dropdown.setValue(this.plugin.settings.narrativeVoicePreset).onChange(async (value) => {
-                    this.plugin.settings.narrativeVoicePreset = value as NarrativeVoicePreset;
-                    await this.plugin.saveSettings();
-                    this.updateNarrativeVoiceRulesDisplay(value as NarrativeVoicePreset, rulesArea);
-                });
+    /**
+     * Render the folder-specific chunk overrides inside a single declarative
+     * setting row: the existing override rows plus an add-folder affordance.
+     * Returns a cleanup that re-renders after add/remove via update().
+     */
+    private renderFolderOverridesDefinition(setting: Setting): void {
+        const wrap = setting.controlEl.createDiv({ cls: 'quill-folder-overrides-list' });
+        const draw = () => {
+            wrap.empty();
+            this.renderFolderOverrides(wrap);
+            const addBtn = wrap.createEl('button', { text: '+ add folder', cls: 'quill-folder-override-row__add' });
+            addBtn.addEventListener('click', () => {
+                const folders = this.getVaultFolders();
+                new FolderSuggestModal(this.app, folders, (folder) => {
+                    if (this.plugin.settings.folderTopKOverrides[folder]) {
+                        new Notice('Folder already has an override.');
+                        return;
+                    }
+                    this.plugin.settings.folderTopKOverrides[folder] = this.plugin.settings.embeddingsTopKChunks;
+                    void this.plugin.saveSettings().then(() => this.update());
+                }).open();
             });
+        };
+        draw();
+    }
 
-        const rulesArea = containerEl.createDiv({ cls: 'quill-narrative-rules' });
-        this.renderNarrativeVoiceRules(containerEl, rulesArea);
+    private async restoreTransformDefaults(): Promise<void> {
+        const s = this.plugin.settings;
+        const d = DEFAULT_SETTINGS;
+        s.narrativeVoicePreset = d.narrativeVoicePreset;
+        s.customNarrativeVoiceRules = d.customNarrativeVoiceRules;
+        s.transformTemperature = d.transformTemperature;
+        s.transformVaultContext = d.transformVaultContext;
+        s.transformMaxOutputTokens = d.transformMaxOutputTokens;
+        s.wikiLinkBehavior = d.wikiLinkBehavior;
+        await this.plugin.saveSettings();
+        this.update();
+    }
 
-        new Setting(containerEl)
-            .setName('Temperature')
-            .setDesc('Higher values produce more creative output. Range: 0.0 – 2.0.')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.transformTemperature))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseFloat(text.inputEl.value);
-                        if (!isNaN(n) && n >= 0 && n <= 2) {
-                            this.plugin.settings.transformTemperature = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.transformTemperature));
-                            new Notice('Value must be a number between 0.0 and 2.0');
-                        }
-                    })
-            );
+    private async restoreCoWriterDefaults(): Promise<void> {
+        const s = this.plugin.settings;
+        const d = DEFAULT_SETTINGS;
+        s.coWriterTemperature = d.coWriterTemperature;
+        s.coWriterMaxOutputTokens = d.coWriterMaxOutputTokens;
+        s.coWriterMaxToolRounds = d.coWriterMaxToolRounds;
+        s.coWriterSessionHistoryLimit = d.coWriterSessionHistoryLimit;
+        s.coWriterAutoSavePerTurn = d.coWriterAutoSavePerTurn;
+        s.coWriterVaultContext = d.coWriterVaultContext;
+        s.coWriterAppendNewline = d.coWriterAppendNewline;
+        s.enableCoWriterThought = d.enableCoWriterThought;
+        s.coWriterVoiceMatch = d.coWriterVoiceMatch;
+        s.enableInlineDirectives = d.enableInlineDirectives;
+        await this.plugin.saveSettings();
+        this.update();
+    }
 
-        new Setting(containerEl)
-            .setName('Vault context')
-            .setDesc(
-                'Include cross-document vault context (character notes, worldbuilding, etc.) in transformation prompts.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.transformVaultContext).onChange(async (value) => {
-                    this.plugin.settings.transformVaultContext = value;
-                    await this.plugin.saveSettings();
-                })
-            );
+    private async restoreAnalysisDefaults(): Promise<void> {
+        this.plugin.settings.analysisTemperature = DEFAULT_SETTINGS.analysisTemperature;
+        this.plugin.settings.analysisMaxOutputTokens = DEFAULT_SETTINGS.analysisMaxOutputTokens;
+        await this.plugin.saveSettings();
+        this.update();
+    }
 
-        new Setting(containerEl)
-            .setName('Max output tokens')
-            .setDesc('Maximum tokens per transformation response. Higher values allow longer rewrites.')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.transformMaxOutputTokens))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1) {
-                            this.plugin.settings.transformMaxOutputTokens = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.transformMaxOutputTokens));
-                            new Notice('Value must be a number ≥ 1');
-                        }
-                    })
-            );
+    private async restoreFeedbackQueueDefaults(): Promise<void> {
+        const s = this.plugin.settings;
+        const d = DEFAULT_SETTINGS;
+        s.enableFeedbackQueue = d.enableFeedbackQueue;
+        s.feedbackQueueLimit = d.feedbackQueueLimit;
+        s.feedbackQueueAutoRun = d.feedbackQueueAutoRun;
+        s.autoSaveFeedbackReports = d.autoSaveFeedbackReports;
+        s.feedbackReportFolder = d.feedbackReportFolder;
+        s.reviewSuggestedEditsEnabled = d.reviewSuggestedEditsEnabled;
+        s.reviewWorldRules = d.reviewWorldRules;
+        await this.plugin.saveSettings();
+        this.update();
+    }
 
-        new Setting(containerEl)
-            .setName('Wiki link handling')
-            .setDesc(
-                'How AI should handle Obsidian wiki links ([[...]]) when rewriting or generating prose. "preserve" keeps them exactly as-is. "adaptive" allows the AI to adapt the display text after the pipe (|) to fit the prose while keeping the page name and heading intact.'
-            )
-            .addDropdown((dropdown) =>
-                dropdown
-                    .addOption('preserve', 'Preserve exactly')
-                    .addOption('adaptive', 'Adaptive (smart display text)')
-                    .setValue(this.plugin.settings.wikiLinkBehavior)
-                    .onChange(async (value) => {
-                        this.plugin.settings.wikiLinkBehavior = value as WikiLinkBehavior;
-                        await this.plugin.saveSettings();
-                    })
-            );
+    private async restoreContextEngineDefaults(): Promise<void> {
+        const s = this.plugin.settings;
+        const d = DEFAULT_SETTINGS;
+        s.contextTokenBudget = d.contextTokenBudget;
+        s.contextCompactAtPercent = d.contextCompactAtPercent;
+        s.compactSummarySentences = d.compactSummarySentences;
+        s.contextRefinementEnabled = d.contextRefinementEnabled;
+        s.contextIncludeVaultContext = d.contextIncludeVaultContext;
+        s.contextMaxVaultFiles = d.contextMaxVaultFiles;
+        s.contextMaxCharsPerFile = d.contextMaxCharsPerFile;
+        s.contextAutoScan = d.contextAutoScan;
+        await this.plugin.saveSettings();
+        this.update();
+    }
 
-        new Setting(containerEl)
-            .setName('Co-writer')
-            .setHeading()
-            .addExtraButton((btn) =>
-                btn
-                    .setIcon('rotate-ccw')
-                    .setTooltip('Restore co-writer defaults')
-                    .onClick(async () => {
-                        this.plugin.settings.coWriterTemperature = DEFAULT_SETTINGS.coWriterTemperature;
-                        this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
-                        this.plugin.settings.coWriterMaxToolRounds = DEFAULT_SETTINGS.coWriterMaxToolRounds;
-                        this.plugin.settings.coWriterSessionHistoryLimit = DEFAULT_SETTINGS.coWriterSessionHistoryLimit;
-                        this.plugin.settings.coWriterAutoSavePerTurn = DEFAULT_SETTINGS.coWriterAutoSavePerTurn;
-                        this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
-                        this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
-                        this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
-                        this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;
-                        this.plugin.settings.enableInlineDirectives = DEFAULT_SETTINGS.enableInlineDirectives;
-                        await this.plugin.saveSettings();
-                        this.refreshBridge();
-                    })
-            );
+    private async restoreLinterAiDefaults(): Promise<void> {
+        this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
+        this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
+        this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
+        this.plugin.settings.wikiLinkBehavior = DEFAULT_SETTINGS.wikiLinkBehavior;
+        await this.plugin.saveSettings();
+        this.update();
+    }
 
-        new Setting(containerEl)
-            .setName('Temperature')
-            .setDesc('Higher values produce more creative continuations. Range: 0.0 – 2.0.')
-            .addText((text) =>
-                text.setValue(String(this.plugin.settings.coWriterTemperature)).inputEl.addEventListener('blur', () => {
-                    const n = parseFloat(text.inputEl.value);
-                    if (!isNaN(n) && n >= 0 && n <= 2) {
-                        this.plugin.settings.coWriterTemperature = n;
-                        void this.plugin.saveSettings();
-                    } else {
-                        text.setValue(String(this.plugin.settings.coWriterTemperature));
-                        new Notice('Value must be a number between 0.0 and 2.0');
-                    }
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Max output tokens')
-            .setDesc('Maximum tokens per continuation. Higher values allow longer passages.')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.coWriterMaxOutputTokens))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1) {
-                            this.plugin.settings.coWriterMaxOutputTokens = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.coWriterMaxOutputTokens));
-                            new Notice('Value must be a number ≥ 1');
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Max tool rounds')
-            .setDesc(
-                'Maximum number of tool-calling rounds per response. Set to 0 for unlimited — the model ' +
-                    'will call as many rounds as it needs (use Stop to cancel). Set a specific number to ' +
-                    'cap turn consumption. Default: 0 (unlimited).'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.coWriterMaxToolRounds))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 0) {
-                            this.plugin.settings.coWriterMaxToolRounds = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.coWriterMaxToolRounds));
-                            new Notice('Value must be a number ≥ 0');
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Saved conversation limit')
-            .setDesc(
-                'How many co-writer conversations to keep on disk. Starting a new chat saves the current one; ' +
-                    'older sessions are deleted (newest-first) once this limit is exceeded. Set to 0 to keep all. ' +
-                    'Default: 25.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.coWriterSessionHistoryLimit))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 0) {
-                            this.plugin.settings.coWriterSessionHistoryLimit = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.coWriterSessionHistoryLimit));
-                            new Notice('Value must be a number ≥ 0');
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Auto-save after each turn')
-            .setDesc(
-                'Snapshot the active conversation to its saved-session file after every completed turn, so it ' +
-                    'survives a crash or restart without an explicit save. Off by default — the snapshot copies ' +
-                    'the full conversation state, so it adds some overhead on long sessions. De-bounced so a ' +
-                    'turn followed immediately by auto-options collapses to one write.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.coWriterAutoSavePerTurn).onChange((value) => {
-                    this.plugin.settings.coWriterAutoSavePerTurn = value;
-                    void this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Vault context')
-            .setDesc(
-                'Include cross-document vault context (character notes, worldbuilding, etc.) in co-writer prompts.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.coWriterVaultContext).onChange(async (value) => {
-                    this.plugin.settings.coWriterVaultContext = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Append trailing newline')
-            .setDesc('Add a blank line after the continuation so you can keep writing without pressing enter twice.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.coWriterAppendNewline).onChange(async (value) => {
-                    this.plugin.settings.coWriterAppendNewline = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Show AI reasoning')
-            .setDesc("Display the AI's thought process in the co-writer panel. Disable for a cleaner interface.")
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableCoWriterThought).onChange(async (value) => {
-                    this.plugin.settings.enableCoWriterThought = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Voice matching')
-            .setDesc(
-                'Analyze the voice of your prose before generating to produce more consistent continuations. Adds a small delay before generation starts.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.coWriterVoiceMatch).onChange(async (value) => {
-                    this.plugin.settings.coWriterVoiceMatch = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Inline directives')
-            .setDesc(
-                'Parse `<!-- quill: ... -->` comments immediately preceding the cursor and feed them to the co-writer as steering. Disable to ignore directives entirely.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableInlineDirectives).onChange(async (value) => {
-                    this.plugin.settings.enableInlineDirectives = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Analysis')
-            .setHeading()
-            .addExtraButton((btn) =>
-                btn
-                    .setIcon('rotate-ccw')
-                    .setTooltip('Restore analysis defaults')
-                    .onClick(async () => {
-                        this.plugin.settings.analysisTemperature = DEFAULT_SETTINGS.analysisTemperature;
-                        this.plugin.settings.analysisMaxOutputTokens = DEFAULT_SETTINGS.analysisMaxOutputTokens;
-                        await this.plugin.saveSettings();
-                        this.refreshBridge();
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Analysis temperature')
-            .setDesc('Temperature for AI analysis and feedback responses (companion mode). Range: 0.0 – 2.0.')
-            .addText((text) =>
-                text.setValue(String(this.plugin.settings.analysisTemperature)).inputEl.addEventListener('blur', () => {
-                    const n = parseFloat(text.inputEl.value);
-                    if (!isNaN(n) && n >= 0 && n <= 2) {
-                        this.plugin.settings.analysisTemperature = n;
-                        void this.plugin.saveSettings();
-                    } else {
-                        text.setValue(String(this.plugin.settings.analysisTemperature));
-                        new Notice('Value must be a number between 0.0 and 2.0');
-                    }
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Analysis max output tokens')
-            .setDesc('Maximum tokens per analysis response.')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.analysisMaxOutputTokens))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1) {
-                            this.plugin.settings.analysisMaxOutputTokens = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.analysisMaxOutputTokens));
-                            new Notice('Value must be a number ≥ 1');
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Feedback queue')
-            .setHeading()
-            .addExtraButton((btn) =>
-                btn
-                    .setIcon('rotate-ccw')
-                    .setTooltip('Restore feedback queue defaults')
-                    .onClick(async () => {
-                        this.plugin.settings.enableFeedbackQueue = DEFAULT_SETTINGS.enableFeedbackQueue;
-                        this.plugin.settings.feedbackQueueLimit = DEFAULT_SETTINGS.feedbackQueueLimit;
-                        this.plugin.settings.feedbackQueueAutoRun = DEFAULT_SETTINGS.feedbackQueueAutoRun;
-                        this.plugin.settings.autoSaveFeedbackReports = DEFAULT_SETTINGS.autoSaveFeedbackReports;
-                        this.plugin.settings.feedbackReportFolder = DEFAULT_SETTINGS.feedbackReportFolder;
-                        this.plugin.settings.reviewSuggestedEditsEnabled = DEFAULT_SETTINGS.reviewSuggestedEditsEnabled;
-                        this.plugin.settings.reviewWorldRules = DEFAULT_SETTINGS.reviewWorldRules;
-                        await this.plugin.saveSettings();
-                        this.refreshBridge();
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Enable feedback queue')
-            .setDesc('Show the queue sub-tab and allow queueing reviews to run unattended. Default: on.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableFeedbackQueue).onChange(async (value) => {
-                    this.plugin.settings.enableFeedbackQueue = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Proactive editor chat')
-            .setDesc(
-                'After a report finishes, the follow-up discussion runs through the co-writer session ' +
-                    'with editing tools enabled, so the editor can propose specific, reviewable inline-diff ' +
-                    'edits (not just advisory prose). Every proposed edit still requires your approval before ' +
-                    'it reaches the vault. Turn off to keep the pre-2.0.0 text-only chat behavior. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.reviewSuggestedEditsEnabled).onChange(async (value) => {
-                    this.plugin.settings.reviewSuggestedEditsEnabled = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('World rules')
-            .setDesc(
-                'World-building rules the editor follows when writing or editing prose in review-discuss. ' +
-                    'Describe how your world works so edits use the right vocabulary and details. ' +
-                    'Example: "Magic is visible as blue light. Swords are called blades regardless of shape. ' +
-                    'The setting is a tropical archipelago."'
-            )
-            .addTextArea((text) => {
-                text.setPlaceholder(
-                    'Magic is visible as blue light...\n' +
-                        'The setting is a tropical archipelago...\n' +
-                        'Swords are called blades regardless of shape...'
-                )
-                    .setValue(this.plugin.settings.reviewWorldRules)
-                    .onChange(async (value) => {
-                        this.plugin.settings.reviewWorldRules = value;
-                        await this.plugin.saveSettings();
-                    });
-                text.inputEl.rows = 5;
-            });
-
-        new Setting(containerEl)
-            .setName('Run queued jobs automatically')
-            .setDesc(
-                'Run queued jobs automatically while Obsidian is open. Turn off to queue jobs without running them until you trigger one manually. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.feedbackQueueAutoRun).onChange(async (value) => {
-                    this.plugin.settings.feedbackQueueAutoRun = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Auto-save feedback reports')
-            .setDesc(
-                'Save every completed feedback report (async queue + interactive Review) to the vault as dated markdown. ' +
-                    'When off, no report is written anywhere — the report is held in-memory for the session only. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.autoSaveFeedbackReports).onChange(async (value) => {
-                    this.plugin.settings.autoSaveFeedbackReports = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Feedback report folder')
-            .setDesc('Vault folder for auto-saved feedback reports. Created on first write.')
-            .addText((text) =>
-                text.setValue(this.plugin.settings.feedbackReportFolder).inputEl.addEventListener('blur', () => {
-                    const v = text.inputEl.value.trim();
-                    this.plugin.settings.feedbackReportFolder = v || DEFAULT_SETTINGS.feedbackReportFolder;
-                    text.setValue(this.plugin.settings.feedbackReportFolder);
-                    void this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Feedback queue limit')
-            .setDesc(
-                'Maximum number of queue jobs retained on disk. Older completed jobs are removed first. Default: 20.'
-            )
-            .addText((text) =>
-                text.setValue(String(this.plugin.settings.feedbackQueueLimit)).inputEl.addEventListener('blur', () => {
-                    const n = parseInt(text.inputEl.value, 10);
-                    if (!isNaN(n) && n >= 1) {
-                        this.plugin.settings.feedbackQueueLimit = n;
-                        void this.plugin.saveSettings();
-                    } else {
-                        text.setValue(String(this.plugin.settings.feedbackQueueLimit));
-                        new Notice('Value must be a number ≥ 1');
-                    }
-                })
-            );
-
-        // Embeddings are the retrieval index that feeds the context assembler —
-        // kept next to the Context engine section for that reason.
-        this.renderEmbeddingsSettings(containerEl);
-
-        new Setting(containerEl)
-            .setName('Context engine')
-            .setHeading()
-            .addExtraButton((btn) =>
-                btn
-                    .setIcon('rotate-ccw')
-                    .setTooltip('Restore context engine defaults')
-                    .onClick(async () => {
-                        this.plugin.settings.contextTokenBudget = DEFAULT_SETTINGS.contextTokenBudget;
-                        this.plugin.settings.contextCompactAtPercent = DEFAULT_SETTINGS.contextCompactAtPercent;
-                        this.plugin.settings.compactSummarySentences = DEFAULT_SETTINGS.compactSummarySentences;
-                        this.plugin.settings.contextRefinementEnabled = DEFAULT_SETTINGS.contextRefinementEnabled;
-                        this.plugin.settings.contextIncludeVaultContext = DEFAULT_SETTINGS.contextIncludeVaultContext;
-                        this.plugin.settings.contextMaxVaultFiles = DEFAULT_SETTINGS.contextMaxVaultFiles;
-                        this.plugin.settings.contextMaxCharsPerFile = DEFAULT_SETTINGS.contextMaxCharsPerFile;
-                        this.plugin.settings.contextAutoScan = DEFAULT_SETTINGS.contextAutoScan;
-                        await this.plugin.saveSettings();
-                        this.refreshBridge();
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Token budget')
-            .setDesc('Maximum tokens for assembled context. Higher values use more context window.')
-            .addDropdown((dropdown) => {
-                for (const opt of [4096, 8192, 16384, 32768]) {
-                    dropdown.addOption(String(opt), String(opt));
-                }
-                dropdown.setValue(String(this.plugin.settings.contextTokenBudget)).onChange(async (value) => {
-                    this.plugin.settings.contextTokenBudget = parseInt(value, 10);
-                    await this.plugin.saveSettings();
-                });
-            });
-
-        new Setting(containerEl)
-            .setName('Compaction threshold')
-            .setDesc('Percentage of token budget at which context is compacted (50-95).')
-            .addText((text) => {
-                text.setValue(String(this.plugin.settings.contextCompactAtPercent)).inputEl.addEventListener(
-                    'blur',
-                    () => {
-                        const raw = text.inputEl.value;
-                        const n = parseInt(raw, 10);
-                        if (!isNaN(n) && n >= 50 && n <= 95) {
-                            this.plugin.settings.contextCompactAtPercent = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.contextCompactAtPercent));
-                            new Notice('Value must be between 50 and 95');
-                        }
-                    }
-                );
-            });
-
-        new Setting(containerEl)
-            .setName('Compact summary length')
-            .setDesc('Number of sentences in the AI-generated compaction summary (1-20).')
-            .addText((text) => {
-                text.setValue(String(this.plugin.settings.compactSummarySentences)).inputEl.addEventListener(
-                    'blur',
-                    () => {
-                        const raw = text.inputEl.value;
-                        const n = parseInt(raw, 10);
-                        if (!isNaN(n) && n >= 1 && n <= 20) {
-                            this.plugin.settings.compactSummarySentences = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.compactSummarySentences));
-                            new Notice('Value must be between 1 and 20');
-                        }
-                    }
-                );
-            });
-
-        new Setting(containerEl)
-            .setName('Refine accepted edits out of context')
-            .setDesc(
-                'Before AI-compacting, surgically compress bulky or now-stale tool content in the ' +
-                    'model\u2019s history: accepted/discarded lore drafts become compact outcome markers, ' +
-                    'stale vault reads are marked for re-lookup, and big reads are trimmed oldest-first ' +
-                    'when nearing the threshold. Cheaper and more faithful than a full AI summary (the ' +
-                    'model can always re-look-up current text), and stops a long-context model from ' +
-                    're-outputting an entry it already drafted. Rewind still works. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.contextRefinementEnabled).onChange(async (value) => {
-                    this.plugin.settings.contextRefinementEnabled = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Include vault context')
-            .setDesc('Search the vault for related notes when assembling context.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.contextIncludeVaultContext).onChange(async (value) => {
-                    this.plugin.settings.contextIncludeVaultContext = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Max vault files')
-            .setDesc('Maximum number of vault files to examine for context (1-100).')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.contextMaxVaultFiles))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1 && n <= 100) {
-                            this.plugin.settings.contextMaxVaultFiles = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.contextMaxVaultFiles));
-                            new Notice('Value must be between 1 and 100');
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Max chars per file')
-            .setDesc('Maximum characters to read from each vault file (500-10000).')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.contextMaxCharsPerFile))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 500 && n <= 10000) {
-                            this.plugin.settings.contextMaxCharsPerFile = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.contextMaxCharsPerFile));
-                            new Notice('Value must be between 500 and 10000');
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Auto-scan on open')
-            .setDesc('Automatically scan documents for context when opened.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.contextAutoScan).onChange(async (value) => {
-                    this.plugin.settings.contextAutoScan = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Linter AI')
-            .setHeading()
-            .addExtraButton((btn) =>
-                btn
-                    .setIcon('rotate-ccw')
-                    .setTooltip('Restore linter AI defaults')
-                    .onClick(async () => {
-                        this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
-                        this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
-                        this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
-                        this.plugin.settings.wikiLinkBehavior = DEFAULT_SETTINGS.wikiLinkBehavior;
-                        await this.plugin.saveSettings();
-                        this.refreshBridge();
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Enable AI-powered lint fixes')
-            .setDesc('Show "fix with AI" buttons in the linter sidebar and editor tooltips for intelligent fixes.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableLinterAiFixes).onChange(async (value) => {
-                    this.plugin.settings.enableLinterAiFixes = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Linter AI temperature')
-            .setDesc('Lower values produce more conservative, precise fixes. Range: 0.0 – 2.0.')
-            .addText((text) =>
-                text.setValue(String(this.plugin.settings.linterTemperature)).inputEl.addEventListener('blur', () => {
-                    const n = parseFloat(text.inputEl.value);
-                    if (!isNaN(n) && n >= 0 && n <= 2) {
-                        this.plugin.settings.linterTemperature = n;
-                        void this.plugin.saveSettings();
-                    } else {
-                        text.setValue(String(this.plugin.settings.linterTemperature));
-                        new Notice('Value must be a number between 0.0 and 2.0');
-                    }
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Linter AI max output tokens')
-            .setDesc('Maximum tokens per AI lint fix response.')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.linterMaxOutputTokens))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1) {
-                            this.plugin.settings.linterMaxOutputTokens = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.linterMaxOutputTokens));
-                            new Notice('Value must be a number ≥ 1');
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Restore defaults')
-            .setDesc('Reset every setting on this tab. Use the per-section reset buttons above for targeted resets.')
-            .addButton((button) =>
-                button.setButtonText('Restore defaults').onClick(async () => {
-                    this.plugin.settings.transformTemperature = DEFAULT_SETTINGS.transformTemperature;
-                    this.plugin.settings.transformVaultContext = DEFAULT_SETTINGS.transformVaultContext;
-                    this.plugin.settings.transformMaxOutputTokens = DEFAULT_SETTINGS.transformMaxOutputTokens;
-                    this.plugin.settings.wikiLinkBehavior = DEFAULT_SETTINGS.wikiLinkBehavior;
-                    this.plugin.settings.narrativeVoicePreset = DEFAULT_SETTINGS.narrativeVoicePreset;
-                    this.plugin.settings.customNarrativeVoiceRules = DEFAULT_SETTINGS.customNarrativeVoiceRules;
-                    this.plugin.settings.analysisTemperature = DEFAULT_SETTINGS.analysisTemperature;
-                    this.plugin.settings.analysisMaxOutputTokens = DEFAULT_SETTINGS.analysisMaxOutputTokens;
-                    this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
-                    this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
-                    this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
-                    this.plugin.settings.contextTokenBudget = DEFAULT_SETTINGS.contextTokenBudget;
-                    this.plugin.settings.contextCompactAtPercent = DEFAULT_SETTINGS.contextCompactAtPercent;
-                    this.plugin.settings.contextRefinementEnabled = DEFAULT_SETTINGS.contextRefinementEnabled;
-                    this.plugin.settings.compactSummarySentences = DEFAULT_SETTINGS.compactSummarySentences;
-                    this.plugin.settings.contextIncludeVaultContext = DEFAULT_SETTINGS.contextIncludeVaultContext;
-                    this.plugin.settings.contextMaxVaultFiles = DEFAULT_SETTINGS.contextMaxVaultFiles;
-                    this.plugin.settings.contextMaxCharsPerFile = DEFAULT_SETTINGS.contextMaxCharsPerFile;
-                    this.plugin.settings.contextAutoScan = DEFAULT_SETTINGS.contextAutoScan;
-                    this.plugin.settings.coWriterTemperature = DEFAULT_SETTINGS.coWriterTemperature;
-                    this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
-                    this.plugin.settings.coWriterMaxToolRounds = DEFAULT_SETTINGS.coWriterMaxToolRounds;
-                    this.plugin.settings.coWriterAutoSavePerTurn = DEFAULT_SETTINGS.coWriterAutoSavePerTurn;
-                    this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
-                    this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
-                    this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
-                    this.plugin.settings.lorebookNetworkTools = DEFAULT_SETTINGS.lorebookNetworkTools;
-                    this.plugin.settings.lorebookFandomWikis = [...DEFAULT_SETTINGS.lorebookFandomWikis];
-                    this.plugin.settings.lorebookFandomAllowAllWikis = DEFAULT_SETTINGS.lorebookFandomAllowAllWikis;
-                    this.plugin.settings.lorebookFandomCacheEnabled = DEFAULT_SETTINGS.lorebookFandomCacheEnabled;
-                    this.plugin.settings.lorebookWikipediaLang = DEFAULT_SETTINGS.lorebookWikipediaLang;
-                    this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
-                    this.plugin.settings.lorebookImageTools = DEFAULT_SETTINGS.lorebookImageTools;
-                    this.plugin.settings.lorebookImageMaxDimension = DEFAULT_SETTINGS.lorebookImageMaxDimension;
-                    this.plugin.settings.lorebookImageMaxDescriptionTokens =
-                        DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
-                    this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
-                    this.plugin.settings.lorebookImageTwoPassDescription =
-                        DEFAULT_SETTINGS.lorebookImageTwoPassDescription;
-                    this.plugin.settings.loreEntryImageSectionHeaders = [
-                        ...DEFAULT_SETTINGS.loreEntryImageSectionHeaders
-                    ];
-                    this.plugin.settings.loreEntryImageMaxPerEntry = DEFAULT_SETTINGS.loreEntryImageMaxPerEntry;
-                    this.plugin.settings.loreEntryImageAttachments = DEFAULT_SETTINGS.loreEntryImageAttachments;
-                    this.plugin.settings.loreEntryImageAttachmentFolder =
-                        DEFAULT_SETTINGS.loreEntryImageAttachmentFolder;
-                    this.plugin.settings.lorePreferEditOverCreate = DEFAULT_SETTINGS.lorePreferEditOverCreate;
-                    this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
-                    this.plugin.settings.slashCommands = [...DEFAULT_SETTINGS.slashCommands];
-                    this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
-                    this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;
-                    this.plugin.settings.enableInlineDirectives = DEFAULT_SETTINGS.enableInlineDirectives;
-                    this.plugin.settings.enableFeedbackQueue = DEFAULT_SETTINGS.enableFeedbackQueue;
-                    this.plugin.settings.feedbackQueueLimit = DEFAULT_SETTINGS.feedbackQueueLimit;
-                    this.plugin.settings.feedbackQueueAutoRun = DEFAULT_SETTINGS.feedbackQueueAutoRun;
-                    this.plugin.settings.autoSaveFeedbackReports = DEFAULT_SETTINGS.autoSaveFeedbackReports;
-                    this.plugin.settings.feedbackReportFolder = DEFAULT_SETTINGS.feedbackReportFolder;
-                    this.plugin.settings.reviewSuggestedEditsEnabled = DEFAULT_SETTINGS.reviewSuggestedEditsEnabled;
-                    this.plugin.settings.reviewWorldRules = DEFAULT_SETTINGS.reviewWorldRules;
-                    await this.plugin.saveSettings();
-                    this.refreshBridge();
-                })
-            );
+    /** Restore-defaults action for the Model behaviors page (every field on the tab). */
+    private async restoreModelBehaviorsDefaults(): Promise<void> {
+        const s = this.plugin.settings;
+        const d = DEFAULT_SETTINGS;
+        s.transformTemperature = d.transformTemperature;
+        s.transformVaultContext = d.transformVaultContext;
+        s.transformMaxOutputTokens = d.transformMaxOutputTokens;
+        s.wikiLinkBehavior = d.wikiLinkBehavior;
+        s.narrativeVoicePreset = d.narrativeVoicePreset;
+        s.customNarrativeVoiceRules = d.customNarrativeVoiceRules;
+        s.analysisTemperature = d.analysisTemperature;
+        s.analysisMaxOutputTokens = d.analysisMaxOutputTokens;
+        s.linterTemperature = d.linterTemperature;
+        s.linterMaxOutputTokens = d.linterMaxOutputTokens;
+        s.enableLinterAiFixes = d.enableLinterAiFixes;
+        s.contextTokenBudget = d.contextTokenBudget;
+        s.contextCompactAtPercent = d.contextCompactAtPercent;
+        s.contextRefinementEnabled = d.contextRefinementEnabled;
+        s.compactSummarySentences = d.compactSummarySentences;
+        s.contextIncludeVaultContext = d.contextIncludeVaultContext;
+        s.contextMaxVaultFiles = d.contextMaxVaultFiles;
+        s.contextMaxCharsPerFile = d.contextMaxCharsPerFile;
+        s.contextAutoScan = d.contextAutoScan;
+        s.coWriterTemperature = d.coWriterTemperature;
+        s.coWriterMaxOutputTokens = d.coWriterMaxOutputTokens;
+        s.coWriterMaxToolRounds = d.coWriterMaxToolRounds;
+        s.coWriterAutoSavePerTurn = d.coWriterAutoSavePerTurn;
+        s.coWriterVaultContext = d.coWriterVaultContext;
+        s.coWriterAppendNewline = d.coWriterAppendNewline;
+        s.enableCoWriterThought = d.enableCoWriterThought;
+        s.coWriterVoiceMatch = d.coWriterVoiceMatch;
+        s.enableInlineDirectives = d.enableInlineDirectives;
+        s.enableFeedbackQueue = d.enableFeedbackQueue;
+        s.feedbackQueueLimit = d.feedbackQueueLimit;
+        s.feedbackQueueAutoRun = d.feedbackQueueAutoRun;
+        s.autoSaveFeedbackReports = d.autoSaveFeedbackReports;
+        s.feedbackReportFolder = d.feedbackReportFolder;
+        s.reviewSuggestedEditsEnabled = d.reviewSuggestedEditsEnabled;
+        s.reviewWorldRules = d.reviewWorldRules;
+        s.embeddingsTopKChunks = d.embeddingsTopKChunks;
+        s.embeddingChunkTokenSize = d.embeddingChunkTokenSize;
+        s.enableEmbeddingWarming = d.enableEmbeddingWarming;
+        s.enableFullEmbedPickerOption = d.enableFullEmbedPickerOption;
+        s.folderTopKOverrides = { ...d.folderTopKOverrides };
+        s.embeddingWarmingDebounceSeconds = d.embeddingWarmingDebounceSeconds;
+        await this.plugin.saveSettings();
+        this.update();
     }
 
     /** Fetch models from the provider endpoint and show a suggester. */
@@ -3483,42 +3184,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             !satisfies(this.plugin.settings.aiDefaultImageProvider, 'image')
         ) {
             this.plugin.settings.aiDefaultImageProvider = '';
-        }
-    }
-
-    /** Render the narrative voice rules textarea and wire its change handler. */
-    private renderNarrativeVoiceRules(containerEl: HTMLElement, rulesArea: HTMLElement): void {
-        const textarea = rulesArea.createEl('textarea', {
-            cls: 'quill-narrative-rules__textarea',
-            attr: {
-                rows: '6',
-                placeholder: 'Rules for the custom narrative voice...'
-            }
-        });
-        this.updateNarrativeVoiceRulesDisplay(this.plugin.settings.narrativeVoicePreset, rulesArea);
-
-        textarea.addEventListener('input', () => {
-            if (this.plugin.settings.narrativeVoicePreset === 'custom') {
-                this.plugin.settings.customNarrativeVoiceRules = textarea.value;
-                void this.plugin.saveSettings();
-            }
-        });
-    }
-
-    /** Sync the narrative voice rules textarea with the active preset. */
-    private updateNarrativeVoiceRulesDisplay(preset: NarrativeVoicePreset, rulesArea: HTMLElement): void {
-        const textarea = rulesArea.querySelector('textarea');
-        if (!textarea) return;
-
-        const isCustom = preset === 'custom';
-        textarea.readOnly = !isCustom;
-
-        if (isCustom) {
-            textarea.value = this.plugin.settings.customNarrativeVoiceRules;
-        } else {
-            const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === preset) ?? NARRATIVE_VOICE_PRESETS[0];
-            if (!def) return;
-            textarea.value = def.rules.join('\n');
         }
     }
 
