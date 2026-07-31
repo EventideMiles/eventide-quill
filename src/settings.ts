@@ -687,7 +687,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 type: 'page',
                 name: 'Linter',
                 desc: 'Prose linter rules and AI fixes.',
-                page: () => this.bridgePage((el) => this.renderLinterTab(el))
+                items: this.linterItems()
             },
             {
                 type: 'page',
@@ -768,6 +768,26 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         } else {
             this.update();
         }
+    }
+
+    /**
+     * Declarative-control change hook. The base persists the value; we layer on
+     * inter-setting cascades that the declarative model can't express inline
+     * (a control has no onChange), then refresh the DOM so dependent controls'
+     * `disabled`/`visible` predicates re-evaluate. Add per-key cases as tabs
+     * are converted (Phases 2-6).
+     */
+    setControlValue(key: string, value: unknown): void | Promise<void> {
+        const result = super.setControlValue(key, value);
+        // Disabling invisible-character scanning also disables aggressive
+        // scanning (which only makes sense with the base rule on).
+        if (key === 'enableGremlins' && value === false && this.plugin.settings.enableAggressiveGremlins) {
+            this.plugin.settings.enableAggressiveGremlins = false;
+            void this.plugin.saveSettings();
+        }
+        // Re-evaluate disabled/visible predicates so cascaded controls update.
+        this.refreshDomState();
+        return result;
     }
 
     /** Collect unique folder paths from the vault's markdown files. */
@@ -2007,305 +2027,198 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         );
     }
 
-    private renderLinterTab(containerEl: HTMLElement): void {
-        const content = containerEl.createDiv({ cls: 'quill-settings-content-linter' });
-
-        new Setting(content).setName('Prose linter').setHeading();
-
-        new Setting(content)
-            .setName('Linter mode')
-            .setDesc('Choose which rule sets are active.')
-            .addDropdown((dropdown) =>
-                dropdown
-                    .addOption('all', 'All rules')
-                    .addOption('prose', 'Prose rules only')
-                    .addOption('ai', 'AI detection only')
-                    .setValue(this.plugin.settings.linterMode)
-                    .onChange(async (value) => {
-                        this.plugin.settings.linterMode = value as LinterMode;
-                        await this.plugin.saveSettings();
-                    })
-            );
-
-        new Setting(content)
-            .setName('Lint on save')
-            .setDesc('Automatically run the prose linter when the document is saved.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.lintOnSave).onChange(async (value) => {
-                    this.plugin.settings.lintOnSave = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Long sentences')
-            .setDesc('Flag sentences exceeding the word limit below.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableLongSentences).onChange(async (value) => {
-                    this.plugin.settings.enableLongSentences = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Max words per sentence')
-            .setDesc('Sentences longer than this many words will be flagged.')
-            .addText((text) =>
-                text.setValue(String(this.plugin.settings.maxSentenceWords)).inputEl.addEventListener('blur', () => {
-                    const n = parseInt(text.inputEl.value, 10);
-                    if (!isNaN(n) && n >= 1) {
-                        this.plugin.settings.maxSentenceWords = n;
-                        void this.plugin.saveSettings();
-                    } else {
-                        text.setValue(String(this.plugin.settings.maxSentenceWords));
-                        new Notice('Value must be a number ≥ 1');
-                    }
-                })
-            );
-
-        new Setting(content)
-            .setName('Passive voice')
-            .setDesc(
-                'Flag instances of passive voice. Disabled by default — it is often a valid stylistic choice in fiction.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enablePassiveVoice).onChange(async (value) => {
-                    this.plugin.settings.enablePassiveVoice = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Adverbs')
-            .setDesc(
-                'Flag adverbs (e.g. Quickly, slowly, very). Enabled by default — a common teaching tool for new writers.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableAdverbCheck).onChange(async (value) => {
-                    this.plugin.settings.enableAdverbCheck = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Qualifiers')
-            .setDesc('Flag weak qualifiers (very, really, quite, etc.).')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableQualifierCheck).onChange(async (value) => {
-                    this.plugin.settings.enableQualifierCheck = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Repeated words')
-            .setDesc('Flag words repeated 3+ times in a single line.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableRepeatedWords).onChange(async (value) => {
-                    this.plugin.settings.enableRepeatedWords = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Min word length for repeats')
-            .setDesc('Words shorter than this are ignored by the repeated-words rule.')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.minRepeatedWordLength))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1) {
-                            this.plugin.settings.minRepeatedWordLength = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.minRepeatedWordLength));
-                            new Notice('Value must be a number ≥ 1');
+    /** Declarative items for the Linter page (prose + AI-detection + gremlins rules). */
+    private linterItems(): SettingDefinitionItem[] {
+        return [
+            {
+                type: 'group',
+                heading: 'Prose linter',
+                items: [
+                    {
+                        name: 'Linter mode',
+                        desc: 'Choose which rule sets are active.',
+                        control: {
+                            type: 'dropdown',
+                            key: 'linterMode',
+                            options: { all: 'All rules', prose: 'Prose rules only', ai: 'AI detection only' }
                         }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Echoes')
-            .setDesc('Flag sentences in a paragraph that start with the same two words.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableEchoes).onChange(async (value) => {
-                    this.plugin.settings.enableEchoes = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Telling vs showing')
-            .setDesc('Flag emotional tells (e.g. He felt angry) that could be shown instead.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableTellingVsShowing).onChange(async (value) => {
-                    this.plugin.settings.enableTellingVsShowing = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Dialogue tags')
-            .setDesc('Flag overused or repetitive dialogue tags.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableDialogueTags).onChange(async (value) => {
-                    this.plugin.settings.enableDialogueTags = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Complex words')
-            .setDesc('Flag words with many syllables that may be hard to read.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableComplexWords).onChange(async (value) => {
-                    this.plugin.settings.enableComplexWords = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Max syllables per word')
-            .setDesc('Words with at least this many syllables are flagged by the complex-words rule.')
-            .addText((text) =>
-                text.setValue(String(this.plugin.settings.maxSyllablesPerWord)).inputEl.addEventListener('blur', () => {
-                    const n = parseInt(text.inputEl.value, 10);
-                    if (!isNaN(n) && n >= 1) {
-                        this.plugin.settings.maxSyllablesPerWord = n;
-                        void this.plugin.saveSettings();
-                    } else {
-                        text.setValue(String(this.plugin.settings.maxSyllablesPerWord));
-                        new Notice('Value must be a number ≥ 1');
+                    },
+                    {
+                        name: 'Lint on save',
+                        desc: 'Automatically run the prose linter when the document is saved.',
+                        control: { type: 'toggle', key: 'lintOnSave' }
+                    },
+                    {
+                        name: 'Long sentences',
+                        desc: 'Flag sentences exceeding the word limit below.',
+                        control: { type: 'toggle', key: 'enableLongSentences' }
+                    },
+                    {
+                        name: 'Max words per sentence',
+                        desc: 'Sentences longer than this many words will be flagged.',
+                        control: {
+                            type: 'number',
+                            key: 'maxSentenceWords',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
+                    },
+                    {
+                        name: 'Passive voice',
+                        desc: 'Flag instances of passive voice. Disabled by default — it is often a valid stylistic choice in fiction.',
+                        control: { type: 'toggle', key: 'enablePassiveVoice' }
+                    },
+                    {
+                        name: 'Adverbs',
+                        desc: 'Flag adverbs (e.g. Quickly, slowly, very). Enabled by default — a common teaching tool for new writers.',
+                        control: { type: 'toggle', key: 'enableAdverbCheck' }
+                    },
+                    {
+                        name: 'Qualifiers',
+                        desc: 'Flag weak qualifiers (very, really, quite, etc.).',
+                        control: { type: 'toggle', key: 'enableQualifierCheck' }
+                    },
+                    {
+                        name: 'Repeated words',
+                        desc: 'Flag words repeated 3+ times in a single line.',
+                        control: { type: 'toggle', key: 'enableRepeatedWords' }
+                    },
+                    {
+                        name: 'Min word length for repeats',
+                        desc: 'Words shorter than this are ignored by the repeated-words rule.',
+                        control: {
+                            type: 'number',
+                            key: 'minRepeatedWordLength',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
+                    },
+                    {
+                        name: 'Echoes',
+                        desc: 'Flag sentences in a paragraph that start with the same two words.',
+                        control: { type: 'toggle', key: 'enableEchoes' }
+                    },
+                    {
+                        name: 'Telling vs showing',
+                        desc: 'Flag emotional tells (e.g. He felt angry) that could be shown instead.',
+                        control: { type: 'toggle', key: 'enableTellingVsShowing' }
+                    },
+                    {
+                        name: 'Dialogue tags',
+                        desc: 'Flag overused or repetitive dialogue tags.',
+                        control: { type: 'toggle', key: 'enableDialogueTags' }
+                    },
+                    {
+                        name: 'Complex words',
+                        desc: 'Flag words with many syllables that may be hard to read.',
+                        control: { type: 'toggle', key: 'enableComplexWords' }
+                    },
+                    {
+                        name: 'Max syllables per word',
+                        desc: 'Words with at least this many syllables are flagged by the complex-words rule.',
+                        control: {
+                            type: 'number',
+                            key: 'maxSyllablesPerWord',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
                     }
-                })
-            );
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'AI detection',
+                items: [
+                    {
+                        name: 'AI clichés',
+                        desc: 'Flag overused AI words (tapestry, testament, delve, vibrant, realm, etc.).',
+                        control: { type: 'toggle', key: 'enableAiCliches' }
+                    },
+                    {
+                        name: 'Em dashes',
+                        desc: 'Flag em dashes (—). Common AI overuse — consider commas, colons, or sentence breaks.',
+                        control: { type: 'toggle', key: 'enableAiEmDashes' }
+                    },
+                    {
+                        name: 'Negation patterns',
+                        desc: 'Flag "it\'s not X, it\'s y" constructions. State what things are directly.',
+                        control: { type: 'toggle', key: 'enableAiNegation' }
+                    },
+                    {
+                        name: 'Filler adverbs',
+                        desc: 'Flag strategy adverbs common in AI prose (quietly, deliberately, gently, etc.).',
+                        control: { type: 'toggle', key: 'enableAiFillerAdverbs' }
+                    },
+                    {
+                        name: 'Hedging language',
+                        desc: 'Flag hedging words (might, could, perhaps, maybe) that weaken prose.',
+                        control: { type: 'toggle', key: 'enableAiHedging' }
+                    },
+                    {
+                        name: 'Wrap-up phrases',
+                        desc: 'Flag concluding phrases (in conclusion, to summarize, ultimately, etc.).',
+                        control: { type: 'toggle', key: 'enableAiWrapUps' }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Gremlins',
+                items: [
+                    {
+                        name: 'Invisible character detection',
+                        desc: 'Flag invisible / zero-width / non-printing unicode characters (formatting controls, soft hyphens, variation selectors, etc.) that may be AI watermarks or copy-paste artifacts.',
+                        control: { type: 'toggle', key: 'enableGremlins' }
+                    },
+                    {
+                        name: 'Aggressive scanning',
+                        desc: 'Scan for every unicode format character, including those legitimately used in emoji (keycaps, zwj sequences, variation selectors, tag characters, etc.). Recommended for security audits.',
+                        control: {
+                            type: 'toggle',
+                            key: 'enableAggressiveGremlins',
+                            disabled: () => !this.plugin.settings.enableGremlins
+                        }
+                    }
+                ]
+            },
+            {
+                name: 'Restore defaults',
+                desc: 'Reset all linter settings to their default values.',
+                action: () => {
+                    void this.restoreLinterDefaults();
+                }
+            }
+        ];
+    }
 
-        new Setting(content).setName('AI detection').setHeading();
-
-        new Setting(content)
-            .setName('AI clichés')
-            .setDesc('Flag overused AI words (tapestry, testament, delve, vibrant, realm, etc.).')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableAiCliches).onChange(async (value) => {
-                    this.plugin.settings.enableAiCliches = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Em dashes')
-            .setDesc('Flag em dashes (—). Common AI overuse — consider commas, colons, or sentence breaks.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableAiEmDashes).onChange(async (value) => {
-                    this.plugin.settings.enableAiEmDashes = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Negation patterns')
-            .setDesc('Flag "it\'s not X, it\'s y" constructions. State what things are directly.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableAiNegation).onChange(async (value) => {
-                    this.plugin.settings.enableAiNegation = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Filler adverbs')
-            .setDesc('Flag strategy adverbs common in AI prose (quietly, deliberately, gently, etc.).')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableAiFillerAdverbs).onChange(async (value) => {
-                    this.plugin.settings.enableAiFillerAdverbs = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Hedging language')
-            .setDesc('Flag hedging words (might, could, perhaps, maybe) that weaken prose.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableAiHedging).onChange(async (value) => {
-                    this.plugin.settings.enableAiHedging = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Wrap-up phrases')
-            .setDesc('Flag concluding phrases (in conclusion, to summarize, ultimately, etc.).')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableAiWrapUps).onChange(async (value) => {
-                    this.plugin.settings.enableAiWrapUps = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content).setName('Gremlins').setHeading();
-
-        new Setting(content)
-            .setName('Invisible character detection')
-            .setDesc(
-                'Flag invisible / zero-width / non-printing unicode characters (formatting controls, soft hyphens, variation selectors, etc.) that may be AI watermarks or copy-paste artifacts.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableGremlins).onChange(async (value) => {
-                    this.plugin.settings.enableGremlins = value;
-                    if (!value) this.plugin.settings.enableAggressiveGremlins = false;
-                    await this.plugin.saveSettings();
-                    this.refreshBridge();
-                })
-            );
-
-        new Setting(content)
-            .setName('Aggressive scanning')
-            .setDesc(
-                'Scan for every unicode format character, including those legitimately used in emoji (keycaps, zwj sequences, variation selectors, tag characters, etc.). Recommended for security audits.'
-            )
-            .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableAggressiveGremlins)
-                    .setDisabled(!this.plugin.settings.enableGremlins)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableAggressiveGremlins = value;
-                        await this.plugin.saveSettings();
-                    })
-            );
-
-        new Setting(content)
-            .setName('Restore defaults')
-            .setDesc('Reset all linter settings to their default values.')
-            .addButton((button) =>
-                button.setButtonText('Restore defaults').onClick(async () => {
-                    // Only reset linter-related fields, not AI provider settings
-                    this.plugin.settings.linterMode = DEFAULT_SETTINGS.linterMode;
-                    this.plugin.settings.lintOnSave = DEFAULT_SETTINGS.lintOnSave;
-                    this.plugin.settings.enableLongSentences = DEFAULT_SETTINGS.enableLongSentences;
-                    this.plugin.settings.maxSentenceWords = DEFAULT_SETTINGS.maxSentenceWords;
-                    this.plugin.settings.enablePassiveVoice = DEFAULT_SETTINGS.enablePassiveVoice;
-                    this.plugin.settings.enableAdverbCheck = DEFAULT_SETTINGS.enableAdverbCheck;
-                    this.plugin.settings.enableQualifierCheck = DEFAULT_SETTINGS.enableQualifierCheck;
-                    this.plugin.settings.enableRepeatedWords = DEFAULT_SETTINGS.enableRepeatedWords;
-                    this.plugin.settings.minRepeatedWordLength = DEFAULT_SETTINGS.minRepeatedWordLength;
-                    this.plugin.settings.enableEchoes = DEFAULT_SETTINGS.enableEchoes;
-                    this.plugin.settings.enableTellingVsShowing = DEFAULT_SETTINGS.enableTellingVsShowing;
-                    this.plugin.settings.enableDialogueTags = DEFAULT_SETTINGS.enableDialogueTags;
-                    this.plugin.settings.enableComplexWords = DEFAULT_SETTINGS.enableComplexWords;
-                    this.plugin.settings.maxSyllablesPerWord = DEFAULT_SETTINGS.maxSyllablesPerWord;
-                    this.plugin.settings.enableAiCliches = DEFAULT_SETTINGS.enableAiCliches;
-                    this.plugin.settings.enableAiEmDashes = DEFAULT_SETTINGS.enableAiEmDashes;
-                    this.plugin.settings.enableAiNegation = DEFAULT_SETTINGS.enableAiNegation;
-                    this.plugin.settings.enableAiFillerAdverbs = DEFAULT_SETTINGS.enableAiFillerAdverbs;
-                    this.plugin.settings.enableAiHedging = DEFAULT_SETTINGS.enableAiHedging;
-                    this.plugin.settings.enableAiWrapUps = DEFAULT_SETTINGS.enableAiWrapUps;
-                    this.plugin.settings.enableGremlins = DEFAULT_SETTINGS.enableGremlins;
-                    this.plugin.settings.enableAggressiveGremlins = DEFAULT_SETTINGS.enableAggressiveGremlins;
-                    await this.plugin.saveSettings();
-                    this.refreshBridge();
-                })
-            );
+    /** Restore-defaults action for the Linter page (linter-related fields only). */
+    private async restoreLinterDefaults(): Promise<void> {
+        const s = this.plugin.settings;
+        const d = DEFAULT_SETTINGS;
+        s.linterMode = d.linterMode;
+        s.lintOnSave = d.lintOnSave;
+        s.enableLongSentences = d.enableLongSentences;
+        s.maxSentenceWords = d.maxSentenceWords;
+        s.enablePassiveVoice = d.enablePassiveVoice;
+        s.enableAdverbCheck = d.enableAdverbCheck;
+        s.enableQualifierCheck = d.enableQualifierCheck;
+        s.enableRepeatedWords = d.enableRepeatedWords;
+        s.minRepeatedWordLength = d.minRepeatedWordLength;
+        s.enableEchoes = d.enableEchoes;
+        s.enableTellingVsShowing = d.enableTellingVsShowing;
+        s.enableDialogueTags = d.enableDialogueTags;
+        s.enableComplexWords = d.enableComplexWords;
+        s.maxSyllablesPerWord = d.maxSyllablesPerWord;
+        s.enableAiCliches = d.enableAiCliches;
+        s.enableAiEmDashes = d.enableAiEmDashes;
+        s.enableAiNegation = d.enableAiNegation;
+        s.enableAiFillerAdverbs = d.enableAiFillerAdverbs;
+        s.enableAiHedging = d.enableAiHedging;
+        s.enableAiWrapUps = d.enableAiWrapUps;
+        s.enableGremlins = d.enableGremlins;
+        s.enableAggressiveGremlins = d.enableAggressiveGremlins;
+        await this.plugin.saveSettings();
+        this.update();
     }
 
     /** Render the AI providers configuration section. */
