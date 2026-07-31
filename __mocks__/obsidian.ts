@@ -42,6 +42,14 @@ export async function requestUrl(_opts: unknown): Promise<{
 /** No-op setIcon — tests don't render icons. */
 export function setIcon(_el: HTMLElement, _iconId: string): void {}
 
+/** Minimal MarkdownRenderer — sets textContent (no real markdown rendering). */
+export const MarkdownRenderer = {
+    render(_app: unknown, markdown: string, el: HTMLElement, _sourcePath: string, _component: unknown): Promise<void> {
+        el.textContent = markdown;
+        return Promise.resolve();
+    }
+};
+
 /** No-op addIcon. */
 export function addIcon(_iconId: string, _svg: string): void {}
 
