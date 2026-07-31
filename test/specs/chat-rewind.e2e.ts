@@ -10,7 +10,7 @@ import { openFile, sendCoWriterMessage, waitForAssistantDone, openQuillSidebar, 
  * pre-fills the input with the discarded text. See "Chat rewind" in
  * AGENTS.md.
  *
- * Covers the v1.5.0 `quillAnchorId`-based API-truncation logic. The deterministic
+ * Covers the v2.0.0 `quillAnchorId`-based API-truncation logic. The deterministic
  * part (anchor stripping) is unit-tested; this spec covers the UI flow +
  * display/API sync that the unit tests can't reach.
  *

@@ -55,17 +55,6 @@ export default defineConfig(
 		},
 	},
 	{
-		// `getSettingDefinitions()` (the declarative settings API) is Obsidian
-		// 1.13+ only and our `minAppVersion` is 1.7.2. Implementing it today
-		// would force a major version bump and break compatibility with every
-		// currently released Obsidian build. We will adopt it (and drop this
-		// override) once Obsidian ships it as a stable requirement — adopting
-		// it is itself the trigger for a major version bump. See AGENTS.md.
-		rules: {
-			'obsidianmd/settings-tab/prefer-setting-definitions': 'off',
-		},
-	},
-	{
 		// Obsidian-specific rules don't apply to test files (no popout windows,
 		// no vault config folder — tests run under Node via Vitest).
 		files: ['tests/**/*.ts'],

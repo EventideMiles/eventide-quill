@@ -120,7 +120,7 @@ export interface EventideQuillSettings {
      * markers (keeping `quillAnchorId` so rewind still works), and a free
      * refinement pass runs before the AI compaction fallback when a
      * conversation approaches the threshold. Off = pure AI compaction only
-     * (the pre-1.5.0 behavior). See `src/ai/context-refinement.ts`.
+     * (the pre-2.0.0 behavior). See `src/ai/context-refinement.ts`.
      */
     contextRefinementEnabled: boolean;
     contextIncludeVaultContext: boolean;
@@ -253,14 +253,14 @@ export interface EventideQuillSettings {
      * returns a length-aware message routing the model to `edit_note` /
      * `insert_note` / `append_to_note` instead. Prevents duplicate notes that
      * strand [[wikilinks]] pointing at the original. Off = unconditional
-     * create (the pre-1.5.0 behavior) — escape hatch.
+     * create (the pre-2.0.0 behavior) — escape hatch.
      */
     lorePreferEditOverCreate: boolean;
     /**
      * When on, follow-up discussion of a review report runs through the
      * co-writer session machinery with editing tools enabled, so the editor
      * can propose specific, reviewable inline-diff edits (not just advisory
-     * prose). Off preserves the pre-1.5.0 text-only chat behavior. Default:
+     * prose). Off preserves the pre-2.0.0 text-only chat behavior. Default:
      * on.
      */
     reviewSuggestedEditsEnabled: boolean;
@@ -1872,7 +1872,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     row.addButton((btn) =>
                         btn
                             .setButtonText('Clear')
-                            .setWarning()
+                            .setDestructive()
                             .onClick(async () => {
                                 btn.setButtonText('Clearing…').setDisabled(true);
                                 await this.plugin.clearFandomWikiCache(wiki);
@@ -3297,7 +3297,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 'After a report finishes, the follow-up discussion runs through the co-writer session ' +
                     'with editing tools enabled, so the editor can propose specific, reviewable inline-diff ' +
                     'edits (not just advisory prose). Every proposed edit still requires your approval before ' +
-                    'it reaches the vault. Turn off to keep the pre-1.5.0 text-only chat behavior. Default: on.'
+                    'it reaches the vault. Turn off to keep the pre-2.0.0 text-only chat behavior. Default: on.'
             )
             .addToggle((toggle) =>
                 toggle.setValue(this.plugin.settings.reviewSuggestedEditsEnabled).onChange(async (value) => {
