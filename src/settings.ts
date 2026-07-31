@@ -675,7 +675,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 type: 'page',
                 name: 'General',
                 desc: 'Sidebar, features, dashboard, embeddings.',
-                page: () => this.bridgePage((el) => this.renderGeneralTab(el))
+                items: this.generalItems()
             },
             {
                 type: 'page',
@@ -1212,266 +1212,214 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 
     /** Render the general settings tab. */
-    private renderGeneralTab(containerEl: HTMLElement): void {
-        const content = containerEl.createDiv({ cls: 'quill-settings-content-general' });
-
-        new Setting(content).setName('Sidebar').setHeading();
-
-        new Setting(content)
-            .setName('Default tab')
-            .setDesc('Which sidebar tab opens by default.')
-            .addDropdown((dropdown) => {
-                dropdown.addOption('dashboard', 'Dashboard');
-                dropdown.addOption('linter', 'Linter');
-                dropdown.addOption('context', 'Context');
-                dropdown.addOption('review', 'Review');
-                dropdown.addOption('cowriter', 'Co-writer');
-                dropdown.addOption('lorebook', 'Lorebook');
-                dropdown.setValue(this.plugin.settings.defaultTab).onChange(async (value) => {
-                    this.plugin.settings.defaultTab = value as DefaultTab;
-                    await this.plugin.saveSettings();
-                });
-            });
-
-        new Setting(content).setName('Feature toggles').setHeading();
-
-        new Setting(content)
-            .setName('Enable dashboard')
-            .setDesc('Show the dashboard tab in the sidebar with per-manuscript analytics.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableDashboard).onChange(async (value) => {
-                    this.plugin.settings.enableDashboard = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Critical analysis')
-            .setDesc('Show the analysis engine in the review tab and the right-click analyze command.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableCriticalAnalysis).onChange((value) => {
-                    this.plugin.settings.enableCriticalAnalysis = value;
-                    void this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Manuscript analysis')
-            .setDesc(
-                'Show the manuscript analysis engine in the review tab for full-manuscript structural diagnostics.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableManuscriptAnalysis).onChange((value) => {
-                    this.plugin.settings.enableManuscriptAnalysis = value;
-                    void this.plugin.saveSettings();
-                })
-            );
-
-        // --- Analysis settings ---
-        new Setting(content).setName('Manuscript analysis engine').setHeading();
-
-        new Setting(content)
-            .setName('Compression chunk size (tokens)')
-            .setDesc(
-                'Target tokens per chunk when using compress compaction (chat model summarization). The embedding chunk size is configured separately below. Default: 1024.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.manuscriptAnalysisChunkTokenSize))
-                    // settings.ts - no Component lifecycle available; raw addEventListener is required
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 256 && n <= 8192) {
-                            this.plugin.settings.manuscriptAnalysisChunkTokenSize = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.manuscriptAnalysisChunkTokenSize));
-                            new Notice('Value must be a number between 256 and 8192');
+    /**
+     * Declarative items for the General page. Every control's `key` matches a
+     * {@link DEFAULT_SETTINGS} field, so the base {@link PluginSettingTab}
+     * reads/writes/persists automatically — no onChange boilerplate. Numeric
+     * bounds move from blur-handlers (with a Notice + revert) to the control's
+     * `validate`, which surfaces an inline error. The Debug group is gated by a
+     * `visible` predicate so it tree-shakes out of release builds.
+     */
+    private generalItems(): SettingDefinitionItem[] {
+        return [
+            {
+                type: 'group',
+                heading: 'Sidebar',
+                items: [
+                    {
+                        name: 'Default tab',
+                        desc: 'Which sidebar tab opens by default.',
+                        control: {
+                            type: 'dropdown',
+                            key: 'defaultTab',
+                            options: {
+                                dashboard: 'Dashboard',
+                                linter: 'Linter',
+                                context: 'Context',
+                                review: 'Review',
+                                cowriter: 'Co-writer',
+                                lorebook: 'Lorebook'
+                            }
                         }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Manuscript analysis temperature')
-            .setDesc(
-                'Temperature for manuscript analysis AI responses. Higher values produce more varied output; lower values are more deterministic. Range: 0.0 – 2.0. Default: 0.5.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.manuscriptAnalysisTemperature))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseFloat(text.inputEl.value);
-                        if (!isNaN(n) && n >= 0 && n <= 2) {
-                            this.plugin.settings.manuscriptAnalysisTemperature = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.manuscriptAnalysisTemperature));
-                            new Notice('Value must be a number between 0.0 and 2.0');
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Feature toggles',
+                items: [
+                    {
+                        name: 'Enable dashboard',
+                        desc: 'Show the dashboard tab in the sidebar with per-manuscript analytics.',
+                        control: { type: 'toggle', key: 'enableDashboard' }
+                    },
+                    {
+                        name: 'Critical analysis',
+                        desc: 'Show the analysis engine in the review tab and the right-click analyze command.',
+                        control: { type: 'toggle', key: 'enableCriticalAnalysis' }
+                    },
+                    {
+                        name: 'Manuscript analysis',
+                        desc: 'Show the manuscript analysis engine in the review tab for full-manuscript structural diagnostics.',
+                        control: { type: 'toggle', key: 'enableManuscriptAnalysis' }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Manuscript analysis engine',
+                items: [
+                    {
+                        name: 'Compression chunk size (tokens)',
+                        desc: 'Target tokens per chunk when using compress compaction (chat model summarization). The embedding chunk size is configured separately on the Model behaviors tab. Default: 1024.',
+                        control: {
+                            type: 'number',
+                            key: 'manuscriptAnalysisChunkTokenSize',
+                            min: 256,
+                            max: 8192,
+                            validate: (v) => (v >= 256 && v <= 8192 ? undefined : 'Value must be between 256 and 8192')
                         }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Manuscript analysis max output tokens')
-            .setDesc(
-                'Maximum tokens per manuscript analysis response. Higher allows more detailed reports but uses more quota. Default: 3072.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.manuscriptAnalysisMaxOutputTokens))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1 && n <= 65536) {
-                            this.plugin.settings.manuscriptAnalysisMaxOutputTokens = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.manuscriptAnalysisMaxOutputTokens));
-                            new Notice('Value must be a number between 1 and 65536');
+                    },
+                    {
+                        name: 'Manuscript analysis temperature',
+                        desc: 'Temperature for manuscript analysis AI responses. Higher values produce more varied output; lower values are more deterministic. Range: 0.0 – 2.0. Default: 0.5.',
+                        control: {
+                            type: 'number',
+                            key: 'manuscriptAnalysisTemperature',
+                            min: 0,
+                            max: 2,
+                            step: 0.1,
+                            validate: (v) => (v >= 0 && v <= 2 ? undefined : 'Value must be between 0.0 and 2.0')
                         }
-                    })
-            );
-
-        // --- Embedding settings ---
-        // --- Debug logging (dev-only) ---
-        if (__DEV__) {
-            new Setting(content).setName('Debug').setHeading();
-
-            new Setting(content)
-                .setName('Enable debug logging')
-                .setDesc(
-                    'When enabled, logs AI payload context to the browser console (console.warn). Useful for inspecting the actual data sent to providers.'
-                )
-                .addToggle((toggle) =>
-                    toggle.setValue(this.plugin.settings.enableDebugLogging).onChange(async (value) => {
-                        this.plugin.settings.enableDebugLogging = value;
-                        await this.plugin.saveSettings();
-                    })
-                );
-        }
-
-        // --- Dashboard settings ---
-        new Setting(content).setName('Dashboard').setHeading();
-
-        new Setting(content)
-            .setName('Readability formula')
-            .setDesc('Which readability formula to display in the dashboard.')
-            .addDropdown((dropdown) => {
-                dropdown.addOption('reweighted-flesch', 'Reweighted flesch');
-                dropdown.addOption('flesch-kincaid', 'Flesch-kincaid');
-                dropdown.addOption('ari', 'Automated readability index');
-                dropdown.addOption('custom-composite', 'Custom composite');
-                dropdown.addOption('dale-chall', 'Dale-chall');
-                dropdown.setValue(this.plugin.settings.readabilityFormula).onChange(async (value) => {
-                    this.plugin.settings.readabilityFormula = value as ReadabilityFormula;
-                    await this.plugin.saveSettings();
-                });
-            });
-
-        new Setting(content)
-            .setName('Auto-refresh interval')
-            .setDesc('Refresh the dashboard every n minutes when the tab is active (0 disables).')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.dashboardAutoRefreshMinutes))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 0 && n <= 60) {
-                            this.plugin.settings.dashboardAutoRefreshMinutes = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.dashboardAutoRefreshMinutes));
-                            new Notice('Value must be between 0 and 60');
+                    },
+                    {
+                        name: 'Manuscript analysis max output tokens',
+                        desc: 'Maximum tokens per manuscript analysis response. Higher allows more detailed reports but uses more quota. Default: 3072.',
+                        control: {
+                            type: 'number',
+                            key: 'manuscriptAnalysisMaxOutputTokens',
+                            min: 1,
+                            max: 65536,
+                            validate: (v) => (v >= 1 && v <= 65536 ? undefined : 'Value must be between 1 and 65536')
                         }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Auto-snapshot on save')
-            .setDesc('Record a word-count snapshot whenever a chapter file is saved.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.dashboardAutoSnapshotOnSave).onChange(async (value) => {
-                    this.plugin.settings.dashboardAutoSnapshotOnSave = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Max snapshots retained')
-            .setDesc(
-                'Maximum number of historical snapshots to keep per manuscript (10-1000). Oldest are pruned first.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.dashboardMaxSnapshots))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 10 && n <= 1000) {
-                            this.plugin.settings.dashboardMaxSnapshots = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.dashboardMaxSnapshots));
-                            new Notice('Value must be between 10 and 1000');
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Debug',
+                visible: () => __DEV__,
+                items: [
+                    {
+                        name: 'Enable debug logging',
+                        desc: 'When enabled, logs AI payload context to the browser console (console.warn). Useful for inspecting the actual data sent to providers.',
+                        control: { type: 'toggle', key: 'enableDebugLogging' }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Dashboard',
+                items: [
+                    {
+                        name: 'Readability formula',
+                        desc: 'Which readability formula to display in the dashboard.',
+                        control: {
+                            type: 'dropdown',
+                            key: 'readabilityFormula',
+                            options: {
+                                'reweighted-flesch': 'Reweighted flesch',
+                                'flesch-kincaid': 'Flesch-kincaid',
+                                ari: 'Automated readability index',
+                                'custom-composite': 'Custom composite',
+                                'dale-chall': 'Dale-chall'
+                            }
                         }
-                    })
-            );
+                    },
+                    {
+                        name: 'Auto-refresh interval',
+                        desc: 'Refresh the dashboard every n minutes when the tab is active (0 disables).',
+                        control: {
+                            type: 'number',
+                            key: 'dashboardAutoRefreshMinutes',
+                            min: 0,
+                            max: 60,
+                            validate: (v) => (v >= 0 && v <= 60 ? undefined : 'Value must be between 0 and 60')
+                        }
+                    },
+                    {
+                        name: 'Auto-snapshot on save',
+                        desc: 'Record a word-count snapshot whenever a chapter file is saved.',
+                        control: { type: 'toggle', key: 'dashboardAutoSnapshotOnSave' }
+                    },
+                    {
+                        name: 'Max snapshots retained',
+                        desc: 'Maximum number of historical snapshots to keep per manuscript (10-1000). Oldest are pruned first.',
+                        control: {
+                            type: 'number',
+                            key: 'dashboardMaxSnapshots',
+                            min: 10,
+                            max: 1000,
+                            validate: (v) => (v >= 10 && v <= 1000 ? undefined : 'Value must be between 10 and 1000')
+                        }
+                    }
+                ]
+            },
+            {
+                name: 'Restore defaults',
+                desc: 'Reset all general settings to their default values.',
+                action: () => {
+                    void this.restoreGeneralDefaults();
+                }
+            }
+        ];
+    }
 
-        // --- Restore defaults ---
-        new Setting(content)
-            .setName('Restore defaults')
-            .setDesc('Reset all general settings to their default values.')
-            .addButton((button) =>
-                button.setButtonText('Restore defaults').onClick(async () => {
-                    this.plugin.settings.defaultTab = DEFAULT_SETTINGS.defaultTab;
-                    this.plugin.settings.enableDashboard = DEFAULT_SETTINGS.enableDashboard;
-                    this.plugin.settings.enableCriticalAnalysis = DEFAULT_SETTINGS.enableCriticalAnalysis;
-                    this.plugin.settings.enableManuscriptAnalysis = DEFAULT_SETTINGS.enableManuscriptAnalysis;
-                    this.plugin.settings.manuscriptAnalysisTemperature = DEFAULT_SETTINGS.manuscriptAnalysisTemperature;
-                    this.plugin.settings.manuscriptAnalysisMaxOutputTokens =
-                        DEFAULT_SETTINGS.manuscriptAnalysisMaxOutputTokens;
-                    this.plugin.settings.manuscriptAnalysisChunkTokenSize =
-                        DEFAULT_SETTINGS.manuscriptAnalysisChunkTokenSize;
-                    this.plugin.settings.embeddingsTopKChunks = DEFAULT_SETTINGS.embeddingsTopKChunks;
-                    this.plugin.settings.embeddingChunkTokenSize = DEFAULT_SETTINGS.embeddingChunkTokenSize;
-                    this.plugin.settings.enableEmbeddingWarming = DEFAULT_SETTINGS.enableEmbeddingWarming;
-                    this.plugin.settings.enableFullEmbedPickerOption = DEFAULT_SETTINGS.enableFullEmbedPickerOption;
-                    this.plugin.settings.folderTopKOverrides = { ...DEFAULT_SETTINGS.folderTopKOverrides };
-                    this.plugin.settings.enableDebugLogging = DEFAULT_SETTINGS.enableDebugLogging;
-                    this.plugin.settings.embeddingWarmingDebounceSeconds =
-                        DEFAULT_SETTINGS.embeddingWarmingDebounceSeconds;
-                    this.plugin.settings.dashboardAutoRefreshMinutes = DEFAULT_SETTINGS.dashboardAutoRefreshMinutes;
-                    this.plugin.settings.dashboardAutoSnapshotOnSave = DEFAULT_SETTINGS.dashboardAutoSnapshotOnSave;
-                    this.plugin.settings.dashboardMaxSnapshots = DEFAULT_SETTINGS.dashboardMaxSnapshots;
-                    this.plugin.settings.readabilityFormula = DEFAULT_SETTINGS.readabilityFormula;
-                    this.plugin.settings.lorebookFolders = [...DEFAULT_SETTINGS.lorebookFolders];
-                    this.plugin.settings.lorebookFolderTypes = { ...DEFAULT_SETTINGS.lorebookFolderTypes };
-                    this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
-                    this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
-                    this.plugin.settings.coWriterToolsEnabled = DEFAULT_SETTINGS.coWriterToolsEnabled;
-                    this.plugin.settings.lorebookNetworkTools = DEFAULT_SETTINGS.lorebookNetworkTools;
-                    this.plugin.settings.lorebookFandomWikis = [...DEFAULT_SETTINGS.lorebookFandomWikis];
-                    this.plugin.settings.lorebookFandomAllowAllWikis = DEFAULT_SETTINGS.lorebookFandomAllowAllWikis;
-                    this.plugin.settings.lorebookFandomCacheEnabled = DEFAULT_SETTINGS.lorebookFandomCacheEnabled;
-                    this.plugin.settings.lorebookWikipediaLang = DEFAULT_SETTINGS.lorebookWikipediaLang;
-                    this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
-                    this.plugin.settings.lorebookImageTools = DEFAULT_SETTINGS.lorebookImageTools;
-                    this.plugin.settings.lorebookImageMaxDimension = DEFAULT_SETTINGS.lorebookImageMaxDimension;
-                    this.plugin.settings.lorebookImageMaxDescriptionTokens =
-                        DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
-                    this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
-                    this.plugin.settings.lorebookImageTwoPassDescription =
-                        DEFAULT_SETTINGS.lorebookImageTwoPassDescription;
-                    this.plugin.settings.loreEntryImageSectionHeaders = [
-                        ...DEFAULT_SETTINGS.loreEntryImageSectionHeaders
-                    ];
-                    this.plugin.settings.loreEntryImageMaxPerEntry = DEFAULT_SETTINGS.loreEntryImageMaxPerEntry;
-                    this.plugin.settings.loreEntryImageAttachments = DEFAULT_SETTINGS.loreEntryImageAttachments;
-                    this.plugin.settings.loreEntryImageAttachmentFolder =
-                        DEFAULT_SETTINGS.loreEntryImageAttachmentFolder;
-                    this.plugin.settings.slashCommands = [...DEFAULT_SETTINGS.slashCommands];
-                    await this.plugin.saveSettings();
-                    this.refreshBridge();
-                })
-            );
+    /** Restore-defaults action for the General page (resets across all tabs, matching pre-2.0.0 behavior). */
+    private async restoreGeneralDefaults(): Promise<void> {
+        const s = this.plugin.settings;
+        const d = DEFAULT_SETTINGS;
+        s.defaultTab = d.defaultTab;
+        s.enableDashboard = d.enableDashboard;
+        s.enableCriticalAnalysis = d.enableCriticalAnalysis;
+        s.enableManuscriptAnalysis = d.enableManuscriptAnalysis;
+        s.manuscriptAnalysisTemperature = d.manuscriptAnalysisTemperature;
+        s.manuscriptAnalysisMaxOutputTokens = d.manuscriptAnalysisMaxOutputTokens;
+        s.manuscriptAnalysisChunkTokenSize = d.manuscriptAnalysisChunkTokenSize;
+        s.embeddingsTopKChunks = d.embeddingsTopKChunks;
+        s.embeddingChunkTokenSize = d.embeddingChunkTokenSize;
+        s.enableEmbeddingWarming = d.enableEmbeddingWarming;
+        s.enableFullEmbedPickerOption = d.enableFullEmbedPickerOption;
+        s.folderTopKOverrides = { ...d.folderTopKOverrides };
+        s.enableDebugLogging = d.enableDebugLogging;
+        s.embeddingWarmingDebounceSeconds = d.embeddingWarmingDebounceSeconds;
+        s.dashboardAutoRefreshMinutes = d.dashboardAutoRefreshMinutes;
+        s.dashboardAutoSnapshotOnSave = d.dashboardAutoSnapshotOnSave;
+        s.dashboardMaxSnapshots = d.dashboardMaxSnapshots;
+        s.readabilityFormula = d.readabilityFormula;
+        s.lorebookFolders = [...d.lorebookFolders];
+        s.lorebookFolderTypes = { ...d.lorebookFolderTypes };
+        s.coWriterLoreContext = d.coWriterLoreContext;
+        s.reviewLoreContext = d.reviewLoreContext;
+        s.coWriterToolsEnabled = d.coWriterToolsEnabled;
+        s.lorebookNetworkTools = d.lorebookNetworkTools;
+        s.lorebookFandomWikis = [...d.lorebookFandomWikis];
+        s.lorebookFandomAllowAllWikis = d.lorebookFandomAllowAllWikis;
+        s.lorebookFandomCacheEnabled = d.lorebookFandomCacheEnabled;
+        s.lorebookWikipediaLang = d.lorebookWikipediaLang;
+        s.lorebookToolMaxTokens = d.lorebookToolMaxTokens;
+        s.lorebookImageTools = d.lorebookImageTools;
+        s.lorebookImageMaxDimension = d.lorebookImageMaxDimension;
+        s.lorebookImageMaxDescriptionTokens = d.lorebookImageMaxDescriptionTokens;
+        s.lorebookImageProxyPrompt = d.lorebookImageProxyPrompt;
+        s.lorebookImageTwoPassDescription = d.lorebookImageTwoPassDescription;
+        s.loreEntryImageSectionHeaders = [...d.loreEntryImageSectionHeaders];
+        s.loreEntryImageMaxPerEntry = d.loreEntryImageMaxPerEntry;
+        s.loreEntryImageAttachments = d.loreEntryImageAttachments;
+        s.loreEntryImageAttachmentFolder = d.loreEntryImageAttachmentFolder;
+        s.slashCommands = [...d.slashCommands];
+        await this.plugin.saveSettings();
+        this.update();
     }
 
     /** Render the Embeddings settings block into `content` (retrieval index config). */
