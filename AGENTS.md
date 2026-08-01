@@ -507,12 +507,15 @@ The `obsidianmd/settings-tab/prefer-setting-definitions` lint rule is active (th
 ## Branch strategy
 
 - `main` is write-protected. Never commit directly to it.
-- All work happens on feature branches pushed to GitHub, then merged via pull request.
+- All work happens on branches pushed to GitHub, then merged via pull request.
+- **Branches typically bundle multiple related features and fixes into a single PR** that ships as one minor or patch release — the established pattern (e.g. the mobile-UX branch landed five issues plus follow-ups in one PR; 2.0.0 landed 118 files). Focused single-change branches are fine when a change is small or isolated, but do not open a separate PR for every feature when a release branch is already in flight.
 - Branch naming:
-    - `feature/<short-description>` — new features
-    - `bugfix/<short-description>` — bug fixes
-- Example: `feature/prose-linter`, `bugfix/settings-crash`
-- Open a PR to `main` when the feature is ready. CodeRabbit will review automatically (`.github/coderabbit.yaml`, profile `chill`).
+    - `feature/<short-description>` — new features / feature bundles
+    - `bugfix/<short-description>` — bug fixes / fix bundles
+- Example: `feature/2.1.0`, `feature/prose-linter`, `bugfix/settings-crash`
+- A release branch carries several logical conventional-commit commits (`feat:`, `fix:`, `refactor:`, `docs:`, `chore:`) for reviewability and revertability; squash-at-merge is the maintainer's call. One PR → one `.planning/pr-merge-<feature>.md` merge record.
+- Open a PR to `main` when the bundle is ready. CodeRabbit will review automatically (`.github/coderabbit.yaml`, profile `chill`).
+- The version bump happens at release time via `npm run set-version -- <version>` (see "Version management"); it is not bumped per-commit during development.
 - Releases are cut by pushing a tag; `.github/workflows/release.yml` builds and creates a draft GitHub release attaching `main.js`, `manifest.json`, and `styles.css`.
 
 ## Security & compliance
