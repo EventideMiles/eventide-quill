@@ -196,6 +196,45 @@ function echoPhrasePosition(
     return posAtOffset(text, offset);
 }
 
+/** Detect repeated sentence-starts within one paragraph and push echo findings into `results`. */
+function detectEchoesInParagraph(
+    sentences: ReturnType<typeof splitSentences>,
+    paraStartOffset: number,
+    text: string,
+    results: LintResult[]
+): void {
+    const starts = sentences.map((s) => {
+        const words = s.text.match(/\b\w+\b/g);
+        return words ? words.slice(0, 2).join(' ').toLowerCase() : '';
+    });
+
+    const startCount = new Map<string, number[]>();
+    starts.forEach((start, idx) => {
+        if (!start) return;
+        const indices = startCount.get(start) || [];
+        indices.push(idx);
+        startCount.set(start, indices);
+    });
+
+    for (const [start, indices] of startCount) {
+        if (indices.length >= 2) {
+            const idx = indices[0];
+            if (idx === undefined) continue;
+            const first = sentences[idx];
+            if (!first) continue;
+            const pos = echoPhrasePosition(text, paraStartOffset, first.start);
+            results.push({
+                line: pos.line,
+                column: pos.column,
+                length: start.length,
+                message: `Echo: "${start}" starts ${indices.length} sentences in this paragraph.`,
+                severity: 'info',
+                rule: 'echoes'
+            });
+        }
+    }
+}
+
 /** Flag paragraphs where multiple sentences start with the same two words. */
 export function checkEchoes(text: string): LintResult[] {
     const results: LintResult[] = [];
@@ -214,37 +253,7 @@ export function checkEchoes(text: string): LintResult[] {
         const paraStartOffset = match.index - paraText.length + leadingTrim;
         const sentences = splitSentences(trimmed, ABBREVIATIONS);
         if (sentences.length < ECHO_THRESHOLD) continue;
-
-        const starts = sentences.map((s) => {
-            const words = s.text.match(/\b\w+\b/g);
-            return words ? words.slice(0, 2).join(' ').toLowerCase() : '';
-        });
-
-        const startCount = new Map<string, number[]>();
-        starts.forEach((start, idx) => {
-            if (!start) return;
-            const indices = startCount.get(start) || [];
-            indices.push(idx);
-            startCount.set(start, indices);
-        });
-
-        for (const [start, indices] of startCount) {
-            if (indices.length >= 2) {
-                const idx = indices[0];
-                if (idx === undefined) continue;
-                const first = sentences[idx];
-                if (!first) continue;
-                const pos = echoPhrasePosition(text, paraStartOffset, first.start);
-                results.push({
-                    line: pos.line,
-                    column: pos.column,
-                    length: start.length,
-                    message: `Echo: "${start}" starts ${indices.length} sentences in this paragraph.`,
-                    severity: 'info',
-                    rule: 'echoes'
-                });
-            }
-        }
+        detectEchoesInParagraph(sentences, paraStartOffset, text, results);
     }
 
     const tail = text.slice(searchFrom);
@@ -254,36 +263,7 @@ export function checkEchoes(text: string): LintResult[] {
         const paraStartOffset = searchFrom + leadingTrim;
         const sentences = splitSentences(remaining, ABBREVIATIONS);
         if (sentences.length >= ECHO_THRESHOLD) {
-            const starts = sentences.map((s) => {
-                const words = s.text.match(/\b\w+\b/g);
-                return words ? words.slice(0, 2).join(' ').toLowerCase() : '';
-            });
-
-            const startCount = new Map<string, number[]>();
-            starts.forEach((start, idx) => {
-                if (!start) return;
-                const indices = startCount.get(start) || [];
-                indices.push(idx);
-                startCount.set(start, indices);
-            });
-
-            for (const [start, indices] of startCount) {
-                if (indices.length >= 2) {
-                    const idx = indices[0];
-                    if (idx === undefined) continue;
-                    const first = sentences[idx];
-                    if (!first) continue;
-                    const pos = echoPhrasePosition(text, paraStartOffset, first.start);
-                    results.push({
-                        line: pos.line,
-                        column: pos.column,
-                        length: start.length,
-                        message: `Echo: "${start}" starts ${indices.length} sentences in this paragraph.`,
-                        severity: 'info',
-                        rule: 'echoes'
-                    });
-                }
-            }
+            detectEchoesInParagraph(sentences, paraStartOffset, text, results);
         }
     }
 
