@@ -170,9 +170,10 @@ export class Component {
     }
 
     addChild(child: Component): Component {
-        if (typeof (child as { onload?: () => void }).onload === 'function') (child as { onload: () => void }).onload();
+        const c = child as unknown as { onload?: () => void; onunload?: () => void };
+        if (typeof c.onload === 'function') c.onload();
         this._cleanups.push(() => {
-            if (typeof (child as { onunload?: () => void }).onunload === 'function') (child as { onunload: () => void }).onunload();
+            if (typeof c.onunload === 'function') c.onunload();
         });
         return child;
     }
@@ -318,7 +319,7 @@ export class ToggleComponent extends ValueComponent<boolean> {
 
     constructor(containerEl: HTMLElement) {
         super(containerEl);
-        this.inputEl.type = 'checkbox';
+        (this.inputEl as HTMLInputElement).type = 'checkbox';
         this.toggleEl = containerEl.createDiv({ cls: 'checkbox-container' });
         containerEl.removeChild(this.inputEl);
         this.toggleEl.appendChild(this.inputEl);
@@ -361,7 +362,7 @@ export class TextComponent extends ValueComponent<string> {
 }
 
 export class TextAreaComponent extends ValueComponent<string> {
-    inputEl: HTMLTextAreaElement;
+    inputEl!: HTMLTextAreaElement;
 
     constructor(containerEl: HTMLElement) {
         super(containerEl);

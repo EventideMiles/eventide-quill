@@ -36,7 +36,7 @@ function makePlugin(): EventideQuillPlugin {
 
 describe('QuillSidebarView', () => {
     it('constructs with the correct view type + display text', () => {
-        const view = new QuillSidebarView(new WorkspaceLeaf(new App()), makePlugin());
+        const view = new QuillSidebarView((new (WorkspaceLeaf as unknown as new (app?: unknown) => object)(new App())) as unknown as WorkspaceLeaf, makePlugin());
         expect(view.getViewType()).to.include('quill');
         expect(view.getDisplayText()).to.equal('Quill');
     });
@@ -44,17 +44,17 @@ describe('QuillSidebarView', () => {
     it('defaults to the configured default tab', () => {
         const plugin = makePlugin();
         plugin.settings.defaultTab = 'dashboard';
-        const view = new QuillSidebarView(new WorkspaceLeaf(new App()), plugin);
+        const view = new QuillSidebarView((new (WorkspaceLeaf as unknown as new (app?: unknown) => object)(new App())) as unknown as WorkspaceLeaf, plugin);
         expect(view.isDashboardActive()).to.equal(true);
     });
 
     it('renders the top tab bar with six tabs on open', async () => {
-        const leaf = new WorkspaceLeaf(new App());
+        const leaf = (new (WorkspaceLeaf as unknown as new (app?: unknown) => object)(new App())) as unknown as WorkspaceLeaf;
         const view = new QuillSidebarView(leaf, makePlugin());
         await view.onOpen();
 
-        const tabLabels = Array.from(leaf.containerEl.querySelectorAll('.quill-sidebar__tab'))
-            .map((el) => el.getAttribute('aria-label') ?? '');
+        const tabLabels = Array.from((leaf as unknown as { containerEl: HTMLElement }).containerEl.querySelectorAll('.quill-sidebar__tab'))
+            .map((el: Element) => el.getAttribute('aria-label') ?? '');
         expect(tabLabels).to.include('Dashboard');
         expect(tabLabels).to.include('Linter');
         expect(tabLabels).to.include('Co-writer');

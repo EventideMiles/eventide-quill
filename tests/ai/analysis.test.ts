@@ -33,16 +33,16 @@ describe('analysis — buildAnalysisMessages', () => {
     it('returns a [system, user] pair whose user message includes the analyzed text', () => {
         const messages = buildAnalysisMessages('plot-logic', { text: 'The detective entered.', scope: 'selection' });
         expect(messages).to.have.lengthOf(2);
-        expect(messages[0].role).to.equal('system');
-        expect(messages[1].role).to.equal('user');
-        expect(messages[1].content).to.include('The detective entered.');
+        expect(messages[0]?.role).to.equal('system');
+        expect(messages[1]?.role).to.equal('user');
+        expect(messages[1]?.content).to.include('The detective entered.');
     });
 
     it('builds a system + user message for every mode without throwing', () => {
         for (const mode of modes) {
             const messages = buildAnalysisMessages(mode, { text: 'scene text', scope: 'scene' });
             expect(messages).to.have.lengthOf(2);
-            expect(messages[0].content.length).to.be.greaterThan(0);
+            expect(messages[0]?.content.length).to.be.greaterThan(0);
         }
     });
 

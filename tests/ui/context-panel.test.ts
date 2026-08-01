@@ -9,7 +9,7 @@ import type EventideQuillPlugin from '../../src/main';
 function makeAssembly(overrides: Partial<ContextAssembly> = {}): ContextAssembly {
     return {
         entities: [],
-        voice: { pov: 'third-person', tense: 'past', avgSentenceLength: 22, dialogueRatio: 0.35 },
+        voice: { pov: 'third-person', tense: 'past', avgSentenceLength: 22, dialogueRatio: 0.35, descriptionRatio: 0.65 },
         contextItems: [],
         totalTokens: 500,
         tokenBudget: 32000,

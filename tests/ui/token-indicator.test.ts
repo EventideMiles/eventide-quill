@@ -73,8 +73,8 @@ describe('token-indicator — buildRequestBreakdown', () => {
         ];
         const breakdown = buildRequestBreakdown(messages, 400);
         expect(breakdown.sections.length).to.equal(3); // Tool defs + System prompt + Chat history
-        expect(breakdown.sections[0].label).to.equal('Tool definitions');
-        expect(breakdown.sections[0].tokens).to.equal(400);
+        expect(breakdown.sections[0]!.label).to.equal('Tool definitions');
+        expect(breakdown.sections[0]!.tokens).to.equal(400);
         expect(breakdown.sections.some((s) => s.label === 'System / mode prompt')).to.equal(true);
         const chat = breakdown.sections.find((s) => s.label === 'Chat history');
         expect(chat).to.exist;

@@ -131,7 +131,7 @@ describe('co-writer-utils — stubDanglingToolCalls', () => {
     it('appends a synthetic tool result for each dangling tool call', () => {
         const last = msg({
             role: 'assistant',
-            quillAnchorId: 7,
+            quillAnchorId: "7",
             toolCalls: [
                 { id: 'call_1', name: 'vault_lookup', arguments: '{}' },
                 { id: 'call_2', name: 'grep_notes', arguments: '{}' }
@@ -139,8 +139,8 @@ describe('co-writer-utils — stubDanglingToolCalls', () => {
         });
         const out = stubDanglingToolCalls([msg({ role: 'user', content: 'hi' }), last]);
         expect(out).to.have.lengthOf(4);
-        expect(out[2]).to.include({ role: 'tool', toolCallId: 'call_1', name: 'vault_lookup', quillAnchorId: 7 });
-        expect(out[3]).to.include({ role: 'tool', toolCallId: 'call_2', name: 'grep_notes', quillAnchorId: 7 });
+        expect(out[2]).to.include({ role: 'tool', toolCallId: 'call_1', name: 'vault_lookup', quillAnchorId: "7" });
+        expect(out[3]).to.include({ role: 'tool', toolCallId: 'call_2', name: 'grep_notes', quillAnchorId: "7" });
     });
 
     it('leaves well-formed tails unchanged', () => {

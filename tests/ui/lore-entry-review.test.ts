@@ -43,13 +43,13 @@ describe('lore-entry-review — ensureGallerySectionInContent', () => {
 
     it('returns content unchanged when all images are already embedded', () => {
         const content = '## Reference\n\n![[art.png]]\n';
-        const result = ensureGallerySectionInContent(content, [{ suggestedFilename: 'art.png' }], headers);
+        const result = ensureGallerySectionInContent(content, [{ suggestedFilename: 'art.png', label: '', base64: '' }], headers);
         expect(result).to.equal(content);
     });
 
     it('appends a fresh gallery section when no recognized heading exists', () => {
         const content = 'Some lore text.';
-        const result = ensureGallerySectionInContent(content, [{ suggestedFilename: 'portrait.png' }], headers);
+        const result = ensureGallerySectionInContent(content, [{ suggestedFilename: 'portrait.png', label: '', base64: '' }], headers);
         expect(result).to.include('## Reference');
         expect(result).to.include('![[portrait.png]]');
     });
@@ -58,7 +58,7 @@ describe('lore-entry-review — ensureGallerySectionInContent', () => {
         const content = '## Gallery\n\n![[existing.png]]\n';
         const result = ensureGallerySectionInContent(
             content,
-            [{ suggestedFilename: 'new.png', label: 'Alternate form' }],
+            [{ suggestedFilename: 'new.png', label: 'Alternate form', base64: '' }],
             headers
         );
         expect(result).to.include('![[new.png]]');
@@ -71,7 +71,7 @@ describe('lore-entry-review — ensureGallerySectionInContent', () => {
         const content = 'Lore text.';
         const result = ensureGallerySectionInContent(
             content,
-            [{ suggestedFilename: 'art.png', caption: 'The hero' }],
+            [{ suggestedFilename: 'art.png', caption: 'The hero', label: '', base64: '' }],
             headers
         );
         expect(result).to.include('![[art.png|The hero]]');

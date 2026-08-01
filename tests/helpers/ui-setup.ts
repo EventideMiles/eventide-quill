@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Polyfills Obsidian's DOM helper extensions for UI lifecycle tests running
  * under happy-dom. Obsidian's `app.js` adds these methods to HTMLElement
