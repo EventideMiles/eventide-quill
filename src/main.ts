@@ -70,6 +70,8 @@ import { MobileStreamWatchdog, notifyMobileStreamRisk } from './ai/mobile-watchd
 import { resolveSessionsDir, listSessions, saveSession, loadSession, deleteSession } from './ai/conversation-store';
 import { SessionListModal } from './ui/session-list-modal';
 import { ConfirmModal } from './ui/confirm-modal';
+import { FilenameModal } from './ui/filename-modal';
+import { exportPluginData, importPluginData, parsePluginDataBundle } from './core/portability';
 import { ReportSuggestModal } from './ui/report-suggest-modal';
 import type { InputMode } from './ui/co-writer-panel';
 import {
@@ -1073,6 +1075,18 @@ export default class EventideQuillPlugin extends Plugin {
                 await this.openReviewPanel();
                 await this.requestAnalysis('lore-consistency', 'auto');
             }
+        });
+
+        this.addCommand({
+            id: 'quill-export-plugin-data',
+            name: 'Quill: Export plugin data (backup)',
+            callback: () => this.exportPluginDataCommand()
+        });
+
+        this.addCommand({
+            id: 'quill-import-plugin-data',
+            name: 'Quill: Import plugin data (restore)',
+            callback: () => this.importPluginDataCommand()
         });
 
         this.addCommand({
@@ -5015,14 +5029,6 @@ export default class EventideQuillPlugin extends Plugin {
         return result;
     }
 
-    /**
-     * Request AI feedback on the context manuscripts with the selected persona.
-     * Streams the response into the Results sub-tab.
-     *
-     * Manuscript content is injected as system messages on every API call, not
-     * stored in feedbackCurrentMessages, so it always survives compaction and
-     * never pollutes token counts.
-     */
     /** Show the one-time skepticism caveat the first time the copy-editor (grammar) persona runs. */
     private maybeShowCopyEditorNotice(personaId: string): void {
         if (personaId === 'copy-editor' && !this.settings.copyEditorAck) {
@@ -5035,6 +5041,86 @@ export default class EventideQuillPlugin extends Plugin {
         }
     }
 
+    /** Export settings + all writer-owned sidecars to a vault backup file. */
+    private exportPluginDataCommand(): void {
+        new FilenameModal(
+            this.app,
+            'eventide-quill-backup.json',
+            async (path) => {
+                try {
+                    const bundle = await exportPluginData(this.app.vault.adapter, this.pluginDataDir, this.manifest.id);
+                    const dest = normalizePath(path);
+                    await this.app.vault.adapter.write(dest, JSON.stringify(bundle, null, 2));
+                    new Notice(
+                        `Quill: Exported ${Object.keys(bundle.files).length} plugin data file(s) to ${dest}.`,
+                        6000
+                    );
+                } catch (e) {
+                    console.error('Quill export failed', e);
+                    new Notice('Quill: Export failed — see console for details.');
+                }
+            },
+            'Export plugin data'
+        ).open();
+    }
+
+    /** Restore settings + writer-owned sidecars from a vault backup file (destructive). */
+    private importPluginDataCommand(): void {
+        new FilenameModal(
+            this.app,
+            'eventide-quill-backup.json',
+            async (path) => {
+                const src = normalizePath(path);
+                try {
+                    if (!(await this.app.vault.adapter.exists(src))) {
+                        new Notice(`Quill: Backup file not found at ${src}.`);
+                        return;
+                    }
+                    const text = await this.app.vault.adapter.read(src);
+                    const bundle = parsePluginDataBundle(text);
+                    const count = Object.keys(bundle.files).length;
+                    new ConfirmModal(
+                        this.app,
+                        'Import plugin data?',
+                        `This overwrites ALL plugin data in this vault (${count} files: settings, saved conversations, feedback queue, dashboards, writing goals, fandom cache). This cannot be undone — export a backup first if unsure.`,
+                        async () => {
+                            try {
+                                const written = await importPluginData(
+                                    this.app.vault.adapter,
+                                    this.pluginDataDir,
+                                    bundle
+                                );
+                                await this.loadSettings();
+                                new Notice(
+                                    `Quill: Imported ${written} file(s). Reload the plugin (disable + enable, or restart Obsidian) so conversations and the queue appear.`,
+                                    10000
+                                );
+                            } catch (e) {
+                                console.error('Quill import failed', e);
+                                new Notice(
+                                    'Quill: Import failed — ' + (e instanceof Error ? e.message : 'see console')
+                                );
+                            }
+                        },
+                        'Overwrite'
+                    ).open();
+                } catch (e) {
+                    console.error('Quill import failed', e);
+                    new Notice('Quill: Import failed — ' + (e instanceof Error ? e.message : 'see console'));
+                }
+            },
+            'Import plugin data'
+        ).open();
+    }
+
+    /**
+     * Request AI feedback on the context manuscripts with the selected persona.
+     * Streams the response into the Results sub-tab.
+     *
+     * Manuscript content is injected as system messages on every API call, not
+     * stored in feedbackCurrentMessages, so it always survives compaction and
+     * never pollutes token counts.
+     */
     async requestFeedback(personaId: string, customInstruction?: string): Promise<void> {
         this.maybeShowCopyEditorNotice(personaId);
         const persona = personaId === 'custom' ? undefined : getPersonaById(personaId);
