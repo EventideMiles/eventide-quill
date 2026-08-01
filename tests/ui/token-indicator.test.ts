@@ -60,7 +60,7 @@ describe('token-indicator — formatBreakdownTooltip', () => {
         expect(tooltip).to.include('300');
         expect(tooltip).to.include('30%');
         expect(tooltip).to.include('Chat history (2 turns)');
-        expect(tooltip).to.include('Total: 1,000 / 8,192 window');
+        expect(tooltip).to.include(`Total: ${(1000).toLocaleString()} / ${(8192).toLocaleString()} window`);
     });
 });
 

@@ -199,4 +199,55 @@ describe('writing-goals — sidecar persistence', () => {
         const loaded = await loadWritingGoals(vault, '.corrupt');
         expect(loaded).to.deep.equal(defaultWritingGoalsState());
     });
+
+    it('returns defaults when the persisted root is not an object', async () => {
+        const vault = makeMemoryVault();
+        await vault.adapter.write('.bad-root/writing-goals.json', JSON.stringify([1, 2, 3]));
+        expect(await loadWritingGoals(vault, '.bad-root')).to.deep.equal(defaultWritingGoalsState());
+    });
+
+    it('returns defaults when any persisted field has the wrong shape', async () => {
+        const badFields: Array<[string, unknown]> = [
+            ['version', '1'],
+            ['lastSeen', ['manuscript']],
+            ['todayDate', 5],
+            ['todayWords', '750'],
+            ['days', { '2026-01-04': '500' }],
+            ['bestStreak', '3'],
+            ['session', { startMs: 1000, folder: 7, startTotal: 99 }]
+        ];
+        for (const [field, value] of badFields) {
+            const vault = makeMemoryVault();
+            await vault.adapter.write(
+                '.bad-field/writing-goals.json',
+                JSON.stringify({ ...defaultWritingGoalsState(), [field]: value })
+            );
+            const loaded = await loadWritingGoals(vault, '.bad-field');
+            expect(loaded, `field ${field} should reject value ${JSON.stringify(value)}`).to.deep.equal(
+                defaultWritingGoalsState()
+            );
+        }
+    });
+
+    it('maps nullish lastSeen/days to empty maps while preserving the rest', async () => {
+        const vault = makeMemoryVault();
+        await vault.adapter.write(
+            '.nullish-maps/writing-goals.json',
+            JSON.stringify({ ...defaultWritingGoalsState(), todayWords: 250, lastSeen: null, days: undefined })
+        );
+        const loaded = await loadWritingGoals(vault, '.nullish-maps');
+        expect(loaded.todayWords).to.equal(250);
+        expect(loaded.lastSeen).to.deep.equal({});
+        expect(loaded.days).to.deep.equal({});
+    });
+
+    it('preserves a valid persisted session', async () => {
+        const vault = makeMemoryVault();
+        const state = {
+            ...defaultWritingGoalsState(),
+            session: { startMs: 10_000, folder: 'manuscript', startTotal: 1000 }
+        };
+        await vault.adapter.write('.session/writing-goals.json', JSON.stringify(state));
+        expect(await loadWritingGoals(vault, '.session')).to.deep.equal(state);
+    });
 });

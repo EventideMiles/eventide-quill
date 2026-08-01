@@ -67,6 +67,38 @@ export function defaultWritingGoalsState(): WritingGoalsState {
     };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** A plain object whose every value is a number (the `lastSeen`/`days` maps). */
+function isNumberRecord(value: unknown): value is Record<string, number> {
+    return isRecord(value) && Object.values(value).every((v) => typeof v === 'number');
+}
+
+function isWritingSession(value: unknown): value is WritingSession {
+    return (
+        isRecord(value) &&
+        typeof value.startMs === 'number' &&
+        typeof value.folder === 'string' &&
+        typeof value.startTotal === 'number'
+    );
+}
+
+/** Every persisted field (when present) has its expected shape. Nullish `lastSeen`/`days`/`session` stay valid — the nullish-map handling maps them to defaults. */
+function isValidWritingGoalsState(value: unknown): value is WritingGoalsState {
+    if (!isRecord(value)) return false;
+    return (
+        typeof value.version === 'number' &&
+        (value.lastSeen == null || isNumberRecord(value.lastSeen)) &&
+        typeof value.todayDate === 'string' &&
+        typeof value.todayWords === 'number' &&
+        (value.days == null || isNumberRecord(value.days)) &&
+        typeof value.bestStreak === 'number' &&
+        (value.session == null || isWritingSession(value.session))
+    );
+}
+
 /** Path to the writing-goals sidecar under the plugin data directory. */
 export function writingGoalsPath(dataDir: string): string {
     return normalizePath(`${dataDir}/${WRITING_GOALS_FILENAME}`);
@@ -78,7 +110,8 @@ export async function loadWritingGoals(vault: Vault, dataDir: string): Promise<W
     try {
         if (!(await vault.adapter.exists(path))) return defaultWritingGoalsState();
         const raw = await vault.adapter.read(path);
-        const parsed = JSON.parse(raw) as Partial<WritingGoalsState>;
+        const parsed: unknown = JSON.parse(raw);
+        if (!isValidWritingGoalsState(parsed)) return defaultWritingGoalsState();
         return {
             ...defaultWritingGoalsState(),
             ...parsed,
