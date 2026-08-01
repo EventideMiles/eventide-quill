@@ -670,10 +670,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
      */
     getSettingDefinitions(): SettingDefinitionItem[] {
         // Setup completion — drives the Welcome page's attention indicator.
+        // Checks configuration state only (providers, model, goal); the
+        // manuscript check is session state that changes with the active file
+        // and isn't reliably populated at definition time.
         const setupComplete =
             this.plugin.settings.aiProviders.length > 0 &&
             !!this.plugin.settings.aiDefaultChatProvider &&
-            !!this.plugin.currentManuscriptFolder &&
             this.plugin.settings.writingDailyGoal > 0;
         return [
             {
@@ -1502,7 +1504,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             key: 'writingDailyGoal',
                             min: 0,
                             max: 100000,
-                            validate: (v) => (v >= 0 ? undefined : 'Value must be a number >= 0')
+                            validate: (v) => (v >= 0 && v <= 100000 ? undefined : 'Value must be between 0 and 100000')
                         }
                     }
                 ]
@@ -1801,9 +1803,14 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             this.update();
                         })
                 );
-                void this.plugin.fandomCache?.getWikiStats(wiki).then((stats) => {
-                    row.setDesc(formatFandomCacheStats(stats));
-                });
+                void this.plugin.fandomCache
+                    ?.getWikiStats(wiki)
+                    .then((stats) => {
+                        row.setDesc(formatFandomCacheStats(stats));
+                    })
+                    .catch(() => {
+                        row.setDesc('Cache stats unavailable.');
+                    });
             }
         };
         draw();
@@ -2068,27 +2075,31 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 getCurrentPageEl?: () => HTMLElement | null;
             };
         };
-        const setting = app.setting;
-        if (!setting?.open || !setting.openTabById) return;
-        setting.open();
-        setting.openTabById(this.plugin.manifest.id);
-        // Reset to the root page list so getNavigableSettingItems sees the 6
-        // top-level page entries (we may currently be deep in a sub-page).
-        if (typeof setting.clearPageStack === 'function') setting.clearPageStack();
-        const items = typeof setting.getNavigableSettingItems === 'function' ? setting.getNavigableSettingItems() : [];
-        const target = items.find((el) => {
-            const name = el.querySelector('.setting-item-name')?.textContent?.trim() ?? '';
-            return name === pageName || (el.textContent ?? '').trim().startsWith(pageName);
-        });
-        if (target && typeof setting.activateSettingItem === 'function') {
-            setting.activateSettingItem(target);
-        }
-        // After navigating to the page, optionally scroll to + flash a specific
-        // setting within it (the same var(--text-highlight-bg) Obsidian uses for
-        // search-result highlights). Retries briefly while the page renders.
-        if (settingName) {
-            this.scrollToSetting(settingName);
-        }
+        const s = app.setting;
+        if (!s?.open || !s.openTabById) return;
+        s.open();
+        s.openTabById(this.plugin.manifest.id);
+        // Reset to the root page list so the target page entry is visible.
+        if (typeof s.clearPageStack === 'function') s.clearPageStack();
+
+        // clearPageStack triggers an async re-render — retry until the root
+        // page list is available, then activate the target + scroll to setting.
+        // settings.ts — no Component lifecycle; window.setTimeout (one-shot).
+        let attempts = 0;
+        const navigate = (): void => {
+            const items = typeof s.getNavigableSettingItems === 'function' ? s.getNavigableSettingItems() : [];
+            const target = items.find((el: HTMLElement) => {
+                const name = el.querySelector('.setting-item-name')?.textContent?.trim() ?? '';
+                return name === pageName;
+            });
+            if (target && typeof s.activateSettingItem === 'function') {
+                s.activateSettingItem(target);
+                if (settingName) this.scrollToSetting(settingName);
+            } else if (++attempts < 15) {
+                window.setTimeout(navigate, 60);
+            }
+        };
+        navigate();
     }
 
     /**
@@ -2097,7 +2108,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
      * renders the target items.
      */
     private scrollToSetting(settingName: string): void {
-        // settings.ts — no Component lifecycle; raw setTimeout for the
+        // settings.ts — no Component lifecycle; window.setTimeout for the
         // page-transition delay + flash removal (one-shot, not recurring).
         let attempts = 0;
         const tryScroll = () => {
@@ -2111,14 +2122,14 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         const el = item as HTMLElement;
                         el.scrollIntoView({ block: 'center' });
                         el.addClass('quill-settings__flash');
-                        setTimeout(() => el.removeClass('quill-settings__flash'), 2500);
+                        window.setTimeout(() => el.removeClass('quill-settings__flash'), 2500);
                         return;
                     }
                 }
             }
-            if (++attempts < 10) setTimeout(tryScroll, 100);
+            if (++attempts < 10) window.setTimeout(tryScroll, 100);
         };
-        setTimeout(tryScroll, 100);
+        window.setTimeout(tryScroll, 100);
     }
 
     private aiProviderDisplayValue(): string {
@@ -2296,6 +2307,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }
                     provider.maxContextTokens = parseInt(value, 10);
                     await this.plugin.saveSettings();
+                    this.refreshBridge();
                 });
             });
 
@@ -3003,7 +3015,13 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 name: 'Restore defaults',
                 desc: 'Reset every setting on this tab. Use the per-section reset buttons above for targeted resets.',
                 action: () => {
-                    void this.restoreModelBehaviorsDefaults();
+                    new ConfirmModal(
+                        this.app,
+                        'Restore all defaults?',
+                        'This resets every setting across General, Lorebook, and Model behaviors to their defaults. This cannot be undone.',
+                        () => void this.restoreGeneralDefaults(),
+                        'Restore'
+                    ).open();
                 }
             }
         ];
@@ -3105,7 +3123,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
         this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
         this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
-        this.plugin.settings.wikiLinkBehavior = DEFAULT_SETTINGS.wikiLinkBehavior;
         await this.plugin.saveSettings();
         this.update();
     }

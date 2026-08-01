@@ -267,6 +267,10 @@ div[class*='quill-settings-content-'].is-hidden {
         margin-bottom: $space-sm;
     }
 
+    &__welcome-genre-chip {
+        cursor: pointer;
+    }
+
     &__welcome-genre-tip {
         font-size: var(--font-ui-smaller);
         color: var(--text-muted);
@@ -518,13 +522,14 @@ div[class*='quill-settings-content-'].is-hidden {
         border-bottom: 1px solid var(--background-modifier-border);
         margin-bottom: $space-md;
     }
+}
 
-    // Flash highlight when deep-linked from the Welcome checklist.
-    // Uses the same background Obsidian applies to search-result highlights.
-    &__flash {
-        animation: quill-settings-flash 0.6s ease-in-out 3;
-        border-radius: $radius-sm;
-    }
+// Flash highlight when deep-linked from the Welcome checklist.
+// Declared standalone (not nested under .quill-slash-command-card) because
+// the class is added to setting-item elements on ANY settings page.
+.quill-settings__flash {
+    animation: quill-settings-flash 0.6s ease-in-out 3;
+    border-radius: $radius-sm;
 }
 
 @keyframes quill-settings-flash {
