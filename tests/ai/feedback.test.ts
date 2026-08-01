@@ -30,6 +30,15 @@ describe('FEEDBACK_PERSONAS', () => {
     });
 });
 
+describe('copy-editor persona (grammar advisory)', () => {
+    it('exists and carries the skepticism caveat', () => {
+        const persona = getPersonaById('copy-editor');
+        expect(persona).toBeDefined();
+        expect(persona!.instructions).toMatch(/routinely break|break.*convention/i);
+        expect(persona!.description).toMatch(/advisory/i);
+    });
+});
+
 describe('getPersonaById', () => {
     it('finds a persona by id', () => {
         const persona = getPersonaById('developmental-editor');

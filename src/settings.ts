@@ -90,6 +90,8 @@ export interface EventideQuillSettings {
      * not reappear in this vault.
      */
     anthropicBanRiskAcknowledged: boolean;
+    /** One-time acknowledgment of the copy-editor (grammar) persona's caveat. */
+    copyEditorAck: boolean;
     transformTemperature: number;
     transformVaultContext: boolean;
     transformMaxOutputTokens: number;
@@ -342,6 +344,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     aiDefaultEmbedProvider: 'local-default/local-embed',
     aiDefaultImageProvider: '',
     anthropicBanRiskAcknowledged: false,
+    copyEditorAck: false,
     transformTemperature: 1.0,
     transformVaultContext: true,
     transformMaxOutputTokens: 4096,

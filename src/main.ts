@@ -5023,7 +5023,20 @@ export default class EventideQuillPlugin extends Plugin {
      * stored in feedbackCurrentMessages, so it always survives compaction and
      * never pollutes token counts.
      */
+    /** Show the one-time skepticism caveat the first time the copy-editor (grammar) persona runs. */
+    private maybeShowCopyEditorNotice(personaId: string): void {
+        if (personaId === 'copy-editor' && !this.settings.copyEditorAck) {
+            this.settings.copyEditorAck = true;
+            void this.saveSettings();
+            new Notice(
+                'Quill: The copy editor gives advisory grammar notes. Great novelists often break these rules — treat the suggestions skeptically.',
+                8000
+            );
+        }
+    }
+
     async requestFeedback(personaId: string, customInstruction?: string): Promise<void> {
+        this.maybeShowCopyEditorNotice(personaId);
         const persona = personaId === 'custom' ? undefined : getPersonaById(personaId);
         if (personaId !== 'custom' && !persona) {
             new Notice('Quill: Unknown feedback persona.');
@@ -5458,6 +5471,7 @@ export default class EventideQuillPlugin extends Plugin {
      * scheduler runs it single-slot FIFO when the slot is free.
      */
     async submitFeedbackJob(personaId: string, focusPrompt?: string): Promise<void> {
+        this.maybeShowCopyEditorNotice(personaId);
         if (!(await this.gateQueueSubmit())) return;
         const job = await this.buildDocumentFeedbackJob(personaId, focusPrompt);
         if (!job) return;

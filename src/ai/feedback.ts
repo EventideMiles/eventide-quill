@@ -66,6 +66,19 @@ export const FEEDBACK_PERSONAS: FeedbackPersona[] = [
             'Prioritize. Not everything needs to be fixed at once.',
             'Be supportive but honest. The goal is to help the writer improve, not to praise or tear down.'
         ].join('\n')
+    },
+    {
+        id: 'copy-editor',
+        name: 'Copy editor',
+        description:
+            'Mechanics and grammar notes — agreement, tense, comma splices. Advisory only: great novelists often break these rules.',
+        instructions: [
+            'Focus on mechanics and grammar: subject-verb agreement, tense consistency, comma splices, dangling modifiers, and similar sentence-level errors.',
+            'Treat the rules as skeptical advice, not law. Many of the best novelists in history routinely break grammar conventions for voice, rhythm, and effect — your job is to surface possible reader distractions, never to enforce correctness.',
+            'Quote the specific phrase, name the mechanic issue in one sentence, and suggest a fix only when it is genuinely unambiguous.',
+            'Prioritize issues that could confuse a reader; skip pedantic and purely stylistic complaints that are matters of taste.',
+            'Ground every observation in specific passages. Quote the text.'
+        ].join('\n')
     }
 ];
 
