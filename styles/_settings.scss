@@ -232,7 +232,7 @@ div[class*='quill-settings-content-'].is-hidden {
         color: var(--text-muted);
         font-size: var(--font-ui-smaller);
 
-        &.is-done--done {
+        &--done {
             background: var(--color-green, var(--interactive-accent));
             border-color: transparent;
             color: var(--text-on-accent);

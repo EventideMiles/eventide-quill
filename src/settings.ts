@@ -2062,6 +2062,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             setting?: {
                 open?: () => void;
                 openTabById?: (id: string) => void;
+                clearPageStack?: () => void;
                 getNavigableSettingItems?: () => HTMLElement[];
                 activateSettingItem?: (el: HTMLElement) => void;
                 getCurrentPageEl?: () => HTMLElement | null;
@@ -2071,6 +2072,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         if (!setting?.open || !setting.openTabById) return;
         setting.open();
         setting.openTabById(this.plugin.manifest.id);
+        // Reset to the root page list so getNavigableSettingItems sees the 6
+        // top-level page entries (we may currently be deep in a sub-page).
+        if (typeof setting.clearPageStack === 'function') setting.clearPageStack();
         const items = typeof setting.getNavigableSettingItems === 'function' ? setting.getNavigableSettingItems() : [];
         const target = items.find((el) => {
             const name = el.querySelector('.setting-item-name')?.textContent?.trim() ?? '';
