@@ -16,6 +16,7 @@ import {
     type WritingGoalsState
 } from '../../../src/core/dashboard/writing-goals';
 
+/** Epoch-ms for a local-date (y, m, d) — month is 1-indexed. */
 const fixedDate = (y: number, m: number, d: number) => new Date(y, m - 1, d).getTime();
 
 describe('writing-goals — default state factory', () => {

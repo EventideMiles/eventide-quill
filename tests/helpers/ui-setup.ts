@@ -20,6 +20,7 @@
 
 type DomOpts = string | Record<string, unknown> | ((el: HTMLElement) => void) | undefined;
 
+/** Apply a `createEl` options argument (string class, callback, or opts object) to an element. */
 function applyOpts(el: HTMLElement, o: DomOpts): void {
     if (!o) return;
     if (typeof o === 'string') {
@@ -47,6 +48,7 @@ function applyOpts(el: HTMLElement, o: DomOpts): void {
     if (typeof opts.callback === 'function') (opts.callback as (el: HTMLElement) => void)(el);
 }
 
+/** Factory for a bound `createEl` method that optionally appends the new element to `this`. */
 function makeCreateEl(append: boolean) {
     return function (this: HTMLElement, tag: string, o?: DomOpts): HTMLElement {
         const el = document.createElement(tag);
@@ -56,18 +58,21 @@ function makeCreateEl(append: boolean) {
     };
 }
 
+/** Factory for a bound `createDiv` method that optionally appends the new element to `this`. */
 function makeCreateDiv(append: boolean) {
     return function (this: HTMLElement, o?: DomOpts): HTMLDivElement {
         return makeCreateEl(append).call(this, 'div', o) as HTMLDivElement;
     };
 }
 
+/** Factory for a bound `createSpan` method that optionally appends the new element to `this`. */
 function makeCreateSpan(append: boolean) {
     return function (this: HTMLElement, o?: DomOpts): HTMLSpanElement {
         return makeCreateEl(append).call(this, 'span', o) as HTMLSpanElement;
     };
 }
 
+/** Bound `createFragment` method — makes a detached fragment and applies options. */
 function createFragmentFn(this: HTMLElement, o?: DomOpts): DocumentFragment {
     const frag = document.createDocumentFragment();
     if (o) applyOpts(frag as unknown as HTMLElement, o);
@@ -180,8 +185,11 @@ g.setTooltip = (_el: HTMLElement, _tooltip: string): void => {
 };
 // ResizeObserver polyfill — happy-dom doesn't provide it.
 (g as Record<string, unknown>).ResizeObserver = class {
+    /** No-op — tests assert on layout/visibility directly, not resize callbacks. */
     observe(): void {}
+    /** No-op. */
     unobserve(): void {}
+    /** No-op. */
     disconnect(): void {}
 };
 

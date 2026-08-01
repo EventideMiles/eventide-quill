@@ -5,6 +5,7 @@ import { App, Component } from 'obsidian';
 import { renderLorebookTab } from '../../src/ui/lorebook-panel';
 import type EventideQuillPlugin from '../../src/main';
 
+/** Build a minimal `EventideQuillPlugin` stub with lorebook-facing fields. */
 function makePlugin(): EventideQuillPlugin {
     return {
         app: new App(),

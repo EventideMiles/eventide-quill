@@ -67,6 +67,7 @@ export function defaultWritingGoalsState(): WritingGoalsState {
     };
 }
 
+/** True when `value` is a plain (non-null, non-array) object. */
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -76,6 +77,7 @@ function isNumberRecord(value: unknown): value is Record<string, number> {
     return isRecord(value) && Object.values(value).every((v) => typeof v === 'number');
 }
 
+/** Shape guard for a persisted {@link WritingSession}. */
 function isWritingSession(value: unknown): value is WritingSession {
     return (
         isRecord(value) &&
@@ -144,6 +146,7 @@ export function dateKey(ms: number): string {
     return `${y}-${m}-${day}`;
 }
 
+/** Shift a 'YYYY-MM-DD' key by `delta` days (negative walks backwards). */
 function addDays(key: string, delta: number): string {
     const parts = key.split('-').map(Number);
     const date = new Date(parts[0] ?? 0, (parts[1] ?? 1) - 1, parts[2] ?? 1);

@@ -5,6 +5,7 @@ import { App, Component } from 'obsidian';
 import { renderChangeBulkBar, renderChangeCard } from '../../src/ui/change-card';
 import type { ProposedEdit } from '../../src/core/change-set';
 
+/** Build a pending-edit fixture with the given overrides. */
 function makeEdit(overrides: Partial<ProposedEdit> = {}): ProposedEdit {
     return { id: 1, newText: 'new prose', state: 'pending', ...overrides } as ProposedEdit;
 }

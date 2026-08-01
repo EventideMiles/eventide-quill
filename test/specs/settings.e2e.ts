@@ -19,6 +19,7 @@ describe('Settings UI', () => {
         await openQuillSidebar();
     });
 
+    /** Open the Eventide Quill settings tab and wait for its page entries to render. */
     async function openPluginSettings(): Promise<void> {
         await browser.execute(() => {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -70,6 +71,7 @@ describe('Settings UI', () => {
         }) as Promise<T>;
     }
 
+    /** Toggle the first `.setting-item` on the current page matching `namePattern`; returns whether one was found and clicked. */
     async function toggleSettingByName(namePattern: RegExp): Promise<boolean> {
         return browser.execute(
             (patternSource: string) => {
@@ -270,6 +272,7 @@ describe('Settings UI', () => {
         }) as Promise<number>;
     }
 
+    /** Poll `currentPageStack()` until it equals `expected` (deep-link navigation). */
     async function waitForPageStack(expected: string[]): Promise<void> {
         await browser.waitUntil(
             async () => JSON.stringify(await currentPageStack()) === JSON.stringify(expected),

@@ -29,6 +29,7 @@ describe('Writing goals & sessions', () => {
         }, text);
     }
 
+    /** Read the live `writingGoals` plugin state (or null when absent). */
     async function readSession(): Promise<{ session: unknown } | null> {
         return browser.execute(() => {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any

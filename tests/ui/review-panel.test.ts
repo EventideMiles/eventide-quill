@@ -5,6 +5,7 @@ import { App } from 'obsidian';
 import { ReviewPanel } from '../../src/ui/review-panel';
 import type EventideQuillPlugin from '../../src/main';
 
+/** Build a minimal `EventideQuillPlugin` stub with review-facing fields. */
 function makePlugin(): EventideQuillPlugin {
     return {
         app: new App(),

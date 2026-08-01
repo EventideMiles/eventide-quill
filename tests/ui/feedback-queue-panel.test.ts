@@ -6,6 +6,7 @@ import { feedbackQueueBadgeCount, renderFeedbackQueue, type FeedbackQueueHandler
 import type { FeedbackJob } from '../../src/ai/feedback-queue';
 import type EventideQuillPlugin from '../../src/main';
 
+/** Build a succeeded-job fixture with the given overrides. */
 function makeJob(overrides: Partial<FeedbackJob> = {}): FeedbackJob {
     return {
         id: 'fq_test',
@@ -21,6 +22,7 @@ function makeJob(overrides: Partial<FeedbackJob> = {}): FeedbackJob {
     } as FeedbackJob;
 }
 
+/** Build a minimal `EventideQuillPlugin` stub exposing the jobs list + queue settings. */
 function makePlugin(jobs: FeedbackJob[]): EventideQuillPlugin {
     return {
         getFeedbackJobs: () => jobs,

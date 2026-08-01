@@ -6,6 +6,7 @@ import { FixWithAiModal } from '../../src/ui/fix-with-ai-modal';
 import type { LintResult } from '../../src/core/linter/types';
 import type EventideQuillPlugin from '../../src/main';
 
+/** Build a long-sentences `LintResult` fixture with the given overrides. */
 function makeResult(overrides: Partial<LintResult> = {}): LintResult {
     return {
         rule: 'long-sentences',

@@ -126,6 +126,7 @@ describe('co-writer-utils — mergeContextPaths', () => {
 });
 
 describe('co-writer-utils — stubDanglingToolCalls', () => {
+    /** Build a partial `ChatMessage` for fixtures, cast to the full type. */
     const msg = (m: Partial<ChatMessage>): ChatMessage => m as ChatMessage;
 
     it('appends a synthetic tool result for each dangling tool call', () => {
@@ -152,6 +153,7 @@ describe('co-writer-utils — stubDanglingToolCalls', () => {
 });
 
 describe('co-writer-utils — editor cursor helpers', () => {
+    /** Build a stub `Editor` wrapping a fixed value + cursor position. */
     function makeEditor(value: string, cursor: number, opts: { withCm?: boolean; setCursor?: (pos: unknown) => void } = {}): Editor {
         const withCm = opts.withCm ?? true;
         return {

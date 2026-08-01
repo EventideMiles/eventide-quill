@@ -6,6 +6,7 @@ import { renderContextTab } from '../../src/ui/context-panel';
 import type { ContextAssembly } from '../../src/core/context-engine/types';
 import type EventideQuillPlugin from '../../src/main';
 
+/** Build a default `ContextAssembly` fixture with the given overrides. */
 function makeAssembly(overrides: Partial<ContextAssembly> = {}): ContextAssembly {
     return {
         entities: [],

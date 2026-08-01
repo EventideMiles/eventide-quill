@@ -1057,6 +1057,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         ];
     }
 
+    /** Render the Welcome page's imperative onboarding content (hero, checklist, features, privacy). */
     private renderWelcomeTab(containerEl: HTMLElement): void {
         const content = containerEl.createDiv({ cls: 'quill-settings-content-welcome' });
 
@@ -1788,6 +1789,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     /** Per-wiki cache stats + clear-cache buttons (async stats load). */
     private renderFandomCachedWikis(setting: Setting): void {
         const wrap = setting.controlEl.createDiv({ cls: 'quill-fandom-cached-wikis' });
+        /** (Re)render one row per allowlisted wiki with live cache stats + a clear button. */
         const draw = () => {
             wrap.empty();
             const wikis = this.plugin.settings.lorebookFandomWikis;
@@ -2048,6 +2050,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         ];
     }
 
+    /** Declarative page entry for one provider (model-count summary + warning status). */
     private providerPageDefinition(provider: ProviderConfig): SettingDefinitionPage {
         const count = provider.models.length;
         return {
@@ -2093,6 +2096,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         if (typeof s.clearPageStack === 'function') s.clearPageStack();
 
         // settings.ts — no Component lifecycle; window.setTimeout (one-shot).
+        /** Poll `getNavigableSettingItems()` until the named entry appears, then activate it and run `then`. */
         const waitForAndActivate = (name: string, then: () => void, attempts = 0): void => {
             const items = typeof s.getNavigableSettingItems === 'function' ? s.getNavigableSettingItems() : [];
             const target = items.find((el: HTMLElement) => {
@@ -2107,6 +2111,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             }
         };
 
+        /** After the page activates, drill into the optional sub-page, then scroll to the setting. */
         const hopIntoSubPage = (): void => {
             if (!subPageName) {
                 if (settingName) this.scrollToSetting(settingName);
@@ -2129,6 +2134,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         // settings.ts — no Component lifecycle; window.setTimeout for the
         // page-transition delay + flash removal (one-shot, not recurring).
         let attempts = 0;
+        /** Locate the named setting row on the current page, center it, and flash it. */
         const tryScroll = () => {
             const app = this.app as unknown as { setting?: { getCurrentPageEl?: () => HTMLElement | null } };
             const pageEl = typeof app.setting?.getCurrentPageEl === 'function' ? app.setting.getCurrentPageEl() : null;
@@ -2150,6 +2156,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         window.setTimeout(tryScroll, 100);
     }
 
+    /** Display value for the AI providers page entry (configured-provider count, or "Not configured"). */
     private aiProviderDisplayValue(): string {
         const n = this.plugin.settings.aiProviders.length;
         return n === 0 ? 'Not configured' : `${n} provider${n === 1 ? '' : 's'}`;
@@ -2624,6 +2631,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
      * item (a dynamic-key map that doesn't fit the fixed-key control model).
      */
     private modelBehaviorsItems(): SettingDefinitionItem[] {
+        /** Build a group's extraButtons entry: a reset icon that runs the given restore callback. */
         const restore = (tooltip: string, fn: () => Promise<void>) => ({
             extraButtons: [
                 (btn: ExtraButtonComponent) =>
@@ -3052,6 +3060,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
      */
     private renderFolderOverridesDefinition(setting: Setting): void {
         const wrap = setting.controlEl.createDiv({ cls: 'quill-folder-overrides-list' });
+        /** (Re)render the override rows plus the add-folder affordance. */
         const draw = () => {
             wrap.empty();
             this.renderFolderOverrides(wrap);
@@ -3071,6 +3080,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         draw();
     }
 
+    /** Reset selection-transformation settings (narrative voice, temperature, context, wiki links) to defaults. */
     private async restoreTransformDefaults(): Promise<void> {
         const s = this.plugin.settings;
         const d = DEFAULT_SETTINGS;
@@ -3084,6 +3094,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         this.update();
     }
 
+    /** Reset co-writer settings (temperature, tokens, context, thought, voice match) to defaults. */
     private async restoreCoWriterDefaults(): Promise<void> {
         const s = this.plugin.settings;
         const d = DEFAULT_SETTINGS;
@@ -3101,6 +3112,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         this.update();
     }
 
+    /** Reset critical-analysis settings (temperature, max output tokens) to defaults. */
     private async restoreAnalysisDefaults(): Promise<void> {
         this.plugin.settings.analysisTemperature = DEFAULT_SETTINGS.analysisTemperature;
         this.plugin.settings.analysisMaxOutputTokens = DEFAULT_SETTINGS.analysisMaxOutputTokens;
@@ -3108,6 +3120,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         this.update();
     }
 
+    /** Reset feedback-queue + review settings (queue toggles, report folder, review-discuss) to defaults. */
     private async restoreFeedbackQueueDefaults(): Promise<void> {
         const s = this.plugin.settings;
         const d = DEFAULT_SETTINGS;
@@ -3122,6 +3135,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         this.update();
     }
 
+    /** Reset context-engine settings (budget, compaction threshold, vault-context switches) to defaults. */
     private async restoreContextEngineDefaults(): Promise<void> {
         const s = this.plugin.settings;
         const d = DEFAULT_SETTINGS;
@@ -3137,6 +3151,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         this.update();
     }
 
+    /** Reset linter-AI settings (AI fixes toggle, temperature, max output tokens) to defaults. */
     private async restoreLinterAiDefaults(): Promise<void> {
         this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
         this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
@@ -3338,10 +3353,12 @@ class ProviderSettingPage extends SettingPage {
         this.title = provider.name || 'Unnamed provider';
     }
 
+    /** Open the page: register it as the active bridge page and render the provider UI into its container. */
     display(): void {
         this.tab.enterBridgePage(this.containerEl, (el) => this.tab.renderProviderPage(el, this.provider));
     }
 
+    /** Unregister this page from the bridge machinery before closing. */
     hide(): void {
         this.tab.exitBridgePage(this.containerEl);
         super.hide();
@@ -3362,10 +3379,12 @@ class DefaultModelsSettingPage extends SettingPage {
         this.title = 'Default models';
     }
 
+    /** Open the page: register it as the active bridge page and render the default-model pickers. */
     display(): void {
         this.tab.enterBridgePage(this.containerEl, (el) => this.tab.renderDefaultModelSettings(el));
     }
 
+    /** Unregister this page from the bridge machinery before closing. */
     hide(): void {
         this.tab.exitBridgePage(this.containerEl);
         super.hide();

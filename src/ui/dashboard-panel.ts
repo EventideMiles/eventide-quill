@@ -241,6 +241,7 @@ function renderWritingGoals(
         else void plugin.startWritingSession();
     });
     const stat = sessionRow.createSpan({ cls: 'quill-dashboard-panel__session-stat' });
+    /** Paint the live session stat (elapsed time + words this session; clears when idle). */
     const drawSession = () => {
         const s = plugin.writingGoals;
         if (!s.session) {

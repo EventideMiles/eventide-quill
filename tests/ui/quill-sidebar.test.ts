@@ -5,6 +5,7 @@ import { App, WorkspaceLeaf } from 'obsidian';
 import { QuillSidebarView } from '../../src/ui/quill-sidebar';
 import type EventideQuillPlugin from '../../src/main';
 
+/** Build a minimal `EventideQuillPlugin` stub for sidebar construction. */
 function makePlugin(): EventideQuillPlugin {
     return {
         app: new App(),

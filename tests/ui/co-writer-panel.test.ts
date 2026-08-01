@@ -5,6 +5,7 @@ import { App } from 'obsidian';
 import { CoWriterPanel } from '../../src/ui/co-writer-panel';
 import type EventideQuillPlugin from '../../src/main';
 
+/** Build a minimal `EventideQuillPlugin` stub for panel construction. */
 function makePlugin(): EventideQuillPlugin {
     return {
         app: new App(),

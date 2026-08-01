@@ -5,6 +5,7 @@ import { App } from 'obsidian';
 import { SessionListModal } from '../../src/ui/session-list-modal';
 import type { SessionIndexEntry } from '../../src/ai/conversation-store';
 
+/** Build a default session-index fixture with the given overrides. */
 function makeEntry(overrides: Partial<SessionIndexEntry> = {}): SessionIndexEntry {
     return {
         id: 's1',
