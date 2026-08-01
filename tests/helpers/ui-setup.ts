@@ -8,7 +8,7 @@
  * Import this file at the top of any UI test that uses `// @vitest-environment
  * happy-dom`. It is a side-effecting module — the import runs the polyfill.
  *
- * Methods polyfilled on HTMLElement.prototype:
+ * Methods polyfilled on HTMLElement.prototype and SVGElement.prototype:
  *   createEl, createDiv, createSpan, createSvg, createFragment — create +
  *     append + return (the method form; the global form below doesn't append).
  *   addClass, removeClass, toggleClass, hasClass, empty, detach, show, hide.
@@ -18,10 +18,14 @@
  *   createEl, createDiv, createSpan, createFragment, setIcon, setTooltip.
  */
 
-type DomOpts = Record<string, unknown> | ((el: HTMLElement) => void) | undefined;
+type DomOpts = string | Record<string, unknown> | ((el: HTMLElement) => void) | undefined;
 
 function applyOpts(el: HTMLElement, o: DomOpts): void {
     if (!o) return;
+    if (typeof o === 'string') {
+        el.className = o;
+        return;
+    }
     if (typeof o === 'function') {
         o(el);
         return;
@@ -70,14 +74,21 @@ function createFragmentFn(this: HTMLElement, o?: DomOpts): DocumentFragment {
     return frag;
 }
 
-/** Apply the polyfill to a prototype (HTMLElement or DocumentFragment). */
+/** Apply the polyfill to a prototype (HTMLElement, SVGElement, or DocumentFragment). */
 function polyfillProto(proto: typeof HTMLElement.prototype): void {
     proto.createEl = makeCreateEl(true) as any;
     proto.createDiv = makeCreateDiv(true) as any;
     proto.createSpan = makeCreateSpan(true) as any;
     proto.createFragment = createFragmentFn as any;
-    proto.createSvg = function (this: HTMLElement): SVGElement {
-        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    proto.createSvg = function (
+        this: HTMLElement,
+        tag: string,
+        o?: DomOpts,
+        callback?: (el: SVGElement) => void
+    ): SVGElement {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', tag);
+        applyOpts(svg as unknown as HTMLElement, o);
+        if (typeof callback === 'function') callback(svg);
         this.appendChild(svg);
         return svg;
     } as any;
@@ -112,7 +123,7 @@ function polyfillProto(proto: typeof HTMLElement.prototype): void {
         return this;
     };
     proto.setText = function (this: HTMLElement, text: string | DocumentFragment): HTMLElement {
-        this.textContent = typeof text === 'string' ? text : text.textContent ?? '';
+        this.textContent = typeof text === 'string' ? text : (text.textContent ?? '');
         return this;
     };
     proto.appendText = function (this: HTMLElement, text: string): HTMLElement {
@@ -129,14 +140,22 @@ function polyfillProto(proto: typeof HTMLElement.prototype): void {
     proto.findAll = function (this: HTMLElement, selector: string): HTMLElement[] {
         return Array.from(this.querySelectorAll(selector));
     };
-    proto.on = function (this: HTMLElement, event: string, _selector: string | null, cb: EventListenerOrEventListenerObject): HTMLElement {
+    proto.on = function (
+        this: HTMLElement,
+        event: string,
+        _selector: string | null,
+        cb: EventListenerOrEventListenerObject
+    ): HTMLElement {
         this.addEventListener(event, cb);
         return this;
     } as any;
 }
 
-// Apply to both HTMLElement and DocumentFragment.
+// Apply to HTMLElement, SVGElement (SVG elements don't inherit the HTMLElement
+// prototype, so nested calls like svg.createSvg(...) need their own copy), and
+// DocumentFragment.
 polyfillProto(HTMLElement.prototype);
+if (typeof SVGElement !== 'undefined') polyfillProto(SVGElement.prototype as typeof HTMLElement.prototype);
 polyfillProto(DocumentFragment.prototype as typeof HTMLElement.prototype);
 
 // Global functions (create without appending — the caller appends).

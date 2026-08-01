@@ -48,7 +48,7 @@ describe('Deep behavioral', () => {
         // The assistant bubble should survive the tab switch.
         const bubbles = (await browser.$$('.quill-cowriter-panel__chat-bubble--assistant')) as unknown as WebdriverIO.Element[];
         expect(bubbles.length).to.be.greaterThan(0);
-        const lastText = await bubbles[bubbles.length - 1].getText();
+        const lastText = await bubbles[bubbles.length - 1]!.getText();
         expect(lastText).to.match(/rain|harbour/i);
     });
 
@@ -83,50 +83,66 @@ describe('Deep behavioral', () => {
     it('opens the review tab and renders the Create subtab', async () => {
         await browser.executeObsidianCommand('eventide-quill:quill-review-open');
 
-        // Wait for any review-panel content to appear (broad selector).
+        // The Review top-level tab becomes selected.
+        const reviewTab = await browser.$('.quill-sidebar__tab[aria-label="Review"]');
         await browser.waitUntil(
             async () => {
-                const sidebar = await browser.$('.quill-sidebar');
-                const text = await sidebar.getText();
-                return text.length > 50; // review form has substantial content
+                const cls = await reviewTab.getAttribute('class');
+                return (cls ?? '').includes('quill-sidebar__tab--active');
             },
-            { timeout: 10_000, timeoutMsg: 'review tab content never rendered' }
+            { timeout: 10_000, timeoutMsg: 'Review tab was never selected' }
         );
 
-        // Verify the review tab has actionable content (engine choices, submit).
-        const sidebar = await browser.$('.quill-sidebar');
-        const text = await sidebar.getText();
-        expect(text).to.match(/review|analysis|feedback|critical/i);
+        // The Create subtab ("New review") is selected by default.
+        const activeSubtab = await browser.$('.quill-sidebar__subtab--active');
+        await activeSubtab.waitForDisplayed({ timeout: 10_000 });
+        expect(await activeSubtab.getText()).to.match(/new review/i);
+
+        // A control unique to the Create subtab — the queue-mode checkbox.
+        const queueToggle = await browser.$('.quill-feedback-queue__toggle input[type="checkbox"]');
+        await queueToggle.waitForDisplayed({ timeout: 10_000 });
     });
 
     it('renders the feedback queue subtab with content', async () => {
         await browser.executeObsidianCommand('eventide-quill:quill-review-open');
 
-        // Wait for the review panel to render.
+        // Scope all queue interaction to the review panel's host element so the
+        // assertions can't be satisfied by unrelated sidebar text.
+        const reviewPanel = await browser.$('.quill-sidebar__content');
+
+        // Find the Queue subtab button inside the review panel's subtab bar.
+        let queueTab: WebdriverIO.Element | null = null;
         await browser.waitUntil(
             async () => {
-                const sidebar = await browser.$('.quill-sidebar');
-                const text = await sidebar.getText();
-                return text.length > 50;
+                const tabs = (await reviewPanel.$$('.quill-sidebar__subtab')) as unknown as WebdriverIO.Element[];
+                for (const tab of tabs) {
+                    if ((await tab.getText()).trim() === 'Queue') {
+                        queueTab = tab;
+                        return true;
+                    }
+                }
+                return false;
             },
-            { timeout: 10_000, timeoutMsg: 'review tab never rendered' }
+            { timeout: 10_000, timeoutMsg: 'Queue subtab never rendered in the review panel' }
+        );
+        expect(queueTab).to.not.equal(null);
+
+        // Clicking the Queue subtab must succeed.
+        await queueTab!.click();
+
+        // The Queue subtab becomes the selected one.
+        await browser.waitUntil(
+            async () => {
+                const active = await reviewPanel.$('.quill-sidebar__subtab--active');
+                if (!(await active.isDisplayed())) return false;
+                return (await active.getText()).trim() === 'Queue';
+            },
+            { timeout: 10_000, timeoutMsg: 'Queue subtab was never selected' }
         );
 
-        // Look for a Queue-related element to click.
-        const queueElements = await browser.$$('*=Queue');
-        for (const el of queueElements) {
-            try {
-                await el.click();
-                await browser.pause(400);
-                break;
-            } catch {
-                /* not clickable, try next */
-            }
-        }
-
-        // The sidebar should still have content after the interaction.
-        const sidebar = await browser.$('.quill-sidebar');
-        const text = await sidebar.getText();
-        expect(text.length).to.be.greaterThan(0);
+        // Queue-specific content becomes visible (toolbar + job list container).
+        const queueContent = await reviewPanel.$('.quill-feedback-queue');
+        await queueContent.waitForDisplayed({ timeout: 10_000 });
+        expect(await queueContent.getText()).to.match(/run next queued job|discuss saved report/i);
     });
 });
