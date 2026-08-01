@@ -1984,6 +1984,51 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
+     * Resolve the reference-context messages shared by the review-chat paths
+     * (critical-analysis chat + manuscript-analysis chat): active-document
+     * text, lore-reference + chat-context paths, folder-context items, then the
+     * reference file messages and the compaction budget figures. Editorial
+     * feedback is NOT a consumer — it layers manuscriptPaths + vaultContext.
+     */
+    private async resolveReviewReferenceContext(
+        provider: AiProvider
+    ): Promise<{ referenceMessages: ChatMessage[]; injectedTokens: number; maxTokens: number; compactPct: number }> {
+        const chatContextPaths = this.lintPanel?.reviewChatContextFiles() ?? [];
+
+        const activeFile = this.app.workspace.getActiveFile();
+        const documentText = activeFile ? await this.getFileText(activeFile.path) : '';
+
+        const { regularPaths: resolvedRefPaths, messages: refEmbedMessages } = await this.resolveEmbedPathsToMessages(
+            [...this.loreReferencePaths(), ...chatContextPaths],
+            'Reference file',
+            documentText,
+            this.settings.contextMaxCharsPerFile
+        );
+
+        try {
+            if (this.currentAssembly) {
+                await this.resolveFolderContextItems(this.currentAssembly, documentText);
+            }
+        } catch {
+            // Best-effort
+        }
+
+        const refFileMessages = await readVaultFiles(
+            this.app.vault,
+            resolvedRefPaths,
+            'Reference file',
+            this.settings.contextMaxCharsPerFile
+        );
+        const referenceMessages = [...refEmbedMessages, ...refFileMessages];
+        const injectedTokens = estimateTokens(referenceMessages);
+
+        const maxTokens = provider.config.maxContextTokens;
+        const compactPct = Math.max(50, Math.min(95, this.settings.contextCompactAtPercent)) / 100;
+
+        return { referenceMessages, injectedTokens, maxTokens, compactPct };
+    }
+
+    /**
      * Resolve embed-prefixed paths into ChatMessages. Regular file paths are
      * returned for the caller to pass to readVaultFiles.
      */
@@ -3851,40 +3896,9 @@ export default class EventideQuillPlugin extends Plugin {
         this.lintPanel?.reviewChatStartLoading();
 
         // Chat context files are injected fresh as system messages on every call.
-        const chatContextPaths = this.lintPanel?.reviewChatContextFiles() ?? [];
-
-        // Get the active document text for embedding queries.
-        const activeFile = this.app.workspace.getActiveFile();
-        const documentText = activeFile ? await this.getFileText(activeFile.path) : '';
-
-        // Resolve any embed-prefixed paths in chat context files.
-        const { regularPaths: resolvedRefPaths, messages: refEmbedMessages } = await this.resolveEmbedPathsToMessages(
-            [...this.loreReferencePaths(), ...chatContextPaths],
-            'Reference file',
-            documentText,
-            this.settings.contextMaxCharsPerFile
+        const { referenceMessages, injectedTokens, maxTokens, compactPct } = await this.resolveReviewReferenceContext(
+            chat.provider
         );
-
-        // Resolve folder context items in the assembly.
-        try {
-            if (this.currentAssembly) {
-                await this.resolveFolderContextItems(this.currentAssembly, documentText);
-            }
-        } catch {
-            // Best-effort
-        }
-
-        const refFileMessages = await readVaultFiles(
-            this.app.vault,
-            resolvedRefPaths,
-            'Reference file',
-            this.settings.contextMaxCharsPerFile
-        );
-        const referenceMessages = [...refEmbedMessages, ...refFileMessages];
-        const injectedTokens = estimateTokens(referenceMessages);
-
-        const maxTokens = chat.provider.config.maxContextTokens;
-        const compactPct = Math.max(50, Math.min(95, this.settings.contextCompactAtPercent)) / 100;
 
         const hypothetical = [...this.manuscriptAnalysisCurrentMessages, { role: 'user' as const, content: message }];
         const conversationTokens = estimateTokens(hypothetical) + injectedTokens;
@@ -4215,40 +4229,9 @@ export default class EventideQuillPlugin extends Plugin {
         // Chat context files (reference material added mid-conversation) are
         // injected fresh as system messages on every call, mirroring feedback.
         // They are NOT stored in analysisCurrentMessages so they survive compaction.
-        const chatContextPaths = this.lintPanel?.reviewChatContextFiles() ?? [];
-
-        // Get the active document text for embedding queries.
-        const activeFile = this.app.workspace.getActiveFile();
-        const documentText = activeFile ? await this.getFileText(activeFile.path) : '';
-
-        // Resolve any embed-prefixed paths in chat context files.
-        const { regularPaths: resolvedRefPaths, messages: refEmbedMessages } = await this.resolveEmbedPathsToMessages(
-            [...this.loreReferencePaths(), ...chatContextPaths],
-            'Reference file',
-            documentText,
-            this.settings.contextMaxCharsPerFile
+        const { referenceMessages, injectedTokens, maxTokens, compactPct } = await this.resolveReviewReferenceContext(
+            chat.provider
         );
-
-        // Resolve folder context items in the assembly.
-        try {
-            if (this.currentAssembly) {
-                await this.resolveFolderContextItems(this.currentAssembly, documentText);
-            }
-        } catch {
-            // Best-effort
-        }
-
-        const refFileMessages = await readVaultFiles(
-            this.app.vault,
-            resolvedRefPaths,
-            'Reference file',
-            this.settings.contextMaxCharsPerFile
-        );
-        const referenceMessages = [...refEmbedMessages, ...refFileMessages];
-        const injectedTokens = estimateTokens(referenceMessages);
-
-        const maxTokens = chat.provider.config.maxContextTokens;
-        const compactPct = Math.max(50, Math.min(95, this.settings.contextCompactAtPercent)) / 100;
 
         // Hypothetical total INCLUDING reference files + new user message.
         const hypothetical = [...this.analysisCurrentMessages, { role: 'user' as const, content: message }];
