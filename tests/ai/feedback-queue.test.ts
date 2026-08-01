@@ -10,6 +10,7 @@ import {
 import type { FeedbackJob } from '../../src/ai/feedback-queue';
 import { makeMemoryVault } from '../helpers/memory-vault';
 
+/** Build a FeedbackJob with sane defaults plus any overrides. */
 function makeJob(overrides: Partial<FeedbackJob> = {}): FeedbackJob {
     return {
         id: mintJobId(),

@@ -123,6 +123,10 @@
         &--danger {
             background: var(--color-red, var(--interactive-accent));
         }
+
+        &--writing {
+            background: var(--color-blue, var(--interactive-accent));
+        }
     }
 
     &__progress-label {
@@ -597,5 +601,36 @@
         font-size: var(--font-ui-smaller);
         color: var(--text-faint, var(--text-muted));
         margin-top: 2px;
+    }
+
+    // --- Writing goals & sessions card ---
+
+    &__goal-row,
+    &__streak-row,
+    &__session-row {
+        display: flex;
+        align-items: center;
+        gap: $space-sm;
+        margin-bottom: $space-xs;
+        font-size: var(--font-ui-smaller);
+    }
+
+    &__goal-row {
+        margin-top: $space-xs;
+    }
+
+    &__goal-met {
+        color: var(--color-green, var(--interactive-accent));
+        font-weight: 600;
+    }
+
+    &__streak-best {
+        margin-left: auto;
+        color: var(--text-faint, var(--text-muted));
+    }
+
+    &__session-stat {
+        color: var(--text-muted);
+        font-variant-numeric: tabular-nums;
     }
 }

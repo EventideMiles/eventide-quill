@@ -169,6 +169,7 @@ export class StreamRepetitionGuard {
         return count >= StreamRepetitionGuard.MAX_REPEATS;
     }
 
+    /** Reset the buffered text (e.g. when a new stream starts). */
     reset(): void {
         this.buffer = '';
     }

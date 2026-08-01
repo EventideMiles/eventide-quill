@@ -55,6 +55,7 @@ export class VaultFileSuggestModal extends SuggestModal<VaultSuggestionItem> {
             .sort((a, b) => a.name.localeCompare(b.name));
     }
 
+    /** Markdown files and embedded folders matching the query, minus excluded paths. */
     getSuggestions(query: string): VaultSuggestionItem[] {
         const markdownFiles = this.app.vault.getMarkdownFiles();
         const q = query.toLowerCase();
@@ -92,6 +93,7 @@ export class VaultFileSuggestModal extends SuggestModal<VaultSuggestionItem> {
         return items;
     }
 
+    /** Render one row as the file path, or the folder label plus its path. */
     renderSuggestion(item: VaultSuggestionItem, el: HTMLElement): void {
         if (item.kind === 'file') {
             el.createDiv({ text: item.file.path });
@@ -105,6 +107,7 @@ export class VaultFileSuggestModal extends SuggestModal<VaultSuggestionItem> {
         }
     }
 
+    /** Hand the chosen item to the callback. */
     onChooseSuggestion(item: VaultSuggestionItem): void {
         this.onChoose(item);
     }

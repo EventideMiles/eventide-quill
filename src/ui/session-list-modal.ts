@@ -14,11 +14,13 @@ function modeLabel(mode: string): string {
     return mode;
 }
 
+/** Modal listing saved co-writer conversations with Open / Delete actions per row. */
 export class SessionListModal extends Modal {
     private entries: SessionIndexEntry[];
     private readonly onSelect: (id: string) => void;
     private readonly onDelete: (id: string) => Promise<void>;
 
+    /** Create the modal with the saved-session entries and open/delete callbacks. */
     constructor(
         app: App,
         entries: SessionIndexEntry[],
@@ -31,6 +33,7 @@ export class SessionListModal extends Modal {
         this.onDelete = onDelete;
     }
 
+    /** Render the conversation list with per-row Open and Delete actions. */
     onOpen(): void {
         this.titleEl.setText('Conversation history');
 

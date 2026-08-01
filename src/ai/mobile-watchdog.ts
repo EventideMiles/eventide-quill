@@ -61,6 +61,7 @@ export class MobileStreamWatchdog {
         this.suspendedDuringStream = false;
     }
 
+    /** React to app background/foreground and warn when an in-flight stream may have been lost. */
     private handleVisibilityChange(): void {
         // Read .hidden from the same document the listener was bound to, not
         // a possibly-stale activeDocument reference.

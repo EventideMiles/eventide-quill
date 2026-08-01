@@ -1,3 +1,4 @@
+import jsdoc from 'eslint-plugin-jsdoc';
 import obsidianmd from 'eslint-plugin-obsidianmd';
 import globals from 'globals';
 import { defineConfig, globalIgnores } from 'eslint/config';
@@ -24,7 +25,9 @@ export default defineConfig(
 		'scripts/live-linter-ai.mts', // dev-only LM Studio harness, not part of the plugin build
 		'scripts/setup-test-vault.mjs', // dev-only chore script (Function() eval, Node built-ins)
 		'test/**/*.ts', // WDIO E2E specs + helpers — type-checked via `npm run typecheck:e2e`, not ESLint (projectService friction not worth it for one-off infra)
-		'test/**/*.mts'
+		'test/**/*.mts',
+		'__mocks__/**', // Obsidian module mock — intentionally loose (class stubs, DOM polyfills)
+		'tests/helpers/**', // Test infrastructure (DOM polyfills, in-memory vaults, mock-http)
 	]),
 	{
 		languageOptions: {
@@ -46,23 +49,39 @@ export default defineConfig(
 	},
 	...obsidianmd.configs.recommended,
 	{
+		// Docstring coverage gate. Warns on every named function/method/class
+		// missing a JSDoc block (named const arrows/functions resolve back to
+		// their `const` declaration, so a docstring above the binding counts).
+		// Anonymous inline callbacks are deliberately excluded — docstringing
+		// every `.map(x => …)` is noise, not documentation.
+		plugins: {
+			jsdoc,
+		},
+		rules: {
+			'jsdoc/require-jsdoc': [
+				'warn',
+				{
+					require: {
+						FunctionDeclaration: true,
+						MethodDefinition: true,
+						ClassDeclaration: true,
+						ClassExpression: true,
+					},
+					contexts: [
+						'VariableDeclarator[id.type="Identifier"] > ArrowFunctionExpression',
+						'VariableDeclarator[id.type="Identifier"] > FunctionExpression',
+					],
+				},
+			],
+		},
+	},
+	{
 		// Placeholder example URLs (e.g. the provider endpoint) aren't prose,
 		// so any UI string containing a URL scheme is exempt from sentence-case.
 		// The rule stays active everywhere else — this is the rule's documented
 		// ignoreRegex escape hatch, not a disable.
 		rules: {
 			'obsidianmd/ui/sentence-case': ['error', { enforceCamelCaseLower: true, ignoreRegex: ['https?://'] }],
-		},
-	},
-	{
-		// `getSettingDefinitions()` (the declarative settings API) is Obsidian
-		// 1.13+ only and our `minAppVersion` is 1.7.2. Implementing it today
-		// would force a major version bump and break compatibility with every
-		// currently released Obsidian build. We will adopt it (and drop this
-		// override) once Obsidian ships it as a stable requirement — adopting
-		// it is itself the trigger for a major version bump. See AGENTS.md.
-		rules: {
-			'obsidianmd/settings-tab/prefer-setting-definitions': 'off',
 		},
 	},
 	{
@@ -76,6 +95,17 @@ export default defineConfig(
 			// node test environment has no real window (the rule is about popout
 			// compatibility inside Obsidian, which doesn't apply here).
 			'obsidianmd/no-global-this': 'off',
+		},
+	},
+	{
+		// UI lifecycle tests assert chai-style (`expect(x).to.exist`), which
+		// `no-unused-expressions` flags as property accesses without side
+		// effects. Scoped here — the rest of `tests/` never uses that style,
+		// and everything else (jsdoc/require-jsdoc, the `tests/**` override,
+		// type-aware rules) still applies to these files.
+		files: ['tests/ui/**/*.ts'],
+		rules: {
+			'@typescript-eslint/no-unused-expressions': 'off',
 		},
 	},
 );

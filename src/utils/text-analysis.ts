@@ -401,6 +401,7 @@ export function splitParagraphs(text: string): string[] {
     const lines = text.split('\n');
     const paragraphs: string[] = [];
     let current: string[] = [];
+    /** Flush the current paragraph buffer into the result. */
     const flush = (): void => {
         if (current.length > 0) {
             const joined = current.join('\n').trim();

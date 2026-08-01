@@ -27,15 +27,18 @@ interface RankedCommand extends SlashCommand {
 export class SlashCommandSuggest extends SuggestBase<RankedCommand> {
     private plugin: EventideQuillPlugin;
 
+    /** Create the slash-command suggester for the given textarea. */
     constructor(app: App, inputEl: HTMLTextAreaElement, plugin: EventideQuillPlugin, lifecycle: Component) {
         super(app, inputEl, lifecycle);
         this.plugin = plugin;
     }
 
+    /** BEM block name for the slash-command dropdown. */
     protected cssBlock(): string {
         return 'quill-slash-command-suggest';
     }
 
+    /** Detect a `/` at the start of the current line and extract the kebab-case query. */
     protected getTriggerAndQuery(textBeforeCursor: string): { triggerStart: number; query: string } | null {
         // Start-of-line: position 0, or preceded by '\n'. The slash-trigger
         // fires only at line starts so mid-prose '/' (e.g. "he/she") doesn't
@@ -51,6 +54,7 @@ export class SlashCommandSuggest extends SuggestBase<RankedCommand> {
         return { triggerStart: lineStart, query: triggerMatch[1] ?? '' };
     }
 
+    /** Valid commands matching the query, ranked by exactness, match position, and name. */
     protected filterItems(query: string): RankedCommand[] {
         const commands = this.plugin.settings.slashCommands;
         if (commands.length === 0) return [];
@@ -88,6 +92,7 @@ export class SlashCommandSuggest extends SuggestBase<RankedCommand> {
         return items;
     }
 
+    /** Render one row as the `/name` match plus its description when present. */
     protected renderItem(item: RankedCommand, row: HTMLElement, lowerQuery: string): void {
         const nameRow = row.createDiv({ cls: `${this.cssBlock()}__name-row` });
         nameRow.createSpan({ cls: `${this.cssBlock()}__slash`, text: '/' });
@@ -99,6 +104,7 @@ export class SlashCommandSuggest extends SuggestBase<RankedCommand> {
         }
     }
 
+    /** Replace the `/query` run with the command body, leaving the text editable. */
     protected commitItem(item: RankedCommand, triggerStart: number, cursorPos: number): void {
         const value = this.inputEl.value;
         const textBeforeTrigger = value.slice(0, triggerStart);

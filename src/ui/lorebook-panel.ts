@@ -303,6 +303,7 @@ function renderLorebookRelationshipsTab(
 
     // Symmetric adjacency: both endpoints of each edge see each other.
     const adjacency = new Map<string, Set<string>>();
+    /** Record `b` as a neighbor of `a`; symmetry comes from the two calls at the loop below. */
     const addNeighbor = (a: string, b: string) => {
         let set = adjacency.get(a);
         if (!set) {

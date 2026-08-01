@@ -11,6 +11,7 @@ export class FilenameModal extends Modal {
     private defaultName: string;
     private title: string;
 
+    /** Create a filename prompt modal with the given default name and callback. */
     constructor(
         app: App,
         defaultName: string,
@@ -23,6 +24,7 @@ export class FilenameModal extends Modal {
         this.title = title;
     }
 
+    /** Render the path input with Save/Cancel buttons and Enter-to-save behavior. */
     onOpen(): void {
         this.titleEl.setText(this.title);
         const content = this.contentEl.createDiv();

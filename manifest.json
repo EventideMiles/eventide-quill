@@ -1,8 +1,8 @@
 {
 	"id": "eventide-quill",
 	"name": "Eventide Quill",
-	"version": "1.5.0",
-	"minAppVersion": "1.7.2",
+	"version": "2.0.0",
+	"minAppVersion": "1.13.0",
 	"description": "A feedback-first, novelist-focused writing assistant.",
 	"author": "Eventide Development, LLC",
 	"authorUrl": "https://github.com/EventideMiles",

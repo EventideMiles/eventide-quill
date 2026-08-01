@@ -1,4 +1,15 @@
-import { App, Menu, Modal, Notice, PluginSettingTab, Setting, SuggestModal } from 'obsidian';
+import {
+    App,
+    ExtraButtonComponent,
+    Modal,
+    Notice,
+    PluginSettingTab,
+    Setting,
+    SettingDefinitionItem,
+    SettingDefinitionPage,
+    SettingPage,
+    SuggestModal
+} from 'obsidian';
 import EventideQuillPlugin from './main';
 import { ModelCapability, ModelInfo, ModelRole, ProviderConfig, ProviderType, roleSatisfies } from './ai/provider';
 import { createProvider, generateModelId, generateProviderId } from './ai/provider-registry';
@@ -14,19 +25,8 @@ import { formatLocalDate } from './ai/tools/fandom-cache';
 import { isValidWikipediaLang } from './ai/tools/wikipedia-lookup';
 
 export type LinterMode = 'all' | 'prose' | 'ai';
-export type SettingsTab = 'welcome' | 'general' | 'lorebook' | 'linter' | 'ai-providers' | 'model-behaviors';
 /** Which sidebar tab opens by default. Mirrors the dropdown options in the General settings. */
 export type DefaultTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard' | 'lorebook';
-
-/**
- * Below this settings-pane width (px), the six top-level tab buttons collapse
- * into a single "active tab" button that opens a native Obsidian {@link Menu}
- * listing all tabs. Six text-only tabs (the longest label is "Model behaviors")
- * need ~520px to sit comfortably without truncation; phones in portrait (~360
- * dp) and narrow tablets fall under this threshold. Mirrors the ResizeObserver
- * hamburger pattern in the sidebar (`quill-sidebar.ts`) and co-writer panel.
- */
-const COMPACT_TABS_THRESHOLD = 520;
 
 /**
  * A user-defined slash command for the co-writer chat input. Typing `/`
@@ -120,7 +120,7 @@ export interface EventideQuillSettings {
      * markers (keeping `quillAnchorId` so rewind still works), and a free
      * refinement pass runs before the AI compaction fallback when a
      * conversation approaches the threshold. Off = pure AI compaction only
-     * (the pre-1.5.0 behavior). See `src/ai/context-refinement.ts`.
+     * (the pre-2.0.0 behavior). See `src/ai/context-refinement.ts`.
      */
     contextRefinementEnabled: boolean;
     contextIncludeVaultContext: boolean;
@@ -156,6 +156,8 @@ export interface EventideQuillSettings {
     dashboardAutoSnapshotOnSave: boolean;
     dashboardMaxSnapshots: number;
     readabilityFormula: ReadabilityFormula;
+    /** Daily writing word goal (0 disables goals/streak). Default 500. */
+    writingDailyGoal: number;
     /**
      * User-defined slash commands for the co-writer chat input. Typing
      * `/` at the start of a line opens a picker of matching commands;
@@ -253,14 +255,14 @@ export interface EventideQuillSettings {
      * returns a length-aware message routing the model to `edit_note` /
      * `insert_note` / `append_to_note` instead. Prevents duplicate notes that
      * strand [[wikilinks]] pointing at the original. Off = unconditional
-     * create (the pre-1.5.0 behavior) — escape hatch.
+     * create (the pre-2.0.0 behavior) — escape hatch.
      */
     lorePreferEditOverCreate: boolean;
     /**
      * When on, follow-up discussion of a review report runs through the
      * co-writer session machinery with editing tools enabled, so the editor
      * can propose specific, reviewable inline-diff edits (not just advisory
-     * prose). Off preserves the pre-1.5.0 text-only chat behavior. Default:
+     * prose). Off preserves the pre-2.0.0 text-only chat behavior. Default:
      * on.
      */
     reviewSuggestedEditsEnabled: boolean;
@@ -381,6 +383,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     dashboardAutoSnapshotOnSave: false,
     dashboardMaxSnapshots: 100,
     readabilityFormula: 'reweighted-flesch',
+    writingDailyGoal: 500,
     slashCommands: [],
     lorebookFolders: [],
     lorebookFolderTypes: {},
@@ -418,6 +421,7 @@ const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
 class InputModal extends Modal {
     private result = '';
 
+    /** Store the prompt fields and the submit callback. */
     constructor(
         app: App,
         private title: string,
@@ -427,6 +431,7 @@ class InputModal extends Modal {
         super(app);
     }
 
+    /** Render the prompt: heading, text input, and Cancel/OK buttons. */
     onOpen(): void {
         const { contentEl } = this;
         contentEl.createEl('h2', { text: this.title });
@@ -455,6 +460,7 @@ class InputModal extends Modal {
         });
     }
 
+    /** Clear the modal and fire `onSubmit` with the entered value (no-op when cancelled). */
     onClose(): void {
         const { contentEl } = this;
         contentEl.empty();
@@ -468,6 +474,7 @@ class InputModal extends Modal {
 class ModelFetchModal extends SuggestModal<ModelInfo> {
     private models: ModelInfo[];
 
+    /** Capture the model list and the selection callback, and start in search mode. */
     constructor(
         app: App,
         models: ModelInfo[],
@@ -519,6 +526,7 @@ class AddProviderModal extends SuggestModal<{ type: ProviderType; label: string;
         }
     ];
 
+    /** Remember the selection callback and start in search mode. */
     constructor(
         app: App,
         private onChoose: (type: ProviderType, defaultEndpoint: string) => void
@@ -555,12 +563,14 @@ class AddProviderModal extends SuggestModal<{ type: ProviderType; label: string;
 class AnthropicBanRiskModal extends Modal {
     private readonly onConfirm: () => void | Promise<void>;
 
+    /** Set the modal title and store the confirmation callback. */
     constructor(app: App, onConfirm: () => void | Promise<void>) {
         super(app);
         this.titleEl.setText('Before you add Anthropic Claude');
         this.onConfirm = onConfirm;
     }
 
+    /** Render the multi-paragraph policy warning and the explicit-risk Continue button. */
     onOpen(): void {
         const container = this.contentEl.createDiv({ cls: 'quill-anthropic-warning' });
 
@@ -638,232 +648,169 @@ function formatFandomCacheStats(stats: WikiStats): string {
     return `${stats.pages} page${stats.pages === 1 ? '' : 's'}, ${stats.images} image${stats.images === 1 ? '' : 's'} — ${size} on disk. Last synced: ${date}.`;
 }
 
+/** Declarative settings root for Eventide Quill (Obsidian 1.13+). */
 export class EventideQuillSettingTab extends PluginSettingTab {
     plugin: EventideQuillPlugin;
-    private activeTab: SettingsTab = 'welcome';
-
     /**
-     * Single source of truth for the six top-level tabs and their labels.
-     * Consumed by {@link renderTabBar} (button text + compact menu items),
-     * {@link showActiveTab} (compact-mode label sync), and the ResizeObserver
-     * compact-mode toggle. Add a tab here and it propagates everywhere.
+     * The currently-open imperative bridge page (Phase 1 of the declarative
+     * migration). Each former tab renders through a `SettingPage` whose
+     * `display()` records itself here so mutation handlers can trigger an
+     * in-place re-render via {@link refreshBridge} — the framework's
+     * `update()` re-runs `getSettingDefinitions()` but does not re-invoke an
+     * already-open imperative page's factory. This field goes away as each tab
+     * is converted to declarative `items` (Phases 2–6).
      */
-    private static readonly TABS: { id: SettingsTab; label: string }[] = [
-        { id: 'welcome', label: 'Welcome' },
-        { id: 'general', label: 'General' },
-        { id: 'lorebook', label: 'Lorebook' },
-        { id: 'linter', label: 'Linter' },
-        { id: 'ai-providers', label: 'AI providers' },
-        { id: 'model-behaviors', label: 'Model behaviors' }
-    ];
+    private activeBridgePage: { containerEl: HTMLElement; render: (content: HTMLElement) => void } | null = null;
 
-    /**
-     * Whether the settings pane is narrow enough that the tab bar has
-     * collapsed into the compact dropdown. Toggled by {@link resizeObserver}
-     * and read by CSS via the `quill-settings-root--compact-tabs` modifier
-     * on the root element (no full re-render — avoids scroll disruption).
-     */
-    private compactTabs = false;
-
-    /** Observes the settings pane width to toggle {@link compactTabs}. */
-    private resizeObserver: ResizeObserver | null = null;
-
+    /** Hold the plugin reference so settings handlers can read/write the live settings object. */
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app, plugin);
         this.plugin = plugin;
     }
 
     /**
-     * Clean up the {@link resizeObserver} when the settings tab is hidden.
-     *
-     * `SettingTab` is not a `Component`, so the observer can't be registered
-     * via `register()`. Obsidian calls `hide()` when the writer navigates away
-     * from the plugin's settings (closes settings, switches to another plugin's
-     * tab, etc.), making it the right teardown point. `display()` also
-     * disconnects defensively at the top of each redraw in case Obsidian
-     * re-renders without first calling `hide()`.
+     * Declarative settings root (Obsidian 1.13+). Returns the six former tabs
+     * as navigable {@link SettingDefinitionPage}s. Until each tab is converted
+     * to declarative controls (Phases 2–6), its page renders imperatively via
+     * {@link bridgePage} — a thin `SettingPage` subclass that calls the
+     * pre-existing `renderXxxTab` method into the page's container. The
+     * framework renders the page entries (with navigation and unified search
+     * at the page level) and calls each page's `display()` on open.
      */
-    hide(): void {
-        this.resizeObserver?.disconnect();
-        this.resizeObserver = null;
-        super.hide();
+    getSettingDefinitions(): SettingDefinitionItem[] {
+        // Setup completion — drives the Welcome page's attention indicator.
+        // Checks configuration state only (providers, model, goal); the
+        // manuscript check is session state that changes with the active file
+        // and isn't reliably populated at definition time.
+        const setupComplete =
+            this.plugin.settings.aiProviders.length > 0 &&
+            !!this.plugin.settings.aiDefaultChatProvider &&
+            this.plugin.settings.writingDailyGoal > 0;
+        return [
+            {
+                type: 'page',
+                name: 'Welcome',
+                desc: 'Getting started, features, and privacy.',
+                items: this.welcomeItems(),
+                status: setupComplete ? null : 'warning'
+            },
+            {
+                type: 'page',
+                name: 'General',
+                desc: 'Sidebar, features, dashboard, embeddings.',
+                items: this.generalItems()
+            },
+            {
+                type: 'page',
+                name: 'Lorebook',
+                desc: 'Lore scanning, coaches, fandom, images.',
+                items: this.lorebookItems()
+            },
+            {
+                type: 'page',
+                name: 'Linter',
+                desc: 'Prose linter rules and AI fixes.',
+                items: this.linterItems()
+            },
+            {
+                type: 'page',
+                name: 'AI providers',
+                desc: 'Providers, models, defaults.',
+                items: this.aiProvidersItems(),
+                displayValue: this.aiProviderDisplayValue(),
+                status: this.aiProviderStatus()
+            },
+            {
+                type: 'page',
+                name: 'Model behaviors',
+                desc: 'Voice, style, co-writer, review.',
+                items: this.modelBehaviorsItems()
+            }
+        ];
     }
 
     /**
-     * Build and display the full settings UI.
-     *
-     * Called on initial open AND on every save that needs a structural
-     * redraw (provider add/remove, toggle reveal/hide, slash-command
-     * add/remove, etc.). To preserve scroll position across in-tab
-     * redraws, the scroll area's scrollTop is captured before the DOM is
-     * torn down and restored after rebuild. Tab switches reset to the top
-     * (the tab-bar click handler passes no `scrollTop` arg, defaulting
-     * to 0; the initial open path finds no previous scroll area and
-     * falls back to 0 too).
+     * Called by an imperative detail {@link SettingPage} (provider or
+     * default-models) when it opens: record it as the active page so mutation
+     * handlers can re-render it in place via {@link refreshBridge}, and render
+     * its content.
      */
-    display(): void {
-        const { containerEl } = this;
+    enterBridgePage(containerEl: HTMLElement, render: (content: HTMLElement) => void): void {
+        this.activeBridgePage = { containerEl, render };
+        this.renderBridgeContent(containerEl, render);
+    }
 
-        // Disconnect any prior observer before re-observing. Obsidian may call
-        // display() multiple times (provider add/remove, toggle redraws) without
-        // first calling hide(); without this, stale observers would pile up.
-        this.resizeObserver?.disconnect();
+    /**
+     * Called by a {@link BridgeSettingPage} when it closes: clear the active
+     * bridge page tracking if it still points at this page.
+     */
+    exitBridgePage(containerEl: HTMLElement): void {
+        if (this.activeBridgePage?.containerEl === containerEl) this.activeBridgePage = null;
+    }
 
-        // Capture scroll position before teardown so we can restore it after
-        // a redraw triggered by an in-tab action (toggle, add/remove row,
-        // card field edit). Without this, `showActiveTab()` resets to 0 on
-        // every redraw and the writer is bounced back to the top after
-        // clicking anything inside the tab. Only tab switches should reset.
-        const prevScrollArea = containerEl.querySelector('.quill-settings__scroll-area');
-        const savedScrollTop = prevScrollArea instanceof HTMLElement ? prevScrollArea.scrollTop : 0;
-
+    /**
+     * Render one bridge page's content: the root styling class, the tab's
+     * existing render method, the heading-grouped visual sections, and the
+     * footer. Idempotent — emptying `containerEl` first makes it safe to call
+     * repeatedly from {@link refreshBridge}.
+     */
+    private renderBridgeContent(containerEl: HTMLElement, render: (content: HTMLElement) => void): void {
         containerEl.empty();
         containerEl.addClass('quill-settings-root');
-        // Re-apply the compact modifier if a prior observer measurement set it
-        // (containerEl.empty() preserves classes on the root itself, but this
-        // is defensive in case a future change clears them).
-        containerEl.toggleClass('quill-settings-root--compact-tabs', this.compactTabs);
-
-        this.renderTabBar(containerEl);
-
-        // All tab content lives inside a scrollable wrapper so that only
-        // the area between the tab bar (header) and the footer scrolls.
-        const scrollArea = containerEl.createDiv({ cls: 'quill-settings__scroll-area' });
-        this.renderWelcomeTab(scrollArea);
-        this.renderGeneralTab(scrollArea);
-        this.renderLorebookTab(scrollArea);
-        this.renderLinterTab(scrollArea);
-        this.renderAiProvidersTab(scrollArea);
-        this.renderModelBehaviorsTab(scrollArea);
-
-        // Wrap runs of settings under each heading into visually distinct
-        // groups (background + border) so tabs don't read as a flat list.
-        const tabContents = scrollArea.querySelectorAll<HTMLElement>('[class*="quill-settings-content-"]');
-        tabContents.forEach((c) => this.groupSettingsByHeading(c));
-
-        this.renderFooter(containerEl);
-
-        this.showActiveTab(savedScrollTop);
-
-        // Toggle compact mode when the settings pane narrows. Below the
-        // threshold the horizontal tab bar hides and a single "active tab"
-        // dropdown button takes its place. Mirrors the sidebar's own
-        // ResizeObserver at quill-sidebar.ts:101 (the only other responsive
-        // tab pattern in the repo).
-        this.resizeObserver = new ResizeObserver((entries) => {
-            for (const entry of entries) {
-                const compact = entry.contentRect.width < COMPACT_TABS_THRESHOLD;
-                if (compact !== this.compactTabs) {
-                    this.compactTabs = compact;
-                    containerEl.toggleClass('quill-settings-root--compact-tabs', compact);
-                }
-            }
-        });
-        this.resizeObserver.observe(containerEl);
+        render(containerEl);
+        // Wrap runs of settings under each heading into bordered sections,
+        // matching the pre-2.0.0 grouped look. Each tab renders into a single
+        // `.quill-settings-content-*` div created by its render method.
+        const content = containerEl.querySelector<HTMLElement>('[class*="quill-settings-content-"]');
+        if (content) this.groupSettingsByHeading(content);
+        containerEl.createDiv({ cls: 'quill-settings__footer' });
     }
 
     /**
-     * Render the tab bar at the top of the settings panel.
-     *
-     * Two sibling bars are built on every render; CSS toggles which one is
-     * visible based on the `quill-settings-root--compact-tabs` modifier
-     * (flipped by {@link resizeObserver}). Building both up front avoids a
-     * full re-render when crossing the width threshold mid-session — only a
-     * class flips, so the writer's scroll position and form inputs survive.
+     * Re-render the currently-open bridge page in place after a mutation
+     * (add/remove provider, slash command, folder override, etc.). Replaces the
+     * pre-2.0.0 `this.refreshBridge()` full re-render. Falls back to `update()` when
+     * no bridge page is active (e.g. at the root definition list). As tabs
+     * convert to declarative controls (Phases 2–6), their mutation handlers
+     * switch to `this.update()` / `this.refreshDomState()` and this method is
+     * removed.
      */
-    private renderTabBar(containerEl: HTMLElement): void {
-        const tabs = EventideQuillSettingTab.TABS;
-
-        // --- Standard horizontal tab bar (hidden under compact mode) ---
-        const tabBar = containerEl.createDiv({ cls: 'quill-settings__tab-bar' });
-        for (const tab of tabs) {
-            const btn = tabBar.createEl('button', {
-                cls: `quill-settings__tab${this.activeTab === tab.id ? ' quill-settings__tab--active' : ''}`,
-                text: tab.label,
-                attr: { 'data-tab': tab.id }
-            });
-            btn.addEventListener('click', () => {
-                this.activeTab = tab.id;
-                this.showActiveTab();
-            });
+    private refreshBridge(): void {
+        if (this.activeBridgePage) {
+            this.renderBridgeContent(this.activeBridgePage.containerEl, this.activeBridgePage.render);
+        } else {
+            this.update();
         }
-
-        // --- Compact dropdown bar (shown under compact mode) ---
-        // A single button echoes the active tab's label with a caret; clicking
-        // opens a native Obsidian Menu listing all tabs with a checkmark on the
-        // active one. Same pattern as the co-writer panel's overflow hamburger
-        // (co-writer-panel.ts:2127).
-        const compactBar = containerEl.createDiv({ cls: 'quill-settings__compact-bar' });
-        const compactBtn = compactBar.createEl('button', {
-            cls: `quill-settings__compact-tab${' quill-settings__compact-tab--active'}`,
-            attr: { type: 'button', 'aria-label': 'Switch settings tab' }
-        });
-        const compactLabel = compactBtn.createSpan({ cls: 'quill-settings__compact-tab-label' });
-        compactLabel.textContent = tabs.find((t) => t.id === this.activeTab)?.label ?? '';
-        compactBtn.createSpan({ cls: 'quill-settings__compact-tab-caret' });
-        compactBtn.addEventListener('click', (e: MouseEvent) => {
-            const menu = new Menu();
-            for (const tab of tabs) {
-                menu.addItem((item) =>
-                    item
-                        .setTitle(tab.label)
-                        .setChecked(this.activeTab === tab.id)
-                        .onClick(() => {
-                            this.activeTab = tab.id;
-                            this.showActiveTab();
-                        })
-                );
-            }
-            menu.showAtMouseEvent(e);
-        });
     }
 
     /**
-     * Toggle visibility of tab content sections and scroll the panel.
-     *
-     * @param scrollTop  Scroll position to restore after redraw. The
-     *                   tab-bar click handler passes nothing (default 0) so
-     *                   switching tabs starts at the top; {@link display}
-     *                   passes the previously captured scrollTop so an
-     *                   in-tab redraw (add/remove/field edit) preserves the
-     *                   writer's place. The initial-open path finds no
-     *                   previous scroll area and also falls back to 0.
+     * Declarative-control change hook. The base persists the value; we layer on
+     * inter-setting cascades that the declarative model can't express inline
+     * (a control has no onChange), then refresh the DOM so dependent controls'
+     * `disabled`/`visible` predicates re-evaluate. Add per-key cases as tabs
+     * are converted (Phases 2-6).
      */
-    private showActiveTab(scrollTop = 0): void {
-        const tabIds = EventideQuillSettingTab.TABS.map((t) => t.id);
-        const tabs = this.containerEl.querySelectorAll('.quill-settings__tab');
-
-        for (const id of tabIds) {
-            const content = this.containerEl.querySelector(`.quill-settings-content-${id}`);
-            if (content) {
-                content.toggleClass('is-hidden', this.activeTab !== id);
-            }
+    setControlValue(key: string, value: unknown): void | Promise<void> {
+        const result = super.setControlValue(key, value);
+        // Disabling invisible-character scanning also disables aggressive
+        // scanning (which only makes sense with the base rule on).
+        if (key === 'enableGremlins' && value === false && this.plugin.settings.enableAggressiveGremlins) {
+            this.plugin.settings.enableAggressiveGremlins = false;
+            void this.plugin.saveSettings();
         }
-
-        tabs.forEach((tab) => {
-            const el = tab as HTMLElement;
-            if (el.dataset.tab === this.activeTab) {
-                el.addClass('quill-settings__tab--active');
-            } else {
-                el.removeClass('quill-settings__tab--active');
-            }
-        });
-
-        // Reflect the new active tab in the compact-mode dropdown button label.
-        // The compact bar is rebuilt on every display(), so a querySelector is
-        // sufficient — no cached reference to invalidate across redraws.
-        const compactLabel = this.containerEl.querySelector('.quill-settings__compact-tab-label');
-        if (compactLabel instanceof HTMLElement) {
-            const match = EventideQuillSettingTab.TABS.find((t) => t.id === this.activeTab);
-            if (match) compactLabel.textContent = match.label;
+        // Turning embedding cache warming on kicks off a warming pass.
+        if (key === 'enableEmbeddingWarming' && value === true) {
+            void this.plugin.warmAllEmbeddingCaches();
         }
-
-        const scrollArea = this.containerEl.querySelector('.quill-settings__scroll-area');
-        if (scrollArea instanceof HTMLElement) {
-            // 0 (tab switch or first open) starts at the top; a preserved
-            // scrollTop (in-tab redraw) restores the writer's place.
-            scrollArea.scrollTop = scrollTop;
+        // "Allow any wiki" is a footgun — surface a notice when it's enabled.
+        if (key === 'lorebookFandomAllowAllWikis' && value === true) {
+            new Notice('Quill: Fandom is now unrestricted — the co-writer can query any wiki it chooses.');
         }
+        // Re-evaluate disabled/visible predicates so cascaded controls update
+        // (e.g. the custom narrative-rules textarea shows only for the custom
+        // preset, and aggressive scanning disables when gremlins is off).
+        this.refreshDomState();
+        return result;
     }
 
     /** Collect unique folder paths from the vault's markdown files. */
@@ -974,7 +921,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
      * uniqueness-checked via Notice), Description (one-line, optional),
      * and Body (multi-line textarea). Per-field edits mutate the object
      * in place and save; structural changes (add/remove) do a full
-     * `this.display()` redraw, mirroring the `aiProviders` card pattern.
+     * `this.refreshBridge()` redraw, mirroring the `aiProviders` card pattern.
      */
     private renderSlashCommands(container: HTMLElement): void {
         container.empty();
@@ -1002,7 +949,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             button.setButtonText('Remove').onClick(async () => {
                 this.plugin.settings.slashCommands.splice(index, 1);
                 await this.plugin.saveSettings();
-                this.display();
+                this.refreshBridge();
             })
         );
 
@@ -1039,7 +986,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         cmd.name = trimmed;
                         void this.plugin.saveSettings();
                         // Refresh the heading so it shows the new "/name" instead of the placeholder.
-                        this.display();
+                        this.refreshBridge();
                     })
             );
 
@@ -1098,6 +1045,28 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 
     /** Render the welcome tab (onboarding + feature overview). */
+    /**
+     * Declarative items for the Welcome page. The onboarding content (hero,
+     * getting-started, features, privacy/network-tool inventory, notes) is
+     * rendered imperatively into a single setting row via {@link renderWelcomeTab};
+     * the four tool-gating toggles inside it are duplicates of settings that
+     * are native controls on the General and Lorebook pages (so they're
+     * individually searchable there). Toggle changes call refreshBridge(), which
+     * re-renders the page (the render re-runs on update()).
+     */
+    private welcomeItems(): SettingDefinitionItem[] {
+        return [
+            {
+                name: 'Welcome',
+                render: (setting) => {
+                    setting.settingEl.empty();
+                    this.renderWelcomeTab(setting.settingEl);
+                }
+            }
+        ];
+    }
+
+    /** Render the Welcome page's imperative onboarding content (hero, checklist, features, privacy). */
     private renderWelcomeTab(containerEl: HTMLElement): void {
         const content = containerEl.createDiv({ cls: 'quill-settings-content-welcome' });
 
@@ -1110,39 +1079,72 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             text: 'A feedback-first writing assistant for novelists.'
         });
 
-        // --- Getting started ---
+        // --- Set up Quill (live checklist — reflects current configuration) ---
 
-        new Setting(content).setName('Getting started').setHeading();
+        new Setting(content).setName('Getting set up').setHeading();
 
-        const steps = content.createDiv({ cls: 'quill-settings__welcome-steps' });
-        const stepItems = [
-            {
-                num: '1',
-                title: 'Configure an AI provider',
-                desc: 'Go to the "AI providers" tab and set up Ollama, LM Studio, or an OpenAI-compatible endpoint.'
-            },
-            {
-                num: '2',
-                title: 'Open the sidebar',
-                desc: 'Click the feather icon in the left ribbon to open the Quill sidebar.'
-            },
-            {
-                num: '3',
-                title: 'Configure your manuscript',
-                desc: 'Open the Dashboard tab in the sidebar, click Settings, and pick your manuscript type.'
-            },
-            {
-                num: '4',
-                title: 'Start writing',
-                desc: 'Use the linter, co-writer, feedback engine, and dashboard as you draft.'
+        const hasProviders = this.plugin.settings.aiProviders.length > 0;
+        const hasChatModel = !!this.plugin.settings.aiDefaultChatProvider;
+        const hasManuscript = !!this.plugin.currentManuscriptFolder;
+        const hasGoal = this.plugin.settings.writingDailyGoal > 0;
+
+        // Each settings-referencing step carries an always-visible action so the
+        // writer can jump straight back to that setting from the checklist even
+        // after it is complete. "Open your manuscript" references no settings
+        // page, so it intentionally has no button.
+        const setupSteps: { done: boolean; label: string; hint: string; actionLabel?: string; action?: () => void }[] =
+            [
+                {
+                    done: hasProviders,
+                    label: 'Add an AI provider',
+                    hint: 'Ollama, LM Studio, or any OpenAI-compatible endpoint. (AI providers page)',
+                    actionLabel: hasProviders ? 'Take me there' : 'Add',
+                    action: hasProviders
+                        ? () => this.openSettingsPage('AI providers')
+                        : () => new AddProviderModal(this.app, (t, ep) => this.addProvider(t, ep)).open()
+                },
+                {
+                    done: hasChatModel,
+                    label: 'Pick a default chat model',
+                    hint: 'The model used for chat, feedback, and the co-writer. (Default models page)',
+                    actionLabel: 'Take me there',
+                    action: () => this.openSettingsPage('AI providers', 'Default chat model', 'Default models')
+                },
+                {
+                    done: hasManuscript,
+                    label: 'Open your manuscript',
+                    hint: 'Open a chapter file and refresh the dashboard so Quill can scan its context.'
+                },
+                {
+                    done: hasGoal,
+                    label: 'Set a daily writing goal',
+                    hint: 'Track a writing streak on the dashboard. (General page)',
+                    actionLabel: 'Take me there',
+                    action: () => this.openSettingsPage('General', 'Daily writing goal')
+                }
+            ];
+        const completed = setupSteps.filter((s) => s.done).length;
+        content.createDiv({
+            cls: 'quill-settings__welcome-progress',
+            text: `${completed} of ${setupSteps.length} setup steps complete`
+        });
+        const checklist = content.createDiv({ cls: 'quill-settings__welcome-checklist' });
+        for (const step of setupSteps) {
+            const row = checklist.createDiv({ cls: 'quill-settings__welcome-checklist-row' });
+            row.createSpan({
+                cls: `quill-settings__welcome-checklist-mark${step.done ? ' quill-settings__welcome-checklist-mark--done' : ''}`,
+                text: step.done ? '\u2713' : '\u25CB'
+            });
+            const body = row.createDiv({ cls: 'quill-settings__welcome-checklist-body' });
+            body.createDiv({ cls: 'quill-settings__welcome-checklist-label', text: step.label });
+            body.createDiv({ cls: 'quill-settings__welcome-checklist-hint', text: step.hint });
+            if (step.action && step.actionLabel) {
+                const btn = row.createEl('button', {
+                    cls: 'quill-settings__welcome-checklist-btn',
+                    text: step.actionLabel
+                });
+                btn.addEventListener('click', step.action);
             }
-        ];
-        for (const step of stepItems) {
-            const row = steps.createDiv({ cls: 'quill-settings__welcome-step' });
-            row.createDiv({ cls: 'quill-settings__welcome-step-num', text: step.num });
-            const body = row.createDiv({ cls: 'quill-settings__welcome-step-body' });
-            body.createDiv({ cls: 'quill-settings__welcome-step-title', text: step.title });
-            body.createDiv({ cls: 'quill-settings__welcome-step-desc', text: step.desc });
         }
 
         // --- Features ---
@@ -1173,6 +1175,55 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             const row = features.createDiv({ cls: 'quill-settings__welcome-feature' });
             row.createSpan({ cls: 'quill-settings__welcome-feature-icon', text: item.icon });
             row.createSpan({ cls: 'quill-settings__welcome-feature-text', text: item.text });
+        }
+
+        // --- What are you writing? (genre-tailored guidance) ---
+
+        new Setting(content).setName('What are you writing?').setHeading();
+        const genreTip = content.createDiv({
+            cls: 'quill-settings__welcome-genre-tip',
+            text: 'Pick the closest genre for guidance on which features to try first.'
+        });
+        const genreChips = content.createDiv({ cls: 'quill-settings__welcome-genre-chips' });
+        const genres: { label: string; tip: string }[] = [
+            {
+                label: 'Fantasy',
+                tip: 'Worldbuilding-heavy: set up a Lorebook folder (Lorebook page) and try the Lorebook Coach to draft entries from your manuscript.'
+            },
+            {
+                label: 'Science fiction',
+                tip: 'Track systems and canon in a Lorebook, and run Critical analysis to catch continuity gaps in the worldbuilding.'
+            },
+            {
+                label: 'Romance',
+                tip: 'The developmental-editor persona (Review tab) gives relationship-focused feedback; the line editor refines voice.'
+            },
+            {
+                label: 'Mystery',
+                tip: 'Use Critical analysis (plot logic + continuity) to track clues and red herrings across chapters.'
+            },
+            {
+                label: 'Thriller',
+                tip: 'Critical analysis flags pacing and continuity; the dashboard pacing heatmap shows where tension drags.'
+            },
+            {
+                label: 'Literary',
+                tip: 'The line-editor persona and the AI-prose linter rules sharpen sentence-level craft.'
+            },
+            {
+                label: 'Historical',
+                tip: 'A Lorebook keeps period detail consistent; network research tools (Wikipedia) help verify references.'
+            },
+            {
+                label: 'Other',
+                tip: 'Start with the co-writer (discuss mode) to brainstorm, and the Review tab for editorial feedback.'
+            }
+        ];
+        for (const g of genres) {
+            const chip = genreChips.createEl('button', { cls: 'quill-settings__welcome-genre-chip', text: g.label });
+            chip.addEventListener('click', () => {
+                genreTip.textContent = g.tip;
+            });
         }
 
         // --- Privacy & network tools ---
@@ -1229,7 +1280,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.coWriterToolsEnabled).onChange(async (value) => {
                     this.plugin.settings.coWriterToolsEnabled = value;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshBridge();
                 })
             );
 
@@ -1240,7 +1291,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.lorebookNetworkTools).onChange(async (value) => {
                     this.plugin.settings.lorebookNetworkTools = value;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshBridge();
                 })
             );
 
@@ -1254,7 +1305,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.lorebookImageTools).onChange(async (value) => {
                     this.plugin.settings.lorebookImageTools = value;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshBridge();
                 })
             );
 
@@ -1271,7 +1322,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.loreEntryImageAttachments).onChange(async (value) => {
                     this.plugin.settings.loreEntryImageAttachments = value;
                     await this.plugin.saveSettings();
-                    this.display();
+                    this.refreshBridge();
                 })
             );
 
@@ -1308,1210 +1359,858 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 
     /** Render the general settings tab. */
-    private renderGeneralTab(containerEl: HTMLElement): void {
-        const content = containerEl.createDiv({ cls: 'quill-settings-content-general' });
-
-        new Setting(content).setName('Sidebar').setHeading();
-
-        new Setting(content)
-            .setName('Default tab')
-            .setDesc('Which sidebar tab opens by default.')
-            .addDropdown((dropdown) => {
-                dropdown.addOption('dashboard', 'Dashboard');
-                dropdown.addOption('linter', 'Linter');
-                dropdown.addOption('context', 'Context');
-                dropdown.addOption('review', 'Review');
-                dropdown.addOption('cowriter', 'Co-writer');
-                dropdown.addOption('lorebook', 'Lorebook');
-                dropdown.setValue(this.plugin.settings.defaultTab).onChange(async (value) => {
-                    this.plugin.settings.defaultTab = value as DefaultTab;
-                    await this.plugin.saveSettings();
-                });
-            });
-
-        new Setting(content).setName('Feature toggles').setHeading();
-
-        new Setting(content)
-            .setName('Enable dashboard')
-            .setDesc('Show the dashboard tab in the sidebar with per-manuscript analytics.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableDashboard).onChange(async (value) => {
-                    this.plugin.settings.enableDashboard = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Critical analysis')
-            .setDesc('Show the analysis engine in the review tab and the right-click analyze command.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableCriticalAnalysis).onChange((value) => {
-                    this.plugin.settings.enableCriticalAnalysis = value;
-                    void this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Manuscript analysis')
-            .setDesc(
-                'Show the manuscript analysis engine in the review tab for full-manuscript structural diagnostics.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableManuscriptAnalysis).onChange((value) => {
-                    this.plugin.settings.enableManuscriptAnalysis = value;
-                    void this.plugin.saveSettings();
-                })
-            );
-
-        // --- Analysis settings ---
-        new Setting(content).setName('Manuscript analysis engine').setHeading();
-
-        new Setting(content)
-            .setName('Compression chunk size (tokens)')
-            .setDesc(
-                'Target tokens per chunk when using compress compaction (chat model summarization). The embedding chunk size is configured separately below. Default: 1024.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.manuscriptAnalysisChunkTokenSize))
-                    // settings.ts - no Component lifecycle available; raw addEventListener is required
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 256 && n <= 8192) {
-                            this.plugin.settings.manuscriptAnalysisChunkTokenSize = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.manuscriptAnalysisChunkTokenSize));
-                            new Notice('Value must be a number between 256 and 8192');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Manuscript analysis temperature')
-            .setDesc(
-                'Temperature for manuscript analysis AI responses. Higher values produce more varied output; lower values are more deterministic. Range: 0.0 – 2.0. Default: 0.5.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.manuscriptAnalysisTemperature))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseFloat(text.inputEl.value);
-                        if (!isNaN(n) && n >= 0 && n <= 2) {
-                            this.plugin.settings.manuscriptAnalysisTemperature = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.manuscriptAnalysisTemperature));
-                            new Notice('Value must be a number between 0.0 and 2.0');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Manuscript analysis max output tokens')
-            .setDesc(
-                'Maximum tokens per manuscript analysis response. Higher allows more detailed reports but uses more quota. Default: 3072.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.manuscriptAnalysisMaxOutputTokens))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1 && n <= 65536) {
-                            this.plugin.settings.manuscriptAnalysisMaxOutputTokens = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.manuscriptAnalysisMaxOutputTokens));
-                            new Notice('Value must be a number between 1 and 65536');
-                        }
-                    })
-            );
-
-        // --- Embedding settings ---
-        // --- Debug logging (dev-only) ---
-        if (__DEV__) {
-            new Setting(content).setName('Debug').setHeading();
-
-            new Setting(content)
-                .setName('Enable debug logging')
-                .setDesc(
-                    'When enabled, logs AI payload context to the browser console (console.warn). Useful for inspecting the actual data sent to providers.'
-                )
-                .addToggle((toggle) =>
-                    toggle.setValue(this.plugin.settings.enableDebugLogging).onChange(async (value) => {
-                        this.plugin.settings.enableDebugLogging = value;
-                        await this.plugin.saveSettings();
-                    })
-                );
-        }
-
-        // --- Dashboard settings ---
-        new Setting(content).setName('Dashboard').setHeading();
-
-        new Setting(content)
-            .setName('Readability formula')
-            .setDesc('Which readability formula to display in the dashboard.')
-            .addDropdown((dropdown) => {
-                dropdown.addOption('reweighted-flesch', 'Reweighted flesch');
-                dropdown.addOption('flesch-kincaid', 'Flesch-kincaid');
-                dropdown.addOption('ari', 'Automated readability index');
-                dropdown.addOption('custom-composite', 'Custom composite');
-                dropdown.addOption('dale-chall', 'Dale-chall');
-                dropdown.setValue(this.plugin.settings.readabilityFormula).onChange(async (value) => {
-                    this.plugin.settings.readabilityFormula = value as ReadabilityFormula;
-                    await this.plugin.saveSettings();
-                });
-            });
-
-        new Setting(content)
-            .setName('Auto-refresh interval')
-            .setDesc('Refresh the dashboard every n minutes when the tab is active (0 disables).')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.dashboardAutoRefreshMinutes))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 0 && n <= 60) {
-                            this.plugin.settings.dashboardAutoRefreshMinutes = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.dashboardAutoRefreshMinutes));
-                            new Notice('Value must be between 0 and 60');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Auto-snapshot on save')
-            .setDesc('Record a word-count snapshot whenever a chapter file is saved.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.dashboardAutoSnapshotOnSave).onChange(async (value) => {
-                    this.plugin.settings.dashboardAutoSnapshotOnSave = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Max snapshots retained')
-            .setDesc(
-                'Maximum number of historical snapshots to keep per manuscript (10-1000). Oldest are pruned first.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.dashboardMaxSnapshots))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 10 && n <= 1000) {
-                            this.plugin.settings.dashboardMaxSnapshots = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.dashboardMaxSnapshots));
-                            new Notice('Value must be between 10 and 1000');
-                        }
-                    })
-            );
-
-        // --- Restore defaults ---
-        new Setting(content)
-            .setName('Restore defaults')
-            .setDesc('Reset all general settings to their default values.')
-            .addButton((button) =>
-                button.setButtonText('Restore defaults').onClick(async () => {
-                    this.plugin.settings.defaultTab = DEFAULT_SETTINGS.defaultTab;
-                    this.plugin.settings.enableDashboard = DEFAULT_SETTINGS.enableDashboard;
-                    this.plugin.settings.enableCriticalAnalysis = DEFAULT_SETTINGS.enableCriticalAnalysis;
-                    this.plugin.settings.enableManuscriptAnalysis = DEFAULT_SETTINGS.enableManuscriptAnalysis;
-                    this.plugin.settings.manuscriptAnalysisTemperature = DEFAULT_SETTINGS.manuscriptAnalysisTemperature;
-                    this.plugin.settings.manuscriptAnalysisMaxOutputTokens =
-                        DEFAULT_SETTINGS.manuscriptAnalysisMaxOutputTokens;
-                    this.plugin.settings.manuscriptAnalysisChunkTokenSize =
-                        DEFAULT_SETTINGS.manuscriptAnalysisChunkTokenSize;
-                    this.plugin.settings.embeddingsTopKChunks = DEFAULT_SETTINGS.embeddingsTopKChunks;
-                    this.plugin.settings.embeddingChunkTokenSize = DEFAULT_SETTINGS.embeddingChunkTokenSize;
-                    this.plugin.settings.enableEmbeddingWarming = DEFAULT_SETTINGS.enableEmbeddingWarming;
-                    this.plugin.settings.enableFullEmbedPickerOption = DEFAULT_SETTINGS.enableFullEmbedPickerOption;
-                    this.plugin.settings.folderTopKOverrides = { ...DEFAULT_SETTINGS.folderTopKOverrides };
-                    this.plugin.settings.enableDebugLogging = DEFAULT_SETTINGS.enableDebugLogging;
-                    this.plugin.settings.embeddingWarmingDebounceSeconds =
-                        DEFAULT_SETTINGS.embeddingWarmingDebounceSeconds;
-                    this.plugin.settings.dashboardAutoRefreshMinutes = DEFAULT_SETTINGS.dashboardAutoRefreshMinutes;
-                    this.plugin.settings.dashboardAutoSnapshotOnSave = DEFAULT_SETTINGS.dashboardAutoSnapshotOnSave;
-                    this.plugin.settings.dashboardMaxSnapshots = DEFAULT_SETTINGS.dashboardMaxSnapshots;
-                    this.plugin.settings.readabilityFormula = DEFAULT_SETTINGS.readabilityFormula;
-                    this.plugin.settings.lorebookFolders = [...DEFAULT_SETTINGS.lorebookFolders];
-                    this.plugin.settings.lorebookFolderTypes = { ...DEFAULT_SETTINGS.lorebookFolderTypes };
-                    this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
-                    this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
-                    this.plugin.settings.coWriterToolsEnabled = DEFAULT_SETTINGS.coWriterToolsEnabled;
-                    this.plugin.settings.lorebookNetworkTools = DEFAULT_SETTINGS.lorebookNetworkTools;
-                    this.plugin.settings.lorebookFandomWikis = [...DEFAULT_SETTINGS.lorebookFandomWikis];
-                    this.plugin.settings.lorebookFandomAllowAllWikis = DEFAULT_SETTINGS.lorebookFandomAllowAllWikis;
-                    this.plugin.settings.lorebookFandomCacheEnabled = DEFAULT_SETTINGS.lorebookFandomCacheEnabled;
-                    this.plugin.settings.lorebookWikipediaLang = DEFAULT_SETTINGS.lorebookWikipediaLang;
-                    this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
-                    this.plugin.settings.lorebookImageTools = DEFAULT_SETTINGS.lorebookImageTools;
-                    this.plugin.settings.lorebookImageMaxDimension = DEFAULT_SETTINGS.lorebookImageMaxDimension;
-                    this.plugin.settings.lorebookImageMaxDescriptionTokens =
-                        DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
-                    this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
-                    this.plugin.settings.lorebookImageTwoPassDescription =
-                        DEFAULT_SETTINGS.lorebookImageTwoPassDescription;
-                    this.plugin.settings.loreEntryImageSectionHeaders = [
-                        ...DEFAULT_SETTINGS.loreEntryImageSectionHeaders
-                    ];
-                    this.plugin.settings.loreEntryImageMaxPerEntry = DEFAULT_SETTINGS.loreEntryImageMaxPerEntry;
-                    this.plugin.settings.loreEntryImageAttachments = DEFAULT_SETTINGS.loreEntryImageAttachments;
-                    this.plugin.settings.loreEntryImageAttachmentFolder =
-                        DEFAULT_SETTINGS.loreEntryImageAttachmentFolder;
-                    this.plugin.settings.slashCommands = [...DEFAULT_SETTINGS.slashCommands];
-                    await this.plugin.saveSettings();
-                    this.display();
-                })
-            );
-    }
-
     /**
-     * Render the footer area. Currently empty and collapsed to 0 height in
-     * `_settings.scss` so it occupies no space. Reserved for a future donation /
-     * support ask — restore the footer sizing there (rules are commented out)
-     * when adding content here.
+     * Declarative items for the General page. Every control's `key` matches a
+     * {@link DEFAULT_SETTINGS} field, so the base {@link PluginSettingTab}
+     * reads/writes/persists automatically — no onChange boilerplate. Numeric
+     * bounds move from blur-handlers (with a Notice + revert) to the control's
+     * `validate`, which surfaces an inline error. The Debug group is gated by a
+     * `visible` predicate so it tree-shakes out of release builds.
      */
-    private renderFooter(containerEl: HTMLElement): void {
-        containerEl.createDiv({ cls: 'quill-settings__footer' });
+    private generalItems(): SettingDefinitionItem[] {
+        return [
+            {
+                type: 'group',
+                heading: 'Sidebar',
+                items: [
+                    {
+                        name: 'Default tab',
+                        desc: 'Which sidebar tab opens by default.',
+                        control: {
+                            type: 'dropdown',
+                            key: 'defaultTab',
+                            options: {
+                                dashboard: 'Dashboard',
+                                linter: 'Linter',
+                                context: 'Context',
+                                review: 'Review',
+                                cowriter: 'Co-writer',
+                                lorebook: 'Lorebook'
+                            }
+                        }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Feature toggles',
+                items: [
+                    {
+                        name: 'Enable dashboard',
+                        desc: 'Show the dashboard tab in the sidebar with per-manuscript analytics.',
+                        control: { type: 'toggle', key: 'enableDashboard' }
+                    },
+                    {
+                        name: 'Critical analysis',
+                        desc: 'Show the analysis engine in the review tab and the right-click analyze command.',
+                        control: { type: 'toggle', key: 'enableCriticalAnalysis' }
+                    },
+                    {
+                        name: 'Manuscript analysis',
+                        desc: 'Show the manuscript analysis engine in the review tab for full-manuscript structural diagnostics.',
+                        control: { type: 'toggle', key: 'enableManuscriptAnalysis' }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Manuscript analysis engine',
+                items: [
+                    {
+                        name: 'Compression chunk size (tokens)',
+                        desc: 'Target tokens per chunk when using compress compaction (chat model summarization). The embedding chunk size is configured separately on the Model behaviors tab. Default: 1024.',
+                        control: {
+                            type: 'number',
+                            key: 'manuscriptAnalysisChunkTokenSize',
+                            min: 256,
+                            max: 8192,
+                            validate: (v) => (v >= 256 && v <= 8192 ? undefined : 'Value must be between 256 and 8192')
+                        }
+                    },
+                    {
+                        name: 'Manuscript analysis temperature',
+                        desc: 'Temperature for manuscript analysis AI responses. Higher values produce more varied output; lower values are more deterministic. Range: 0.0 – 2.0. Default: 0.5.',
+                        control: {
+                            type: 'number',
+                            key: 'manuscriptAnalysisTemperature',
+                            min: 0,
+                            max: 2,
+                            step: 0.1,
+                            validate: (v) => (v >= 0 && v <= 2 ? undefined : 'Value must be between 0.0 and 2.0')
+                        }
+                    },
+                    {
+                        name: 'Manuscript analysis max output tokens',
+                        desc: 'Maximum tokens per manuscript analysis response. Higher allows more detailed reports but uses more quota. Default: 3072.',
+                        control: {
+                            type: 'number',
+                            key: 'manuscriptAnalysisMaxOutputTokens',
+                            min: 1,
+                            max: 65536,
+                            validate: (v) => (v >= 1 && v <= 65536 ? undefined : 'Value must be between 1 and 65536')
+                        }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Debug',
+                visible: () => __DEV__,
+                items: [
+                    {
+                        name: 'Enable debug logging',
+                        desc: 'When enabled, logs AI payload context to the browser console (console.warn). Useful for inspecting the actual data sent to providers.',
+                        control: { type: 'toggle', key: 'enableDebugLogging' }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Dashboard',
+                items: [
+                    {
+                        name: 'Readability formula',
+                        desc: 'Which readability formula to display in the dashboard.',
+                        control: {
+                            type: 'dropdown',
+                            key: 'readabilityFormula',
+                            options: {
+                                'reweighted-flesch': 'Reweighted flesch',
+                                'flesch-kincaid': 'Flesch-kincaid',
+                                ari: 'Automated readability index',
+                                'custom-composite': 'Custom composite',
+                                'dale-chall': 'Dale-chall'
+                            }
+                        }
+                    },
+                    {
+                        name: 'Auto-refresh interval',
+                        desc: 'Refresh the dashboard every n minutes when the tab is active (0 disables).',
+                        control: {
+                            type: 'number',
+                            key: 'dashboardAutoRefreshMinutes',
+                            min: 0,
+                            max: 60,
+                            validate: (v) => (v >= 0 && v <= 60 ? undefined : 'Value must be between 0 and 60')
+                        }
+                    },
+                    {
+                        name: 'Auto-snapshot on save',
+                        desc: 'Record a word-count snapshot whenever a chapter file is saved.',
+                        control: { type: 'toggle', key: 'dashboardAutoSnapshotOnSave' }
+                    },
+                    {
+                        name: 'Max snapshots retained',
+                        desc: 'Maximum number of historical snapshots to keep per manuscript (10-1000). Oldest are pruned first.',
+                        control: {
+                            type: 'number',
+                            key: 'dashboardMaxSnapshots',
+                            min: 10,
+                            max: 1000,
+                            validate: (v) => (v >= 10 && v <= 1000 ? undefined : 'Value must be between 10 and 1000')
+                        }
+                    },
+                    {
+                        name: 'Daily writing goal',
+                        desc: 'Target words per day for the dashboard goals card and streak (0 disables). Default: 500.',
+                        control: {
+                            type: 'number',
+                            key: 'writingDailyGoal',
+                            min: 0,
+                            max: 100000,
+                            validate: (v) => (v >= 0 && v <= 100000 ? undefined : 'Value must be between 0 and 100000')
+                        }
+                    }
+                ]
+            },
+            {
+                name: 'Restore defaults',
+                desc: 'Reset all general settings to their default values.',
+                action: () => {
+                    void this.restoreGeneralDefaults();
+                }
+            }
+        ];
     }
 
-    /** Render the Embeddings settings block into `content` (retrieval index config). */
-    private renderEmbeddingsSettings(content: HTMLElement): void {
-        new Setting(content).setName('Embeddings').setHeading();
-
-        new Setting(content)
-            .setName('Embedding top-k chunks')
-            .setDesc(
-                'Number of chunks (paragraphs) retrieved from embedded folders. Higher = more context but more tokens; lower = tighter focus, less window pressure. Recommended: 8–12 for most use cases. 3–5 keeps overhead minimal. 15+ may crowd the context window.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.embeddingsTopKChunks))
-                    // settings.ts - no Component lifecycle available; raw addEventListener is required
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1 && n <= 100) {
-                            this.plugin.settings.embeddingsTopKChunks = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.embeddingsTopKChunks));
-                            new Notice('Value must be a number between 1 and 100');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Embedding cache warming')
-            .setDesc(
-                'Automatically pre-compute and cache embeddings for each folder containing Markdown files (cast notes, lore, outlines, manuscript chapters). Enables instant semantic retrieval. Root folder is excluded.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableEmbeddingWarming).onChange((value) => {
-                    this.plugin.settings.enableEmbeddingWarming = value;
-                    void this.plugin.saveSettings();
-                    if (value) {
-                        void this.plugin.warmAllEmbeddingCaches();
-                    }
-                })
-            );
-
-        new Setting(content)
-            .setName('Embedding warming debounce (seconds)')
-            .setDesc(
-                'How long to wait after the last file save before warming embeddings. Higher reduces API calls during active writing; lower keeps caches fresher. Default: 30.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.embeddingWarmingDebounceSeconds))
-                    // settings.ts - no Component lifecycle available; raw addEventListener is required
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 5 && n <= 600) {
-                            this.plugin.settings.embeddingWarmingDebounceSeconds = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.embeddingWarmingDebounceSeconds));
-                            new Notice('Value must be a number between 5 and 600');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Build embeddings now')
-            .setDesc(
-                'Immediately pre-compute and cache embeddings for all folders with Markdown files. ' +
-                    'Useful after adding new material or when warming is turned off.'
-            )
-            .addButton((button) =>
-                button.setButtonText('Build').onClick(() => {
-                    button.setDisabled(true);
-                    button.setButtonText('Building\u2026');
-                    void this.plugin
-                        .warmAllEmbeddingCaches()
-                        .then(() => {
-                            new Notice('Quill: Embedding caches rebuilt.');
-                        })
-                        .catch((err: unknown) => {
-                            const msg = err instanceof Error ? err.message : String(err);
-                            new Notice(`Quill: Embedding build failed. ${msg}`);
-                        })
-                        .finally(() => {
-                            button.setDisabled(false);
-                            button.setButtonText('Build');
-                        });
-                })
-            );
-
-        new Setting(content)
-            .setName('Embedding chunk size (tokens)')
-            .setDesc(
-                "Target tokens per chunk when embedding. Must not exceed your embedding model's context window. Many local embedding models (e.g. Nomic-embed-text) support 512; cloud models may support more. Default: 512."
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.embeddingChunkTokenSize))
-                    // settings.ts - no Component lifecycle available; raw addEventListener is required
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 128 && n <= 8192) {
-                            this.plugin.settings.embeddingChunkTokenSize = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.embeddingChunkTokenSize));
-                            new Notice('Value must be a number between 128 and 8192');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Show full embed in file picker')
-            .setDesc(
-                'When enabled, file pickers show a "{Folder name} full embed" option alongside "{Folder name} embedded" (top-K). Full embed sends all chunk texts from the folder; top-K sends only the most relevant. Default: off.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableFullEmbedPickerOption).onChange((value) => {
-                    this.plugin.settings.enableFullEmbedPickerOption = value;
-                    void this.plugin.saveSettings();
-                })
-            );
-
-        // --- Folder-specific top-K overrides ---
-        new Setting(content)
-            .setName('Folder-specific chunk overrides')
-            .setDesc(
-                'Set a custom top-k chunk count for specific embedded folders. Use a higher number for folders that are more important to your writing (e.g., plot maps), and a lower number for auxiliary lore. Folders without an override use the global setting above.'
-            )
-            .setHeading();
-
-        const overridesContainer = content.createDiv({ cls: 'quill-folder-overrides-list' });
-
-        this.renderFolderOverrides(overridesContainer);
-
-        new Setting(content).addButton((button) =>
-            button.setButtonText('+ add folder').onClick(() => {
-                const folders = this.getVaultFolders();
-                new FolderSuggestModal(this.app, folders, (folder) => {
-                    if (this.plugin.settings.folderTopKOverrides[folder]) {
-                        new Notice('Folder already has an override.');
-                        return;
-                    }
-                    this.plugin.settings.folderTopKOverrides[folder] = this.plugin.settings.embeddingsTopKChunks;
-                    void this.plugin.saveSettings();
-                    this.renderFolderOverrides(overridesContainer);
-                }).open();
-            })
-        );
-
-        // --- Lorebook ---
+    /** Restore-defaults action for the General page (resets across all tabs, matching pre-2.0.0 behavior). */
+    private async restoreGeneralDefaults(): Promise<void> {
+        const s = this.plugin.settings;
+        const d = DEFAULT_SETTINGS;
+        s.defaultTab = d.defaultTab;
+        s.enableDashboard = d.enableDashboard;
+        s.enableCriticalAnalysis = d.enableCriticalAnalysis;
+        s.enableManuscriptAnalysis = d.enableManuscriptAnalysis;
+        s.manuscriptAnalysisTemperature = d.manuscriptAnalysisTemperature;
+        s.manuscriptAnalysisMaxOutputTokens = d.manuscriptAnalysisMaxOutputTokens;
+        s.manuscriptAnalysisChunkTokenSize = d.manuscriptAnalysisChunkTokenSize;
+        s.embeddingsTopKChunks = d.embeddingsTopKChunks;
+        s.embeddingChunkTokenSize = d.embeddingChunkTokenSize;
+        s.enableEmbeddingWarming = d.enableEmbeddingWarming;
+        s.enableFullEmbedPickerOption = d.enableFullEmbedPickerOption;
+        s.folderTopKOverrides = { ...d.folderTopKOverrides };
+        s.enableDebugLogging = d.enableDebugLogging;
+        s.embeddingWarmingDebounceSeconds = d.embeddingWarmingDebounceSeconds;
+        s.dashboardAutoRefreshMinutes = d.dashboardAutoRefreshMinutes;
+        s.dashboardAutoSnapshotOnSave = d.dashboardAutoSnapshotOnSave;
+        s.dashboardMaxSnapshots = d.dashboardMaxSnapshots;
+        s.readabilityFormula = d.readabilityFormula;
+        s.writingDailyGoal = d.writingDailyGoal;
+        s.lorebookFolders = [...d.lorebookFolders];
+        s.lorebookFolderTypes = { ...d.lorebookFolderTypes };
+        s.coWriterLoreContext = d.coWriterLoreContext;
+        s.reviewLoreContext = d.reviewLoreContext;
+        s.coWriterToolsEnabled = d.coWriterToolsEnabled;
+        s.lorebookNetworkTools = d.lorebookNetworkTools;
+        s.lorebookFandomWikis = [...d.lorebookFandomWikis];
+        s.lorebookFandomAllowAllWikis = d.lorebookFandomAllowAllWikis;
+        s.lorebookFandomCacheEnabled = d.lorebookFandomCacheEnabled;
+        s.lorebookWikipediaLang = d.lorebookWikipediaLang;
+        s.lorebookToolMaxTokens = d.lorebookToolMaxTokens;
+        s.lorebookImageTools = d.lorebookImageTools;
+        s.lorebookImageMaxDimension = d.lorebookImageMaxDimension;
+        s.lorebookImageMaxDescriptionTokens = d.lorebookImageMaxDescriptionTokens;
+        s.lorebookImageProxyPrompt = d.lorebookImageProxyPrompt;
+        s.lorebookImageTwoPassDescription = d.lorebookImageTwoPassDescription;
+        s.loreEntryImageSectionHeaders = [...d.loreEntryImageSectionHeaders];
+        s.loreEntryImageMaxPerEntry = d.loreEntryImageMaxPerEntry;
+        s.loreEntryImageAttachments = d.loreEntryImageAttachments;
+        s.loreEntryImageAttachmentFolder = d.loreEntryImageAttachmentFolder;
+        s.slashCommands = [...d.slashCommands];
+        await this.plugin.saveSettings();
+        this.update();
     }
 
     /** Render the Lorebook tab — lorebook config, cached wikis, lore entry images, lore folders. */
-    private renderLorebookTab(containerEl: HTMLElement): void {
-        const content = containerEl.createDiv({ cls: 'quill-settings-content-lorebook' });
-        this.renderLorebookSettings(content);
-    }
-
-    /** Render the lorebook settings block into `content`. */
-    private renderLorebookSettings(content: HTMLElement): void {
-        new Setting(content).setName('Lorebook').setHeading();
-
-        new Setting(content)
-            .setName('Feed lore into co-writer')
-            .setDesc(
-                'Automatically include relevant lore entries as context when generating with the co-writer. Retrieved via the embedding cache. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.coWriterLoreContext).onChange(async (value) => {
-                    this.plugin.settings.coWriterLoreContext = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Feed lore into review engines')
-            .setDesc(
-                'Automatically include relevant lore entries as context for editorial feedback, critical analysis, and manuscript analysis. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.reviewLoreContext).onChange(async (value) => {
-                    this.plugin.settings.reviewLoreContext = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Co-writer tool use')
-            .setDesc(
-                'Let the co-writer (discuss, coach, and lorebook modes) call tools ' +
-                    '(manuscript mentions, lore siblings, vault lookup) via the model\u2019s native ' +
-                    'tool-calling API so it can look up details mid-conversation. Turn off if your ' +
-                    'model doesn\u2019t support tool calling or to avoid the extra turn consumption. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.coWriterToolsEnabled).onChange(async (value) => {
-                    this.plugin.settings.coWriterToolsEnabled = value;
-                    await this.plugin.saveSettings();
-                    this.display();
-                })
-            );
-
-        new Setting(content)
-            .setName('Network tools')
-            .setDesc(
-                'Allow the co-writer to call network tools (fetch_url, fandom_lookup, ' +
-                    'wikipedia_lookup). These send requests to external sites — disable only ' +
-                    'if you want to restrict the AI from researching canon, references, or web ' +
-                    'pages. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.lorebookNetworkTools).onChange(async (value) => {
-                    this.plugin.settings.lorebookNetworkTools = value;
-                    await this.plugin.saveSettings();
-                    this.display();
-                })
-            );
-
-        new Setting(content)
-            .setName('Fandom wikis')
-            .setDesc(
-                'Comma-separated Fandom wiki subdomains the AI may query ' +
-                    '(e.g., "starwars, memory-alpha, lotr"). Leave empty to disable Fandom lookups.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(this.plugin.settings.lorebookFandomWikis.join(', '))
-                    .inputEl.addEventListener('blur', () => {
-                        const wikis = text.inputEl.value
-                            .split(',')
-                            .map((s) => s.trim().toLowerCase())
-                            .filter((s) => s.length > 0);
-                        this.plugin.settings.lorebookFandomWikis = wikis;
-                        void this.plugin.saveSettings();
-                    })
-            );
-
-        new Setting(content)
-            .setName('Allow any wiki')
-            .setDesc(
-                'Caution: lets the co-writer query ANY Fandom wiki subdomain it chooses, ' +
-                    'not just the allowlist above. Prefer the allowlist unless you specifically need this.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.lorebookFandomAllowAllWikis).onChange(async (value) => {
-                    this.plugin.settings.lorebookFandomAllowAllWikis = value;
-                    await this.plugin.saveSettings();
-                    if (value) {
-                        new Notice('Quill: Fandom is now unrestricted — the co-writer can query any wiki it chooses.');
+    /**
+     * Declarative items for the Lorebook page. Scalar settings are native
+     * controls; the dynamic collections (slash commands, lorebook folders,
+     * fandom wiki allowlist, gallery section headings) and the conditional
+     * cached-wikis manager are SettingDefinitionRender items (their elements
+     * are dynamic arrays that don't map to fixed control keys, and the
+     * cached-wikis view loads stats asynchronously). Providers on the AI
+     * providers tab (Phase 6) are the one collection that benefits from a
+     * SettingDefinitionList-of-pages.
+     */
+    private lorebookItems(): SettingDefinitionItem[] {
+        return [
+            {
+                type: 'group',
+                heading: 'Lorebook',
+                items: [
+                    {
+                        name: 'Feed lore into co-writer',
+                        desc: 'Automatically include relevant lore entries as context when generating with the co-writer. Retrieved via the embedding cache. Default: on.',
+                        control: { type: 'toggle', key: 'coWriterLoreContext' }
+                    },
+                    {
+                        name: 'Feed lore into review engines',
+                        desc: 'Automatically include relevant lore entries as context for editorial feedback, critical analysis, and manuscript analysis. Default: on.',
+                        control: { type: 'toggle', key: 'reviewLoreContext' }
+                    },
+                    {
+                        name: 'Co-writer tool use',
+                        desc: 'Let the co-writer (discuss, coach, and lorebook modes) call tools (manuscript mentions, lore siblings, vault lookup) via the model’s native tool-calling API so it can look up details mid-conversation. Turn off if your model doesn’t support tool calling or to avoid the extra turn consumption. Default: on.',
+                        control: { type: 'toggle', key: 'coWriterToolsEnabled' }
+                    },
+                    {
+                        name: 'Network tools',
+                        desc: 'Allow the co-writer to call network tools (fetch_url, fandom_lookup, wikipedia_lookup). These send requests to external sites — disable only if you want to restrict the AI from researching canon, references, or web pages. Default: on.',
+                        control: { type: 'toggle', key: 'lorebookNetworkTools' }
+                    },
+                    {
+                        name: 'Fandom wikis',
+                        desc: 'Comma-separated Fandom wiki subdomains the AI may query (e.g., "starwars, memory-alpha, lotr"). Leave empty to disable Fandom lookups.',
+                        render: (setting) => this.renderFandomWikisField(setting)
+                    },
+                    {
+                        name: 'Allow any wiki',
+                        desc: 'Caution: lets the co-writer query ANY Fandom wiki subdomain it chooses, not just the allowlist above. Prefer the allowlist unless you specifically need this.',
+                        control: { type: 'toggle', key: 'lorebookFandomAllowAllWikis' }
+                    },
+                    {
+                        name: 'Fandom page cache',
+                        desc: 'Save lookups to a local cache so repeats skip the network — more private, and works offline once cached. Once populated, cached pages answer even with network tools off (consent is at sync time). Lives in the plugin data folder, not your vault.',
+                        control: { type: 'toggle', key: 'lorebookFandomCacheEnabled' }
+                    },
+                    {
+                        name: 'Sync fandom wiki cache',
+                        desc: 'Download every page from an allowlisted wiki into the local cache. Fair-rate and cancelable (via the cancel command). Useful before going offline.',
+                        action: () => {
+                            this.plugin.pickFandomWikiForSync();
+                        }
+                    },
+                    {
+                        name: 'Cached wikis',
+                        desc: 'Per-wiki cache size, page/image counts, and last-sync time, with a clear-cache action.',
+                        visible: () => this.plugin.settings.lorebookFandomCacheEnabled,
+                        render: (setting) => this.renderFandomCachedWikis(setting)
+                    },
+                    {
+                        name: 'Wikipedia language',
+                        desc: 'Wikipedia language subdomain (e.g., "en", "fr", "de", "simple"). Default: en.',
+                        control: {
+                            type: 'text',
+                            key: 'lorebookWikipediaLang',
+                            validate: (v) =>
+                                isValidWikipediaLang(v)
+                                    ? undefined
+                                    : 'Use a language subdomain like "en", "fr", or "simple".'
+                        }
+                    },
+                    {
+                        name: 'Network tool result limit (tokens)',
+                        desc: 'Maximum tokens returned per network tool call. Default: 2000.',
+                        control: {
+                            type: 'number',
+                            key: 'lorebookToolMaxTokens',
+                            min: 100,
+                            validate: (v) => (v >= 100 ? undefined : 'Value must be a number >= 100')
+                        }
+                    },
+                    {
+                        name: 'Image tools',
+                        desc: 'Allow the co-writer to call image-fetching tools — fetch_image_url (download any image URL), fandom_image (Fandom lead/gallery images), and wikipedia_image (Wikipedia lead portraits). Images are downscaled before delivery. Requires a vision-capable chat model (role "Chat + image") or a dedicated image model (role "Image") to have any effect. Default: on.',
+                        control: { type: 'toggle', key: 'lorebookImageTools' }
+                    },
+                    {
+                        name: 'Image max dimension (px)',
+                        desc: 'Longest-side cap before downscale. Smaller values save context budget. Default: 512.',
+                        control: {
+                            type: 'number',
+                            key: 'lorebookImageMaxDimension',
+                            min: 64,
+                            max: 2048,
+                            validate: (v) => (v >= 64 && v <= 2048 ? undefined : 'Value must be between 64 and 2048')
+                        }
+                    },
+                    {
+                        name: 'Image description token budget',
+                        desc: 'Max output tokens for the Regime B image-description call. Higher values let the model describe every character in a group image; lower values are faster on local hardware. The model stops early when it finishes — this is a ceiling, not a target. Default: 2048.',
+                        control: {
+                            type: 'number',
+                            key: 'lorebookImageMaxDescriptionTokens',
+                            min: 256,
+                            max: 8192,
+                            validate: (v) => (v >= 256 && v <= 8192 ? undefined : 'Value must be between 256 and 8192')
+                        }
+                    },
+                    {
+                        name: 'Image proxy prompt',
+                        desc: 'When your chat model is text-only and a separate image model is configured, this tells the image model how to describe images into text. Edit to focus on what matters for your fiction (clothing, architecture, mood, etc.).',
+                        control: { type: 'textarea', key: 'lorebookImageProxyPrompt', rows: 4 }
+                    },
+                    {
+                        name: 'Two-pass image description',
+                        desc: 'When your chat model is text-only and a separate image model is configured, describe multi-image batches in two passes: the image model first counts and labels each visible character, then describes each with that list as grounding. Helps weaker vision models keep per-character descriptions coherent across a group. Only applies when more than one image is attached — single images skip the count pass.',
+                        control: { type: 'toggle', key: 'lorebookImageTwoPassDescription' }
                     }
-                })
-            );
-
-        new Setting(content)
-            .setName('Fandom page cache')
-            .setDesc(
-                'Save lookups to a local cache so repeats skip the network — more private, and works offline once cached. ' +
-                    'Once populated, cached pages answer even with network tools off (consent is at sync time). ' +
-                    'Lives in the plugin data folder, not your vault.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.lorebookFandomCacheEnabled).onChange(async (value) => {
-                    this.plugin.settings.lorebookFandomCacheEnabled = value;
-                    await this.plugin.saveSettings();
-                    this.display();
-                })
-            );
-
-        new Setting(content)
-            .setName('Sync fandom wiki cache')
-            .setDesc(
-                'Download every page from an allowlisted wiki into the local cache. Fair-rate and cancelable (via the cancel command). Useful before going offline.'
-            )
-            .addButton((btn) =>
-                btn.setButtonText('Sync now').onClick(() => {
-                    this.plugin.pickFandomWikiForSync();
-                })
-            );
-
-        // Per-wiki cache management (Stage 4) — size/pages/images/last-synced +
-        // Clear. Rendered only when the cache is enabled; stats load async.
-        if (this.plugin.settings.lorebookFandomCacheEnabled) {
-            new Setting(content).setName('Cached wikis').setHeading();
-            const cachedWikis = this.plugin.settings.lorebookFandomWikis;
-            if (cachedWikis.length === 0) {
-                new Setting(content).setDesc(
-                    'No allowlisted wikis to show. Add a wiki subdomain above to manage its cache.'
-                );
-            } else {
-                for (const wiki of cachedWikis) {
-                    const row = new Setting(content).setName(wiki).setDesc('Loading cache stats…');
-                    row.addButton((btn) =>
-                        btn
-                            .setButtonText('Clear')
-                            .setWarning()
-                            .onClick(async () => {
-                                btn.setButtonText('Clearing…').setDisabled(true);
-                                await this.plugin.clearFandomWikiCache(wiki);
-                                this.display();
-                            })
-                    );
-                    void this.plugin.fandomCache?.getWikiStats(wiki).then((stats) => {
-                        row.setDesc(formatFandomCacheStats(stats));
-                    });
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Lore entry images',
+                items: [
+                    {
+                        name: 'Image gallery section headings',
+                        desc: "Comma-separated headings that mark a lore entry's image-gallery section (case-insensitive). The scanner parses image embeds (e.g., `![[file.png]]`) under any matching heading and surfaces them to the AI via the get_lore_image tool. Subheadings within the gallery section become per-image labels (useful for multi-form characters). Example headings: 'Reference', 'Gallery', 'Forms', 'Appearance'.",
+                        render: (setting) => this.renderStringListField(setting, 'loreEntryImageSectionHeaders')
+                    },
+                    {
+                        name: 'Max images per lore entry',
+                        desc: 'Soft cap on the number of images the scanner extracts per entry. Overflow is silently dropped — the cap is a budget tool, not a content rule. The writer can still place more embeds in the note body. Default: 4.',
+                        control: {
+                            type: 'number',
+                            key: 'loreEntryImageMaxPerEntry',
+                            min: 1,
+                            max: 20,
+                            validate: (v) => (v >= 1 && v <= 20 ? undefined : 'Value must be between 1 and 20')
+                        }
+                    },
+                    {
+                        name: 'Agent image attachments',
+                        desc: 'Allow the lorebook coach and batch tools to propose image attachments for your review. On: the coach can attach images when drafting an entry, and the batch tool can attach images to existing entries. Every attachment flows through the review queue — nothing is written without your approval. Off: the agent cannot attach images, but you can still add them manually via ![[file]] embeds. Does not affect other tools. Default: on.',
+                        control: { type: 'toggle', key: 'loreEntryImageAttachments' }
+                    },
+                    {
+                        name: 'Attachment folder',
+                        desc: 'Where agent-attached images are written on approval. Empty uses Obsidian’s configured attachment folder. Vault-relative path (e.g., "Attachments/Lore").',
+                        control: { type: 'text', key: 'loreEntryImageAttachmentFolder' }
+                    },
+                    {
+                        name: 'Prefer editing existing lore',
+                        desc: 'When the lorebook coach drafts a new entry whose exact name already matches a note in your vault, refuse the draft and point it at edit_note / insert_note / append_to_note instead. Avoids duplicate notes that strand [[wikilinks]] pointing at the original. Off = allow unconditional creation. Default: on.',
+                        control: { type: 'toggle', key: 'lorePreferEditOverCreate' }
+                    }
+                ]
+            },
+            {
+                name: 'Slash commands',
+                desc: 'Shortcut snippets for the co-writer chat input. Typing "/" at the start of a line opens a picker listing matching commands; choosing one inserts the body into the input, fully editable before sending. Empty list (the default) disables the picker. Names must be kebab-case (lowercase letters, digits, hyphens; must start with a letter).',
+                render: (setting) => {
+                    const container = setting.controlEl.createDiv({ cls: 'quill-slash-command-list' });
+                    this.renderSlashCommands(container);
+                }
+            },
+            {
+                name: 'Lorebook folders',
+                desc: 'Folders scanned for lore entries. Any Markdown file under one of these folders is treated as a lore entry. Set a per-folder type default so every file inherits it without frontmatter; leave as mixed to type files individually via the quill-type key.',
+                render: (setting) => {
+                    const container = setting.controlEl.createDiv({ cls: 'quill-folder-overrides-list' });
+                    this.renderLorebookFolders(container);
                 }
             }
-        }
-
-        new Setting(content)
-            .setName('Wikipedia language')
-            .setDesc('Wikipedia language subdomain (e.g., "en", "fr", "de", "simple"). Default: en.')
-            .addText((text) =>
-                text.setValue(this.plugin.settings.lorebookWikipediaLang).inputEl.addEventListener('blur', () => {
-                    const lang = text.inputEl.value.trim().toLowerCase();
-                    if (!lang) {
-                        this.plugin.settings.lorebookWikipediaLang = 'en';
-                        void this.plugin.saveSettings();
-                        // Keep the visible field in sync with the reverted default.
-                        text.inputEl.value = 'en';
-                        return;
-                    }
-                    if (!isValidWikipediaLang(lang)) {
-                        new Notice(
-                            `Quill: "${lang}" is not a valid Wikipedia language code (use a subdomain like "en", "fr", or "simple").`
-                        );
-                        text.inputEl.value = this.plugin.settings.lorebookWikipediaLang;
-                        return;
-                    }
-                    this.plugin.settings.lorebookWikipediaLang = lang;
-                    void this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Network tool result limit (tokens)')
-            .setDesc('Maximum tokens returned per network tool call. Default: 2000.')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.lorebookToolMaxTokens))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 100) {
-                            this.plugin.settings.lorebookToolMaxTokens = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.lorebookToolMaxTokens));
-                            new Notice('Value must be a number ≥ 100');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Image tools')
-            .setDesc(
-                'Allow the co-writer to call image-fetching tools — fetch_image_url (download any ' +
-                    'image URL), fandom_image (Fandom lead/gallery images), and wikipedia_image ' +
-                    '(Wikipedia lead portraits). Images are downscaled before delivery. Requires a ' +
-                    'vision-capable chat model (role "Chat + image") or a dedicated image model ' +
-                    '(role "Image") to have any effect. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.lorebookImageTools).onChange(async (value) => {
-                    this.plugin.settings.lorebookImageTools = value;
-                    await this.plugin.saveSettings();
-                    this.display();
-                })
-            );
-
-        new Setting(content)
-            .setName('Image max dimension (px)')
-            .setDesc('Longest-side cap before downscale. Smaller values save context budget. Default: 512.')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.lorebookImageMaxDimension))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 64 && n <= 2048) {
-                            this.plugin.settings.lorebookImageMaxDimension = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.lorebookImageMaxDimension));
-                            new Notice('Value must be a number between 64 and 2048');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Image description token budget')
-            .setDesc(
-                'Max output tokens for the Regime B image-description call. Higher values let the model ' +
-                    'describe every character in a group image; lower values are faster on local hardware. ' +
-                    'The model stops early when it finishes — this is a ceiling, not a target. Default: 2048.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.lorebookImageMaxDescriptionTokens))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 256 && n <= 8192) {
-                            this.plugin.settings.lorebookImageMaxDescriptionTokens = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.lorebookImageMaxDescriptionTokens));
-                            new Notice('Value must be a number between 256 and 8192');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Image proxy prompt')
-            .setDesc(
-                'When your chat model is text-only and a separate image model is configured, ' +
-                    'this tells the image model how to describe images into text. Edit to focus ' +
-                    'on what matters for your fiction (clothing, architecture, mood, etc.).'
-            )
-            .addTextArea((text) =>
-                text.setValue(this.plugin.settings.lorebookImageProxyPrompt).inputEl.addEventListener('blur', () => {
-                    const value = text.inputEl.value.trim();
-                    if (value.length > 0) {
-                        this.plugin.settings.lorebookImageProxyPrompt = value;
-                    } else {
-                        // Restore the default and keep the visible input in
-                        // sync so the displayed text matches the saved setting.
-                        this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_IMAGE_PROXY_PROMPT;
-                        text.inputEl.value = DEFAULT_IMAGE_PROXY_PROMPT;
-                    }
-                    void this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Two-pass image description')
-            .setDesc(
-                'When your chat model is text-only and a separate image model is configured, describe ' +
-                    'multi-image batches in two passes: the image model first counts and labels each ' +
-                    'visible character, then describes each with that list as grounding. Helps weaker ' +
-                    'vision models keep per-character descriptions coherent across a group. Only ' +
-                    'applies when more than one image is attached — single images skip the count pass.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.lorebookImageTwoPassDescription).onChange((value) => {
-                    this.plugin.settings.lorebookImageTwoPassDescription = value;
-                    void this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content).setName('Lore entry images').setHeading();
-        new Setting(content)
-            .setName('Image gallery section headings')
-            .setDesc(
-                "Comma-separated headings that mark a lore entry's image-gallery section (case-insensitive). " +
-                    'The scanner parses image embeds (e.g., `![[file.png]]`) under any matching heading and ' +
-                    'surfaces them to the AI via the get_lore_image tool. Subheadings within the gallery ' +
-                    'section become per-image labels (useful for multi-form characters). Example headings: ' +
-                    "'Reference', 'Gallery', 'Forms', 'Appearance'."
-            )
-            .addText((text) =>
-                text
-                    .setValue(this.plugin.settings.loreEntryImageSectionHeaders.join(', '))
-                    .inputEl.addEventListener('blur', () => {
-                        const value = text.inputEl.value
-                            .split(',')
-                            .map((s) => s.trim())
-                            .filter((s) => s.length > 0);
-                        this.plugin.settings.loreEntryImageSectionHeaders = value;
-                        void this.plugin.saveSettings();
-                    })
-            );
-
-        new Setting(content)
-            .setName('Max images per lore entry')
-            .setDesc(
-                'Soft cap on the number of images the scanner extracts per entry. Overflow is silently ' +
-                    'dropped — the cap is a budget tool, not a content rule. The writer can still place ' +
-                    'more embeds in the note body. Default: 4.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.loreEntryImageMaxPerEntry))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1 && n <= 20) {
-                            this.plugin.settings.loreEntryImageMaxPerEntry = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.loreEntryImageMaxPerEntry));
-                            new Notice('Value must be a number between 1 and 20');
-                        }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Agent image attachments')
-            .setDesc(
-                'Allow the lorebook coach and batch tools to propose image attachments for your review. ' +
-                    'On: the coach can attach images when drafting an entry, and the batch tool can attach ' +
-                    'images to existing entries. Every attachment flows through the review queue — nothing ' +
-                    'is written without your approval. Off: the agent cannot attach images, but you can ' +
-                    'still add them manually via ![[file]] embeds. Does not affect other tools. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.loreEntryImageAttachments).onChange(async (value) => {
-                    this.plugin.settings.loreEntryImageAttachments = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Attachment folder')
-            .setDesc(
-                'Where agent-attached images are written on approval. Empty uses Obsidian’s configured ' +
-                    'attachment folder. Vault-relative path (e.g., "Attachments/Lore").'
-            )
-            .addText((text) =>
-                text
-                    .setValue(this.plugin.settings.loreEntryImageAttachmentFolder)
-                    .inputEl.addEventListener('blur', () => {
-                        const value = text.inputEl.value.trim();
-                        this.plugin.settings.loreEntryImageAttachmentFolder = value;
-                        void this.plugin.saveSettings();
-                    })
-            );
-
-        new Setting(content)
-            .setName('Prefer editing existing lore')
-            .setDesc(
-                'When the lorebook coach drafts a new entry whose exact name already matches a note in ' +
-                    'your vault, refuse the draft and point it at edit_note / insert_note / append_to_note ' +
-                    'instead. Avoids duplicate notes that strand [[wikilinks]] pointing at the original. ' +
-                    'Off = allow unconditional creation. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.lorePreferEditOverCreate).onChange(async (value) => {
-                    this.plugin.settings.lorePreferEditOverCreate = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        // --- Slash commands (co-writer input shortcuts) ---
-        new Setting(content)
-            .setName('Slash commands')
-            .setDesc(
-                'Shortcut snippets for the co-writer chat input. Typing "/" at the start of a line ' +
-                    'opens a picker listing matching commands; choosing one inserts the body into ' +
-                    'the input, fully editable before sending. Empty list (the default) disables ' +
-                    'the picker. Names must be kebab-case (lowercase letters, digits, hyphens; ' +
-                    'must start with a letter).'
-            )
-            .setHeading();
-
-        const slashCmdContainer = content.createDiv({ cls: 'quill-slash-command-list' });
-        this.renderSlashCommands(slashCmdContainer);
-
-        new Setting(content).addButton((button) =>
-            button.setButtonText('+ add command').onClick(() => {
-                this.plugin.settings.slashCommands.push({ name: '', description: '', body: '' });
-                void this.plugin.saveSettings().then(() => this.display());
-            })
-        );
-
-        new Setting(content)
-            .setName('Lorebook folders')
-            .setDesc(
-                'Folders scanned for lore entries. Any Markdown file under one of these folders is treated as a lore entry. Set a per-folder type default so every file inherits it without frontmatter; leave as mixed to type files individually via the quill-type key.'
-            )
-            .setHeading();
-
-        const loreFoldersContainer = content.createDiv({ cls: 'quill-folder-overrides-list' });
-        this.renderLorebookFolders(loreFoldersContainer);
-
-        new Setting(content).addButton((button) =>
-            button.setButtonText('+ add folder').onClick(() => {
-                const folders = this.getVaultFolders().filter((f) => !this.plugin.settings.lorebookFolders.includes(f));
-                new FolderSuggestModal(this.app, folders, (folder) => {
-                    if (this.plugin.settings.lorebookFolders.includes(folder)) {
-                        new Notice('Folder already in lorebook.');
-                        return;
-                    }
-                    this.plugin.settings.lorebookFolders.push(folder);
-                    this.plugin.settings.lorebookFolders.sort((a, b) => a.localeCompare(b));
-                    void this.plugin.saveSettings();
-                    this.renderLorebookFolders(loreFoldersContainer);
-                }).open();
-            })
-        );
+        ];
     }
 
-    private renderLinterTab(containerEl: HTMLElement): void {
-        const content = containerEl.createDiv({ cls: 'quill-settings-content-linter' });
+    /** Comma-separated text field bound to a string[] settings field (fandom wikis). */
+    private renderFandomWikisField(setting: Setting): void {
+        const input = setting.controlEl.createEl('input', {
+            type: 'text',
+            cls: 'quill-fandom-wikis-input',
+            attr: { placeholder: 'Starwars, memory-alpha, lotr' }
+        });
+        input.value = this.plugin.settings.lorebookFandomWikis.join(', ');
+        input.addEventListener('blur', () => {
+            this.plugin.settings.lorebookFandomWikis = input.value
+                .split(',')
+                .map((s) => s.trim().toLowerCase())
+                .filter((s) => s.length > 0);
+            void this.plugin.saveSettings();
+            input.value = this.plugin.settings.lorebookFandomWikis.join(', ');
+        });
+    }
 
-        new Setting(content).setName('Prose linter').setHeading();
+    /** Comma-separated text field bound to a generic string[] settings field. */
+    private renderStringListField(setting: Setting, key: 'loreEntryImageSectionHeaders'): void {
+        const input = setting.controlEl.createEl('input', { type: 'text', cls: 'quill-stringlist-input' });
+        input.value = this.plugin.settings[key].join(', ');
+        input.addEventListener('blur', () => {
+            this.plugin.settings[key] = input.value
+                .split(',')
+                .map((s) => s.trim())
+                .filter((s) => s.length > 0);
+            void this.plugin.saveSettings();
+            input.value = this.plugin.settings[key].join(', ');
+        });
+    }
 
-        new Setting(content)
-            .setName('Linter mode')
-            .setDesc('Choose which rule sets are active.')
-            .addDropdown((dropdown) =>
-                dropdown
-                    .addOption('all', 'All rules')
-                    .addOption('prose', 'Prose rules only')
-                    .addOption('ai', 'AI detection only')
-                    .setValue(this.plugin.settings.linterMode)
-                    .onChange(async (value) => {
-                        this.plugin.settings.linterMode = value as LinterMode;
-                        await this.plugin.saveSettings();
+    /** Per-wiki cache stats + clear-cache buttons (async stats load). */
+    private renderFandomCachedWikis(setting: Setting): void {
+        const wrap = setting.controlEl.createDiv({ cls: 'quill-fandom-cached-wikis' });
+        /** (Re)render one row per allowlisted wiki with live cache stats + a clear button. */
+        const draw = () => {
+            wrap.empty();
+            const wikis = this.plugin.settings.lorebookFandomWikis;
+            if (wikis.length === 0) {
+                wrap.createDiv({ cls: 'quill-settings__empty-hint', text: 'No allowlisted wikis to show.' });
+                return;
+            }
+            for (const wiki of wikis) {
+                const row = new Setting(wrap).setName(wiki).setDesc('Loading cache stats…');
+                row.addButton((btn) =>
+                    btn
+                        .setButtonText('Clear')
+                        .setDestructive()
+                        .onClick(async () => {
+                            btn.setButtonText('Clearing…').setDisabled(true);
+                            await this.plugin.clearFandomWikiCache(wiki);
+                            this.update();
+                        })
+                );
+                void this.plugin.fandomCache
+                    ?.getWikiStats(wiki)
+                    .then((stats) => {
+                        row.setDesc(formatFandomCacheStats(stats));
                     })
-            );
+                    .catch(() => {
+                        row.setDesc('Cache stats unavailable.');
+                    });
+            }
+        };
+        draw();
+    }
 
-        new Setting(content)
-            .setName('Lint on save')
-            .setDesc('Automatically run the prose linter when the document is saved.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.lintOnSave).onChange(async (value) => {
-                    this.plugin.settings.lintOnSave = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Long sentences')
-            .setDesc('Flag sentences exceeding the word limit below.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableLongSentences).onChange(async (value) => {
-                    this.plugin.settings.enableLongSentences = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Max words per sentence')
-            .setDesc('Sentences longer than this many words will be flagged.')
-            .addText((text) =>
-                text.setValue(String(this.plugin.settings.maxSentenceWords)).inputEl.addEventListener('blur', () => {
-                    const n = parseInt(text.inputEl.value, 10);
-                    if (!isNaN(n) && n >= 1) {
-                        this.plugin.settings.maxSentenceWords = n;
-                        void this.plugin.saveSettings();
-                    } else {
-                        text.setValue(String(this.plugin.settings.maxSentenceWords));
-                        new Notice('Value must be a number ≥ 1');
-                    }
-                })
-            );
-
-        new Setting(content)
-            .setName('Passive voice')
-            .setDesc(
-                'Flag instances of passive voice. Disabled by default — it is often a valid stylistic choice in fiction.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enablePassiveVoice).onChange(async (value) => {
-                    this.plugin.settings.enablePassiveVoice = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Adverbs')
-            .setDesc(
-                'Flag adverbs (e.g. Quickly, slowly, very). Enabled by default — a common teaching tool for new writers.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableAdverbCheck).onChange(async (value) => {
-                    this.plugin.settings.enableAdverbCheck = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Qualifiers')
-            .setDesc('Flag weak qualifiers (very, really, quite, etc.).')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableQualifierCheck).onChange(async (value) => {
-                    this.plugin.settings.enableQualifierCheck = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Repeated words')
-            .setDesc('Flag words repeated 3+ times in a single line.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableRepeatedWords).onChange(async (value) => {
-                    this.plugin.settings.enableRepeatedWords = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Min word length for repeats')
-            .setDesc('Words shorter than this are ignored by the repeated-words rule.')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.minRepeatedWordLength))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1) {
-                            this.plugin.settings.minRepeatedWordLength = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.minRepeatedWordLength));
-                            new Notice('Value must be a number ≥ 1');
+    /** Declarative items for the Linter page (prose + AI-detection + gremlins rules). */
+    private linterItems(): SettingDefinitionItem[] {
+        return [
+            {
+                type: 'group',
+                heading: 'Prose linter',
+                items: [
+                    {
+                        name: 'Linter mode',
+                        desc: 'Choose which rule sets are active.',
+                        control: {
+                            type: 'dropdown',
+                            key: 'linterMode',
+                            options: { all: 'All rules', prose: 'Prose rules only', ai: 'AI detection only' }
                         }
-                    })
-            );
-
-        new Setting(content)
-            .setName('Echoes')
-            .setDesc('Flag sentences in a paragraph that start with the same two words.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableEchoes).onChange(async (value) => {
-                    this.plugin.settings.enableEchoes = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Telling vs showing')
-            .setDesc('Flag emotional tells (e.g. He felt angry) that could be shown instead.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableTellingVsShowing).onChange(async (value) => {
-                    this.plugin.settings.enableTellingVsShowing = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Dialogue tags')
-            .setDesc('Flag overused or repetitive dialogue tags.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableDialogueTags).onChange(async (value) => {
-                    this.plugin.settings.enableDialogueTags = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Complex words')
-            .setDesc('Flag words with many syllables that may be hard to read.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableComplexWords).onChange(async (value) => {
-                    this.plugin.settings.enableComplexWords = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Max syllables per word')
-            .setDesc('Words with at least this many syllables are flagged by the complex-words rule.')
-            .addText((text) =>
-                text.setValue(String(this.plugin.settings.maxSyllablesPerWord)).inputEl.addEventListener('blur', () => {
-                    const n = parseInt(text.inputEl.value, 10);
-                    if (!isNaN(n) && n >= 1) {
-                        this.plugin.settings.maxSyllablesPerWord = n;
-                        void this.plugin.saveSettings();
-                    } else {
-                        text.setValue(String(this.plugin.settings.maxSyllablesPerWord));
-                        new Notice('Value must be a number ≥ 1');
+                    },
+                    {
+                        name: 'Lint on save',
+                        desc: 'Automatically run the prose linter when the document is saved.',
+                        control: { type: 'toggle', key: 'lintOnSave' }
+                    },
+                    {
+                        name: 'Long sentences',
+                        desc: 'Flag sentences exceeding the word limit below.',
+                        control: { type: 'toggle', key: 'enableLongSentences' }
+                    },
+                    {
+                        name: 'Max words per sentence',
+                        desc: 'Sentences longer than this many words will be flagged.',
+                        control: {
+                            type: 'number',
+                            key: 'maxSentenceWords',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
+                    },
+                    {
+                        name: 'Passive voice',
+                        desc: 'Flag instances of passive voice. Disabled by default — it is often a valid stylistic choice in fiction.',
+                        control: { type: 'toggle', key: 'enablePassiveVoice' }
+                    },
+                    {
+                        name: 'Adverbs',
+                        desc: 'Flag adverbs (e.g. Quickly, slowly, very). Enabled by default — a common teaching tool for new writers.',
+                        control: { type: 'toggle', key: 'enableAdverbCheck' }
+                    },
+                    {
+                        name: 'Qualifiers',
+                        desc: 'Flag weak qualifiers (very, really, quite, etc.).',
+                        control: { type: 'toggle', key: 'enableQualifierCheck' }
+                    },
+                    {
+                        name: 'Repeated words',
+                        desc: 'Flag words repeated 3+ times in a single line.',
+                        control: { type: 'toggle', key: 'enableRepeatedWords' }
+                    },
+                    {
+                        name: 'Min word length for repeats',
+                        desc: 'Words shorter than this are ignored by the repeated-words rule.',
+                        control: {
+                            type: 'number',
+                            key: 'minRepeatedWordLength',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
+                    },
+                    {
+                        name: 'Echoes',
+                        desc: 'Flag sentences in a paragraph that start with the same two words.',
+                        control: { type: 'toggle', key: 'enableEchoes' }
+                    },
+                    {
+                        name: 'Telling vs showing',
+                        desc: 'Flag emotional tells (e.g. He felt angry) that could be shown instead.',
+                        control: { type: 'toggle', key: 'enableTellingVsShowing' }
+                    },
+                    {
+                        name: 'Dialogue tags',
+                        desc: 'Flag overused or repetitive dialogue tags.',
+                        control: { type: 'toggle', key: 'enableDialogueTags' }
+                    },
+                    {
+                        name: 'Complex words',
+                        desc: 'Flag words with many syllables that may be hard to read.',
+                        control: { type: 'toggle', key: 'enableComplexWords' }
+                    },
+                    {
+                        name: 'Max syllables per word',
+                        desc: 'Words with at least this many syllables are flagged by the complex-words rule.',
+                        control: {
+                            type: 'number',
+                            key: 'maxSyllablesPerWord',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
                     }
-                })
-            );
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'AI detection',
+                items: [
+                    {
+                        name: 'AI clichés',
+                        desc: 'Flag overused AI words (tapestry, testament, delve, vibrant, realm, etc.).',
+                        control: { type: 'toggle', key: 'enableAiCliches' }
+                    },
+                    {
+                        name: 'Em dashes',
+                        desc: 'Flag em dashes (—). Common AI overuse — consider commas, colons, or sentence breaks.',
+                        control: { type: 'toggle', key: 'enableAiEmDashes' }
+                    },
+                    {
+                        name: 'Negation patterns',
+                        desc: 'Flag "it\'s not X, it\'s y" constructions. State what things are directly.',
+                        control: { type: 'toggle', key: 'enableAiNegation' }
+                    },
+                    {
+                        name: 'Filler adverbs',
+                        desc: 'Flag strategy adverbs common in AI prose (quietly, deliberately, gently, etc.).',
+                        control: { type: 'toggle', key: 'enableAiFillerAdverbs' }
+                    },
+                    {
+                        name: 'Hedging language',
+                        desc: 'Flag hedging words (might, could, perhaps, maybe) that weaken prose.',
+                        control: { type: 'toggle', key: 'enableAiHedging' }
+                    },
+                    {
+                        name: 'Wrap-up phrases',
+                        desc: 'Flag concluding phrases (in conclusion, to summarize, ultimately, etc.).',
+                        control: { type: 'toggle', key: 'enableAiWrapUps' }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Gremlins',
+                items: [
+                    {
+                        name: 'Invisible character detection',
+                        desc: 'Flag invisible / zero-width / non-printing unicode characters (formatting controls, soft hyphens, variation selectors, etc.) that may be AI watermarks or copy-paste artifacts.',
+                        control: { type: 'toggle', key: 'enableGremlins' }
+                    },
+                    {
+                        name: 'Aggressive scanning',
+                        desc: 'Scan for every unicode format character, including those legitimately used in emoji (keycaps, zwj sequences, variation selectors, tag characters, etc.). Recommended for security audits.',
+                        control: {
+                            type: 'toggle',
+                            key: 'enableAggressiveGremlins',
+                            disabled: () => !this.plugin.settings.enableGremlins
+                        }
+                    }
+                ]
+            },
+            {
+                name: 'Restore defaults',
+                desc: 'Reset all linter settings to their default values.',
+                action: () => {
+                    void this.restoreLinterDefaults();
+                }
+            }
+        ];
+    }
 
-        new Setting(content).setName('AI detection').setHeading();
-
-        new Setting(content)
-            .setName('AI clichés')
-            .setDesc('Flag overused AI words (tapestry, testament, delve, vibrant, realm, etc.).')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableAiCliches).onChange(async (value) => {
-                    this.plugin.settings.enableAiCliches = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Em dashes')
-            .setDesc('Flag em dashes (—). Common AI overuse — consider commas, colons, or sentence breaks.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableAiEmDashes).onChange(async (value) => {
-                    this.plugin.settings.enableAiEmDashes = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Negation patterns')
-            .setDesc('Flag "it\'s not X, it\'s y" constructions. State what things are directly.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableAiNegation).onChange(async (value) => {
-                    this.plugin.settings.enableAiNegation = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Filler adverbs')
-            .setDesc('Flag strategy adverbs common in AI prose (quietly, deliberately, gently, etc.).')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableAiFillerAdverbs).onChange(async (value) => {
-                    this.plugin.settings.enableAiFillerAdverbs = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Hedging language')
-            .setDesc('Flag hedging words (might, could, perhaps, maybe) that weaken prose.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableAiHedging).onChange(async (value) => {
-                    this.plugin.settings.enableAiHedging = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content)
-            .setName('Wrap-up phrases')
-            .setDesc('Flag concluding phrases (in conclusion, to summarize, ultimately, etc.).')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableAiWrapUps).onChange(async (value) => {
-                    this.plugin.settings.enableAiWrapUps = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(content).setName('Gremlins').setHeading();
-
-        new Setting(content)
-            .setName('Invisible character detection')
-            .setDesc(
-                'Flag invisible / zero-width / non-printing unicode characters (formatting controls, soft hyphens, variation selectors, etc.) that may be AI watermarks or copy-paste artifacts.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableGremlins).onChange(async (value) => {
-                    this.plugin.settings.enableGremlins = value;
-                    if (!value) this.plugin.settings.enableAggressiveGremlins = false;
-                    await this.plugin.saveSettings();
-                    this.display();
-                })
-            );
-
-        new Setting(content)
-            .setName('Aggressive scanning')
-            .setDesc(
-                'Scan for every unicode format character, including those legitimately used in emoji (keycaps, zwj sequences, variation selectors, tag characters, etc.). Recommended for security audits.'
-            )
-            .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.enableAggressiveGremlins)
-                    .setDisabled(!this.plugin.settings.enableGremlins)
-                    .onChange(async (value) => {
-                        this.plugin.settings.enableAggressiveGremlins = value;
-                        await this.plugin.saveSettings();
-                    })
-            );
-
-        new Setting(content)
-            .setName('Restore defaults')
-            .setDesc('Reset all linter settings to their default values.')
-            .addButton((button) =>
-                button.setButtonText('Restore defaults').onClick(async () => {
-                    // Only reset linter-related fields, not AI provider settings
-                    this.plugin.settings.linterMode = DEFAULT_SETTINGS.linterMode;
-                    this.plugin.settings.lintOnSave = DEFAULT_SETTINGS.lintOnSave;
-                    this.plugin.settings.enableLongSentences = DEFAULT_SETTINGS.enableLongSentences;
-                    this.plugin.settings.maxSentenceWords = DEFAULT_SETTINGS.maxSentenceWords;
-                    this.plugin.settings.enablePassiveVoice = DEFAULT_SETTINGS.enablePassiveVoice;
-                    this.plugin.settings.enableAdverbCheck = DEFAULT_SETTINGS.enableAdverbCheck;
-                    this.plugin.settings.enableQualifierCheck = DEFAULT_SETTINGS.enableQualifierCheck;
-                    this.plugin.settings.enableRepeatedWords = DEFAULT_SETTINGS.enableRepeatedWords;
-                    this.plugin.settings.minRepeatedWordLength = DEFAULT_SETTINGS.minRepeatedWordLength;
-                    this.plugin.settings.enableEchoes = DEFAULT_SETTINGS.enableEchoes;
-                    this.plugin.settings.enableTellingVsShowing = DEFAULT_SETTINGS.enableTellingVsShowing;
-                    this.plugin.settings.enableDialogueTags = DEFAULT_SETTINGS.enableDialogueTags;
-                    this.plugin.settings.enableComplexWords = DEFAULT_SETTINGS.enableComplexWords;
-                    this.plugin.settings.maxSyllablesPerWord = DEFAULT_SETTINGS.maxSyllablesPerWord;
-                    this.plugin.settings.enableAiCliches = DEFAULT_SETTINGS.enableAiCliches;
-                    this.plugin.settings.enableAiEmDashes = DEFAULT_SETTINGS.enableAiEmDashes;
-                    this.plugin.settings.enableAiNegation = DEFAULT_SETTINGS.enableAiNegation;
-                    this.plugin.settings.enableAiFillerAdverbs = DEFAULT_SETTINGS.enableAiFillerAdverbs;
-                    this.plugin.settings.enableAiHedging = DEFAULT_SETTINGS.enableAiHedging;
-                    this.plugin.settings.enableAiWrapUps = DEFAULT_SETTINGS.enableAiWrapUps;
-                    this.plugin.settings.enableGremlins = DEFAULT_SETTINGS.enableGremlins;
-                    this.plugin.settings.enableAggressiveGremlins = DEFAULT_SETTINGS.enableAggressiveGremlins;
-                    await this.plugin.saveSettings();
-                    this.display();
-                })
-            );
+    /** Restore-defaults action for the Linter page (linter-related fields only). */
+    private async restoreLinterDefaults(): Promise<void> {
+        const s = this.plugin.settings;
+        const d = DEFAULT_SETTINGS;
+        s.linterMode = d.linterMode;
+        s.lintOnSave = d.lintOnSave;
+        s.enableLongSentences = d.enableLongSentences;
+        s.maxSentenceWords = d.maxSentenceWords;
+        s.enablePassiveVoice = d.enablePassiveVoice;
+        s.enableAdverbCheck = d.enableAdverbCheck;
+        s.enableQualifierCheck = d.enableQualifierCheck;
+        s.enableRepeatedWords = d.enableRepeatedWords;
+        s.minRepeatedWordLength = d.minRepeatedWordLength;
+        s.enableEchoes = d.enableEchoes;
+        s.enableTellingVsShowing = d.enableTellingVsShowing;
+        s.enableDialogueTags = d.enableDialogueTags;
+        s.enableComplexWords = d.enableComplexWords;
+        s.maxSyllablesPerWord = d.maxSyllablesPerWord;
+        s.enableAiCliches = d.enableAiCliches;
+        s.enableAiEmDashes = d.enableAiEmDashes;
+        s.enableAiNegation = d.enableAiNegation;
+        s.enableAiFillerAdverbs = d.enableAiFillerAdverbs;
+        s.enableAiHedging = d.enableAiHedging;
+        s.enableAiWrapUps = d.enableAiWrapUps;
+        s.enableGremlins = d.enableGremlins;
+        s.enableAggressiveGremlins = d.enableAggressiveGremlins;
+        await this.plugin.saveSettings();
+        this.update();
     }
 
     /** Render the AI providers configuration section. */
-    private renderAiProvidersTab(containerEl: HTMLElement): void {
-        const content = containerEl.createDiv({ cls: 'quill-settings-content-ai-providers' });
-
-        new Setting(content).setName('AI providers').setHeading();
-
-        // Render each provider card
-        const providers = this.plugin.settings.aiProviders;
-        for (const [pIdx, provider] of providers.entries()) {
-            this.renderProviderCard(content, provider, pIdx);
-        }
-
-        // Add provider button
-        new Setting(content)
-            .setName('Add provider')
-            .setDesc('Add a new AI provider endpoint.')
-            .addButton((button) =>
-                button.setButtonText('Add provider').onClick(() => {
-                    new AddProviderModal(this.app, (type, defaultEndpoint) => {
-                        this.addProvider(type, defaultEndpoint);
-                    }).open();
-                })
-            );
-
-        // Default model dropdowns
-        this.renderDefaultModelSettings(content);
+    /** Declarative items for the AI providers page: a list of navigable provider pages + a default-models page. */
+    private aiProvidersItems(): SettingDefinitionItem[] {
+        return [
+            {
+                type: 'list',
+                heading: 'AI providers',
+                emptyState: 'No providers configured. Click "Add provider" to set one up.',
+                items: this.plugin.settings.aiProviders.map((p) => this.providerPageDefinition(p)),
+                onDelete: (index) => {
+                    this.plugin.settings.aiProviders.splice(index, 1);
+                    this.validateDefaultProviders();
+                    void this.plugin.saveSettings().then(() => this.update());
+                },
+                addItem: {
+                    name: 'Add provider',
+                    action: () => {
+                        new AddProviderModal(this.app, (type, defaultEndpoint) =>
+                            this.addProvider(type, defaultEndpoint)
+                        ).open();
+                    }
+                }
+            },
+            {
+                type: 'page',
+                name: 'Default models',
+                desc: 'Default chat, embed, and image models across all providers.',
+                page: () => new DefaultModelsSettingPage(this),
+                displayValue: this.defaultModelDisplayValue(),
+                status: this.plugin.settings.aiDefaultChatProvider ? null : 'warning'
+            }
+        ];
     }
 
-    /** Render a single provider card. */
-    private renderProviderCard(containerEl: HTMLElement, provider: ProviderConfig, index: number): void {
-        const card = containerEl.createDiv({ cls: 'quill-provider-card' });
+    /** Declarative page entry for one provider (model-count summary + warning status). */
+    private providerPageDefinition(provider: ProviderConfig): SettingDefinitionPage {
+        const count = provider.models.length;
+        return {
+            type: 'page',
+            name: provider.name || 'Unnamed provider',
+            desc: `${provider.type} • ${count} model${count === 1 ? '' : 's'}`,
+            page: () => new ProviderSettingPage(this, provider),
+            displayValue: `${count} model${count === 1 ? '' : 's'}`,
+            status: count === 0 ? 'warning' : null
+        };
+    }
 
-        // Provider heading row
-        const headingRow = card.createDiv({ cls: 'quill-provider-card__heading' });
+    /**
+     * Deep-link into a settings page by name (e.g. "AI providers", "General"),
+     * optionally hopping into a sub-page and scrolling to a specific setting
+     * within it. Uses Obsidian's internal settings-nav API — `openTabById` is
+     * the long-standing convention; `getNavigableSettingItems`/`activateSettingItem`
+     * are its 1.13 declarative counterparts. Feature-detected: if the internal
+     * API is unavailable (renamed/removed in a future build), falls back to just
+     * opening the plugin tab so the writer can pick the page themselves.
+     *
+     * Navigation is poll-based because every hop (root list → page → sub-page)
+     * re-renders asynchronously; `waitForAndActivate` retries until the target
+     * entry shows up in `getNavigableSettingItems()` before activating it.
+     */
+    openSettingsPage(pageName: string, settingName?: string, subPageName?: string): void {
+        const app = this.app as unknown as {
+            setting?: {
+                open?: () => void;
+                openTabById?: (id: string) => void;
+                clearPageStack?: () => void;
+                getNavigableSettingItems?: () => HTMLElement[];
+                activateSettingItem?: (el: HTMLElement) => void;
+                getCurrentPageEl?: () => HTMLElement | null;
+            };
+        };
+        const s = app.setting;
+        if (!s?.open || !s.openTabById) return;
+        s.open();
+        s.openTabById(this.plugin.manifest.id);
+        // Reset to the root page list so the target page entry is visible
+        // (we may currently be deep in a sub-page).
+        if (typeof s.clearPageStack === 'function') s.clearPageStack();
 
-        new Setting(headingRow).setName(provider.name || 'Unnamed provider').addButton((button) =>
-            button.setButtonText('Remove').onClick(async () => {
-                this.plugin.settings.aiProviders.splice(index, 1);
-                this.validateDefaultProviders();
-                await this.plugin.saveSettings();
-                this.display();
-            })
-        );
+        // settings.ts — no Component lifecycle; window.setTimeout (one-shot).
+        /** Poll `getNavigableSettingItems()` until the named entry appears, then activate it and run `then`. */
+        const waitForAndActivate = (name: string, then: () => void, attempts = 0): void => {
+            const items = typeof s.getNavigableSettingItems === 'function' ? s.getNavigableSettingItems() : [];
+            const target = items.find((el: HTMLElement) => {
+                const elName = el.querySelector('.setting-item-name')?.textContent?.trim() ?? '';
+                return elName === name;
+            });
+            if (target && typeof s.activateSettingItem === 'function') {
+                s.activateSettingItem(target);
+                then();
+            } else if (attempts < 15) {
+                window.setTimeout(() => waitForAndActivate(name, then, attempts + 1), 60);
+            }
+        };
 
+        /** After the page activates, drill into the optional sub-page, then scroll to the setting. */
+        const hopIntoSubPage = (): void => {
+            if (!subPageName) {
+                if (settingName) this.scrollToSetting(settingName);
+                return;
+            }
+            waitForAndActivate(subPageName, () => {
+                if (settingName) this.scrollToSetting(settingName);
+            });
+        };
+
+        waitForAndActivate(pageName, hopIntoSubPage);
+    }
+
+    /**
+     * Find a setting by name on the active settings page, scroll it into view,
+     * and flash it briefly. Retries up to ~1s while the page-transition
+     * renders the target items.
+     */
+    private scrollToSetting(settingName: string): void {
+        // settings.ts — no Component lifecycle; window.setTimeout for the
+        // page-transition delay + flash removal (one-shot, not recurring).
+        let attempts = 0;
+        /** Locate the named setting row on the current page, center it, and flash it. */
+        const tryScroll = () => {
+            const app = this.app as unknown as { setting?: { getCurrentPageEl?: () => HTMLElement | null } };
+            const pageEl = typeof app.setting?.getCurrentPageEl === 'function' ? app.setting.getCurrentPageEl() : null;
+            if (pageEl) {
+                const matches = pageEl.querySelectorAll('.setting-item');
+                for (const item of Array.from(matches)) {
+                    const name = item.querySelector('.setting-item-name')?.textContent?.trim() ?? '';
+                    if (name === settingName) {
+                        const el = item as HTMLElement;
+                        el.scrollIntoView({ block: 'center' });
+                        el.addClass('quill-settings__flash');
+                        window.setTimeout(() => el.removeClass('quill-settings__flash'), 2500);
+                        return;
+                    }
+                }
+            }
+            if (++attempts < 10) window.setTimeout(tryScroll, 100);
+        };
+        window.setTimeout(tryScroll, 100);
+    }
+
+    /** Display value for the AI providers page entry (configured-provider count, or "Not configured"). */
+    private aiProviderDisplayValue(): string {
+        const n = this.plugin.settings.aiProviders.length;
+        return n === 0 ? 'Not configured' : `${n} provider${n === 1 ? '' : 's'}`;
+    }
+
+    /**
+     * Warning status for the AI providers page entry. Flags the two states that
+     * silently break every AI feature: no providers configured, or no default
+     * chat model picked.
+     */
+    private aiProviderStatus(): 'warning' | null {
+        return this.plugin.settings.aiProviders.length === 0 || !this.plugin.settings.aiDefaultChatProvider
+            ? 'warning'
+            : null;
+    }
+
+    /** Display value for the Default models page entry (resolved chat model, or "Not set"). */
+    private defaultModelDisplayValue(): string {
+        const key = this.plugin.settings.aiDefaultChatProvider;
+        if (!key) return 'Not set';
+        const slash = key.indexOf('/');
+        if (slash < 0) return 'Not set';
+        const pid = key.slice(0, slash);
+        const mid = key.slice(slash + 1);
+        const provider = this.plugin.settings.aiProviders.find((p) => p.id === pid);
+        const model = provider?.models.find((m) => m.id === mid);
+        return provider && model ? `${provider.name} — ${model.model}` : 'Not set';
+    }
+
+    /**
+     * Render a full provider detail page (fields + model list + test buttons).
+     * Public so {@link ProviderSettingPage} can call it; reuses the private
+     * card renderers. Mutation handlers inside call refreshBridge(), which
+     * re-renders the open provider page in place (via the bridge machinery).
+     */
+    renderProviderPage(containerEl: HTMLElement, provider: ProviderConfig): void {
+        this.renderProviderFields(containerEl, provider);
+        this.renderModelList(containerEl, provider);
+        this.renderTestButtons(containerEl, provider);
+    }
+
+    /** Render a provider's editable fields (everything except the list-managed delete affordance). */
+    private renderProviderFields(containerEl: HTMLElement, provider: ProviderConfig): void {
         // Name
-        new Setting(card)
+        new Setting(containerEl)
             .setName('Name')
             .setDesc('A display name for this provider.')
             .addText((text) =>
@@ -2522,7 +2221,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
 
         // Type
-        new Setting(card)
+        new Setting(containerEl)
             .setName('Type')
             .setDesc('The API format this provider uses.')
             .addDropdown((dropdown) =>
@@ -2543,7 +2242,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             this.openAnthropicBanRiskWarning(() => {
                                 provider.type = newType;
                                 provider.endpoint = 'https://api.anthropic.com/v1';
-                                void this.plugin.saveSettings().then(() => this.display());
+                                void this.plugin.saveSettings().then(() => this.refreshBridge());
                             });
                             // Revert the dropdown visually so a dismissed warning
                             // doesn't leave the type half-changed.
@@ -2560,12 +2259,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             provider.endpoint = 'https://generativelanguage.googleapis.com/v1beta';
                         }
                         await this.plugin.saveSettings();
-                        this.display();
+                        this.refreshBridge();
                     })
             );
 
         // Endpoint URL
-        new Setting(card)
+        new Setting(containerEl)
             .setName('Endpoint URL')
             .setDesc('The full base URL of the API endpoint. Used as-is with no path manipulation.')
             .addText((text) =>
@@ -2589,7 +2288,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                       : 'Optional. Leave blank for local providers.';
             const apiKeyPlaceholder =
                 provider.type === 'anthropic' ? 'sk-ant-...' : provider.type === 'gemini' ? 'AIza...' : 'E.g., sk-...';
-            new Setting(card)
+            new Setting(containerEl)
                 .setName('API key')
                 .setDesc(apiKeyDesc)
                 .addText((text) =>
@@ -2609,7 +2308,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         }
 
         // Context window
-        new Setting(card)
+        new Setting(containerEl)
             .setName('Context window')
             .setDesc('Maximum context tokens for models on this endpoint.')
             .addDropdown((dropdown) => {
@@ -2622,7 +2321,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     dropdown.setValue(current);
                 } else {
                     dropdown.setValue('custom');
-                    card.createDiv({
+                    containerEl.createDiv({
                         cls: 'quill-provider-card__setting-extra',
                         text: `Custom value: ${current}`
                     });
@@ -2633,7 +2332,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             const n = parseInt(customVal, 10);
                             if (!isNaN(n) && n > 0) {
                                 provider.maxContextTokens = n;
-                                void this.plugin.saveSettings().then(() => this.display());
+                                void this.plugin.saveSettings().then(() => this.refreshBridge());
                             } else {
                                 new Notice('Value must be a positive number');
                             }
@@ -2642,11 +2341,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }
                     provider.maxContextTokens = parseInt(value, 10);
                     await this.plugin.saveSettings();
+                    this.refreshBridge();
                 });
             });
 
         // Max output tokens
-        new Setting(card)
+        new Setting(containerEl)
             .setName('Max output tokens')
             .setDesc('Maximum tokens per response for all models on this endpoint.')
             .addText((text) =>
@@ -2661,12 +2361,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }
                 })
             );
-
-        // Models sub-list
-        this.renderModelList(card, provider);
-
-        // Test buttons
-        this.renderTestButtons(card, provider);
     }
 
     /** Render the model list for a provider. */
@@ -2697,7 +2391,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             model.role = value as ModelRole;
                             this.validateDefaultProviders();
                             await this.plugin.saveSettings();
-                            this.display();
+                            this.refreshBridge();
                         })
                 );
 
@@ -2730,7 +2424,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         provider.models.splice(idx, 1);
                         this.validateDefaultProviders();
                         await this.plugin.saveSettings();
-                        this.display();
+                        this.refreshBridge();
                     }
                 })
             );
@@ -2747,7 +2441,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     model: ''
                 });
                 await this.plugin.saveSettings();
-                this.display();
+                this.refreshBridge();
             })
         );
     }
@@ -2801,8 +2495,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             );
     }
 
-    /** Render the default chat/embed/image model dropdowns. */
-    private renderDefaultModelSettings(containerEl: HTMLElement): void {
+    /** Render the default chat/embed/image model dropdowns. Public so {@link DefaultModelsSettingPage} can call it. */
+    renderDefaultModelSettings(containerEl: HTMLElement): void {
         // Collect chat-, embed-, and image-capable models across providers.
         // Image models may live on a different provider than chat — the proxy
         // caption call is fully isolated, so cross-provider routing is fine.
@@ -2847,6 +2541,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 dropdown.onChange(async (value) => {
                     this.plugin.settings.aiDefaultChatProvider = value;
                     await this.plugin.saveSettings();
+                    // Refresh the AI-providers / Default-models entry status indicators.
+                    this.update();
                 });
             });
 
@@ -2933,736 +2629,593 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 
     /** Render the Model behaviors settings tab. */
-    private renderModelBehaviorsTab(containerEl: HTMLElement): void {
-        const content = containerEl.createDiv({ cls: 'quill-settings-content-model-behaviors' });
-        this.renderModelBehaviorsSettings(content);
+    /**
+     * Declarative items for the Model behaviors page. Native controls for every
+     * simple setting; each section's restore-defaults is the group's
+     * `extraButtons` (a small "reset" icon in the heading). The narrative-voice
+     * preset is a dropdown; its custom-rules textarea is a separate control
+     * visible only for the `custom` preset (setControlValue re-evaluates
+     * visibility via refreshDomState). Embedding warming's kick-off side-effect
+     * lives in setControlValue. Folder-specific chunk overrides are a render
+     * item (a dynamic-key map that doesn't fit the fixed-key control model).
+     */
+    private modelBehaviorsItems(): SettingDefinitionItem[] {
+        /** Build a group's extraButtons entry: a reset icon that runs the given restore callback. */
+        const restore = (tooltip: string, fn: () => Promise<void>) => ({
+            extraButtons: [
+                (btn: ExtraButtonComponent) =>
+                    btn
+                        .setIcon('rotate-ccw')
+                        .setTooltip(tooltip)
+                        .onClick(() => void fn())
+            ]
+        });
+        return [
+            {
+                type: 'group',
+                heading: 'Selection transformations',
+                ...restore('Restore transformation defaults', () => this.restoreTransformDefaults()),
+                items: [
+                    {
+                        name: 'Narrative voice',
+                        desc: 'The narrative perspective and tense used when generating text.',
+                        control: {
+                            type: 'dropdown',
+                            key: 'narrativeVoicePreset',
+                            options: Object.fromEntries(NARRATIVE_VOICE_PRESETS.map((p) => [p.id, p.label]))
+                        }
+                    },
+                    {
+                        name: 'Custom narrative voice rules',
+                        desc: 'Rules for your custom narrative voice (only used when the preset is "Custom").',
+                        visible: () => this.plugin.settings.narrativeVoicePreset === 'custom',
+                        control: { type: 'textarea', key: 'customNarrativeVoiceRules', rows: 6 }
+                    },
+                    {
+                        name: 'Temperature',
+                        desc: 'Higher values produce more creative output. Range: 0.0 – 2.0.',
+                        control: {
+                            type: 'number',
+                            key: 'transformTemperature',
+                            min: 0,
+                            max: 2,
+                            step: 0.1,
+                            validate: (v) => (v >= 0 && v <= 2 ? undefined : 'Value must be between 0.0 and 2.0')
+                        }
+                    },
+                    {
+                        name: 'Vault context',
+                        desc: 'Include cross-document vault context (character notes, worldbuilding, etc.) in transformation prompts.',
+                        control: { type: 'toggle', key: 'transformVaultContext' }
+                    },
+                    {
+                        name: 'Max output tokens',
+                        desc: 'Maximum tokens per transformation response. Higher values allow longer rewrites.',
+                        control: {
+                            type: 'number',
+                            key: 'transformMaxOutputTokens',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
+                    },
+                    {
+                        name: 'Wiki link handling',
+                        desc: 'How AI should handle Obsidian wiki links ([[...]]) when rewriting or generating prose. "preserve" keeps them exactly as-is. "adaptive" allows the AI to adapt the display text after the pipe (|) to fit the prose while keeping the page name and heading intact.',
+                        control: {
+                            type: 'dropdown',
+                            key: 'wikiLinkBehavior',
+                            options: { preserve: 'Preserve exactly', adaptive: 'Adaptive (smart display text)' }
+                        }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Co-writer',
+                ...restore('Restore co-writer defaults', () => this.restoreCoWriterDefaults()),
+                items: [
+                    {
+                        name: 'Temperature',
+                        desc: 'Higher values produce more creative continuations. Range: 0.0 – 2.0.',
+                        control: {
+                            type: 'number',
+                            key: 'coWriterTemperature',
+                            min: 0,
+                            max: 2,
+                            step: 0.1,
+                            validate: (v) => (v >= 0 && v <= 2 ? undefined : 'Value must be between 0.0 and 2.0')
+                        }
+                    },
+                    {
+                        name: 'Max output tokens',
+                        desc: 'Maximum tokens per continuation. Higher values allow longer passages.',
+                        control: {
+                            type: 'number',
+                            key: 'coWriterMaxOutputTokens',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
+                    },
+                    {
+                        name: 'Max tool rounds',
+                        desc: 'Maximum number of tool-calling rounds per response. Set to 0 for unlimited — the model will call as many rounds as it needs (use Stop to cancel). Set a specific number to cap turn consumption. Default: 0 (unlimited).',
+                        control: {
+                            type: 'number',
+                            key: 'coWriterMaxToolRounds',
+                            min: 0,
+                            validate: (v) => (v >= 0 ? undefined : 'Value must be a number >= 0')
+                        }
+                    },
+                    {
+                        name: 'Saved conversation limit',
+                        desc: 'How many co-writer conversations to keep on disk. Starting a new chat saves the current one; older sessions are deleted (newest-first) once this limit is exceeded. Set to 0 to keep all. Default: 25.',
+                        control: {
+                            type: 'number',
+                            key: 'coWriterSessionHistoryLimit',
+                            min: 0,
+                            validate: (v) => (v >= 0 ? undefined : 'Value must be a number >= 0')
+                        }
+                    },
+                    {
+                        name: 'Auto-save after each turn',
+                        desc: 'Snapshot the active conversation to its saved-session file after every completed turn, so it survives a crash or restart without an explicit save. Off by default — the snapshot copies the full conversation state, so it adds some overhead on long sessions. De-bounced so a turn followed immediately by auto-options collapses to one write.',
+                        control: { type: 'toggle', key: 'coWriterAutoSavePerTurn' }
+                    },
+                    {
+                        name: 'Vault context',
+                        desc: 'Include cross-document vault context (character notes, worldbuilding, etc.) in co-writer prompts.',
+                        control: { type: 'toggle', key: 'coWriterVaultContext' }
+                    },
+                    {
+                        name: 'Append trailing newline',
+                        desc: 'Add a blank line after the continuation so you can keep writing without pressing enter twice.',
+                        control: { type: 'toggle', key: 'coWriterAppendNewline' }
+                    },
+                    {
+                        name: 'Show AI reasoning',
+                        desc: "Display the AI's thought process in the co-writer panel. Disable for a cleaner interface.",
+                        control: { type: 'toggle', key: 'enableCoWriterThought' }
+                    },
+                    {
+                        name: 'Voice matching',
+                        desc: 'Analyze the voice of your prose before generating to produce more consistent continuations. Adds a small delay before generation starts.',
+                        control: { type: 'toggle', key: 'coWriterVoiceMatch' }
+                    },
+                    {
+                        name: 'Inline directives',
+                        desc: 'Parse `<!-- quill: ... -->` comments immediately preceding the cursor and feed them to the co-writer as steering. Disable to ignore directives entirely.',
+                        control: { type: 'toggle', key: 'enableInlineDirectives' }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Analysis',
+                ...restore('Restore analysis defaults', () => this.restoreAnalysisDefaults()),
+                items: [
+                    {
+                        name: 'Analysis temperature',
+                        desc: 'Temperature for AI analysis and feedback responses (companion mode). Range: 0.0 – 2.0.',
+                        control: {
+                            type: 'number',
+                            key: 'analysisTemperature',
+                            min: 0,
+                            max: 2,
+                            step: 0.1,
+                            validate: (v) => (v >= 0 && v <= 2 ? undefined : 'Value must be between 0.0 and 2.0')
+                        }
+                    },
+                    {
+                        name: 'Analysis max output tokens',
+                        desc: 'Maximum tokens per analysis response.',
+                        control: {
+                            type: 'number',
+                            key: 'analysisMaxOutputTokens',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Feedback queue',
+                ...restore('Restore feedback queue defaults', () => this.restoreFeedbackQueueDefaults()),
+                items: [
+                    {
+                        name: 'Enable feedback queue',
+                        desc: 'Show the queue sub-tab and allow queueing reviews to run unattended. Default: on.',
+                        control: { type: 'toggle', key: 'enableFeedbackQueue' }
+                    },
+                    {
+                        name: 'Proactive editor chat',
+                        desc: 'After a report finishes, the follow-up discussion runs through the co-writer session with editing tools enabled, so the editor can propose specific, reviewable inline-diff edits (not just advisory prose). Every proposed edit still requires your approval before it reaches the vault. Turn off to keep the pre-2.0.0 text-only chat behavior. Default: on.',
+                        control: { type: 'toggle', key: 'reviewSuggestedEditsEnabled' }
+                    },
+                    {
+                        name: 'World rules',
+                        desc: 'World-building rules the editor follows when writing or editing prose in review-discuss. Describe how your world works so edits use the right vocabulary and details. Example: "Magic is visible as blue light. Swords are called blades regardless of shape. The setting is a tropical archipelago."',
+                        control: { type: 'textarea', key: 'reviewWorldRules', rows: 5 }
+                    },
+                    {
+                        name: 'Run queued jobs automatically',
+                        desc: 'Run queued jobs automatically while Obsidian is open. Turn off to queue jobs without running them until you trigger one manually. Default: on.',
+                        control: { type: 'toggle', key: 'feedbackQueueAutoRun' }
+                    },
+                    {
+                        name: 'Auto-save feedback reports',
+                        desc: 'Save every completed feedback report (async queue + interactive Review) to the vault as dated markdown. When off, no report is written anywhere — the report is held in-memory for the session only. Default: on.',
+                        control: { type: 'toggle', key: 'autoSaveFeedbackReports' }
+                    },
+                    {
+                        name: 'Feedback report folder',
+                        desc: 'Vault folder for auto-saved feedback reports. Created on first write.',
+                        control: {
+                            type: 'text',
+                            key: 'feedbackReportFolder',
+                            placeholder: DEFAULT_SETTINGS.feedbackReportFolder
+                        }
+                    },
+                    {
+                        name: 'Feedback queue limit',
+                        desc: 'Maximum number of queue jobs retained on disk. Older completed jobs are removed first. Default: 20.',
+                        control: {
+                            type: 'number',
+                            key: 'feedbackQueueLimit',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Embeddings',
+                items: [
+                    {
+                        name: 'Embedding top-k chunks',
+                        desc: 'Number of chunks (paragraphs) retrieved from embedded folders. Higher = more context but more tokens; lower = tighter focus, less window pressure. Recommended: 8–12 for most use cases. 3–5 keeps overhead minimal. 15+ may crowd the context window.',
+                        control: {
+                            type: 'number',
+                            key: 'embeddingsTopKChunks',
+                            min: 1,
+                            max: 100,
+                            validate: (v) =>
+                                v >= 1 && v <= 100 ? undefined : 'Value must be a number between 1 and 100'
+                        }
+                    },
+                    {
+                        name: 'Embedding cache warming',
+                        desc: 'Automatically pre-compute and cache embeddings for each folder containing Markdown files (cast notes, lore, outlines, manuscript chapters). Enables instant semantic retrieval. Root folder is excluded.',
+                        control: { type: 'toggle', key: 'enableEmbeddingWarming' }
+                    },
+                    {
+                        name: 'Embedding warming debounce (seconds)',
+                        desc: 'How long to wait after the last file save before warming embeddings. Higher reduces API calls during active writing; lower keeps caches fresher. Default: 30.',
+                        control: {
+                            type: 'number',
+                            key: 'embeddingWarmingDebounceSeconds',
+                            min: 5,
+                            max: 600,
+                            validate: (v) => (v >= 5 && v <= 600 ? undefined : 'Value must be between 5 and 600')
+                        }
+                    },
+                    {
+                        name: 'Build embeddings now',
+                        desc: 'Immediately pre-compute and cache embeddings for all folders with Markdown files. Useful after adding new material or when warming is turned off.',
+                        action: (el: HTMLElement) => {
+                            void this.plugin
+                                .warmAllEmbeddingCaches()
+                                .then(() => new Notice('Quill: Embedding caches rebuilt.'))
+                                .catch((err: unknown) => {
+                                    const msg = err instanceof Error ? err.message : String(err);
+                                    new Notice(`Quill: Embedding build failed. ${msg}`);
+                                });
+                        }
+                    },
+                    {
+                        name: 'Embedding chunk size (tokens)',
+                        desc: "Target tokens per chunk when embedding. Must not exceed your embedding model's context window. Many local embedding models (e.g. Nomic-embed-text) support 512; cloud models may support more. Default: 512.",
+                        control: {
+                            type: 'number',
+                            key: 'embeddingChunkTokenSize',
+                            min: 128,
+                            max: 8192,
+                            validate: (v) => (v >= 128 && v <= 8192 ? undefined : 'Value must be between 128 and 8192')
+                        }
+                    },
+                    {
+                        name: 'Show full embed in file picker',
+                        desc: 'When enabled, file pickers show a "{Folder name} full embed" option alongside "{Folder name} embedded" (top-K). Full embed sends all chunk texts from the folder; top-K sends only the most relevant. Default: off.',
+                        control: { type: 'toggle', key: 'enableFullEmbedPickerOption' }
+                    },
+                    {
+                        name: 'Folder-specific chunk overrides',
+                        desc: 'Set a custom top-k chunk count for specific embedded folders. Use a higher number for folders that are more important to your writing (e.g., plot maps), and a lower number for auxiliary lore. Folders without an override use the global setting above.',
+                        render: (setting) => this.renderFolderOverridesDefinition(setting)
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Context engine',
+                ...restore('Restore context engine defaults', () => this.restoreContextEngineDefaults()),
+                items: [
+                    {
+                        name: 'Token budget',
+                        desc: 'Maximum tokens for assembled context. Higher values use more context window.',
+                        control: {
+                            type: 'dropdown',
+                            key: 'contextTokenBudget',
+                            options: Object.fromEntries([4096, 8192, 16384, 32768].map((n) => [String(n), String(n)]))
+                        }
+                    },
+                    {
+                        name: 'Compaction threshold',
+                        desc: 'Percentage of token budget at which context is compacted (50-95).',
+                        control: {
+                            type: 'number',
+                            key: 'contextCompactAtPercent',
+                            min: 50,
+                            max: 95,
+                            validate: (v) => (v >= 50 && v <= 95 ? undefined : 'Value must be between 50 and 95')
+                        }
+                    },
+                    {
+                        name: 'Compact summary length',
+                        desc: 'Number of sentences in the AI-generated compaction summary (1-20).',
+                        control: {
+                            type: 'number',
+                            key: 'compactSummarySentences',
+                            min: 1,
+                            max: 20,
+                            validate: (v) => (v >= 1 && v <= 20 ? undefined : 'Value must be between 1 and 20')
+                        }
+                    },
+                    {
+                        name: 'Refine accepted edits out of context',
+                        desc: 'Before AI-compacting, surgically compress bulky or now-stale tool content in the model’s history: accepted/discarded lore drafts become compact outcome markers, stale vault reads are marked for re-lookup, and big reads are trimmed oldest-first when nearing the threshold. Cheaper and more faithful than a full AI summary (the model can always re-look-up current text), and stops a long-context model from re-outputting an entry it already drafted. Rewind still works. Default: on.',
+                        control: { type: 'toggle', key: 'contextRefinementEnabled' }
+                    },
+                    {
+                        name: 'Include vault context',
+                        desc: 'Search the vault for related notes when assembling context.',
+                        control: { type: 'toggle', key: 'contextIncludeVaultContext' }
+                    },
+                    {
+                        name: 'Max vault files',
+                        desc: 'Maximum number of vault files to examine for context (1-100).',
+                        control: {
+                            type: 'number',
+                            key: 'contextMaxVaultFiles',
+                            min: 1,
+                            max: 100,
+                            validate: (v) => (v >= 1 && v <= 100 ? undefined : 'Value must be between 1 and 100')
+                        }
+                    },
+                    {
+                        name: 'Max chars per file',
+                        desc: 'Maximum characters to read from each vault file (500-10000).',
+                        control: {
+                            type: 'number',
+                            key: 'contextMaxCharsPerFile',
+                            min: 500,
+                            max: 10000,
+                            validate: (v) =>
+                                v >= 500 && v <= 10000 ? undefined : 'Value must be between 500 and 10000'
+                        }
+                    },
+                    {
+                        name: 'Auto-scan on open',
+                        desc: 'Automatically scan documents for context when opened.',
+                        control: { type: 'toggle', key: 'contextAutoScan' }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Linter AI',
+                ...restore('Restore linter AI defaults', () => this.restoreLinterAiDefaults()),
+                items: [
+                    {
+                        name: 'Enable AI-powered lint fixes',
+                        desc: 'Show "fix with AI" buttons in the linter sidebar and editor tooltips for intelligent fixes.',
+                        control: { type: 'toggle', key: 'enableLinterAiFixes' }
+                    },
+                    {
+                        name: 'Linter AI temperature',
+                        desc: 'Lower values produce more conservative, precise fixes. Range: 0.0 – 2.0.',
+                        control: {
+                            type: 'number',
+                            key: 'linterTemperature',
+                            min: 0,
+                            max: 2,
+                            step: 0.1,
+                            validate: (v) => (v >= 0 && v <= 2 ? undefined : 'Value must be between 0.0 and 2.0')
+                        }
+                    },
+                    {
+                        name: 'Linter AI max output tokens',
+                        desc: 'Maximum tokens per AI lint fix response.',
+                        control: {
+                            type: 'number',
+                            key: 'linterMaxOutputTokens',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
+                    }
+                ]
+            },
+            {
+                name: 'Restore defaults',
+                desc: 'Reset every setting on this tab. Use the per-section reset buttons above for targeted resets.',
+                action: () => {
+                    new ConfirmModal(
+                        this.app,
+                        'Restore all defaults?',
+                        'This resets every setting across General, Lorebook, and Model behaviors to their defaults. This cannot be undone.',
+                        () => void this.restoreGeneralDefaults(),
+                        'Restore'
+                    ).open();
+                }
+            }
+        ];
     }
 
-    /** Render model behavior settings. */
-    private renderModelBehaviorsSettings(containerEl: HTMLElement): void {
-        new Setting(containerEl)
-            .setName('Selection transformations')
-            .setHeading()
-            .addExtraButton((btn) =>
-                btn
-                    .setIcon('rotate-ccw')
-                    .setTooltip('Restore transformation defaults')
-                    .onClick(async () => {
-                        this.plugin.settings.narrativeVoicePreset = DEFAULT_SETTINGS.narrativeVoicePreset;
-                        this.plugin.settings.customNarrativeVoiceRules = DEFAULT_SETTINGS.customNarrativeVoiceRules;
-                        this.plugin.settings.transformTemperature = DEFAULT_SETTINGS.transformTemperature;
-                        this.plugin.settings.transformVaultContext = DEFAULT_SETTINGS.transformVaultContext;
-                        this.plugin.settings.transformMaxOutputTokens = DEFAULT_SETTINGS.transformMaxOutputTokens;
-                        this.plugin.settings.wikiLinkBehavior = DEFAULT_SETTINGS.wikiLinkBehavior;
-                        await this.plugin.saveSettings();
-                        this.display();
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Narrative voice')
-            .setDesc('The narrative perspective and tense used when generating text.')
-            .addDropdown((dropdown) => {
-                for (const preset of NARRATIVE_VOICE_PRESETS) {
-                    dropdown.addOption(preset.id, preset.label);
-                }
-                dropdown.setValue(this.plugin.settings.narrativeVoicePreset).onChange(async (value) => {
-                    this.plugin.settings.narrativeVoicePreset = value as NarrativeVoicePreset;
-                    await this.plugin.saveSettings();
-                    this.updateNarrativeVoiceRulesDisplay(value as NarrativeVoicePreset, rulesArea);
-                });
+    /**
+     * Render the folder-specific chunk overrides inside a single declarative
+     * setting row: the existing override rows plus an add-folder affordance.
+     * Returns a cleanup that re-renders after add/remove via update().
+     */
+    private renderFolderOverridesDefinition(setting: Setting): void {
+        const wrap = setting.controlEl.createDiv({ cls: 'quill-folder-overrides-list' });
+        /** (Re)render the override rows plus the add-folder affordance. */
+        const draw = () => {
+            wrap.empty();
+            this.renderFolderOverrides(wrap);
+            const addBtn = wrap.createEl('button', { text: '+ add folder', cls: 'quill-folder-override-row__add' });
+            addBtn.addEventListener('click', () => {
+                const folders = this.getVaultFolders();
+                new FolderSuggestModal(this.app, folders, (folder) => {
+                    if (this.plugin.settings.folderTopKOverrides[folder]) {
+                        new Notice('Folder already has an override.');
+                        return;
+                    }
+                    this.plugin.settings.folderTopKOverrides[folder] = this.plugin.settings.embeddingsTopKChunks;
+                    void this.plugin.saveSettings().then(() => this.update());
+                }).open();
             });
+        };
+        draw();
+    }
 
-        const rulesArea = containerEl.createDiv({ cls: 'quill-narrative-rules' });
-        this.renderNarrativeVoiceRules(containerEl, rulesArea);
+    /** Reset selection-transformation settings (narrative voice, temperature, context, wiki links) to defaults. */
+    private async restoreTransformDefaults(): Promise<void> {
+        const s = this.plugin.settings;
+        const d = DEFAULT_SETTINGS;
+        s.narrativeVoicePreset = d.narrativeVoicePreset;
+        s.customNarrativeVoiceRules = d.customNarrativeVoiceRules;
+        s.transformTemperature = d.transformTemperature;
+        s.transformVaultContext = d.transformVaultContext;
+        s.transformMaxOutputTokens = d.transformMaxOutputTokens;
+        s.wikiLinkBehavior = d.wikiLinkBehavior;
+        await this.plugin.saveSettings();
+        this.update();
+    }
 
-        new Setting(containerEl)
-            .setName('Temperature')
-            .setDesc('Higher values produce more creative output. Range: 0.0 – 2.0.')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.transformTemperature))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseFloat(text.inputEl.value);
-                        if (!isNaN(n) && n >= 0 && n <= 2) {
-                            this.plugin.settings.transformTemperature = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.transformTemperature));
-                            new Notice('Value must be a number between 0.0 and 2.0');
-                        }
-                    })
-            );
+    /** Reset co-writer settings (temperature, tokens, context, thought, voice match) to defaults. */
+    private async restoreCoWriterDefaults(): Promise<void> {
+        const s = this.plugin.settings;
+        const d = DEFAULT_SETTINGS;
+        s.coWriterTemperature = d.coWriterTemperature;
+        s.coWriterMaxOutputTokens = d.coWriterMaxOutputTokens;
+        s.coWriterMaxToolRounds = d.coWriterMaxToolRounds;
+        s.coWriterSessionHistoryLimit = d.coWriterSessionHistoryLimit;
+        s.coWriterAutoSavePerTurn = d.coWriterAutoSavePerTurn;
+        s.coWriterVaultContext = d.coWriterVaultContext;
+        s.coWriterAppendNewline = d.coWriterAppendNewline;
+        s.enableCoWriterThought = d.enableCoWriterThought;
+        s.coWriterVoiceMatch = d.coWriterVoiceMatch;
+        s.enableInlineDirectives = d.enableInlineDirectives;
+        await this.plugin.saveSettings();
+        this.update();
+    }
 
-        new Setting(containerEl)
-            .setName('Vault context')
-            .setDesc(
-                'Include cross-document vault context (character notes, worldbuilding, etc.) in transformation prompts.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.transformVaultContext).onChange(async (value) => {
-                    this.plugin.settings.transformVaultContext = value;
-                    await this.plugin.saveSettings();
-                })
-            );
+    /** Reset critical-analysis settings (temperature, max output tokens) to defaults. */
+    private async restoreAnalysisDefaults(): Promise<void> {
+        this.plugin.settings.analysisTemperature = DEFAULT_SETTINGS.analysisTemperature;
+        this.plugin.settings.analysisMaxOutputTokens = DEFAULT_SETTINGS.analysisMaxOutputTokens;
+        await this.plugin.saveSettings();
+        this.update();
+    }
 
-        new Setting(containerEl)
-            .setName('Max output tokens')
-            .setDesc('Maximum tokens per transformation response. Higher values allow longer rewrites.')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.transformMaxOutputTokens))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1) {
-                            this.plugin.settings.transformMaxOutputTokens = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.transformMaxOutputTokens));
-                            new Notice('Value must be a number ≥ 1');
-                        }
-                    })
-            );
+    /** Reset feedback-queue + review settings (queue toggles, report folder, review-discuss) to defaults. */
+    private async restoreFeedbackQueueDefaults(): Promise<void> {
+        const s = this.plugin.settings;
+        const d = DEFAULT_SETTINGS;
+        s.enableFeedbackQueue = d.enableFeedbackQueue;
+        s.feedbackQueueLimit = d.feedbackQueueLimit;
+        s.feedbackQueueAutoRun = d.feedbackQueueAutoRun;
+        s.autoSaveFeedbackReports = d.autoSaveFeedbackReports;
+        s.feedbackReportFolder = d.feedbackReportFolder;
+        s.reviewSuggestedEditsEnabled = d.reviewSuggestedEditsEnabled;
+        s.reviewWorldRules = d.reviewWorldRules;
+        await this.plugin.saveSettings();
+        this.update();
+    }
 
-        new Setting(containerEl)
-            .setName('Wiki link handling')
-            .setDesc(
-                'How AI should handle Obsidian wiki links ([[...]]) when rewriting or generating prose. "preserve" keeps them exactly as-is. "adaptive" allows the AI to adapt the display text after the pipe (|) to fit the prose while keeping the page name and heading intact.'
-            )
-            .addDropdown((dropdown) =>
-                dropdown
-                    .addOption('preserve', 'Preserve exactly')
-                    .addOption('adaptive', 'Adaptive (smart display text)')
-                    .setValue(this.plugin.settings.wikiLinkBehavior)
-                    .onChange(async (value) => {
-                        this.plugin.settings.wikiLinkBehavior = value as WikiLinkBehavior;
-                        await this.plugin.saveSettings();
-                    })
-            );
+    /** Reset context-engine settings (budget, compaction threshold, vault-context switches) to defaults. */
+    private async restoreContextEngineDefaults(): Promise<void> {
+        const s = this.plugin.settings;
+        const d = DEFAULT_SETTINGS;
+        s.contextTokenBudget = d.contextTokenBudget;
+        s.contextCompactAtPercent = d.contextCompactAtPercent;
+        s.compactSummarySentences = d.compactSummarySentences;
+        s.contextRefinementEnabled = d.contextRefinementEnabled;
+        s.contextIncludeVaultContext = d.contextIncludeVaultContext;
+        s.contextMaxVaultFiles = d.contextMaxVaultFiles;
+        s.contextMaxCharsPerFile = d.contextMaxCharsPerFile;
+        s.contextAutoScan = d.contextAutoScan;
+        await this.plugin.saveSettings();
+        this.update();
+    }
 
-        new Setting(containerEl)
-            .setName('Co-writer')
-            .setHeading()
-            .addExtraButton((btn) =>
-                btn
-                    .setIcon('rotate-ccw')
-                    .setTooltip('Restore co-writer defaults')
-                    .onClick(async () => {
-                        this.plugin.settings.coWriterTemperature = DEFAULT_SETTINGS.coWriterTemperature;
-                        this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
-                        this.plugin.settings.coWriterMaxToolRounds = DEFAULT_SETTINGS.coWriterMaxToolRounds;
-                        this.plugin.settings.coWriterSessionHistoryLimit = DEFAULT_SETTINGS.coWriterSessionHistoryLimit;
-                        this.plugin.settings.coWriterAutoSavePerTurn = DEFAULT_SETTINGS.coWriterAutoSavePerTurn;
-                        this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
-                        this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
-                        this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
-                        this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;
-                        this.plugin.settings.enableInlineDirectives = DEFAULT_SETTINGS.enableInlineDirectives;
-                        await this.plugin.saveSettings();
-                        this.display();
-                    })
-            );
+    /** Reset linter-AI settings (AI fixes toggle, temperature, max output tokens) to defaults. */
+    private async restoreLinterAiDefaults(): Promise<void> {
+        this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
+        this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
+        this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
+        await this.plugin.saveSettings();
+        this.update();
+    }
 
-        new Setting(containerEl)
-            .setName('Temperature')
-            .setDesc('Higher values produce more creative continuations. Range: 0.0 – 2.0.')
-            .addText((text) =>
-                text.setValue(String(this.plugin.settings.coWriterTemperature)).inputEl.addEventListener('blur', () => {
-                    const n = parseFloat(text.inputEl.value);
-                    if (!isNaN(n) && n >= 0 && n <= 2) {
-                        this.plugin.settings.coWriterTemperature = n;
-                        void this.plugin.saveSettings();
-                    } else {
-                        text.setValue(String(this.plugin.settings.coWriterTemperature));
-                        new Notice('Value must be a number between 0.0 and 2.0');
-                    }
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Max output tokens')
-            .setDesc('Maximum tokens per continuation. Higher values allow longer passages.')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.coWriterMaxOutputTokens))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1) {
-                            this.plugin.settings.coWriterMaxOutputTokens = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.coWriterMaxOutputTokens));
-                            new Notice('Value must be a number ≥ 1');
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Max tool rounds')
-            .setDesc(
-                'Maximum number of tool-calling rounds per response. Set to 0 for unlimited — the model ' +
-                    'will call as many rounds as it needs (use Stop to cancel). Set a specific number to ' +
-                    'cap turn consumption. Default: 0 (unlimited).'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.coWriterMaxToolRounds))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 0) {
-                            this.plugin.settings.coWriterMaxToolRounds = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.coWriterMaxToolRounds));
-                            new Notice('Value must be a number ≥ 0');
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Saved conversation limit')
-            .setDesc(
-                'How many co-writer conversations to keep on disk. Starting a new chat saves the current one; ' +
-                    'older sessions are deleted (newest-first) once this limit is exceeded. Set to 0 to keep all. ' +
-                    'Default: 25.'
-            )
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.coWriterSessionHistoryLimit))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 0) {
-                            this.plugin.settings.coWriterSessionHistoryLimit = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.coWriterSessionHistoryLimit));
-                            new Notice('Value must be a number ≥ 0');
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Auto-save after each turn')
-            .setDesc(
-                'Snapshot the active conversation to its saved-session file after every completed turn, so it ' +
-                    'survives a crash or restart without an explicit save. Off by default — the snapshot copies ' +
-                    'the full conversation state, so it adds some overhead on long sessions. De-bounced so a ' +
-                    'turn followed immediately by auto-options collapses to one write.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.coWriterAutoSavePerTurn).onChange((value) => {
-                    this.plugin.settings.coWriterAutoSavePerTurn = value;
-                    void this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Vault context')
-            .setDesc(
-                'Include cross-document vault context (character notes, worldbuilding, etc.) in co-writer prompts.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.coWriterVaultContext).onChange(async (value) => {
-                    this.plugin.settings.coWriterVaultContext = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Append trailing newline')
-            .setDesc('Add a blank line after the continuation so you can keep writing without pressing enter twice.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.coWriterAppendNewline).onChange(async (value) => {
-                    this.plugin.settings.coWriterAppendNewline = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Show AI reasoning')
-            .setDesc("Display the AI's thought process in the co-writer panel. Disable for a cleaner interface.")
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableCoWriterThought).onChange(async (value) => {
-                    this.plugin.settings.enableCoWriterThought = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Voice matching')
-            .setDesc(
-                'Analyze the voice of your prose before generating to produce more consistent continuations. Adds a small delay before generation starts.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.coWriterVoiceMatch).onChange(async (value) => {
-                    this.plugin.settings.coWriterVoiceMatch = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Inline directives')
-            .setDesc(
-                'Parse `<!-- quill: ... -->` comments immediately preceding the cursor and feed them to the co-writer as steering. Disable to ignore directives entirely.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableInlineDirectives).onChange(async (value) => {
-                    this.plugin.settings.enableInlineDirectives = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Analysis')
-            .setHeading()
-            .addExtraButton((btn) =>
-                btn
-                    .setIcon('rotate-ccw')
-                    .setTooltip('Restore analysis defaults')
-                    .onClick(async () => {
-                        this.plugin.settings.analysisTemperature = DEFAULT_SETTINGS.analysisTemperature;
-                        this.plugin.settings.analysisMaxOutputTokens = DEFAULT_SETTINGS.analysisMaxOutputTokens;
-                        await this.plugin.saveSettings();
-                        this.display();
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Analysis temperature')
-            .setDesc('Temperature for AI analysis and feedback responses (companion mode). Range: 0.0 – 2.0.')
-            .addText((text) =>
-                text.setValue(String(this.plugin.settings.analysisTemperature)).inputEl.addEventListener('blur', () => {
-                    const n = parseFloat(text.inputEl.value);
-                    if (!isNaN(n) && n >= 0 && n <= 2) {
-                        this.plugin.settings.analysisTemperature = n;
-                        void this.plugin.saveSettings();
-                    } else {
-                        text.setValue(String(this.plugin.settings.analysisTemperature));
-                        new Notice('Value must be a number between 0.0 and 2.0');
-                    }
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Analysis max output tokens')
-            .setDesc('Maximum tokens per analysis response.')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.analysisMaxOutputTokens))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1) {
-                            this.plugin.settings.analysisMaxOutputTokens = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.analysisMaxOutputTokens));
-                            new Notice('Value must be a number ≥ 1');
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Feedback queue')
-            .setHeading()
-            .addExtraButton((btn) =>
-                btn
-                    .setIcon('rotate-ccw')
-                    .setTooltip('Restore feedback queue defaults')
-                    .onClick(async () => {
-                        this.plugin.settings.enableFeedbackQueue = DEFAULT_SETTINGS.enableFeedbackQueue;
-                        this.plugin.settings.feedbackQueueLimit = DEFAULT_SETTINGS.feedbackQueueLimit;
-                        this.plugin.settings.feedbackQueueAutoRun = DEFAULT_SETTINGS.feedbackQueueAutoRun;
-                        this.plugin.settings.autoSaveFeedbackReports = DEFAULT_SETTINGS.autoSaveFeedbackReports;
-                        this.plugin.settings.feedbackReportFolder = DEFAULT_SETTINGS.feedbackReportFolder;
-                        this.plugin.settings.reviewSuggestedEditsEnabled = DEFAULT_SETTINGS.reviewSuggestedEditsEnabled;
-                        this.plugin.settings.reviewWorldRules = DEFAULT_SETTINGS.reviewWorldRules;
-                        await this.plugin.saveSettings();
-                        this.display();
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Enable feedback queue')
-            .setDesc('Show the queue sub-tab and allow queueing reviews to run unattended. Default: on.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableFeedbackQueue).onChange(async (value) => {
-                    this.plugin.settings.enableFeedbackQueue = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Proactive editor chat')
-            .setDesc(
-                'After a report finishes, the follow-up discussion runs through the co-writer session ' +
-                    'with editing tools enabled, so the editor can propose specific, reviewable inline-diff ' +
-                    'edits (not just advisory prose). Every proposed edit still requires your approval before ' +
-                    'it reaches the vault. Turn off to keep the pre-1.5.0 text-only chat behavior. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.reviewSuggestedEditsEnabled).onChange(async (value) => {
-                    this.plugin.settings.reviewSuggestedEditsEnabled = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('World rules')
-            .setDesc(
-                'World-building rules the editor follows when writing or editing prose in review-discuss. ' +
-                    'Describe how your world works so edits use the right vocabulary and details. ' +
-                    'Example: "Magic is visible as blue light. Swords are called blades regardless of shape. ' +
-                    'The setting is a tropical archipelago."'
-            )
-            .addTextArea((text) => {
-                text.setPlaceholder(
-                    'Magic is visible as blue light...\n' +
-                        'The setting is a tropical archipelago...\n' +
-                        'Swords are called blades regardless of shape...'
-                )
-                    .setValue(this.plugin.settings.reviewWorldRules)
-                    .onChange(async (value) => {
-                        this.plugin.settings.reviewWorldRules = value;
-                        await this.plugin.saveSettings();
-                    });
-                text.inputEl.rows = 5;
-            });
-
-        new Setting(containerEl)
-            .setName('Run queued jobs automatically')
-            .setDesc(
-                'Run queued jobs automatically while Obsidian is open. Turn off to queue jobs without running them until you trigger one manually. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.feedbackQueueAutoRun).onChange(async (value) => {
-                    this.plugin.settings.feedbackQueueAutoRun = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Auto-save feedback reports')
-            .setDesc(
-                'Save every completed feedback report (async queue + interactive Review) to the vault as dated markdown. ' +
-                    'When off, no report is written anywhere — the report is held in-memory for the session only. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.autoSaveFeedbackReports).onChange(async (value) => {
-                    this.plugin.settings.autoSaveFeedbackReports = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Feedback report folder')
-            .setDesc('Vault folder for auto-saved feedback reports. Created on first write.')
-            .addText((text) =>
-                text.setValue(this.plugin.settings.feedbackReportFolder).inputEl.addEventListener('blur', () => {
-                    const v = text.inputEl.value.trim();
-                    this.plugin.settings.feedbackReportFolder = v || DEFAULT_SETTINGS.feedbackReportFolder;
-                    text.setValue(this.plugin.settings.feedbackReportFolder);
-                    void this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Feedback queue limit')
-            .setDesc(
-                'Maximum number of queue jobs retained on disk. Older completed jobs are removed first. Default: 20.'
-            )
-            .addText((text) =>
-                text.setValue(String(this.plugin.settings.feedbackQueueLimit)).inputEl.addEventListener('blur', () => {
-                    const n = parseInt(text.inputEl.value, 10);
-                    if (!isNaN(n) && n >= 1) {
-                        this.plugin.settings.feedbackQueueLimit = n;
-                        void this.plugin.saveSettings();
-                    } else {
-                        text.setValue(String(this.plugin.settings.feedbackQueueLimit));
-                        new Notice('Value must be a number ≥ 1');
-                    }
-                })
-            );
-
-        // Embeddings are the retrieval index that feeds the context assembler —
-        // kept next to the Context engine section for that reason.
-        this.renderEmbeddingsSettings(containerEl);
-
-        new Setting(containerEl)
-            .setName('Context engine')
-            .setHeading()
-            .addExtraButton((btn) =>
-                btn
-                    .setIcon('rotate-ccw')
-                    .setTooltip('Restore context engine defaults')
-                    .onClick(async () => {
-                        this.plugin.settings.contextTokenBudget = DEFAULT_SETTINGS.contextTokenBudget;
-                        this.plugin.settings.contextCompactAtPercent = DEFAULT_SETTINGS.contextCompactAtPercent;
-                        this.plugin.settings.compactSummarySentences = DEFAULT_SETTINGS.compactSummarySentences;
-                        this.plugin.settings.contextRefinementEnabled = DEFAULT_SETTINGS.contextRefinementEnabled;
-                        this.plugin.settings.contextIncludeVaultContext = DEFAULT_SETTINGS.contextIncludeVaultContext;
-                        this.plugin.settings.contextMaxVaultFiles = DEFAULT_SETTINGS.contextMaxVaultFiles;
-                        this.plugin.settings.contextMaxCharsPerFile = DEFAULT_SETTINGS.contextMaxCharsPerFile;
-                        this.plugin.settings.contextAutoScan = DEFAULT_SETTINGS.contextAutoScan;
-                        await this.plugin.saveSettings();
-                        this.display();
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Token budget')
-            .setDesc('Maximum tokens for assembled context. Higher values use more context window.')
-            .addDropdown((dropdown) => {
-                for (const opt of [4096, 8192, 16384, 32768]) {
-                    dropdown.addOption(String(opt), String(opt));
-                }
-                dropdown.setValue(String(this.plugin.settings.contextTokenBudget)).onChange(async (value) => {
-                    this.plugin.settings.contextTokenBudget = parseInt(value, 10);
-                    await this.plugin.saveSettings();
-                });
-            });
-
-        new Setting(containerEl)
-            .setName('Compaction threshold')
-            .setDesc('Percentage of token budget at which context is compacted (50-95).')
-            .addText((text) => {
-                text.setValue(String(this.plugin.settings.contextCompactAtPercent)).inputEl.addEventListener(
-                    'blur',
-                    () => {
-                        const raw = text.inputEl.value;
-                        const n = parseInt(raw, 10);
-                        if (!isNaN(n) && n >= 50 && n <= 95) {
-                            this.plugin.settings.contextCompactAtPercent = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.contextCompactAtPercent));
-                            new Notice('Value must be between 50 and 95');
-                        }
-                    }
-                );
-            });
-
-        new Setting(containerEl)
-            .setName('Compact summary length')
-            .setDesc('Number of sentences in the AI-generated compaction summary (1-20).')
-            .addText((text) => {
-                text.setValue(String(this.plugin.settings.compactSummarySentences)).inputEl.addEventListener(
-                    'blur',
-                    () => {
-                        const raw = text.inputEl.value;
-                        const n = parseInt(raw, 10);
-                        if (!isNaN(n) && n >= 1 && n <= 20) {
-                            this.plugin.settings.compactSummarySentences = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.compactSummarySentences));
-                            new Notice('Value must be between 1 and 20');
-                        }
-                    }
-                );
-            });
-
-        new Setting(containerEl)
-            .setName('Refine accepted edits out of context')
-            .setDesc(
-                'Before AI-compacting, surgically compress bulky or now-stale tool content in the ' +
-                    'model\u2019s history: accepted/discarded lore drafts become compact outcome markers, ' +
-                    'stale vault reads are marked for re-lookup, and big reads are trimmed oldest-first ' +
-                    'when nearing the threshold. Cheaper and more faithful than a full AI summary (the ' +
-                    'model can always re-look-up current text), and stops a long-context model from ' +
-                    're-outputting an entry it already drafted. Rewind still works. Default: on.'
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.contextRefinementEnabled).onChange(async (value) => {
-                    this.plugin.settings.contextRefinementEnabled = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Include vault context')
-            .setDesc('Search the vault for related notes when assembling context.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.contextIncludeVaultContext).onChange(async (value) => {
-                    this.plugin.settings.contextIncludeVaultContext = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Max vault files')
-            .setDesc('Maximum number of vault files to examine for context (1-100).')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.contextMaxVaultFiles))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1 && n <= 100) {
-                            this.plugin.settings.contextMaxVaultFiles = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.contextMaxVaultFiles));
-                            new Notice('Value must be between 1 and 100');
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Max chars per file')
-            .setDesc('Maximum characters to read from each vault file (500-10000).')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.contextMaxCharsPerFile))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 500 && n <= 10000) {
-                            this.plugin.settings.contextMaxCharsPerFile = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.contextMaxCharsPerFile));
-                            new Notice('Value must be between 500 and 10000');
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Auto-scan on open')
-            .setDesc('Automatically scan documents for context when opened.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.contextAutoScan).onChange(async (value) => {
-                    this.plugin.settings.contextAutoScan = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Linter AI')
-            .setHeading()
-            .addExtraButton((btn) =>
-                btn
-                    .setIcon('rotate-ccw')
-                    .setTooltip('Restore linter AI defaults')
-                    .onClick(async () => {
-                        this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
-                        this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
-                        this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
-                        this.plugin.settings.wikiLinkBehavior = DEFAULT_SETTINGS.wikiLinkBehavior;
-                        await this.plugin.saveSettings();
-                        this.display();
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Enable AI-powered lint fixes')
-            .setDesc('Show "fix with AI" buttons in the linter sidebar and editor tooltips for intelligent fixes.')
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.enableLinterAiFixes).onChange(async (value) => {
-                    this.plugin.settings.enableLinterAiFixes = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Linter AI temperature')
-            .setDesc('Lower values produce more conservative, precise fixes. Range: 0.0 – 2.0.')
-            .addText((text) =>
-                text.setValue(String(this.plugin.settings.linterTemperature)).inputEl.addEventListener('blur', () => {
-                    const n = parseFloat(text.inputEl.value);
-                    if (!isNaN(n) && n >= 0 && n <= 2) {
-                        this.plugin.settings.linterTemperature = n;
-                        void this.plugin.saveSettings();
-                    } else {
-                        text.setValue(String(this.plugin.settings.linterTemperature));
-                        new Notice('Value must be a number between 0.0 and 2.0');
-                    }
-                })
-            );
-
-        new Setting(containerEl)
-            .setName('Linter AI max output tokens')
-            .setDesc('Maximum tokens per AI lint fix response.')
-            .addText((text) =>
-                text
-                    .setValue(String(this.plugin.settings.linterMaxOutputTokens))
-                    .inputEl.addEventListener('blur', () => {
-                        const n = parseInt(text.inputEl.value, 10);
-                        if (!isNaN(n) && n >= 1) {
-                            this.plugin.settings.linterMaxOutputTokens = n;
-                            void this.plugin.saveSettings();
-                        } else {
-                            text.setValue(String(this.plugin.settings.linterMaxOutputTokens));
-                            new Notice('Value must be a number ≥ 1');
-                        }
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Restore defaults')
-            .setDesc('Reset every setting on this tab. Use the per-section reset buttons above for targeted resets.')
-            .addButton((button) =>
-                button.setButtonText('Restore defaults').onClick(async () => {
-                    this.plugin.settings.transformTemperature = DEFAULT_SETTINGS.transformTemperature;
-                    this.plugin.settings.transformVaultContext = DEFAULT_SETTINGS.transformVaultContext;
-                    this.plugin.settings.transformMaxOutputTokens = DEFAULT_SETTINGS.transformMaxOutputTokens;
-                    this.plugin.settings.wikiLinkBehavior = DEFAULT_SETTINGS.wikiLinkBehavior;
-                    this.plugin.settings.narrativeVoicePreset = DEFAULT_SETTINGS.narrativeVoicePreset;
-                    this.plugin.settings.customNarrativeVoiceRules = DEFAULT_SETTINGS.customNarrativeVoiceRules;
-                    this.plugin.settings.analysisTemperature = DEFAULT_SETTINGS.analysisTemperature;
-                    this.plugin.settings.analysisMaxOutputTokens = DEFAULT_SETTINGS.analysisMaxOutputTokens;
-                    this.plugin.settings.linterTemperature = DEFAULT_SETTINGS.linterTemperature;
-                    this.plugin.settings.linterMaxOutputTokens = DEFAULT_SETTINGS.linterMaxOutputTokens;
-                    this.plugin.settings.enableLinterAiFixes = DEFAULT_SETTINGS.enableLinterAiFixes;
-                    this.plugin.settings.contextTokenBudget = DEFAULT_SETTINGS.contextTokenBudget;
-                    this.plugin.settings.contextCompactAtPercent = DEFAULT_SETTINGS.contextCompactAtPercent;
-                    this.plugin.settings.contextRefinementEnabled = DEFAULT_SETTINGS.contextRefinementEnabled;
-                    this.plugin.settings.compactSummarySentences = DEFAULT_SETTINGS.compactSummarySentences;
-                    this.plugin.settings.contextIncludeVaultContext = DEFAULT_SETTINGS.contextIncludeVaultContext;
-                    this.plugin.settings.contextMaxVaultFiles = DEFAULT_SETTINGS.contextMaxVaultFiles;
-                    this.plugin.settings.contextMaxCharsPerFile = DEFAULT_SETTINGS.contextMaxCharsPerFile;
-                    this.plugin.settings.contextAutoScan = DEFAULT_SETTINGS.contextAutoScan;
-                    this.plugin.settings.coWriterTemperature = DEFAULT_SETTINGS.coWriterTemperature;
-                    this.plugin.settings.coWriterMaxOutputTokens = DEFAULT_SETTINGS.coWriterMaxOutputTokens;
-                    this.plugin.settings.coWriterMaxToolRounds = DEFAULT_SETTINGS.coWriterMaxToolRounds;
-                    this.plugin.settings.coWriterAutoSavePerTurn = DEFAULT_SETTINGS.coWriterAutoSavePerTurn;
-                    this.plugin.settings.coWriterVaultContext = DEFAULT_SETTINGS.coWriterVaultContext;
-                    this.plugin.settings.coWriterLoreContext = DEFAULT_SETTINGS.coWriterLoreContext;
-                    this.plugin.settings.reviewLoreContext = DEFAULT_SETTINGS.reviewLoreContext;
-                    this.plugin.settings.lorebookNetworkTools = DEFAULT_SETTINGS.lorebookNetworkTools;
-                    this.plugin.settings.lorebookFandomWikis = [...DEFAULT_SETTINGS.lorebookFandomWikis];
-                    this.plugin.settings.lorebookFandomAllowAllWikis = DEFAULT_SETTINGS.lorebookFandomAllowAllWikis;
-                    this.plugin.settings.lorebookFandomCacheEnabled = DEFAULT_SETTINGS.lorebookFandomCacheEnabled;
-                    this.plugin.settings.lorebookWikipediaLang = DEFAULT_SETTINGS.lorebookWikipediaLang;
-                    this.plugin.settings.lorebookToolMaxTokens = DEFAULT_SETTINGS.lorebookToolMaxTokens;
-                    this.plugin.settings.lorebookImageTools = DEFAULT_SETTINGS.lorebookImageTools;
-                    this.plugin.settings.lorebookImageMaxDimension = DEFAULT_SETTINGS.lorebookImageMaxDimension;
-                    this.plugin.settings.lorebookImageMaxDescriptionTokens =
-                        DEFAULT_SETTINGS.lorebookImageMaxDescriptionTokens;
-                    this.plugin.settings.lorebookImageProxyPrompt = DEFAULT_SETTINGS.lorebookImageProxyPrompt;
-                    this.plugin.settings.lorebookImageTwoPassDescription =
-                        DEFAULT_SETTINGS.lorebookImageTwoPassDescription;
-                    this.plugin.settings.loreEntryImageSectionHeaders = [
-                        ...DEFAULT_SETTINGS.loreEntryImageSectionHeaders
-                    ];
-                    this.plugin.settings.loreEntryImageMaxPerEntry = DEFAULT_SETTINGS.loreEntryImageMaxPerEntry;
-                    this.plugin.settings.loreEntryImageAttachments = DEFAULT_SETTINGS.loreEntryImageAttachments;
-                    this.plugin.settings.loreEntryImageAttachmentFolder =
-                        DEFAULT_SETTINGS.loreEntryImageAttachmentFolder;
-                    this.plugin.settings.lorePreferEditOverCreate = DEFAULT_SETTINGS.lorePreferEditOverCreate;
-                    this.plugin.settings.coWriterAppendNewline = DEFAULT_SETTINGS.coWriterAppendNewline;
-                    this.plugin.settings.slashCommands = [...DEFAULT_SETTINGS.slashCommands];
-                    this.plugin.settings.enableCoWriterThought = DEFAULT_SETTINGS.enableCoWriterThought;
-                    this.plugin.settings.coWriterVoiceMatch = DEFAULT_SETTINGS.coWriterVoiceMatch;
-                    this.plugin.settings.enableInlineDirectives = DEFAULT_SETTINGS.enableInlineDirectives;
-                    this.plugin.settings.enableFeedbackQueue = DEFAULT_SETTINGS.enableFeedbackQueue;
-                    this.plugin.settings.feedbackQueueLimit = DEFAULT_SETTINGS.feedbackQueueLimit;
-                    this.plugin.settings.feedbackQueueAutoRun = DEFAULT_SETTINGS.feedbackQueueAutoRun;
-                    this.plugin.settings.autoSaveFeedbackReports = DEFAULT_SETTINGS.autoSaveFeedbackReports;
-                    this.plugin.settings.feedbackReportFolder = DEFAULT_SETTINGS.feedbackReportFolder;
-                    this.plugin.settings.reviewSuggestedEditsEnabled = DEFAULT_SETTINGS.reviewSuggestedEditsEnabled;
-                    this.plugin.settings.reviewWorldRules = DEFAULT_SETTINGS.reviewWorldRules;
-                    await this.plugin.saveSettings();
-                    this.display();
-                })
-            );
+    /** Restore-defaults action for the Model behaviors page (every field on the tab). */
+    private async restoreModelBehaviorsDefaults(): Promise<void> {
+        const s = this.plugin.settings;
+        const d = DEFAULT_SETTINGS;
+        s.transformTemperature = d.transformTemperature;
+        s.transformVaultContext = d.transformVaultContext;
+        s.transformMaxOutputTokens = d.transformMaxOutputTokens;
+        s.wikiLinkBehavior = d.wikiLinkBehavior;
+        s.narrativeVoicePreset = d.narrativeVoicePreset;
+        s.customNarrativeVoiceRules = d.customNarrativeVoiceRules;
+        s.analysisTemperature = d.analysisTemperature;
+        s.analysisMaxOutputTokens = d.analysisMaxOutputTokens;
+        s.linterTemperature = d.linterTemperature;
+        s.linterMaxOutputTokens = d.linterMaxOutputTokens;
+        s.enableLinterAiFixes = d.enableLinterAiFixes;
+        s.contextTokenBudget = d.contextTokenBudget;
+        s.contextCompactAtPercent = d.contextCompactAtPercent;
+        s.contextRefinementEnabled = d.contextRefinementEnabled;
+        s.compactSummarySentences = d.compactSummarySentences;
+        s.contextIncludeVaultContext = d.contextIncludeVaultContext;
+        s.contextMaxVaultFiles = d.contextMaxVaultFiles;
+        s.contextMaxCharsPerFile = d.contextMaxCharsPerFile;
+        s.contextAutoScan = d.contextAutoScan;
+        s.coWriterTemperature = d.coWriterTemperature;
+        s.coWriterMaxOutputTokens = d.coWriterMaxOutputTokens;
+        s.coWriterMaxToolRounds = d.coWriterMaxToolRounds;
+        s.coWriterAutoSavePerTurn = d.coWriterAutoSavePerTurn;
+        s.coWriterVaultContext = d.coWriterVaultContext;
+        s.coWriterAppendNewline = d.coWriterAppendNewline;
+        s.enableCoWriterThought = d.enableCoWriterThought;
+        s.coWriterVoiceMatch = d.coWriterVoiceMatch;
+        s.enableInlineDirectives = d.enableInlineDirectives;
+        s.enableFeedbackQueue = d.enableFeedbackQueue;
+        s.feedbackQueueLimit = d.feedbackQueueLimit;
+        s.feedbackQueueAutoRun = d.feedbackQueueAutoRun;
+        s.autoSaveFeedbackReports = d.autoSaveFeedbackReports;
+        s.feedbackReportFolder = d.feedbackReportFolder;
+        s.reviewSuggestedEditsEnabled = d.reviewSuggestedEditsEnabled;
+        s.reviewWorldRules = d.reviewWorldRules;
+        s.embeddingsTopKChunks = d.embeddingsTopKChunks;
+        s.embeddingChunkTokenSize = d.embeddingChunkTokenSize;
+        s.enableEmbeddingWarming = d.enableEmbeddingWarming;
+        s.enableFullEmbedPickerOption = d.enableFullEmbedPickerOption;
+        s.folderTopKOverrides = { ...d.folderTopKOverrides };
+        s.embeddingWarmingDebounceSeconds = d.embeddingWarmingDebounceSeconds;
+        await this.plugin.saveSettings();
+        this.update();
     }
 
     /** Fetch models from the provider endpoint and show a suggester. */
@@ -3682,7 +3235,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
             new ModelFetchModal(this.app, models, (modelId) => {
                 modelConfig.model = modelId;
-                void this.plugin.saveSettings().then(() => this.display());
+                void this.plugin.saveSettings().then(() => this.refreshBridge());
             }).open();
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -3701,6 +3254,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     private validateDefaultProviders(): void {
         const { aiProviders } = this.plugin.settings;
 
+        /** True when the `providerId/modelId` composite key resolves to a provider whose model satisfies the capability. */
         const satisfies = (key: string, capability: ModelCapability): boolean => {
             const parts = key.split('/', 2);
             if (parts.length !== 2 || !parts[0] || !parts[1]) return false;
@@ -3728,42 +3282,6 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             !satisfies(this.plugin.settings.aiDefaultImageProvider, 'image')
         ) {
             this.plugin.settings.aiDefaultImageProvider = '';
-        }
-    }
-
-    /** Render the narrative voice rules textarea and wire its change handler. */
-    private renderNarrativeVoiceRules(containerEl: HTMLElement, rulesArea: HTMLElement): void {
-        const textarea = rulesArea.createEl('textarea', {
-            cls: 'quill-narrative-rules__textarea',
-            attr: {
-                rows: '6',
-                placeholder: 'Rules for the custom narrative voice...'
-            }
-        });
-        this.updateNarrativeVoiceRulesDisplay(this.plugin.settings.narrativeVoicePreset, rulesArea);
-
-        textarea.addEventListener('input', () => {
-            if (this.plugin.settings.narrativeVoicePreset === 'custom') {
-                this.plugin.settings.customNarrativeVoiceRules = textarea.value;
-                void this.plugin.saveSettings();
-            }
-        });
-    }
-
-    /** Sync the narrative voice rules textarea with the active preset. */
-    private updateNarrativeVoiceRulesDisplay(preset: NarrativeVoicePreset, rulesArea: HTMLElement): void {
-        const textarea = rulesArea.querySelector('textarea');
-        if (!textarea) return;
-
-        const isCustom = preset === 'custom';
-        textarea.readOnly = !isCustom;
-
-        if (isCustom) {
-            textarea.value = this.plugin.settings.customNarrativeVoiceRules;
-        } else {
-            const def = NARRATIVE_VOICE_PRESETS.find((p) => p.id === preset) ?? NARRATIVE_VOICE_PRESETS[0];
-            if (!def) return;
-            textarea.value = def.rules.join('\n');
         }
     }
 
@@ -3801,7 +3319,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             maxOutputTokens: 4096
         };
         this.plugin.settings.aiProviders.push(newProvider);
-        void this.plugin.saveSettings().then(() => this.display());
+        void this.plugin.saveSettings().then(() => this.refreshBridge());
     }
 
     /**
@@ -3827,8 +3345,67 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 }
 
+/**
+ * Navigable detail page for one AI provider (Phase 6). Renders the provider's
+ * fields, model list, and test buttons via {@link EventideQuillSettingTab.renderProviderPage},
+ * and registers with the bridge machinery so mutation handlers that call
+ * refreshBridge() (type cascades, model add/remove/role changes, custom
+ * context) re-render this page in place.
+ */
+class ProviderSettingPage extends SettingPage {
+    private readonly tab: EventideQuillSettingTab;
+    private readonly provider: ProviderConfig;
+
+    /** Capture the tab and provider this page renders. */
+    constructor(tab: EventideQuillSettingTab, provider: ProviderConfig) {
+        super();
+        this.tab = tab;
+        this.provider = provider;
+        this.title = provider.name || 'Unnamed provider';
+    }
+
+    /** Open the page: register it as the active bridge page and render the provider UI into its container. */
+    display(): void {
+        this.tab.enterBridgePage(this.containerEl, (el) => this.tab.renderProviderPage(el, this.provider));
+    }
+
+    /** Unregister this page from the bridge machinery before closing. */
+    hide(): void {
+        this.tab.exitBridgePage(this.containerEl);
+        super.hide();
+    }
+}
+
+/**
+ * Navigable page for the default chat/embed/image model pickers. Renders via
+ * {@link EventideQuillSettingTab.renderDefaultModelSettings} (the embed picker
+ * has a cache-invalidation confirmation modal that doesn't need a re-render).
+ */
+class DefaultModelsSettingPage extends SettingPage {
+    private readonly tab: EventideQuillSettingTab;
+
+    /** Capture the tab this page renders. */
+    constructor(tab: EventideQuillSettingTab) {
+        super();
+        this.tab = tab;
+        this.title = 'Default models';
+    }
+
+    /** Open the page: register it as the active bridge page and render the default-model pickers. */
+    display(): void {
+        this.tab.enterBridgePage(this.containerEl, (el) => this.tab.renderDefaultModelSettings(el));
+    }
+
+    /** Unregister this page from the bridge machinery before closing. */
+    hide(): void {
+        this.tab.exitBridgePage(this.containerEl);
+        super.hide();
+    }
+}
+
 /** Modal for picking a vault folder from the list of markdown-containing folders. */
 class FolderSuggestModal extends SuggestModal<string> {
+    /** Store the folder list and the pick callback. */
     constructor(
         app: App,
         private folders: string[],
@@ -3837,15 +3414,18 @@ class FolderSuggestModal extends SuggestModal<string> {
         super(app);
     }
 
+    /** Filter the folder list by query. */
     getSuggestions(query: string): string[] {
         const q = query.toLowerCase();
         return this.folders.filter((f) => f.toLowerCase().includes(q));
     }
 
+    /** Render each folder row. */
     renderSuggestion(folder: string, el: HTMLElement): void {
         el.createSpan({ text: folder });
     }
 
+    /** Fire the pick callback with the chosen folder. */
     onChooseSuggestion(folder: string): void {
         this.onPick(folder);
     }

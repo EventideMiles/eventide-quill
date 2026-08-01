@@ -66,6 +66,7 @@ export class OllamaProvider implements AiProvider {
     readonly name: string;
     readonly config: ProviderConfig;
 
+    /** Store the provider id, name, and config. */
     constructor(config: ProviderConfig) {
         this.id = config.id;
         this.name = config.name;

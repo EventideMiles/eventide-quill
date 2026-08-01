@@ -42,6 +42,7 @@ export abstract class SuggestBase<TItem> {
     protected isOpen = false;
     private justCommitted = false;
 
+    /** Create the suggester, building the wrapper and registering DOM events through the component lifecycle. */
     constructor(app: App, inputEl: HTMLTextAreaElement, lifecycle: Component) {
         this.app = app;
         this.inputEl = inputEl;
@@ -166,6 +167,7 @@ export abstract class SuggestBase<TItem> {
 
     // ── Filtering + rendering ──────────────────────────────────────
 
+    /** Filter and rank the query, then show (or close) the dropdown. */
     protected filterAndShow(query: string): void {
         const items = this.filterItems(query);
         this.currentItems = items.slice(0, 12);
@@ -179,6 +181,7 @@ export abstract class SuggestBase<TItem> {
         this.renderDropdown();
     }
 
+    /** Rebuild the dropdown DOM with a row per item, highlighting the selected one. */
     protected renderDropdown(): void {
         if (!this.suggestEl) {
             this.suggestEl = this.wrapperEl.createDiv({ cls: this.cssBlock() });
@@ -238,6 +241,7 @@ export abstract class SuggestBase<TItem> {
         if (after) parent.createSpan({ text: after });
     }
 
+    /** Move the selected highlight to the current index and scroll it into view. */
     protected highlightSelected(): void {
         if (!this.suggestEl) return;
         const items = this.suggestEl.querySelectorAll(`.${this.cssBlock()}__item`);
@@ -250,6 +254,7 @@ export abstract class SuggestBase<TItem> {
 
     // ── Selection ──────────────────────────────────────────────────
 
+    /** Commit the selected item into the input, close, and fire a synthetic input event. */
     protected commitSelection(): void {
         const selected = this.currentItems[this.selectedIndex];
         if (!selected) return;
@@ -275,6 +280,7 @@ export abstract class SuggestBase<TItem> {
         this.currentQuery = '';
     };
 
+    /** Close the dropdown and remove the wrapper from the DOM. */
     protected destroy(): void {
         this.close();
         // DOM event listeners are auto-removed by the Component lifecycle

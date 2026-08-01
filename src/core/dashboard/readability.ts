@@ -7,10 +7,12 @@ const DALE_CHALL_SET = new Set(daleChallWords);
 
 const PUNCTUATION_TRIM = /^[^a-zA-Z]+|[^a-zA-Z]+$/g;
 
+/** Strip leading/trailing non-alphabetic characters from a word. */
 function stripPunctuation(word: string): string {
     return word.replace(PUNCTUATION_TRIM, '');
 }
 
+/** True when the word is on the Dale-Chall familiar list (directly or via morphology). */
 function isFamiliarWord(word: string): boolean {
     const cleaned = stripPunctuation(word);
     if (!cleaned) return true;
@@ -21,6 +23,7 @@ function isFamiliarWord(word: string): boolean {
     return checkMorphologicalVariants(lower);
 }
 
+/** Check common morphological variants (plurals, inflections) of a word against the Dale-Chall list. */
 function checkMorphologicalVariants(w: string): boolean {
     const candidates: string[] = [];
 
@@ -75,6 +78,7 @@ function checkMorphologicalVariants(w: string): boolean {
     return false;
 }
 
+/** Split text into non-empty whitespace-separated words. */
 function splitWords(text: string): string[] {
     return text.split(/\s+/).filter(Boolean);
 }
@@ -86,6 +90,7 @@ interface SentenceWordData {
     difficultWordCount: number;
 }
 
+/** Break the text into sentences, tallying word, syllable, and difficult-word counts per sentence. */
 function analyzeSentences(text: string): SentenceWordData[] {
     const sentences = splitSentences(text, ABBREVIATIONS_PATTERN);
     return sentences.map((s) => {
@@ -101,6 +106,7 @@ function analyzeSentences(text: string): SentenceWordData[] {
     });
 }
 
+/** Sum per-sentence word, syllable, and difficult-word counts into totals. */
 function aggregateSentenceData(data: SentenceWordData[]): {
     totalWords: number;
     totalSentences: number;
@@ -169,6 +175,7 @@ export function daleChall(text: string): DaleChallResult {
     };
 }
 
+/** Map a Dale-Chall raw score to a grade-level band. */
 function daleChallGradeFromRaw(raw: number): number {
     if (raw >= 60) return 4;
     if (raw >= 50) return 6; // grades 5-6
@@ -212,6 +219,7 @@ export function automatedReadabilityIndex(text: string): number {
     return Math.max(0, Math.round(ari * 10) / 10);
 }
 
+/** Count alphabetic and numeric characters (the ARI letters metric). */
 function countLetters(text: string): number {
     let count = 0;
     for (let i = 0; i < text.length; i++) {
@@ -325,6 +333,7 @@ export function customComposite(
     };
 }
 
+/** Map a composite score to its readability label. */
 function compositeLabel(score: number): string {
     if (score >= 80) return 'very readable';
     if (score >= 60) return 'readable';
@@ -390,6 +399,7 @@ export function narrativeFlow(
     return { score: rounded, label: flowLabel(rounded) };
 }
 
+/** Map a narrative-flow score to its tier label. */
 export function flowLabel(score: number): string {
     if (score >= 80) return 'strong flow';
     if (score >= 60) return 'good flow';
@@ -398,6 +408,7 @@ export function flowLabel(score: number): string {
     return 'monotonous';
 }
 
+/** Clamp a value into the inclusive [min, max] range. */
 function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
 }

@@ -708,6 +708,7 @@ export function checkDuplicateText(text: string): LintResult[] {
         return trimmed.length >= MIN_LEN ? distinctiveWords(trimmed) : null;
     });
 
+    /** Push a duplicate-text warning for the given paragraph index. */
     const reportAt = (idx: number, pct: number, scope: string): void => {
         const pos = posAtOffset(text, paragraphs[idx]!.from);
         results.push({

@@ -30,6 +30,7 @@ function makeScriptedProvider(rounds: ChatChunk[][]): AiProvider {
     };
 }
 
+/** Build a simple tool that returns a fixed result. */
 function makeTool(id: string, result: string): Tool {
     return {
         id,
@@ -41,6 +42,7 @@ function makeTool(id: string, result: string): Tool {
     };
 }
 
+/** Build an empty tool context. */
 function makeCtx(): ToolContext {
     return { plugin: {} } as unknown as ToolContext;
 }

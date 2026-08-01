@@ -30,6 +30,7 @@ const config: ProviderConfig = {
     maxOutputTokens: 4096
 };
 
+/** Build a GeminiProvider from the shared test config. */
 function makeProvider(): GeminiProvider {
     return new GeminiProvider(config);
 }

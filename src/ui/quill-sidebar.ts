@@ -33,6 +33,7 @@ const VALID_TOP_TABS: ReadonlySet<TopTab> = new Set<TopTab>([
     'lorebook'
 ]);
 
+/** Sidebar view hosting the linter, context, review, co-writer, dashboard, and lorebook tabs. */
 export class QuillSidebarView extends ItemView {
     private results: LintResult[] = [];
     private selectedResult: LintResult | null = null;
@@ -279,6 +280,7 @@ export class QuillSidebarView extends ItemView {
         const flaggedStart = result.column;
         const flaggedEnd = result.column + result.length;
 
+        /** True when the line contains only whitespace. */
         const isBlank = (text: string) => text.trim().length === 0;
 
         let paraStart = lineIndex;
@@ -1086,6 +1088,7 @@ export class QuillSidebarView extends ItemView {
         }
     }
 
+    /** Start a new review on the Review tab (switches to the Results sub-tab). */
     reviewStartLoading(engine: 'editorial' | 'critical' | 'manuscript', headerLabel: string, subLabel?: string): void {
         this.reviewPanel?.startLoading(engine, headerLabel, subLabel);
     }
@@ -1100,14 +1103,17 @@ export class QuillSidebarView extends ItemView {
         this.reviewPanel?.restoreDiscussAfterSwap();
     }
 
+    /** Append a streaming chunk to the Review panel's flat report view. */
     reviewAppendChunk(text: string): void {
         this.reviewPanel?.appendChunk(text);
     }
 
+    /** Mark the Review panel's initial report stream complete. */
     async reviewFinished(): Promise<void> {
         await this.reviewPanel?.finishLoading();
     }
 
+    /** Surface a review error in the Review panel. */
     reviewError(message: string): void {
         this.reviewPanel?.showError(message);
     }
@@ -1126,80 +1132,98 @@ export class QuillSidebarView extends ItemView {
         this.reviewPanel?.feedbackQueueChanged();
     }
 
+    /** Reset the Review panel to the Create sub-tab. */
     reviewResetResults(): void {
         this.reviewPanel?.resetResults();
     }
 
     // Manuscripts (editorial engine only)
 
+    /** Return the editorial manuscript context file paths. */
     reviewContextFiles(): string[] {
         return this.reviewPanel?.getContextFilePaths() ?? [];
     }
 
+    /** Add a manuscript context file on the Review panel. */
     reviewAddContextFile(filePath: string): void {
         void this.reviewPanel?.addContextFile(filePath);
     }
 
     // Chat lifecycle (shared by both engines)
 
+    /** Return the Review panel's follow-up chat history. */
     reviewChatHistory(): { role: 'user' | 'assistant' | 'system'; content: string }[] {
         return this.reviewPanel?.getChatHistory() ?? [];
     }
 
+    /** Append a system context-head message to the Review follow-up chat. */
     reviewAppendChatSystemMessage(content: string): void {
         this.reviewPanel?.appendChatSystemMessage(content);
     }
 
+    /** Append a system context-head message directly into the Review DOM. */
     reviewAppendChatSystemMessageInPlace(content: string): void {
         this.reviewPanel?.appendChatSystemMessageInPlace(content);
     }
 
+    /** Replace the Review panel's follow-up chat history wholesale. */
     reviewReplaceChatHistory(history: { role: 'user' | 'assistant' | 'system'; content: string }[]): void {
         this.reviewPanel?.replaceChatHistory(history);
     }
 
+    /** Set the Review panel's context-token override. */
     reviewSetContextTokenEstimate(tokens: number): void {
         this.reviewPanel?.setContextTokenEstimate(tokens);
     }
 
+    /** Set the Review panel's manuscript token estimate. */
     reviewSetManuscriptTokenEstimate(estimate: { estimated: number; max: number } | null): void {
         this.reviewPanel?.setManuscriptTokenEstimate(estimate);
     }
 
+    /** Trigger the Review panel's save-conversation flow. */
     reviewSaveConversation(): void {
         this.reviewPanel?.saveConversation();
     }
 
+    /** Mark the Review follow-up chat as loading. */
     reviewChatStartLoading(): void {
         this.reviewPanel?.chatStartLoading();
     }
 
+    /** Append a streaming chunk to the Review follow-up chat. */
     reviewChatAppendChunk(text: string): void {
         this.reviewPanel?.chatAppendChunk(text);
     }
 
+    /** Finish the Review follow-up chat turn. */
     async reviewChatFinished(): Promise<void> {
         await this.reviewPanel?.chatFinished();
     }
 
+    /** Surface a Review follow-up chat error. */
     async reviewChatError(message: string): Promise<void> {
         await this.reviewPanel?.chatError(message);
     }
 
     // Chat context files (shared)
 
+    /** Return the Review panel's chat reference files. */
     reviewChatContextFiles(): string[] {
         return this.reviewPanel?.getChatContextFiles() ?? [];
     }
 
+    /** Return the Review panel's chat reference token count. */
     reviewChatContextTokens(): number {
         return this.reviewPanel?.getChatContextTokens() ?? 0;
     }
 
+    /** Add a chat reference file to the Review panel. */
     async reviewAddChatContextFile(filePath: string): Promise<void> {
         await this.reviewPanel?.addChatContextFile(filePath);
     }
 
+    /** Forward a streaming-thought update to the active Co-writer panel. */
     coWriterSetThoughtContent(thought: string): void {
         this.activeCoWriterPanel?.setThoughtContent(thought);
     }

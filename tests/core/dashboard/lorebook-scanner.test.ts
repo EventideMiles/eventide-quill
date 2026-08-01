@@ -10,6 +10,7 @@ import {
 import type { LoreEntry } from '../../../src/core/dashboard/lorebook-types';
 import type { ExtractedEntity } from '../../../src/core/context-engine/types';
 
+/** Build a minimal typed lore entry. */
 function makeEntry(
     name: string,
     filePath: string,
@@ -28,6 +29,7 @@ function makeEntry(
     };
 }
 
+/** Build a minimal extracted entity. */
 function makeEntity(name: string, type: string, occurrences: number): ExtractedEntity {
     return {
         id: `${type}:${name.toLowerCase().replace(/\s+/g, '-')}`,

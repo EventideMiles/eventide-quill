@@ -102,6 +102,7 @@ export abstract class AbstractChatPanel {
      */
     private resizeObserver: ResizeObserver | null = null;
 
+    /** Create a chat panel bound to the given Obsidian app instance. */
     constructor(app: App) {
         this.app = app;
     }
@@ -185,14 +186,17 @@ export abstract class AbstractChatPanel {
 
     // --- Callback setters ---
 
+    /** Register the callback fired when the writer cancels an in-flight generation. */
     setCancelGenerationHandler(handler: () => void): void {
         this.onCancelGeneration = handler;
     }
 
+    /** Register the callback fired when the writer requests a context compaction. */
     setCompactHandler(handler: () => void | Promise<void>): void {
         this.onCompact = handler;
     }
 
+    /** Register the callback fired when the writer starts a new chat. */
     setNewChatHandler(handler: (clearContext: boolean) => void): void {
         this.onNewChat = handler;
     }

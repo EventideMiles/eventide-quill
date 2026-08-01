@@ -12,7 +12,7 @@ import { assertNotRateLimited } from './http-retry';
  */
 
 /** Custom User-Agent to comply with Wikimedia's API policy (200 req/min tier). */
-export const MEDIAWIKI_UA = 'EventideQuill/1.5.0 (https://github.com/EventideMiles/eventide-quill)';
+export const MEDIAWIKI_UA = 'EventideQuill/2.0.0 (https://github.com/EventideMiles/eventide-quill)';
 
 /**
  * Wikimedia Foundation hosts whose `api.php` lives under `/w/` rather than the
@@ -24,6 +24,7 @@ export const MEDIAWIKI_UA = 'EventideQuill/1.5.0 (https://github.com/EventideMil
 const WIKIMEDIA_HOST_RE =
     /\.(?:wikipedia|wiktionary|wikiquote|wikibooks|wikisource|wikinews|wikiversity|wikivoyage|wikimedia|wikidata)\.org$|^wikidata\.org$/;
 
+/** True when the host is a Wikimedia project domain. */
 function isWikimediaHost(host: string): boolean {
     return WIKIMEDIA_HOST_RE.test(host);
 }
@@ -69,6 +70,7 @@ export class MediaWikiError extends Error {
     /** HTTP status code returned by the MediaWiki API. */
     readonly status: number;
 
+    /** Build the error message and capture the HTTP status. */
     constructor(message: string, status: number) {
         super(message);
         this.name = 'MediaWikiError';
@@ -325,6 +327,7 @@ export interface MediaWikiLookupResult {
     matchedExtract?: string;
 }
 
+/** Search a MediaWiki host and return the best top-K titles with extracts, capped by token budget. */
 export async function mediawikiLookup(host: string, query: string, maxTokens: number): Promise<MediaWikiLookupResult> {
     const results = await mediawikiSearch(host, query, 5);
 
@@ -570,6 +573,7 @@ export async function mediawikiCharacterGallery(
 ): Promise<Array<{ file: string; caption?: string }>> {
     const combined: Array<{ file: string; caption?: string }> = [];
     const seen = new Set<string>();
+    /** Append unseen gallery entries until the combined list reaches the limit. */
     const add = (entries: Array<{ file: string; caption?: string }>) => {
         for (const e of entries) {
             const key = e.file.toLowerCase();

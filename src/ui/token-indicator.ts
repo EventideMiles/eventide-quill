@@ -84,6 +84,7 @@ export function buildRequestBreakdown(messages: ChatMessage[], toolOverhead: num
     const byLabel = new Map<string, { tokens: number; detail?: string }>();
     const order: string[] = [];
 
+    /** Add tokens to a category's running total, preserving first-seen order. */
     const bump = (label: string, tokens: number, detail?: string) => {
         if (tokens <= 0) return;
         const existing = byLabel.get(label);

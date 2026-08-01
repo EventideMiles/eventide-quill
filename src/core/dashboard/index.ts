@@ -32,3 +32,18 @@ export {
     withFolderLock
 } from './manuscript-file';
 export type { ManuscriptFileData } from './manuscript-file';
+export {
+    DEFAULT_WRITING_GOALS_STATE,
+    computeStreak,
+    dateKey,
+    defaultWritingGoalsState,
+    loadWritingGoals,
+    recordProgress,
+    saveWritingGoals,
+    sessionElapsed,
+    sessionWords,
+    startSession,
+    stopSession,
+    writingGoalsPath
+} from './writing-goals';
+export type { WritingGoalsState, WritingSession } from './writing-goals';

@@ -115,6 +115,7 @@ export const vaultLookupTool: Tool = {
         // nextOffset must advance by the ACTUAL body length returned (usable),
         // not maxChars — otherwise the model skips content it never saw.
         const prefix = offset > 0 ? `[Continuing from offset ${offset}]\n\n` : '';
+        /** Build the continuation hint pointing the model at the next offset. */
         const hint = (next: number): string =>
             `\n\n...[truncated — call vault_lookup again with path="${query}" and offset=${next} to read the rest]`;
         // Trial with the upper-bound offset to get worst-case hint length.

@@ -22,7 +22,9 @@ const SESSION_ID_RE = /^cw_[a-z0-9_]+$/;
 const SESSIONS_FOLDER = 'co-writer-sessions';
 const INDEX_FILENAME = 'index.json';
 
+/** Error thrown on a malformed session id. */
 class InvalidSessionIdError extends Error {
+    /** Build the error message from the invalid id (and optional detail). */
     constructor(id: string, detail?: string) {
         super(detail ? `Invalid session id: ${id} (${detail})` : `Invalid session id: ${id}`);
         this.name = 'InvalidSessionIdError';
@@ -69,11 +71,13 @@ export function resolveSessionsDir(dataDir: string): string {
     return normalizePath(`${dataDir}/${SESSIONS_FOLDER}`);
 }
 
+/** Ensure a directory exists, creating it on first use. */
 async function ensureDir(vault: Vault, dir: string): Promise<void> {
     const exists = await vault.adapter.exists(dir);
     if (!exists) await vault.adapter.mkdir(dir);
 }
 
+/** Read + parse a JSON sidecar, returning null when absent or corrupt. */
 async function readJson<T>(vault: Vault, path: string): Promise<T | null> {
     if (!(await vault.adapter.exists(path))) return null;
     try {
@@ -97,6 +101,7 @@ function deriveTitle(state: SerializedCoWriterState): string {
 // Per-process write lock on the index so concurrent saves (e.g. a save
 // racing an unload-snapshot) don't clobber each other's index update.
 let indexWriteChain: Promise<void> = Promise.resolve();
+/** Serialize index mutations through a per-process promise chain. */
 function withIndexLock<T>(fn: () => Promise<T>): Promise<T> {
     const next = indexWriteChain.then(fn, fn);
     // Swallow rejections on the stored chain so a failed write doesn't poison
@@ -205,6 +210,7 @@ export async function saveSession(
     return entry;
 }
 
+/** Narrow a parsed sidecar blob to a valid SerializedCoWriterState. */
 function isValidState(state: unknown): state is SerializedCoWriterState {
     if (!state || typeof state !== 'object') return false;
     const s = state as Record<string, unknown>;

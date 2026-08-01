@@ -203,6 +203,7 @@ export function stripGallerySections(body: string, sectionHeaders: string[]): { 
     let sectionImageCount = 0;
     const labelCounts = new Map<string, number>();
 
+    /** Emit a gallery marker for the current section and reset per-section state. */
     const emitMarker = () => {
         if (sectionImageCount > 0) {
             // Preserve label names so the model can target a specific image
@@ -531,6 +532,7 @@ export function computeDocumentCoverage(
         }
     }
 
+    /** Whether the entry is the active file (excluded from coverage lists). */
     const isExcluded = (e: LoreEntry) => activeFilePath != null && e.filePath === activeFilePath;
     const referenced = entries.filter((e) => !isExcluded(e) && referencedSet.has(e.filePath));
     const orphaned = entries.filter((e) => !isExcluded(e) && !referencedSet.has(e.filePath));
@@ -572,6 +574,7 @@ export function computeManuscriptCoverage(
         }
     }
 
+    /** Whether the entry is the active file (excluded from coverage lists). */
     const isExcluded = (e: LoreEntry) => activeFilePath != null && e.filePath === activeFilePath;
     const referenced = mappedEntries.filter((e) => !isExcluded(e) && referencedSet.has(e.filePath));
     const orphaned = mappedEntries.filter((e) => !isExcluded(e) && !referencedSet.has(e.filePath));

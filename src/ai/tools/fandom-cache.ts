@@ -159,6 +159,7 @@ export class FandomCache {
     /** Per-wiki tokenized search index (Stage 6). Built lazily on first {@link search} call for a wiki, invalidated on any mutation of that wiki's pages. */
     private readonly searchIndices = new Map<string, SearchEntry[]>();
 
+    /** Create the cache, wiring the vault and cache directory. */
     private constructor(vault: Vault, dataDir: string) {
         this.vault = vault;
         this.cacheDir = normalizePath(`${dataDir}/${CACHE_FOLDER}`);
@@ -334,6 +335,7 @@ export class FandomCache {
         return (await this.fileHasEntries(this.pagesPath(wiki))) || (await this.fileHasEntries(this.imagesPath(wiki)));
     }
 
+    /** Stat-only check: a populated sidecar file exists and is larger than the empty wrapper. */
     private async fileHasEntries(path: string): Promise<boolean> {
         try {
             if (!(await this.vault.adapter.exists(path))) return false;
@@ -379,14 +381,17 @@ export class FandomCache {
         return normalizePath(`${this.cacheDir}/${wiki}`);
     }
 
+    /** Path to the wiki's pages.json sidecar. */
     private pagesPath(wiki: string): string {
         return normalizePath(`${this.wikiDir(wiki)}/${PAGES_FILENAME}`);
     }
 
+    /** Path to the wiki's images.json sidecar. */
     private imagesPath(wiki: string): string {
         return normalizePath(`${this.wikiDir(wiki)}/${IMAGES_FILENAME}`);
     }
 
+    /** Path to the wiki's binary image folder. */
     private imgDir(wiki: string): string {
         return normalizePath(`${this.wikiDir(wiki)}/${IMG_FOLDER}`);
     }
@@ -635,6 +640,7 @@ interface FandomReachabilityHost {
     fandomCache: FandomCache | null;
 }
 
+/** Resolve the live/cache-only/none reachability state for Fandom tools from the plugin's settings and cache. */
 export function fandomReachability(plugin: FandomReachabilityHost): FandomReachability {
     const { lorebookNetworkTools, lorebookFandomWikis, lorebookFandomAllowAllWikis, lorebookFandomCacheEnabled } =
         plugin.settings;

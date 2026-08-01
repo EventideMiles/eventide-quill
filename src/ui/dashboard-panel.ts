@@ -11,6 +11,7 @@ import {
 } from '../core/dashboard/presets';
 import { flowLabel } from '../core/dashboard/readability';
 import { formatTrendVelocity } from '../core/dashboard/trend';
+import { computeStreak, sessionElapsed, sessionWords } from '../core/dashboard/writing-goals';
 import { getActiveDocument, renderDocumentHeader } from './document-header';
 
 /** Expand state for chapter rows, keyed by `${filePath}:${lineStart}`. Survives re-renders. */
@@ -122,6 +123,7 @@ export function renderDashboardTab(container: HTMLElement, plugin: EventideQuill
     component.registerInterval(tickId);
 
     renderSummary(container, metrics, plugin);
+    renderWritingGoals(container, metrics, plugin, component);
     renderFlowScore(container, metrics);
     renderChapterList(container, metrics, plugin, component);
     renderPacingHeatmap(container, metrics, plugin, component);
@@ -171,6 +173,94 @@ function renderSummary(container: HTMLElement, metrics: ManuscriptMetrics, plugi
         cell.createDiv({ cls: 'quill-dashboard-panel__summary-stat-value', text: stat.value });
         cell.createDiv({ cls: 'quill-dashboard-panel__summary-stat-label', text: stat.label });
     }
+}
+
+/** Format an elapsed millisecond duration as `H:MM:SS` (or `M:SS` under an hour). */
+function formatDuration(ms: number): string {
+    const totalSec = Math.floor(ms / 1000);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
+    const ss = String(s).padStart(2, '0');
+    return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+/**
+ * Render the Writing goals card: today's words vs the daily goal (with a
+ * progress bar), the current streak + best, and a focus-session timer with a
+ * live word-count delta. The session stat ticks every second via a
+ * self-cleaning interval registered on the component.
+ */
+function renderWritingGoals(
+    container: HTMLElement,
+    metrics: ManuscriptMetrics,
+    plugin: EventideQuillPlugin,
+    component: Component
+): void {
+    const goal = plugin.settings.writingDailyGoal;
+    const state = plugin.writingGoals;
+    const section = container.createDiv({ cls: 'quill-dashboard-panel__section quill-dashboard-panel__writing-goals' });
+    section.createDiv({ cls: 'quill-dashboard-panel__section-heading', text: 'Writing goals' });
+
+    if (goal > 0) {
+        const ratio = goal > 0 ? state.todayWords / goal : 0;
+        const pct = Math.min(100, Math.max(0, ratio * 100));
+        const met = state.todayWords >= goal;
+        const goalRow = section.createDiv({ cls: 'quill-dashboard-panel__goal-row' });
+        goalRow.createSpan({
+            cls: 'quill-dashboard-panel__goal-label',
+            text: `Today ${state.todayWords.toLocaleString()} / ${goal.toLocaleString()} words`
+        });
+        if (met) goalRow.createSpan({ cls: 'quill-dashboard-panel__goal-met', text: 'goal met' });
+        const bar = section.createDiv({ cls: 'quill-dashboard-panel__progress-bar' });
+        bar.createDiv({
+            cls: 'quill-dashboard-panel__progress-fill quill-dashboard-panel__progress-fill--writing',
+            attr: { style: `width: ${pct.toFixed(0)}%` }
+        });
+        const streak = computeStreak(state, goal, Date.now());
+        const streakRow = section.createDiv({ cls: 'quill-dashboard-panel__streak-row' });
+        streakRow.createSpan({ text: `Streak ${streak} day${streak === 1 ? '' : 's'}` });
+        streakRow.createSpan({ cls: 'quill-dashboard-panel__streak-best', text: `best ${state.bestStreak}` });
+    } else {
+        section.createEl('p', {
+            cls: 'quill-empty-hint',
+            text: 'Set a daily writing goal (general settings) to track progress and streak.'
+        });
+    }
+
+    // Focus session timer.
+    const sessionRow = section.createDiv({ cls: 'quill-dashboard-panel__session-row' });
+    const active = !!state.session;
+    const btn = sessionRow.createEl('button', {
+        cls: 'quill-dashboard-panel__session-btn',
+        text: active ? 'Stop session' : 'Start session'
+    });
+    component.registerDomEvent(btn, 'click', () => {
+        if (plugin.writingGoals.session) void plugin.stopWritingSession();
+        else void plugin.startWritingSession();
+    });
+    const stat = sessionRow.createSpan({ cls: 'quill-dashboard-panel__session-stat' });
+    /** Paint the live session stat (elapsed time + words this session; clears when idle). */
+    const drawSession = () => {
+        const s = plugin.writingGoals;
+        if (!s.session) {
+            stat.textContent = '';
+            return;
+        }
+        const elapsed = sessionElapsed(s, Date.now());
+        const words = sessionWords(s, metrics.totalWords);
+        stat.textContent = `${formatDuration(elapsed)} · ${words.toLocaleString()} words this session`;
+    };
+    drawSession();
+    const tickId = window.setInterval(() => {
+        if (!stat.isConnected) {
+            window.clearInterval(tickId);
+            return;
+        }
+        drawSession();
+    }, 1000);
+    component.registerInterval(tickId);
 }
 
 /**

@@ -179,13 +179,16 @@ export function resolveQueueDir(dataDir: string): string {
     return normalizePath(`${dataDir}/${QUEUE_FOLDER}`);
 }
 
+/** Error thrown on a malformed feedback job id. */
 class InvalidJobIdError extends Error {
+    /** Build the error message from the invalid id (and optional detail). */
     constructor(id: string, detail?: string) {
         super(detail ? `Invalid feedback job id: ${id} (${detail})` : `Invalid feedback job id: ${id}`);
         this.name = 'InvalidJobIdError';
     }
 }
 
+/** Resolve a queue sidecar path, validating the id first. */
 function jobFilePath(dir: string, id: string): string {
     if (!JOB_ID_RE.test(id)) {
         throw new InvalidJobIdError(id, 'path construction');
@@ -198,10 +201,12 @@ export function mintJobId(): string {
     return `fq_${Date.now().toString(36)}_${((Math.random() * 46656) | 0).toString(36)}`;
 }
 
+/** Ensure the queue directory exists, creating it on first use. */
 async function ensureDir(vault: Vault, dir: string): Promise<void> {
     if (!(await vault.adapter.exists(dir))) await vault.adapter.mkdir(dir);
 }
 
+/** Read + parse a JSON sidecar, returning null when absent or corrupt. */
 async function readJson<T>(vault: Vault, path: string): Promise<T | null> {
     if (!(await vault.adapter.exists(path))) return null;
     try {
@@ -217,6 +222,7 @@ async function readJson<T>(vault: Vault, path: string): Promise<T | null> {
 // Per-process write lock on the index so concurrent saves don't clobber each
 // other's index update.
 let indexWriteChain: Promise<void> = Promise.resolve();
+/** Serialize index mutations through a per-process promise chain. */
 function withIndexLock<T>(fn: () => Promise<T>): Promise<T> {
     const next = indexWriteChain.then(fn, fn);
     indexWriteChain = next.then(
@@ -226,6 +232,7 @@ function withIndexLock<T>(fn: () => Promise<T>): Promise<T> {
     return next;
 }
 
+/** Build the index row for a job from its current fields and measured size. */
 function entryFromJob(job: FeedbackJob, sizeBytes: number): JobIndexEntry {
     return {
         id: job.id,

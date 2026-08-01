@@ -34,6 +34,7 @@ export class FixWithAiModal extends Modal {
     /** The line text containing the flagged span, used for the diff display. */
     private lineText: string;
 
+    /** Create the modal with the flagged result, editor text, and fix-accept callback. */
     constructor(
         app: App,
         plugin: EventideQuillPlugin,

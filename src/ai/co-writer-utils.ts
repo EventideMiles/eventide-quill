@@ -12,7 +12,7 @@ import type { ChatMessage } from './provider';
 /** Replace em dashes (—) with a comma+space for prose that shouldn't use them.
  *  Preserves content inside wiki links ([[...]]) so linked targets are not broken. */
 export function sanitizeProse(text: string): string {
-    return text.replace(/\[\[[^\]]*\]\]|\u2014/g, (match) => (match.startsWith('[[') ? match : ', '));
+    return text.replace(/\[\[[^\]]*\]\]|\s*\u2014\s*/g, (match) => (match.startsWith('[[') ? match : ', '));
 }
 
 /**
@@ -101,7 +101,7 @@ export function respectsStoppingPoint(content: string, instruction: string): boo
     const lower = content.toLowerCase().trim();
 
     // Check for paragraph count constraint
-    const paraMatch = instruction.match(/write\s+exactly\s+(\d+)\s+paragraph/);
+    const paraMatch = instruction.match(/write\s+exactly\s+(\d+)\s+paragraph/i);
     if (paraMatch?.[1]) {
         const expectedCount = parseInt(paraMatch[1], 10);
         const actualCount = (content.match(/\n\s*\n/g) ?? []).length + 1;
@@ -151,7 +151,7 @@ export function truncateToStoppingPoint(content: string, instruction: string): s
     const lower = content.toLowerCase();
 
     // Handle paragraph count constraint
-    const paraMatch = instruction.match(/write\s+exactly\s+(\d+)\s+paragraph/);
+    const paraMatch = instruction.match(/write\s+exactly\s+(\d+)\s+paragraph/i);
     if (paraMatch?.[1]) {
         const expectedCount = parseInt(paraMatch[1], 10);
         const paragraphs = content.split(/\n\s*\n/);

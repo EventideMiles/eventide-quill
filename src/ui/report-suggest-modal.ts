@@ -21,6 +21,7 @@ export class ReportSuggestModal extends SuggestModal<ReportEntry> {
     private readonly reports: ReportEntry[];
     readonly isEmpty: boolean;
 
+    /** Create the report picker, gathering saved report notes from the vault. */
     constructor(app: App, plugin: EventideQuillPlugin, onChoose: (file: TFile) => void) {
         super(app);
         this.onChoose = onChoose;
@@ -29,6 +30,7 @@ export class ReportSuggestModal extends SuggestModal<ReportEntry> {
         this.isEmpty = this.reports.length === 0;
     }
 
+    /** Collect report notes under the configured folder that carry quill-report-type frontmatter, newest-first. */
     private gatherReports(plugin: EventideQuillPlugin): ReportEntry[] {
         const folder = normalizePath(plugin.settings.feedbackReportFolder || 'eventide-quill-reports');
         const prefix = folder.endsWith('/') ? folder : `${folder}/`;
@@ -47,17 +49,20 @@ export class ReportSuggestModal extends SuggestModal<ReportEntry> {
         return out.sort((a, b) => (a.name < b.name ? 1 : -1));
     }
 
+    /** Reports matching the query by label or filename, or all when the query is empty. */
     getSuggestions(query: string): ReportEntry[] {
         const q = query.toLowerCase();
         if (!q) return this.reports;
         return this.reports.filter((r) => r.label.toLowerCase().includes(q) || r.name.toLowerCase().includes(q));
     }
 
+    /** Render one row with the report label and dated filename. */
     renderSuggestion(entry: ReportEntry, el: HTMLElement): void {
         el.createDiv({ text: entry.label });
         el.createDiv({ cls: 'quill-context-panel__item-matched', text: entry.name });
     }
 
+    /** Hand the chosen report file to the callback. */
     onChooseSuggestion(entry: ReportEntry): void {
         this.onChoose(entry.file);
     }

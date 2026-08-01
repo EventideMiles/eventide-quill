@@ -115,6 +115,16 @@ import {
     withFolderLock,
     type ManuscriptFileData
 } from './core/dashboard/manuscript-file';
+import {
+    computeStreak,
+    defaultWritingGoalsState,
+    loadWritingGoals,
+    recordProgress,
+    saveWritingGoals,
+    startSession,
+    stopSession,
+    type WritingGoalsState
+} from './core/dashboard/writing-goals';
 
 /**
  * Whether a vault file path should be excluded from embedding.
@@ -265,6 +275,7 @@ export interface PreparedManuscript {
     wasCompacted: boolean;
 }
 
+/** Eventide Quill plugin: manuscript dashboard, prose linter, AI feedback, co-writer, and lorebook. */
 export default class EventideQuillPlugin extends Plugin {
     settings!: EventideQuillSettings;
     private lintPanel: QuillSidebarView | null = null;
@@ -429,6 +440,11 @@ export default class EventideQuillPlugin extends Plugin {
     currentManuscriptFolder: string | null = null;
     /** Historical snapshots for the active manuscript, or null when not yet loaded. */
     currentDashboardSnapshots: ManuscriptSnapshot[] | null = null;
+
+    /** Writing goals & sessions ledger (daily words, streak, active session). */
+    writingGoals: WritingGoalsState = defaultWritingGoalsState();
+    /** Promise resolving when the writing-goals sidecar has loaded. Await before mutating. */
+    private writingGoalsLoading: Promise<void> = Promise.resolve();
     /** Per-manuscript dashboard data loaded from the sidecar file, or null when not yet loaded. */
     currentManuscriptFileData: ManuscriptFileData | null = null;
     /** Absolute path to the plugin's data directory (for dashboard snapshot storage). */
@@ -448,6 +464,8 @@ export default class EventideQuillPlugin extends Plugin {
         // Resolve the plugin's data directory for dashboard snapshot storage.
         this.pluginDataDir = `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
 
+        // Writing goals & sessions ledger (best-effort load; defaults on miss).
+        this.writingGoalsLoading = this.loadWritingGoalsState();
         // Local Fandom cache (sidecar under <pluginDataDir>/fandom-cache/).
         // Write-through (Stage 1) + cache-first (Stage 2) + answers-when-network-off
         // (Stage 3, gated by the presence set populated in init()). Fire-and-forget
@@ -3069,16 +3087,19 @@ export default class EventideQuillPlugin extends Plugin {
     // Manuscript Analysis Engine
     // ========================================================================
 
+    /** Abort the in-flight manuscript-analysis generation, if any. */
     cancelManuscriptAnalysisGeneration(): void {
         this.manuscriptAnalysisAbort?.abort();
     }
 
+    /** Abort any in-flight generation and clear the manuscript-analysis conversation. */
     resetManuscriptAnalysisChat(): void {
         this.manuscriptAnalysisAbort?.abort();
         this.manuscriptAnalysisCurrentMessages = [];
         this.lintPanel?.reviewResetResults();
     }
 
+    /** Summarize the manuscript-analysis conversation via the chat provider when it exceeds one turn. */
     async compactManuscriptAnalysis(): Promise<void> {
         if (this.manuscriptAnalysisCurrentMessages.length <= 1) return;
         const chat = this.getDefaultChatProvider();
@@ -4439,6 +4460,16 @@ export default class EventideQuillPlugin extends Plugin {
             const metrics = manuscriptMetrics(chapters, entities, dismissedIds);
             this.currentDashboardMetrics = metrics;
 
+            // Record writing-goals progress: attribute the manuscript word-count
+            // delta since the last refresh to today's ledger, then refresh streak.
+            await this.writingGoalsLoading;
+            recordProgress(this.writingGoals, folder, metrics.totalWords, Date.now());
+            this.writingGoals.bestStreak = Math.max(
+                this.writingGoals.bestStreak,
+                computeStreak(this.writingGoals, this.settings.writingDailyGoal, Date.now())
+            );
+            void saveWritingGoals(this.app.vault, this.pluginDataDir, this.writingGoals);
+
             // Cache the combined manuscript text and folder for the Lorebook
             // Manuscript subtab, which uses substring matching rather than entities.
             this.currentManuscriptText = fullText;
@@ -4481,6 +4512,34 @@ export default class EventideQuillPlugin extends Plugin {
             const message = err instanceof Error ? err.message : String(err);
             new Notice(`Quill: dashboard refresh failed (${message}).`);
         }
+    }
+
+    /** Load the writing-goals ledger sidecar (best-effort; defaults on miss). */
+    async loadWritingGoalsState(): Promise<void> {
+        this.writingGoals = await loadWritingGoals(this.app.vault, this.pluginDataDir);
+    }
+
+    /**
+     * Start a focus session anchored to the active manuscript's current word
+     * count. No-op if a session is already running.
+     */
+    async startWritingSession(): Promise<void> {
+        await this.writingGoalsLoading;
+        if (this.writingGoals.session) return;
+        const total = this.currentDashboardMetrics?.totalWords ?? 0;
+        const folder = this.currentManuscriptFolder ?? '';
+        startSession(this.writingGoals, folder, total, Date.now());
+        void saveWritingGoals(this.app.vault, this.pluginDataDir, this.writingGoals);
+        this.lintPanel?.refreshDashboardPanel();
+    }
+
+    /** End the active focus session (if any). */
+    async stopWritingSession(): Promise<void> {
+        await this.writingGoalsLoading;
+        if (!this.writingGoals.session) return;
+        stopSession(this.writingGoals);
+        void saveWritingGoals(this.app.vault, this.pluginDataDir, this.writingGoals);
+        this.lintPanel?.refreshDashboardPanel();
     }
 
     /**
@@ -5518,6 +5577,7 @@ export default class EventideQuillPlugin extends Plugin {
         void this.runNextQueuedFeedbackJob();
     }
 
+    /** Surface a Notice for a queued feedback job that finished (success, failure, or cancelled). */
     private notifyFeedbackJobOutcome(job: FeedbackJob): void {
         if (job.status === 'succeeded') {
             new Notice(
@@ -5954,6 +6014,7 @@ export default class EventideQuillPlugin extends Plugin {
         ).open();
     }
 
+    /** Delete the given completed jobs from memory and their sidecar files. */
     private async performClearCompleted(jobs: FeedbackJob[]): Promise<void> {
         const dir = resolveQueueDir(this.pluginDataDir);
         for (const job of jobs) {

@@ -24,6 +24,7 @@ function wikipediaHost(lang: string): string {
  * is rejected (callers fall back to the `'en'` default).
  */
 const WIKIPEDIA_LANG_RE = /^([a-z]{2,3}|simple)(-[a-z0-9]+)?$/;
+/** True when `lang` is a valid Wikipedia language subdomain. */
 export function isValidWikipediaLang(lang: string): boolean {
     return WIKIPEDIA_LANG_RE.test(lang);
 }

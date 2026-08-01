@@ -101,6 +101,7 @@ export interface IntentNarration {
     snippet: string;
 }
 
+/** Detect plain-text intent-to-edit narration (e.g. "I'll start with…") and return a snippet. */
 export function detectIntentNarration(response: string): IntentNarration | null {
     const text = response.trim();
     if (!text) return null;

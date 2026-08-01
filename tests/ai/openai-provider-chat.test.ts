@@ -33,6 +33,7 @@ const config: ProviderConfig = {
     maxOutputTokens: 4096
 };
 
+/** Build an OpenAiCompatibleProvider from the shared test config. */
 function makeProvider(): OpenAiCompatibleProvider {
     return new OpenAiCompatibleProvider(config);
 }

@@ -6,6 +6,7 @@ interface CachedContext {
     timestamp: number;
 }
 
+/** In-memory cache of extracted entities and voice markers per file. */
 export class ContextCache {
     private cache = new Map<string, CachedContext>();
 

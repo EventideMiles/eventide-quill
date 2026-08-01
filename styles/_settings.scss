@@ -204,44 +204,80 @@ div[class*='quill-settings-content-'].is-hidden {
         margin-top: $space-xs;
     }
 
-    &__welcome-steps {
+    &__welcome-progress {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        margin-bottom: $space-sm;
+    }
+
+    &__welcome-checklist {
         margin-bottom: $space-xl;
     }
 
-    &__welcome-step {
+    &__welcome-checklist-row {
         display: flex;
         gap: $space-md;
         padding: $space-sm 0;
         align-items: flex-start;
     }
 
-    &__welcome-step-num {
+    &__welcome-checklist-mark {
         flex-shrink: 0;
-        width: 24px;
-        height: 24px;
-        line-height: 24px;
+        width: 22px;
+        height: 22px;
+        line-height: 22px;
         text-align: center;
         border-radius: $radius-full;
-        background: var(--interactive-accent);
-        color: var(--text-on-accent);
+        border: 1px solid var(--background-modifier-border);
+        color: var(--text-muted);
         font-size: var(--font-ui-smaller);
-        font-weight: 700;
+
+        &--done {
+            background: var(--color-green, var(--interactive-accent));
+            border-color: transparent;
+            color: var(--text-on-accent);
+            font-weight: 700;
+        }
     }
 
-    &__welcome-step-body {
+    &__welcome-checklist-body {
         flex: 1;
     }
 
-    &__welcome-step-title {
+    &__welcome-checklist-label {
         font-size: var(--font-ui-small);
         font-weight: 600;
         color: var(--text-normal);
     }
 
-    &__welcome-step-desc {
+    &__welcome-checklist-hint {
         font-size: var(--font-ui-smaller);
         color: var(--text-muted);
-        margin-top: 2px;
+        margin-top: $space-xs;
+    }
+
+    &__welcome-checklist-btn {
+        flex-shrink: 0;
+    }
+
+    &__welcome-genre-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: $space-xs;
+        margin-bottom: $space-sm;
+    }
+
+    &__welcome-genre-chip {
+        cursor: pointer;
+    }
+
+    &__welcome-genre-tip {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+        padding: $space-sm;
+        border-radius: $radius-md;
+        background: var(--background-secondary);
+        margin-bottom: $space-xl;
     }
 
     &__welcome-features {
@@ -485,5 +521,24 @@ div[class*='quill-settings-content-'].is-hidden {
     &__heading {
         border-bottom: 1px solid var(--background-modifier-border);
         margin-bottom: $space-md;
+    }
+}
+
+// Flash highlight when deep-linked from the Welcome checklist.
+// Declared standalone (not nested under .quill-slash-command-card) because
+// the class is added to setting-item elements on ANY settings page.
+.quill-settings__flash {
+    animation: quill-settings-flash 0.6s ease-in-out 3;
+    border-radius: $radius-sm;
+}
+
+@keyframes quill-settings-flash {
+    0%,
+    100% {
+        background-color: transparent;
+    }
+
+    50% {
+        background-color: var(--text-highlight-bg);
     }
 }
