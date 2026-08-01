@@ -64,6 +64,7 @@ describe('FANDOM_DEFAULT_LICENSE', () => {
 });
 
 describe('fandomReachability', () => {
+    /** Build a minimal host object with the given reachability settings. */
     function makeHost(overrides: Partial<ReachabilitySettings> = {}) {
         return {
             settings: {

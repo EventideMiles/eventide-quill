@@ -26,6 +26,7 @@ function makeMockProvider(summary: string): AiProvider {
     };
 }
 
+/** Build a message array with a leading system prompt plus the given turns. */
 function makeMessages(turns: Array<{ role: 'user' | 'assistant'; content: string }>): ChatMessage[] {
     return [{ role: 'system', content: 'System prompt' }, ...turns];
 }

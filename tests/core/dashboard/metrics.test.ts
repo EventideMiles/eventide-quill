@@ -156,6 +156,7 @@ describe('chapterMetrics', () => {
 });
 
 describe('characterAppearances', () => {
+    /** Build a minimal character entity with the given occurrences. */
     function makeEntity(name: string, occurrences: number, aliases: string[] = []): ExtractedEntity {
         return {
             id: `character:${name.toLowerCase().replace(/\s+/g, '-')}`,

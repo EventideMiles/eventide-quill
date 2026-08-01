@@ -275,6 +275,7 @@ export interface PreparedManuscript {
     wasCompacted: boolean;
 }
 
+/** Eventide Quill plugin: manuscript dashboard, prose linter, AI feedback, co-writer, and lorebook. */
 export default class EventideQuillPlugin extends Plugin {
     settings!: EventideQuillSettings;
     private lintPanel: QuillSidebarView | null = null;
@@ -3086,16 +3087,19 @@ export default class EventideQuillPlugin extends Plugin {
     // Manuscript Analysis Engine
     // ========================================================================
 
+    /** Abort the in-flight manuscript-analysis generation, if any. */
     cancelManuscriptAnalysisGeneration(): void {
         this.manuscriptAnalysisAbort?.abort();
     }
 
+    /** Abort any in-flight generation and clear the manuscript-analysis conversation. */
     resetManuscriptAnalysisChat(): void {
         this.manuscriptAnalysisAbort?.abort();
         this.manuscriptAnalysisCurrentMessages = [];
         this.lintPanel?.reviewResetResults();
     }
 
+    /** Summarize the manuscript-analysis conversation via the chat provider when it exceeds one turn. */
     async compactManuscriptAnalysis(): Promise<void> {
         if (this.manuscriptAnalysisCurrentMessages.length <= 1) return;
         const chat = this.getDefaultChatProvider();
@@ -5573,6 +5577,7 @@ export default class EventideQuillPlugin extends Plugin {
         void this.runNextQueuedFeedbackJob();
     }
 
+    /** Surface a Notice for a queued feedback job that finished (success, failure, or cancelled). */
     private notifyFeedbackJobOutcome(job: FeedbackJob): void {
         if (job.status === 'succeeded') {
             new Notice(
@@ -6009,6 +6014,7 @@ export default class EventideQuillPlugin extends Plugin {
         ).open();
     }
 
+    /** Delete the given completed jobs from memory and their sidecar files. */
     private async performClearCompleted(jobs: FeedbackJob[]): Promise<void> {
         const dir = resolveQueueDir(this.pluginDataDir);
         for (const job of jobs) {

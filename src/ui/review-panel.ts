@@ -179,6 +179,7 @@ export class ReviewPanel extends AbstractChatPanel {
         | null = null;
     private queueHandlers: FeedbackQueueHandlers | null = null;
 
+    /** Build the panel and its shared chat-context-files manager. */
     constructor(app: App) {
         super(app);
         this.chatContextFiles = new ChatContextFiles(app, 'quill-chat-panel', () => this.updateReviewIndicator());
@@ -188,16 +189,19 @@ export class ReviewPanel extends AbstractChatPanel {
     // Handler registration
     // ========================================================================
 
+    /** Register the interactive editorial-generate callback. */
     setEditorialGenerateHandler(handler: (personaId: string, customInstruction?: string) => void): void {
         this.onEditorialGenerate = handler;
     }
 
+    /** Register the interactive critical-generate callback. */
     setCriticalGenerateHandler(
         handler: (mode: AnalysisMode, scope: ScopeChoice, customInstruction?: string) => void
     ): void {
         this.onCriticalGenerate = handler;
     }
 
+    /** Register the interactive manuscript-generate callback. */
     setManuscriptGenerateHandler(
         handler: (
             mode: ManuscriptAnalysisMode,
@@ -315,10 +319,12 @@ export class ReviewPanel extends AbstractChatPanel {
         return this.currentCompactionStrategy;
     }
 
+    /** Register the follow-up chat-message callback. */
     setChatMessageHandler(handler: (message: string) => void): void {
         this.onChatMessage = handler;
     }
 
+    /** Set an override for the context token count and refresh the indicator. */
     setContextTokenEstimate(tokens: number): void {
         this.contextTokenOverride = tokens;
         this.updateReviewIndicator();
@@ -328,6 +334,7 @@ export class ReviewPanel extends AbstractChatPanel {
     // Manuscript context files (editorial engine only)
     // ========================================================================
 
+    /** Estimate tokens for an embed folder from its local embeddings cache (top-K or full). */
     private async estimateEmbedFolderTokens(parsed: {
         folderPath: string;
         mode: 'top-k' | 'full';
@@ -365,6 +372,7 @@ export class ReviewPanel extends AbstractChatPanel {
         return Math.ceil(totalChars / 4);
     }
 
+    /** Add a manuscript context file (or embed folder) and estimate its tokens. */
     async addContextFile(filePath: string): Promise<void> {
         if (this.contextFilePaths.includes(filePath)) return;
         this.contextFilePaths.push(filePath);
@@ -392,6 +400,7 @@ export class ReviewPanel extends AbstractChatPanel {
         if (this.containerEl) this.render();
     }
 
+    /** Remove a manuscript context file and drop its token estimate. */
     removeContextFile(filePath: string): void {
         this.contextFilePaths = this.contextFilePaths.filter((p) => p !== filePath);
         this.contextFileTokens.delete(filePath);
@@ -412,6 +421,7 @@ export class ReviewPanel extends AbstractChatPanel {
         if (this.containerEl) this.render();
     }
 
+    /** Return a copy of the manuscript context file paths. */
     getContextFilePaths(): string[] {
         return [...this.contextFilePaths];
     }
@@ -420,14 +430,17 @@ export class ReviewPanel extends AbstractChatPanel {
     // Chat context files (shared — reference material for follow-up chat)
     // ========================================================================
 
+    /** Return the follow-up chat reference files. */
     getChatContextFiles(): string[] {
         return this.chatContextFiles.getFiles();
     }
 
+    /** Return the accumulated token count of the chat reference files. */
     getChatContextTokens(): number {
         return this.chatContextFiles.getTotalTokens();
     }
 
+    /** Add a follow-up chat reference file (or embed folder) with token estimation. */
     async addChatContextFile(filePath: string): Promise<void> {
         await this.chatContextFiles.add(filePath);
         const parsed = parseEmbedFolderPath(filePath);
@@ -439,6 +452,7 @@ export class ReviewPanel extends AbstractChatPanel {
         }
     }
 
+    /** Remove a follow-up chat reference file. */
     removeChatContextFile(filePath: string): void {
         this.chatContextFiles.remove(filePath);
     }
@@ -494,6 +508,7 @@ export class ReviewPanel extends AbstractChatPanel {
         if (this.containerEl) this.render();
     }
 
+    /** Append a streaming chunk to the flat report view (no-op in discuss mode). */
     appendChunk(text: string): void {
         // Streaming chunks target the flat-report view; in discuss mode the
         // embedded panel handles its own streaming. (Defensive — appendChunk
@@ -505,6 +520,7 @@ export class ReviewPanel extends AbstractChatPanel {
         if (el) el.setText(this.reportText);
     }
 
+    /** Mark streaming complete and re-render the results view at the top. */
     async finishLoading(): Promise<void> {
         this.resultsState = 'complete';
         // Exit discuss mode defensively — if a prior review's discuss session
@@ -521,6 +537,7 @@ export class ReviewPanel extends AbstractChatPanel {
         if (c) c.scrollTop = 0;
     }
 
+    /** Switch to the error state, showing the given message. */
     showError(message: string): void {
         this.resultsState = 'error';
         this.exitDiscussMode();
@@ -528,6 +545,7 @@ export class ReviewPanel extends AbstractChatPanel {
         if (this.containerEl) this.render();
     }
 
+    /** Reset to the Create sub-tab with a clean results state. */
     resetResults(): void {
         this.exitDiscussMode();
         this.subtab = 'create';
@@ -564,16 +582,19 @@ export class ReviewPanel extends AbstractChatPanel {
     // Chat lifecycle (follow-up conversation after the initial report)
     // ========================================================================
 
+    /** Return a copy of the follow-up chat history. */
     getChatHistory(): { role: 'user' | 'assistant' | 'system'; content: string }[] {
         return [...this.chatHistory];
     }
 
+    /** Append a system context-head message and re-render (no-op in discuss mode). */
     appendChatSystemMessage(content: string): void {
         if (this.discussMode) return;
         this.chatHistory.push({ role: 'system', content });
         if (this.containerEl) void this.rerenderResultsTab();
     }
 
+    /** Append a system context-head message directly into the current DOM (no full re-render). */
     appendChatSystemMessageInPlace(content: string): void {
         if (this.discussMode) return;
         this.chatHistory.push({ role: 'system', content });
@@ -588,17 +609,20 @@ export class ReviewPanel extends AbstractChatPanel {
         this.updateReviewIndicator();
     }
 
+    /** Replace the follow-up chat history wholesale (no-op in discuss mode). */
     replaceChatHistory(history: { role: 'user' | 'assistant' | 'system'; content: string }[]): void {
         if (this.discussMode) return;
         this.chatHistory = [...history];
         if (this.containerEl) void this.rerenderResultsTab();
     }
 
+    /** Mark the follow-up chat as loading (no-op in discuss mode). */
     chatStartLoading(): void {
         if (this.discussMode) return;
         super.chatStartLoading();
     }
 
+    /** Append a streaming chunk to the follow-up chat (no-op in discuss mode). */
     chatAppendChunk(text: string): void {
         if (this.discussMode) return;
         let last = this.chatHistory[this.chatHistory.length - 1];
@@ -614,6 +638,7 @@ export class ReviewPanel extends AbstractChatPanel {
         if (!this.userScrolledUp) this.scrollToBottom();
     }
 
+    /** Finish the follow-up chat turn and re-render with scroll restored. */
     async chatFinished(): Promise<void> {
         if (this.discussMode) return;
         await this.withScrollRestore(async () => {
@@ -622,6 +647,7 @@ export class ReviewPanel extends AbstractChatPanel {
         });
     }
 
+    /** Surface a follow-up chat error as an assistant message, preserving scroll. */
     async chatError(message: string): Promise<void> {
         if (this.discussMode) return;
         await this.withScrollRestore(async () => {
@@ -643,6 +669,7 @@ export class ReviewPanel extends AbstractChatPanel {
     // Save conversation (engine-aware header)
     // ========================================================================
 
+    /** Save the current report + follow-up chat to a vault markdown file via the FilenameModal. */
     saveConversation(): void {
         const timestamp = new Date().toISOString().slice(0, 10);
         const isCritical = this.activeEngine === 'critical';
@@ -725,6 +752,7 @@ export class ReviewPanel extends AbstractChatPanel {
     /** Set by renderChatBottom; called when tokens change. */
     private updateIndicatorFn: (() => void) | null = null;
 
+    /** Sum the token estimates of the manuscript context files. */
     private totalContextTokens(): number {
         let total = 0;
         for (const t of this.contextFileTokens.values()) total += t;
@@ -733,19 +761,23 @@ export class ReviewPanel extends AbstractChatPanel {
 
     private static readonly SYSTEM_PROMPT_OVERHEAD = 2600;
 
+    /** Total estimated tokens including the fixed system-prompt overhead. */
     private totalEstimatedTokens(): number {
         return ReviewPanel.SYSTEM_PROMPT_OVERHEAD + this.totalContextTokens();
     }
 
+    /** Percentage of the provider budget used (capped at 100). */
     private budgetPercent(): number {
         if (this.maxAllowedTokens <= 0) return 0;
         return Math.min(100, (this.totalEstimatedTokens() / this.maxAllowedTokens) * 100);
     }
 
+    /** Whether the current token estimate exceeds the provider context limit. */
     private isOverBudget(): boolean {
         return this.maxAllowedTokens > 0 && this.totalEstimatedTokens() > this.maxAllowedTokens;
     }
 
+    /** Compute the full context-token figure: override or report + history + reference files. */
     private computeContextTokens(): { totalTokens: number; maxTokens: number } {
         if (this.contextTokenOverride !== null) {
             // Critical engine: the override already covers the analysis
@@ -776,6 +808,7 @@ export class ReviewPanel extends AbstractChatPanel {
     // Main render
     // ========================================================================
 
+    /** Render the active sub-tab, short-circuiting while the embedded panel owns the DOM. */
     render(): void {
         if (!this.containerEl) return;
         // Short-circuit: when the Results sub-tab is active AND in discuss mode
@@ -817,6 +850,7 @@ export class ReviewPanel extends AbstractChatPanel {
         }
     }
 
+    /** Render the Create/Results/Queue sub-tab bar and cache the Queue badge element. */
     private renderSubtabBar(): void {
         if (!this.containerEl) return;
         const bar = this.containerEl.createDiv({ cls: 'quill-sidebar__subtab-bar' });
@@ -861,6 +895,7 @@ export class ReviewPanel extends AbstractChatPanel {
     // Create sub-tab
     // ========================================================================
 
+    /** Render the Create sub-tab: engine picker, engine sections, custom instruction, generate button. */
     private renderCreateTab(): void {
         if (!this.containerEl) return;
         const scroll = this.containerEl.createDiv({ cls: 'quill-sidebar__content-plain' });
@@ -946,6 +981,7 @@ export class ReviewPanel extends AbstractChatPanel {
     // Queue sub-tab
     // ========================================================================
 
+    /** Render the Queue sub-tab via the encapsulated feedback-queue panel. */
     private renderQueueTab(): void {
         if (!this.containerEl) return;
         const scroll = this.containerEl.createDiv({ cls: 'quill-sidebar__content-plain quill-feedback-queue' });
@@ -956,6 +992,7 @@ export class ReviewPanel extends AbstractChatPanel {
         renderFeedbackQueue(scroll, this.plugin, this.renderEvents, this.queueHandlers);
     }
 
+    /** Render the engine picker (critical / editorial / manuscript). */
     private renderEnginePicker(container: HTMLElement): void {
         const section = container.createDiv({ cls: 'quill-form__section' });
         section.createEl('p', { cls: 'quill-form__label', text: 'Review type' });
@@ -983,6 +1020,7 @@ export class ReviewPanel extends AbstractChatPanel {
 
     // --- Editorial sections ---
 
+    /** Render the editorial manuscript list, budget bar, and file picker. */
     private renderManuscriptsSection(container: HTMLElement): void {
         const section = container.createDiv({ cls: 'quill-form__section' });
         section.createEl('p', { cls: 'quill-form__label', text: 'Additional manuscripts' });
@@ -1051,6 +1089,7 @@ export class ReviewPanel extends AbstractChatPanel {
         });
     }
 
+    /** Render the editorial persona picker. */
     private renderPersonaSection(container: HTMLElement): void {
         const section = container.createDiv({ cls: 'quill-form__section' });
         section.createEl('p', { cls: 'quill-form__label', text: 'Feedback type' });
@@ -1069,6 +1108,7 @@ export class ReviewPanel extends AbstractChatPanel {
 
     // --- Critical sections ---
 
+    /** Render the critical-analysis mode picker. */
     private renderModeSection(container: HTMLElement): void {
         const section = container.createDiv({ cls: 'quill-form__section' });
         section.createEl('p', { cls: 'quill-form__label', text: 'Analysis mode' });
@@ -1086,6 +1126,7 @@ export class ReviewPanel extends AbstractChatPanel {
         }
     }
 
+    /** Render the critical-analysis scope picker (auto/selection/scene/document). */
     private renderScopeSection(container: HTMLElement): void {
         const section = container.createDiv({ cls: 'quill-form__section' });
         section.createEl('p', { cls: 'quill-form__label', text: 'Scope' });
@@ -1113,6 +1154,7 @@ export class ReviewPanel extends AbstractChatPanel {
 
     // --- Manuscript mode section ---
 
+    /** Render the manuscript analysis mode picker plus scope/compaction/token sections. */
     private renderManuscriptModeSection(container: HTMLElement): void {
         const section = container.createDiv({ cls: 'quill-form__section' });
         section.createEl('p', { cls: 'quill-form__label', text: 'Analysis mode' });
@@ -1140,6 +1182,7 @@ export class ReviewPanel extends AbstractChatPanel {
         this.renderManuscriptTokenEstimate(container);
     }
 
+    /** Render the manuscript scope picker with surrounding-chapter count controls. */
     private renderManuscriptScopeSection(container: HTMLElement): void {
         const section = container.createDiv({ cls: 'quill-form__section' });
         section.createEl('p', { cls: 'quill-form__label', text: 'Scope' });
@@ -1212,6 +1255,7 @@ export class ReviewPanel extends AbstractChatPanel {
         }
     }
 
+    /** Render the manuscript compaction-strategy picker (embed / compress / full). */
     private renderManuscriptCompactionSection(container: HTMLElement): void {
         const section = container.createDiv({ cls: 'quill-form__section' });
         section.createEl('p', { cls: 'quill-form__label', text: 'Text compaction' });
@@ -1257,6 +1301,7 @@ export class ReviewPanel extends AbstractChatPanel {
         }
     }
 
+    /** Render the cached manuscript token estimate with over-budget warning. */
     private renderManuscriptTokenEstimate(container: HTMLElement): void {
         if (!this.manuscriptTokenEstimate) return;
         const { estimated, max } = this.manuscriptTokenEstimate;
@@ -1284,6 +1329,7 @@ export class ReviewPanel extends AbstractChatPanel {
     // the Notice toast at the top of the screen is missed — the actual enqueue
     // is near-instant, so the loading state is mostly a deliberate UX delay.
 
+    /** Dispatch the Generate button to the active engine's trigger (or the queue). */
     private triggerGenerate(btn: HTMLElement): void {
         if (this.engine === 'editorial') {
             // Editorial requires a manuscript. Persona buttons call triggerEditorial
@@ -1300,6 +1346,7 @@ export class ReviewPanel extends AbstractChatPanel {
         }
     }
 
+    /** Trigger editorial feedback for a persona, or enqueue it when queue mode is on. */
     private triggerEditorial(personaId: string, btn: HTMLElement): void {
         // No manuscript-count check needed — the active document is always the
         // primary manuscript. The manuscripts list is for ADDITIONAL files only.
@@ -1315,6 +1362,7 @@ export class ReviewPanel extends AbstractChatPanel {
         this.onEditorialGenerate?.(personaId, instruction);
     }
 
+    /** Trigger critical analysis for the current mode/scope, or enqueue it when queue mode is on. */
     private triggerCritical(btn: HTMLElement): void {
         if (!this.currentMode) {
             new Notice('Quill: Pick an analysis mode first.');
@@ -1333,6 +1381,7 @@ export class ReviewPanel extends AbstractChatPanel {
         this.onCriticalGenerate?.(mode, this.currentScope, instruction);
     }
 
+    /** Trigger manuscript analysis, or enqueue it when queue mode is on. */
     private triggerManuscript(btn: HTMLElement): void {
         if (!this.currentManuscriptMode) {
             new Notice('Quill: Pick a manuscript analysis mode first.');
@@ -1505,6 +1554,7 @@ export class ReviewPanel extends AbstractChatPanel {
         this.embeddedPanelMounted = true;
     }
 
+    /** Re-render just the Results sub-tab (bails out of discuss mode without touching it). */
     private async rerenderResultsTab(): Promise<void> {
         // In discuss mode the embedded panel owns the DOM; re-rendering the
         // flat-report view would wipe its host and lose streaming state.
@@ -1516,6 +1566,7 @@ export class ReviewPanel extends AbstractChatPanel {
         await this.renderResultsTab(token);
     }
 
+    /** Render the Results sub-tab: report, follow-up chat, controls, and chat bottom. */
     private async renderResultsTab(token: number): Promise<void> {
         try {
             if (!this.containerEl) return;
@@ -1629,6 +1680,7 @@ export class ReviewPanel extends AbstractChatPanel {
         }
     }
 
+    /** Render the chat bottom bar: action row, textarea with @-mentions, and token indicator. */
     private renderChatBottom(_scroll: HTMLElement, disabled = false): void {
         if (!this.containerEl) return;
         const bottomArea = this.containerEl.createDiv({
@@ -1728,6 +1780,7 @@ export class ReviewPanel extends AbstractChatPanel {
             new FileMentionSuggest(this.app, input, this.renderEvents);
         }
 
+        /** Resolve @-mentions, push the user message, and dispatch to the chat handler. */
         const doSend = () => {
             if (this.chatLoading) return;
             let text = input.value.trim();
@@ -1769,6 +1822,7 @@ export class ReviewPanel extends AbstractChatPanel {
             this.scrollToBottom();
             this.onChatMessage?.(text);
         };
+        /** Abort the in-flight follow-up generation. */
         const doStop = () => this.onCancelGeneration?.();
         this.renderEvents.registerDomEvent(actionBtn, 'click', () => {
             if (disabled) return;
@@ -1785,6 +1839,7 @@ export class ReviewPanel extends AbstractChatPanel {
 
         // Token indicator
         const ctxIndicator = bottomArea.createDiv({ cls: 'quill-chat-panel__indicator' });
+        /** Refresh the token-indicator text from the current computed context tokens. */
         const setIndicatorText = () => {
             const { totalTokens, maxTokens } = this.computeContextTokens();
             const label =

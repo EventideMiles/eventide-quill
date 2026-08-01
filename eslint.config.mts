@@ -1,3 +1,4 @@
+import jsdoc from 'eslint-plugin-jsdoc';
 import obsidianmd from 'eslint-plugin-obsidianmd';
 import globals from 'globals';
 import { defineConfig, globalIgnores } from 'eslint/config';
@@ -48,6 +49,32 @@ export default defineConfig(
 		},
 	},
 	...obsidianmd.configs.recommended,
+	{
+		// Docstring coverage gate. Warns on every named function/method/class
+		// missing a JSDoc block (named const arrows/functions resolve back to
+		// their `const` declaration, so a docstring above the binding counts).
+		// Anonymous inline callbacks are deliberately excluded — docstringing
+		// every `.map(x => …)` is noise, not documentation.
+		plugins: {
+			jsdoc,
+		},
+		rules: {
+			'jsdoc/require-jsdoc': [
+				'warn',
+				{
+					require: {
+						FunctionDeclaration: true,
+						MethodDefinition: true,
+						ClassDeclaration: true,
+					},
+					contexts: [
+						'VariableDeclarator[id.type="Identifier"] > ArrowFunctionExpression',
+						'VariableDeclarator[id.type="Identifier"] > FunctionExpression',
+					],
+				},
+			],
+		},
+	},
 	{
 		// Placeholder example URLs (e.g. the provider endpoint) aren't prose,
 		// so any UI string containing a URL scheme is exempt from sentence-case.

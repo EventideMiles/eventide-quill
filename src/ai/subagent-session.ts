@@ -115,6 +115,7 @@ export class SubagentSession {
 
     private static nextId = 0;
 
+    /** Mint a fresh subagent id and copy the config into session fields. */
     constructor(
         private readonly plugin: EventideQuillPlugin,
         private readonly provider: AiProvider,
@@ -321,6 +322,7 @@ export class SubagentSession {
         return estimateTokens(this.messages) + this.toolTokenOverhead;
     }
 
+    /** Mark the subagent failed with a reason, notify the UI, and return the reason. */
     private fail(reason: string): string {
         this.status = 'failed';
         this.error = reason;

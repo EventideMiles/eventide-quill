@@ -26,6 +26,7 @@ import { toolErrorMessage } from './http-retry';
  * entry point before any path is built.
  */
 const FANDOM_SUBDOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+/** True when `wiki` is a valid Fandom subdomain label. */
 export function isValidFandomSubdomain(wiki: string): boolean {
     return FANDOM_SUBDOMAIN_RE.test(wiki);
 }

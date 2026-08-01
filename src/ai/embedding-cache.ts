@@ -70,6 +70,7 @@ export class EmbeddingCache {
     private entries: Map<string, EmbeddingEntry>;
     private dirty = false;
 
+    /** Construct a cache from a pre-parsed entry list. */
     private constructor(folder: string, modelId: string, entries: EmbeddingEntry[]) {
         this.folder = folder;
         this.modelId = modelId;

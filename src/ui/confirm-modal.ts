@@ -42,6 +42,7 @@ export class ConfirmModal extends Modal {
         this.secondaryAction = secondaryAction;
     }
 
+    /** Render the message plus Cancel, secondary, and Confirm buttons. */
     onOpen(): void {
         const content = this.contentEl.createDiv();
         content.createEl('p', { text: this.message });

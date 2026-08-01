@@ -47,6 +47,7 @@ const severityColors: Record<string, string> = {
 
 const DEBOUNCE_MS = 500;
 
+/** CodeMirror extension state for lint decorations, debounced linting, and tooltip pinning. */
 class LintDecorations {
     decorations: DecorationSet = Decoration.none;
     private lintFn: (text: string) => LintResult[];

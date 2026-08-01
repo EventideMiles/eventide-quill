@@ -93,6 +93,7 @@ interface ToolCallSite {
     args: Record<string, unknown>;
 }
 
+/** Find all eligible assistant tool calls for `toolName` whose args pass `matchArgs`. */
 function findToolCallSites(
     messages: ChatMessage[],
     toolName: string,

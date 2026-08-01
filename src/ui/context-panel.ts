@@ -11,6 +11,7 @@ class AddFileModal extends FuzzySuggestModal<VaultSuggestionItem> {
     private plugin: EventideQuillPlugin;
     private embeddedFolders: Array<{ path: string; name: string }>;
 
+    /** Create the search modal, discovering embedded folders for the picker. */
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app);
         this.plugin = plugin;
@@ -18,6 +19,7 @@ class AddFileModal extends FuzzySuggestModal<VaultSuggestionItem> {
         this.embeddedFolders = this.discoverEmbeddedFolders();
     }
 
+    /** Find all embedded folders (quill-embeddings.json), mapped to name + path and sorted by name. */
     private discoverEmbeddedFolders(): Array<{ path: string; name: string }> {
         const cacheFolders = findEmbeddedFolders(this.app.vault.getFiles());
         return [...cacheFolders]
@@ -28,6 +30,7 @@ class AddFileModal extends FuzzySuggestModal<VaultSuggestionItem> {
             .sort((a, b) => a.name.localeCompare(b.name));
     }
 
+    /** All selectable items: markdown files plus embedded folders (top-K, and full when enabled). */
     getItems(): VaultSuggestionItem[] {
         const items: VaultSuggestionItem[] = [];
 
@@ -48,6 +51,7 @@ class AddFileModal extends FuzzySuggestModal<VaultSuggestionItem> {
         return items;
     }
 
+    /** Display text for an item: file path, or folder label plus path. */
     getItemText(item: VaultSuggestionItem): string {
         if (item.kind === 'file') {
             return item.file.path;
@@ -55,6 +59,7 @@ class AddFileModal extends FuzzySuggestModal<VaultSuggestionItem> {
         return `${embedFolderLabel(item.folderName, item.mode)} ${item.folderPath}`;
     }
 
+    /** Render one suggestion row with the item's display text and matched path. */
     renderSuggestion(item: FuzzyMatch<VaultSuggestionItem>, el: HTMLElement): void {
         if (item.item.kind === 'file') {
             el.createDiv({ text: item.item.file.basename });
@@ -66,6 +71,7 @@ class AddFileModal extends FuzzySuggestModal<VaultSuggestionItem> {
         }
     }
 
+    /** Add the chosen item to the context via the plugin. */
     onChooseItem(item: VaultSuggestionItem): void {
         if (item.kind === 'file') {
             void this.plugin.addManualContextItem(item.file.path);

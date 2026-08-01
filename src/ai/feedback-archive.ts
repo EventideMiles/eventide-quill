@@ -41,6 +41,7 @@ export interface ReportArchiveInput {
 /** Build a filesystem-safe, sortable, local-time filename: `YYYY-MM-DD_HH-MM-SS_<id>.md`. */
 function buildArchiveFilename(id: string, ms: number): string {
     const d = new Date(ms);
+    /** Zero-pad a two-digit number for the filename timestamp. */
     const pad = (n: number): string => String(n).padStart(2, '0');
     // Local getters (not toISOString, which is UTC) so the dated filename reflects
     // the writer's calendar day — same rationale as formatLocalDate in fandom-cache.

@@ -17,14 +17,17 @@ interface SuggestionItem {
  * query looks like an email address (contains `.` without `/`).
  */
 export class FileMentionSuggest extends SuggestBase<SuggestionItem> {
+    /** Create the @-mention suggester for the given textarea. */
     constructor(app: App, inputEl: HTMLTextAreaElement, lifecycle: Component) {
         super(app, inputEl, lifecycle);
     }
 
+    /** BEM block name for the mention dropdown. */
     protected cssBlock(): string {
         return 'quill-file-mention-suggest';
     }
 
+    /** Find the @ trigger and query, dismissing emails, spaces, and already-resolved full paths. */
     protected getTriggerAndQuery(textBeforeCursor: string): { triggerStart: number; query: string } | null {
         const atIndex = textBeforeCursor.lastIndexOf('@');
         if (atIndex === -1) return null;
@@ -43,6 +46,7 @@ export class FileMentionSuggest extends SuggestBase<SuggestionItem> {
         return { triggerStart: atIndex, query };
     }
 
+    /** Vault markdown files matching the query, ranked by exactness, match position, and path length. */
     protected filterItems(query: string): SuggestionItem[] {
         const files = this.app.vault.getMarkdownFiles();
         const lowerQuery = query.toLowerCase();
@@ -78,10 +82,12 @@ export class FileMentionSuggest extends SuggestBase<SuggestionItem> {
         return items;
     }
 
+    /** Render one row as the file path with the query match highlighted. */
     protected renderItem(item: SuggestionItem, row: HTMLElement, lowerQuery: string): void {
         this.highlightInto(row, item.file.path, lowerQuery);
     }
 
+    /** Insert the quote-wrapped @path mention at the trigger, restoring the cursor. */
     protected commitItem(item: SuggestionItem, triggerStart: number, cursorPos: number): void {
         const value = this.inputEl.value;
         const textBeforeTrigger = value.slice(0, triggerStart);

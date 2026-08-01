@@ -12,6 +12,7 @@ import { OllamaProvider } from '../../src/ai/ollama-provider';
 import { AnthropicProvider } from '../../src/ai/anthropic-provider';
 import { GeminiProvider } from '../../src/ai/gemini-provider';
 
+/** Build a mixed provider list covering every provider type. */
 function makeProviders(): ProviderConfig[] {
     return [
         {

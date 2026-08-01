@@ -20,6 +20,7 @@ export class ChatContextFiles {
     private fileTokens: Map<string, number> = new Map();
     private bottomArea: HTMLElement | null = null;
 
+    /** Create a context-file manager bound to the given app, CSS prefix, and change callback. */
     constructor(
         private app: App,
         private cssPrefix: string,
@@ -42,14 +43,17 @@ export class ChatContextFiles {
         this.bottomArea = null;
     }
 
+    /** The list of context file paths in insertion order. */
     getFiles(): string[] {
         return [...this.files];
     }
 
+    /** Number of context files in the list. */
     fileCount(): number {
         return this.files.length;
     }
 
+    /** Whether any context files are present. */
     hasFiles(): boolean {
         return this.files.length > 0;
     }
@@ -92,6 +96,7 @@ export class ChatContextFiles {
         this.refreshDom();
     }
 
+    /** Best-effort token estimate for a file: reads content for real files, else 0 for embed-folder paths. */
     private async refreshTokenFor(filePath: string): Promise<void> {
         if (parseEmbedFolderPath(filePath)) {
             // Embed folder paths have no real file to read; token count is

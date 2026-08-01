@@ -88,6 +88,7 @@ async function resolveEntities(ctx: ToolContext): Promise<ExtractedEntity[]> {
     return extractAllEntities(text);
 }
 
+/** Render one extracted entity as a single-line mention summary. */
 function formatEntity(e: ExtractedEntity): string {
     const lines = e.lines.length > 0 ? ` at line${e.lines.length === 1 ? '' : 's'} ${e.lines.join(', ')}` : '';
     const aliases = e.aliases.length > 0 ? `; aliases: ${e.aliases.join(', ')}` : '';

@@ -139,6 +139,7 @@ export function entityFromId(id: string): ExtractedEntity {
     };
 }
 
+/** Coerce a frontmatter value to a non-empty string array, or undefined. */
 function asStringArray(val: unknown): string[] | undefined {
     if (!Array.isArray(val)) return undefined;
     const result = val.filter((v): v is string => typeof v === 'string');

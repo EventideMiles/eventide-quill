@@ -30,6 +30,7 @@ const config: ProviderConfig = {
     maxOutputTokens: 4096
 };
 
+/** Build an OllamaProvider from the shared test config. */
 function makeProvider(): OllamaProvider {
     return new OllamaProvider(config);
 }

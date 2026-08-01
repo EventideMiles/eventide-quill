@@ -128,6 +128,7 @@ export function renderFeedbackQueue(
     }
 }
 
+/** Render one queue job card with its status, metadata, and action buttons. */
 function renderJobCard(
     container: HTMLElement,
     job: FeedbackJob,

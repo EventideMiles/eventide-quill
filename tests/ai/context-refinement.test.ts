@@ -9,6 +9,7 @@ import {
 
 /* ---------- message factories ---------- */
 
+/** Build an assistant propose_entry turn plus its tool result. */
 function proposeTurn(opts: {
     name: string;
     content: string;
@@ -41,6 +42,7 @@ function proposeTurn(opts: {
     return [assistant, tool];
 }
 
+/** Build an edit_note tool-result message for the given edit id. */
 function editResultMsg(basename: string, editId: number, anchor?: string): ChatMessage {
     const msg: ChatMessage = {
         role: 'tool',
@@ -52,6 +54,7 @@ function editResultMsg(basename: string, editId: number, anchor?: string): ChatM
     return msg;
 }
 
+/** Build an assistant vault_lookup turn plus its tool result. */
 function vaultLookupTurn(opts: { path: string; body: string; id?: string; anchor?: string }): ChatMessage[] {
     const id = opts.id ?? 'call_v1';
     const assistant: ChatMessage = {

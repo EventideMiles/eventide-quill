@@ -8,6 +8,7 @@ export class HttpError extends Error {
     status: number;
     body: string;
 
+    /** Build the error from the HTTP status and response body. */
     constructor(status: number, body: string) {
         super(`HTTP ${status}`);
         this.name = 'HttpError';
@@ -20,6 +21,7 @@ export class HttpError extends Error {
  * Error thrown when the response body is missing or unavailable for streaming.
  */
 export class StreamingUnavailableError extends Error {
+    /** Build the error signalling that streaming is unavailable. */
     constructor() {
         super('Response body is missing or unavailable; streaming is not possible.');
         this.name = 'StreamingUnavailableError';
@@ -37,6 +39,7 @@ export class MobileNetworkError extends Error {
     /** The original error that triggered the mobile-drop wrap. */
     cause: unknown;
 
+    /** Build the error from the hint message and the original cause. */
     constructor(message: string, cause: unknown) {
         super(message);
         this.name = 'MobileNetworkError';

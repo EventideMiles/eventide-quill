@@ -12,6 +12,7 @@ interface StubOptions {
     preferEdit?: boolean;
 }
 
+/** Build a ToolContext with stubbed vault and metadataCache. */
 function makeCtx(opts: StubOptions): ToolContext {
     const fileByPath = new Map<string, TFile>();
     const linkByName = new Map<string, TFile>();
@@ -49,6 +50,7 @@ function makeCtx(opts: StubOptions): ToolContext {
     return { plugin } as unknown as ToolContext;
 }
 
+/** Build a TFile with the given path and basename. */
 function makeFile(path: string, basename: string): TFile {
     const f = new TFile();
     f.path = path;

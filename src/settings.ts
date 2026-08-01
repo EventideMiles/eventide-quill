@@ -421,6 +421,7 @@ const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
 class InputModal extends Modal {
     private result = '';
 
+    /** Store the prompt fields and the submit callback. */
     constructor(
         app: App,
         private title: string,
@@ -430,6 +431,7 @@ class InputModal extends Modal {
         super(app);
     }
 
+    /** Render the prompt: heading, text input, and Cancel/OK buttons. */
     onOpen(): void {
         const { contentEl } = this;
         contentEl.createEl('h2', { text: this.title });
@@ -458,6 +460,7 @@ class InputModal extends Modal {
         });
     }
 
+    /** Clear the modal and fire `onSubmit` with the entered value (no-op when cancelled). */
     onClose(): void {
         const { contentEl } = this;
         contentEl.empty();
@@ -471,6 +474,7 @@ class InputModal extends Modal {
 class ModelFetchModal extends SuggestModal<ModelInfo> {
     private models: ModelInfo[];
 
+    /** Capture the model list and the selection callback, and start in search mode. */
     constructor(
         app: App,
         models: ModelInfo[],
@@ -522,6 +526,7 @@ class AddProviderModal extends SuggestModal<{ type: ProviderType; label: string;
         }
     ];
 
+    /** Remember the selection callback and start in search mode. */
     constructor(
         app: App,
         private onChoose: (type: ProviderType, defaultEndpoint: string) => void
@@ -558,12 +563,14 @@ class AddProviderModal extends SuggestModal<{ type: ProviderType; label: string;
 class AnthropicBanRiskModal extends Modal {
     private readonly onConfirm: () => void | Promise<void>;
 
+    /** Set the modal title and store the confirmation callback. */
     constructor(app: App, onConfirm: () => void | Promise<void>) {
         super(app);
         this.titleEl.setText('Before you add Anthropic Claude');
         this.onConfirm = onConfirm;
     }
 
+    /** Render the multi-paragraph policy warning and the explicit-risk Continue button. */
     onOpen(): void {
         const container = this.contentEl.createDiv({ cls: 'quill-anthropic-warning' });
 
@@ -641,6 +648,7 @@ function formatFandomCacheStats(stats: WikiStats): string {
     return `${stats.pages} page${stats.pages === 1 ? '' : 's'}, ${stats.images} image${stats.images === 1 ? '' : 's'} — ${size} on disk. Last synced: ${date}.`;
 }
 
+/** Declarative settings root for Eventide Quill (Obsidian 1.13+). */
 export class EventideQuillSettingTab extends PluginSettingTab {
     plugin: EventideQuillPlugin;
     /**
@@ -654,6 +662,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
      */
     private activeBridgePage: { containerEl: HTMLElement; render: (content: HTMLElement) => void } | null = null;
 
+    /** Hold the plugin reference so settings handlers can read/write the live settings object. */
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app, plugin);
         this.plugin = plugin;
@@ -3245,6 +3254,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     private validateDefaultProviders(): void {
         const { aiProviders } = this.plugin.settings;
 
+        /** True when the `providerId/modelId` composite key resolves to a provider whose model satisfies the capability. */
         const satisfies = (key: string, capability: ModelCapability): boolean => {
             const parts = key.split('/', 2);
             if (parts.length !== 2 || !parts[0] || !parts[1]) return false;
@@ -3346,6 +3356,7 @@ class ProviderSettingPage extends SettingPage {
     private readonly tab: EventideQuillSettingTab;
     private readonly provider: ProviderConfig;
 
+    /** Capture the tab and provider this page renders. */
     constructor(tab: EventideQuillSettingTab, provider: ProviderConfig) {
         super();
         this.tab = tab;
@@ -3373,6 +3384,7 @@ class ProviderSettingPage extends SettingPage {
 class DefaultModelsSettingPage extends SettingPage {
     private readonly tab: EventideQuillSettingTab;
 
+    /** Capture the tab this page renders. */
     constructor(tab: EventideQuillSettingTab) {
         super();
         this.tab = tab;
@@ -3393,6 +3405,7 @@ class DefaultModelsSettingPage extends SettingPage {
 
 /** Modal for picking a vault folder from the list of markdown-containing folders. */
 class FolderSuggestModal extends SuggestModal<string> {
+    /** Store the folder list and the pick callback. */
     constructor(
         app: App,
         private folders: string[],
@@ -3401,15 +3414,18 @@ class FolderSuggestModal extends SuggestModal<string> {
         super(app);
     }
 
+    /** Filter the folder list by query. */
     getSuggestions(query: string): string[] {
         const q = query.toLowerCase();
         return this.folders.filter((f) => f.toLowerCase().includes(q));
     }
 
+    /** Render each folder row. */
     renderSuggestion(folder: string, el: HTMLElement): void {
         el.createSpan({ text: folder });
     }
 
+    /** Fire the pick callback with the chosen folder. */
     onChooseSuggestion(folder: string): void {
         this.onPick(folder);
     }

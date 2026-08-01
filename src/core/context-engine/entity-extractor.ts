@@ -301,6 +301,7 @@ function getLineFromOffset(table: number[], offset: number): number | null {
     return hi >= 0 ? hi + 1 : null;
 }
 
+/** Record a candidate occurrence, tracking its count and source lines. */
 function addCandidate(
     map: Map<string, { count: number; lines: Set<number> }>,
     lineMap: number[],
@@ -446,7 +447,7 @@ function mergeMultiWordAndAliases(
         result.set(name, { ...data, aliases: [] });
     }
 
-    // Helper to merge counts/lines from a single-word candidate into a multi-word one.
+    /** Merge counts/lines from a single-word candidate into a multi-word one. */
     const mergeInto = (fullName: string, aliasName: string): void => {
         const target = result.get(fullName);
         const source = result.get(aliasName);
@@ -463,6 +464,7 @@ function mergeMultiWordAndAliases(
 
     // --- Pass 1: resolve single-word candidates against existing multi-word candidates ---
     // Build component index from multi-word names currently in the result.
+    /** Resolve single-word candidates against existing multi-word candidates. */
     const resolveAgainstExisting = (): void => {
         // componentWord → Set of full names that contain it
         const componentIndex = new Map<string, Set<string>>();
@@ -664,6 +666,7 @@ export function extractAllEntities(text: string): ExtractedEntity[] {
 
     // Deduplicate by name: character > location > plot-thread.
     const seen = new Map<string, ExtractedEntity>();
+    /** Add an entity to the deduped map if its name has not been seen yet. */
     const addIfNew = (e: ExtractedEntity) => {
         const key = e.name.toLowerCase();
         if (!seen.has(key)) seen.set(key, e);

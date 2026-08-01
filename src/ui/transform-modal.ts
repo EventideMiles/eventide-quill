@@ -8,6 +8,7 @@ import { TONE_OPTIONS, ToneOption } from '../ai/transform';
 export class TransformModal extends Modal {
     private instruction = '';
 
+    /** Create the modal with the selected text and a callback for the submitted instruction. */
     constructor(
         app: App,
         private selectedText: string,
@@ -16,6 +17,7 @@ export class TransformModal extends Modal {
         super(app);
     }
 
+    /** Render the instruction textarea and the Cancel / Transform buttons. */
     onOpen(): void {
         const { contentEl } = this;
 
@@ -53,6 +55,7 @@ export class TransformModal extends Modal {
         });
     }
 
+    /** Clear the modal content on close. */
     onClose(): void {
         const { contentEl } = this;
         contentEl.empty();
@@ -63,6 +66,7 @@ export class TransformModal extends Modal {
  * Suggest modal for choosing a tone when using the "Change tone" action.
  */
 export class ToneSuggestModal extends SuggestModal<ToneOption> {
+    /** Create the tone picker with a callback for the chosen tone. */
     constructor(
         app: App,
         private onChoose: (tone: ToneOption) => void
@@ -72,15 +76,18 @@ export class ToneSuggestModal extends SuggestModal<ToneOption> {
         this.limit = 10;
     }
 
+    /** Tone options whose name contains the query. */
     getSuggestions(query: string): ToneOption[] {
         const q = query.toLowerCase();
         return TONE_OPTIONS.filter((t) => t.toLowerCase().includes(q));
     }
 
+    /** Render one row with the tone name. */
     renderSuggestion(tone: ToneOption, el: HTMLElement): void {
         el.createDiv({ text: tone });
     }
 
+    /** Hand the chosen tone to the callback. */
     onChooseSuggestion(tone: ToneOption): void {
         this.onChoose(tone);
     }

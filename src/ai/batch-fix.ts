@@ -41,10 +41,12 @@ export function groupFindingsByPassage(results: LintResult[], editorText: string
     if (results.length === 0) return [];
 
     const lines = editorText.split('\n');
+    /** True when a line contains only whitespace. */
     const isBlank = (text: string) => text.trim().length === 0;
-    // Structural markdown lines act as hard passage boundaries (in addition to
-    // blank lines) so a heading or scene break without a preceding blank line
-    // is never absorbed into an adjacent prose passage and rewritten over.
+    /** True when a line is a blank line or a structural markdown boundary
+     *  (heading/scene break) — these act as hard passage boundaries so a
+     *  heading or scene break without a preceding blank line is never absorbed
+     *  into an adjacent prose passage and rewritten over. */
     const isBoundary = (text: string) => isBlank(text) || SCENE_BREAK_HEADING.test(text) || SCENE_BREAK_RULE.test(text);
 
     // Build line-start offset table for character-offset lookups.

@@ -105,6 +105,7 @@ export class DuplicateToolError extends Error {
     /** The conflicting tool id. */
     readonly toolId: string;
 
+    /** Build the error from the conflicting tool id. */
     constructor(toolId: string) {
         super(`Tool "${toolId}" is already registered`);
         this.name = 'DuplicateToolError';
@@ -123,6 +124,7 @@ export class DuplicateToolError extends Error {
 export class ToolRegistry {
     private readonly tools = new Map<string, Tool>();
 
+    /** Register a tool, throwing DuplicateToolError on a conflicting id. */
     register(tool: Tool): void {
         if (this.tools.has(tool.id)) {
             throw new DuplicateToolError(tool.id);
@@ -130,18 +132,22 @@ export class ToolRegistry {
         this.tools.set(tool.id, tool);
     }
 
+    /** Look up a registered tool by id. */
     get(id: string): Tool | undefined {
         return this.tools.get(id);
     }
 
+    /** True when a tool with `id` is registered. */
     has(id: string): boolean {
         return this.tools.has(id);
     }
 
+    /** All registered tools, in registration order. */
     list(): Tool[] {
         return [...this.tools.values()];
     }
 
+    /** Number of registered tools. */
     get size(): number {
         return this.tools.size;
     }

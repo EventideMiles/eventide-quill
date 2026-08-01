@@ -135,6 +135,7 @@ interface AnchoredCardGroup {
  */
 const STREAMING_PLACEHOLDER_ID = 'msg-streaming-placeholder';
 
+/** Co-writer chat panel: discuss/coach/lorebook/fulfill modes, tool cards, and mode picker. */
 export class CoWriterPanel extends AbstractChatPanel {
     private plugin: EventideQuillPlugin;
 
@@ -254,11 +255,13 @@ export class CoWriterPanel extends AbstractChatPanel {
     /** Monotonic render counter; used to discard stale async finalizations. */
     private renderId = 0;
 
+    /** Hold the plugin reference for session + settings access. */
     constructor(app: App, plugin: EventideQuillPlugin) {
         super(app);
         this.plugin = plugin;
     }
 
+    /** Adopt a new container element, re-binding the keydown handler to it. */
     setContainer(containerEl: HTMLElement): void {
         if (this.containerEl && this.keydownHandler) {
             this.containerEl.removeEventListener('keydown', this.keydownHandler);
@@ -777,6 +780,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         this.scheduleRender();
     }
 
+    /** Return the session's context files (added via the ± picker). */
     private getContextFiles(): string[] {
         return this.plugin.coWriterSession?.getContextFiles() ?? [];
     }
@@ -1452,6 +1456,7 @@ export class CoWriterPanel extends AbstractChatPanel {
         const chatIds = new Set(this.chatHistory.map((m) => m.id));
         const byMessage = new Map<string, AnchoredCardGroup>();
         const orphans: AnchoredCardGroup = { subagents: [], loreEdits: [], loreImages: [] };
+        /** Look up (or create) the card group anchored to a chat message id. */
         const groupFor = (id: string): AnchoredCardGroup => {
             let g = byMessage.get(id);
             if (!g) {
@@ -2129,6 +2134,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             const textWrap = row.createDiv({ cls: 'quill-cowriter-panel__mode-row-text' });
             textWrap.createDiv({ cls: 'quill-cowriter-panel__mode-row-label', text: m.label });
             textWrap.createDiv({ cls: 'quill-cowriter-panel__mode-row-desc', text: m.desc });
+            /** Switch the co-writer mode to the selected option. */
             const choose = () => {
                 this.setMode(m.mode);
             };
@@ -2221,6 +2227,7 @@ export class CoWriterPanel extends AbstractChatPanel {
                 // Shared cleanup so the input is removed whether the writer
                 // chose files (change) or dismissed the picker (cancel) —
                 // otherwise the hidden input would accumulate in the DOM.
+                /** Remove the hidden input on both choose and cancel paths. */
                 const cleanup = (): void => {
                     fileInput.remove();
                 };
@@ -2404,6 +2411,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             new SlashCommandSuggest(this.app, input, this.plugin, this.renderEvents);
         }
 
+        /** Validate the input and dispatch a send to the active mode's handler. */
         const doSend = () => {
             if (this.optionsLoading || this.draftState === 'generating' || this.fulfillActive || this.compacting)
                 return;
@@ -2457,6 +2465,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             }
         };
 
+        /** Abort the in-flight co-writer generation. */
         const doStop = () => {
             this.onCancelGeneration?.();
         };

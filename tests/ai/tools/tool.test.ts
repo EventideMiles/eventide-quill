@@ -3,6 +3,7 @@ import { ToolRegistry, DuplicateToolError, executeToolCall } from '../../../src/
 import type { Tool, ToolContext } from '../../../src/ai/tools/tool';
 import type { ToolCallRequest } from '../../../src/ai/provider';
 
+/** Build a simple tool with optional overrides. */
 function makeTool(id: string, opts: Partial<Tool> = {}): Tool {
     return {
         id,
@@ -15,10 +16,12 @@ function makeTool(id: string, opts: Partial<Tool> = {}): Tool {
     };
 }
 
+/** Build an empty tool context. */
 function makeCtx(): ToolContext {
     return { plugin: {} } as unknown as ToolContext;
 }
 
+/** Build a ToolCallRequest for the given tool name. */
 function makeCall(name: string, args: string = '{}'): ToolCallRequest {
     return { id: 'call_1', name, arguments: args };
 }

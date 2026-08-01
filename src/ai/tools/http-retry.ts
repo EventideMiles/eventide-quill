@@ -24,6 +24,7 @@ const DEFAULT_RETRY_SECONDS = 60;
 export class RateLimitError extends Error {
     readonly seconds: number;
 
+    /** Build the error from the parsed retry delay in seconds. */
     constructor(seconds: number) {
         super(`HTTP 429 (rate-limited; retry after ${seconds}s)`);
         this.name = 'RateLimitError';

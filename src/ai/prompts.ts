@@ -61,6 +61,7 @@ function buildStyleRules(def: NarrativeVoiceDefinition, wikiLinkBehavior: WikiLi
     ];
 }
 
+/** Build the narrative-voice system prompt for the given preset, vault context, and wiki-link behavior. */
 function getNarrativeSystemPrompt(
     vaultContext: string,
     narrativePreset: NarrativeVoicePreset,
@@ -320,6 +321,7 @@ export interface ActiveSteering {
     text: string;
 }
 
+/** Build the co-writer continuation system prompt from the voice profile, narrative preset, and optional context. */
 export function getCoWriterGenerationPrompt(
     voiceProfile: VoiceProfile,
     narrativePreset: NarrativeVoicePreset,
@@ -730,6 +732,7 @@ function withVaultContext(parts: string[], vaultContext?: string): string {
     return parts.join('\n');
 }
 
+/** Build the critical-analysis prompt focused on plot logic (contradictions, timelines, causal chains). */
 function getPlotLogicPrompt(vaultContext?: string, baseOptions?: AnalysisBasePromptOptions): string {
     const parts = [
         ...getAnalysisBasePrompt(baseOptions),
@@ -743,6 +746,7 @@ function getPlotLogicPrompt(vaultContext?: string, baseOptions?: AnalysisBasePro
     return withVaultContext(parts, vaultContext);
 }
 
+/** Build the critical-analysis prompt focused on character consistency against established behavior. */
 function getCharacterConsistencyPrompt(
     characters?: ExtractedEntity[],
     vaultContext?: string,
@@ -763,6 +767,7 @@ function getCharacterConsistencyPrompt(
     return withVaultContext(parts, vaultContext);
 }
 
+/** Build the critical-analysis prompt focused on continuity (dropped threads, unresolved setup). */
 function getContinuityScanPrompt(
     plotThreads?: string[],
     vaultContext?: string,
@@ -783,6 +788,7 @@ function getContinuityScanPrompt(
     return withVaultContext(parts, vaultContext);
 }
 
+/** Build the critical-analysis prompt focused on voice drift (POV slips, tense shifts, rhythm divergence). */
 function getVoiceDriftPrompt(
     voiceMarker?: VoiceMarker,
     vaultContext?: string,

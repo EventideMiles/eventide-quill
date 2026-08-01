@@ -81,6 +81,7 @@ export const loreSiblingsTool: Tool = {
  */
 type TypeFilterResult = { kind: 'none' } | { kind: 'invalid'; raw: string } | { kind: 'type'; type: LoreEntryType };
 
+/** Parse the optional type filter into a none/invalid/type outcome. */
 function parseTypeFilter(args: string): TypeFilterResult {
     const trimmed = args.trim().toLowerCase();
     if (!trimmed) return { kind: 'none' };
@@ -98,6 +99,7 @@ function parseTypeFilter(args: string): TypeFilterResult {
         : { kind: 'invalid', raw: args.trim() };
 }
 
+/** Render one lore entry as a single-line summary for the tool result. */
 function formatEntry(entry: {
     fileBasename: string;
     type: LoreEntryTypeOrUntyped;

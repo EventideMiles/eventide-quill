@@ -125,6 +125,7 @@ export function syncChangeSetPositions(view: EditorView, changeSet: ChangeSet, o
  *  stacked and distinctly separated — avoiding the CM conflict where a point
  *  widget at the end of a replaced range gets swallowed. */
 class ChangePreviewWidget extends WidgetType {
+    /** Store the removed text, pending edit snapshot, and Approve/Reject handlers. */
     constructor(
         private readonly removedText: string,
         private readonly edit: DiffEditSnapshot,

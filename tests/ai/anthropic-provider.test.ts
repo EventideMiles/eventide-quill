@@ -22,6 +22,7 @@ const baseConfig: Pick<ProviderConfig, 'models' | 'maxOutputTokens' | 'thinkingB
     maxOutputTokens: 4096
 };
 
+/** Build a request body via buildAnthropicRequestBody for assertions. */
 function build(messages: ChatMessage[], options: Partial<ChatOptions> = {}): Record<string, unknown> {
     return buildAnthropicRequestBody(messages, { messages, ...options }, baseConfig, 'test');
 }

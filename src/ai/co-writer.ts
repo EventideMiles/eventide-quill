@@ -166,6 +166,7 @@ async function resolveEmbedPathsToMessages(
     return { regularPaths, messages };
 }
 
+/** Resolve additional context files (plus auto-injected lore entries) into injectable chat messages. */
 export async function loadAdditionalContext(
     plugin: EventideQuillPlugin,
     contextFilePaths: string[],
@@ -1430,6 +1431,7 @@ export class CoWriterSession {
         // Helper: push a token estimate that includes the injected context
         // (full manuscript, tool ads, world rules) so the pre-send indicator
         // for the NEXT turn matches the actual request size.
+        /** Emit a token estimate including injected context so the pre-send indicator matches the request. */
         const pushFullTokenEstimate = () => {
             this.emitTokenEstimate(
                 this.estimateRequestBreakdown([
@@ -1835,6 +1837,7 @@ export class CoWriterSession {
         // Helper: build a token breakdown that includes injected context
         // (vault, additional files, plot map, active file, tool ads) so the
         // indicator reflects the actual request size, not just the conversation.
+        /** Build a token breakdown including injected context (vault, files, plot map, tool ads). */
         const coachFullBreakdown = () =>
             this.estimateRequestBreakdown([
                 this.discussCurrentMessages[0]!,
@@ -2426,6 +2429,7 @@ export class CoWriterSession {
 
         const compactPct = Math.max(50, Math.min(95, this.settingsOrDefault(plugin).contextCompactAtPercent)) / 100;
         const conversationTokens = this.estimateRequestTokens(this.loreCoachMessages);
+        /** Build a token breakdown including the lorebook-coach injected context. */
         const loreFullBreakdown = () =>
             this.estimateRequestBreakdown([
                 this.loreCoachMessages[0]!,
@@ -3034,6 +3038,7 @@ export class CoWriterSession {
         if (this.app) {
             const file = this.app.vault.getAbstractFileByPath(filePath);
             if (file instanceof TFile) {
+                /** Apply the approved edit to the file; no-op when it is no longer pending. */
                 const run = async (): Promise<void> => {
                     const edit = entry.changeSet.get(id);
                     if (!edit || edit.state !== 'pending') return;
@@ -4136,6 +4141,7 @@ export class CoWriterSession {
         const oldBasename = oldPath.split('/').pop()!;
         const newBasename = newPath.split('/').pop()!;
 
+        /** Rewrite the renamed path (and basename) in content and tool-call arguments so prior anchors stay valid. */
         const rewriteMessages = (messages: ChatMessage[]) => {
             for (const msg of messages) {
                 if (msg.thinkingBlocks && msg.thinkingBlocks.length > 0) continue;
@@ -4535,6 +4541,7 @@ export class CoWriterSession {
 
         // Truncate the model's API array: keep system/context-head messages
         // (no quillAnchorId) + any message anchored to a surviving display turn.
+        /** Keep system/context-head messages (no quillAnchorId) plus messages anchored to a surviving display turn. */
         const truncateApi = (arr: ChatMessage[]): ChatMessage[] =>
             arr.filter((m) => !m.quillAnchorId || keptIds.has(m.quillAnchorId));
         this.discussCurrentMessages = truncateApi(this.discussCurrentMessages);

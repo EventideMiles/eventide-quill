@@ -33,6 +33,7 @@ const config: ProviderConfig = {
     maxOutputTokens: 4096
 };
 
+/** Build an AnthropicProvider from the shared test config. */
 function makeProvider(): AnthropicProvider {
     return new AnthropicProvider(config);
 }
