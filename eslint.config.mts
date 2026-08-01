@@ -28,7 +28,6 @@ export default defineConfig(
 		'test/**/*.mts',
 		'__mocks__/**', // Obsidian module mock — intentionally loose (class stubs, DOM polyfills)
 		'tests/helpers/**', // Test infrastructure (DOM polyfills, in-memory vaults, mock-http)
-		'tests/ui/**' // UI lifecycle tests — use simplified mock types that strict ESLint can't resolve
 	]),
 	{
 		languageOptions: {
@@ -66,6 +65,7 @@ export default defineConfig(
 						FunctionDeclaration: true,
 						MethodDefinition: true,
 						ClassDeclaration: true,
+						ClassExpression: true,
 					},
 					contexts: [
 						'VariableDeclarator[id.type="Identifier"] > ArrowFunctionExpression',
@@ -95,6 +95,17 @@ export default defineConfig(
 			// node test environment has no real window (the rule is about popout
 			// compatibility inside Obsidian, which doesn't apply here).
 			'obsidianmd/no-global-this': 'off',
+		},
+	},
+	{
+		// UI lifecycle tests assert chai-style (`expect(x).to.exist`), which
+		// `no-unused-expressions` flags as property accesses without side
+		// effects. Scoped here — the rest of `tests/` never uses that style,
+		// and everything else (jsdoc/require-jsdoc, the `tests/**` override,
+		// type-aware rules) still applies to these files.
+		files: ['tests/ui/**/*.ts'],
+		rules: {
+			'@typescript-eslint/no-unused-expressions': 'off',
 		},
 	},
 );

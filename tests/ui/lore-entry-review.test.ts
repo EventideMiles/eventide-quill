@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ensureGallerySectionInContent, rewriteImageEmbeds } from '../../src/ui/lore-entry-review';
 
-interface ProposedImage {
-    suggestedFilename: string;
-    label?: string;
-    caption?: string;
-}
-
 describe('lore-entry-review — rewriteImageEmbeds', () => {
     it('replaces wiki-link embed targets with resolved filenames', () => {
         const content = 'Here is art:\n![[old-name.png]]\nDone.';
