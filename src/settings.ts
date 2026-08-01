@@ -1085,7 +1085,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     label: 'Pick a default chat model',
                     hint: 'The model used for chat, feedback, and the co-writer. (Default models page)',
                     actionLabel: hasChatModel ? undefined : 'Open',
-                    action: hasChatModel ? undefined : () => this.openSettingsPage('AI providers')
+                    action: hasChatModel ? undefined : () => this.openSettingsPage('AI providers', 'Default models')
                 },
                 {
                     done: hasManuscript,
@@ -1097,7 +1097,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     label: 'Set a daily writing goal',
                     hint: 'Track a writing streak on the dashboard. (General page)',
                     actionLabel: hasGoal ? undefined : 'Open',
-                    action: hasGoal ? undefined : () => this.openSettingsPage('General')
+                    action: hasGoal ? undefined : () => this.openSettingsPage('General', 'Daily writing goal')
                 }
             ];
         const completed = setupSteps.filter((s) => s.done).length;
@@ -2050,13 +2050,14 @@ export class EventideQuillSettingTab extends PluginSettingTab {
      * API is unavailable (renamed/removed in a future build), falls back to just
      * opening the plugin tab so the writer can pick the page themselves.
      */
-    openSettingsPage(pageName: string): void {
+    openSettingsPage(pageName: string, settingName?: string): void {
         const app = this.app as unknown as {
             setting?: {
                 open?: () => void;
                 openTabById?: (id: string) => void;
                 getNavigableSettingItems?: () => HTMLElement[];
                 activateSettingItem?: (el: HTMLElement) => void;
+                getCurrentPageEl?: () => HTMLElement | null;
             };
         };
         const setting = app.setting;
@@ -2071,6 +2072,42 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         if (target && typeof setting.activateSettingItem === 'function') {
             setting.activateSettingItem(target);
         }
+        // After navigating to the page, optionally scroll to + flash a specific
+        // setting within it (the same var(--text-highlight-bg) Obsidian uses for
+        // search-result highlights). Retries briefly while the page renders.
+        if (settingName) {
+            this.scrollToSetting(settingName);
+        }
+    }
+
+    /**
+     * Find a setting by name on the active settings page, scroll it into view,
+     * and flash it briefly. Retries up to ~1s while the page-transition
+     * renders the target items.
+     */
+    private scrollToSetting(settingName: string): void {
+        // settings.ts — no Component lifecycle; raw setTimeout for the
+        // page-transition delay + flash removal (one-shot, not recurring).
+        let attempts = 0;
+        const tryScroll = () => {
+            const app = this.app as unknown as { setting?: { getCurrentPageEl?: () => HTMLElement | null } };
+            const pageEl = typeof app.setting?.getCurrentPageEl === 'function' ? app.setting.getCurrentPageEl() : null;
+            if (pageEl) {
+                const matches = pageEl.querySelectorAll('.setting-item');
+                for (const item of Array.from(matches)) {
+                    const name = item.querySelector('.setting-item-name')?.textContent?.trim() ?? '';
+                    if (name === settingName) {
+                        const el = item as HTMLElement;
+                        el.scrollIntoView({ block: 'center' });
+                        el.addClass('quill-settings__flash');
+                        setTimeout(() => el.removeClass('quill-settings__flash'), 2500);
+                        return;
+                    }
+                }
+            }
+            if (++attempts < 10) setTimeout(tryScroll, 100);
+        };
+        setTimeout(tryScroll, 100);
     }
 
     private aiProviderDisplayValue(): string {

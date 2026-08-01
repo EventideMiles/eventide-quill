@@ -518,4 +518,22 @@ div[class*='quill-settings-content-'].is-hidden {
         border-bottom: 1px solid var(--background-modifier-border);
         margin-bottom: $space-md;
     }
+
+    // Flash highlight when deep-linked from the Welcome checklist.
+    // Uses the same background Obsidian applies to search-result highlights.
+    &__flash {
+        animation: quill-settings-flash 0.6s ease-in-out 3;
+        border-radius: $radius-sm;
+    }
+}
+
+@keyframes quill-settings-flash {
+    0%,
+    100% {
+        background-color: transparent;
+    }
+
+    50% {
+        background-color: var(--text-highlight-bg);
+    }
 }
