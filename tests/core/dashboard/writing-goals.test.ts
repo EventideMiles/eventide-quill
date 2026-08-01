@@ -231,14 +231,30 @@ describe('writing-goals — sidecar persistence', () => {
 
     it('maps nullish lastSeen/days to empty maps while preserving the rest', async () => {
         const vault = makeMemoryVault();
+        // Serialize days as explicit null (JSON.stringify drops undefined keys
+        // entirely, so undefined would never exercise the nullish handling).
         await vault.adapter.write(
             '.nullish-maps/writing-goals.json',
-            JSON.stringify({ ...defaultWritingGoalsState(), todayWords: 250, lastSeen: null, days: undefined })
+            JSON.stringify({
+                version: 1,
+                lastSeen: null,
+                todayDate: '2026-01-05',
+                todayWords: 250,
+                days: null,
+                bestStreak: 3,
+                session: { startMs: 10_000, folder: 'manuscript', startTotal: 1000 }
+            })
         );
         const loaded = await loadWritingGoals(vault, '.nullish-maps');
-        expect(loaded.todayWords).to.equal(250);
-        expect(loaded.lastSeen).to.deep.equal({});
-        expect(loaded.days).to.deep.equal({});
+        expect(loaded).to.deep.equal({
+            version: 1,
+            lastSeen: {},
+            todayDate: '2026-01-05',
+            todayWords: 250,
+            days: {},
+            bestStreak: 3,
+            session: { startMs: 10_000, folder: 'manuscript', startTotal: 1000 }
+        });
     });
 
     it('preserves a valid persisted session', async () => {
