@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 /**
  * Vitest configuration. Mirrors the esbuild dev-build environment:
  * `__DEV__` is defined as `true` so tests exercise the same code paths as
- * `npm run dev` / `npm run build` (the dev variants), not the release
+ * `npm run dev` / `npm run build:dev` (the dev variants), not the release
  * tree-shaken variants.
  *
  * Tests live under `tests/` at the repo root (NOT `src/__tests__/`) so the

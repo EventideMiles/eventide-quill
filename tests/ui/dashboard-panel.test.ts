@@ -117,7 +117,7 @@ describe('dashboard-panel — renderDashboardTab', () => {
         expect(container.textContent).to.include('Manuscript');
         expect(container.textContent).to.include((10000).toLocaleString());
 
-        // Writing goals card (the 2.0.0 flagship).
+        // Writing goals card (the 2.0.1 flagship).
         expect(container.textContent).to.include('Writing goals');
         expect(container.textContent).to.include('250');
         expect(container.textContent).to.include('500');
