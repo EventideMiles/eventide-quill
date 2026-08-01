@@ -1105,41 +1105,37 @@ export class CoWriterSession {
     }
 
     /**
-     * Send a discussion message to the AI.
-     * Unlike generateOptions, this does not produce continuation options —
-     * it returns a normal chat response for brainstorming and discussion.
-     *
-     * Conversation history tracking:
-     *  - `discussCurrentMessages` stores API-level messages (system prompt,
-     *    context heads from compaction, and chat turns).
-     *  - Injected context (vault + additional files) is built fresh on every
-     *    call and never stored in `discussCurrentMessages`, so it always
-     *    survives compaction and never double-counts in token estimates.
-     *
-     * Compaction strategy (rolling context head):
-     *  - When the token budget (conversation + files + new message) meets or
-     *    exceeds the compaction threshold, the older portion of the
-     *    conversation is summarized by the AI into a single context head.
-     *  - The new user message is always preserved below the context head.
+     * Shared turn setup for the manuscript-based co-writer modes (discuss + coach):
+     * provider guard, active-file/editor resolution, context assembly, abort +
+     * loading state, push the user message, and build the injected context
+     * (vault + additional files + plot map + inline directives). Returns null
+     * when no provider is configured so callers can early-return. Lore coach is
+     * NOT a consumer — it works on lore entries, not the active manuscript, and
+     * diverges after the abort/loading preamble.
      */
-    async sendDiscussion(
+    private async prepareManuscriptTurn(
         plugin: EventideQuillPlugin,
         message: string,
         images?: string[],
         mentionPaths?: string[]
-    ): Promise<void> {
+    ): Promise<{
+        chat: { provider: AiProvider; modelId?: string };
+        editor: Editor | null;
+        fullText: string;
+        proseForContext: string;
+        injectedContext: ChatMessage[];
+        vaultContext: string;
+    } | null> {
         const chat = plugin.getDefaultChatProvider();
         if (!chat.provider) {
             new Notice('Quill: No AI provider configured. Set one up in settings.');
-            return;
+            return null;
         }
         plugin.warnIfQueueRunning();
         notifyMobileStreamRisk();
 
-        // Use the active file if available; fall back to stored manuscriptPath.
-        // Discuss mode works without an active file — the model can gather
-        // context via tools (manuscript_mentions, vault_lookup, etc.) instead
-        // of from the active document's prose.
+        // These modes work without an active file — the model can gather context
+        // via tools instead of from the active document's prose.
         const activeFile = plugin.app.workspace.getActiveFile();
         const filePath = activeFile?.path ?? this.manuscriptPath;
         if (filePath) this.manuscriptPath = filePath;
@@ -1163,7 +1159,7 @@ export class CoWriterSession {
         this.onOptionsLoading?.(true);
         if (editor) this.lockEditor();
 
-        // Add user's message to display-only chat history
+        // Add the user's message to the display-only chat history.
         this.pushChatMessage({
             role: 'user',
             content: message,
@@ -1174,8 +1170,8 @@ export class CoWriterSession {
         const fullText = editor?.getValue() ?? '';
         const proseForContext = editor ? proseBeforeCursorOrDoc(editor, 4000) : '';
 
-        // Build injected context — vault + additional files.
-        // Injected fresh every call; never stored in discussCurrentMessages.
+        // Build injected context — vault + additional files, fresh every call so
+        // it never pollutes the stored API message array or token estimates.
         const injectedContext: ChatMessage[] = [];
         const vaultContext =
             plugin.settings.coWriterVaultContext && plugin.currentAssembly
@@ -1190,14 +1186,52 @@ export class CoWriterSession {
             fullText
         );
         injectedContext.push(...additionalContextMessages);
-        const discussPlotMap = await buildPlotMapMessage(plugin);
-        if (discussPlotMap) {
-            injectedContext.push(discussPlotMap);
+        const plotMap = await buildPlotMapMessage(plugin);
+        if (plotMap) {
+            injectedContext.push(plotMap);
         }
-        const discussDirective = buildDirectiveMessage(plugin, proseForContext);
-        if (discussDirective) {
-            injectedContext.push(discussDirective);
+        const directive = buildDirectiveMessage(plugin, proseForContext);
+        if (directive) {
+            injectedContext.push(directive);
         }
+
+        return {
+            chat: { provider: chat.provider, modelId: chat.modelId },
+            editor,
+            fullText,
+            proseForContext,
+            injectedContext,
+            vaultContext
+        };
+    }
+
+    /**
+     * Send a discussion message to the AI.
+     * Unlike generateOptions, this does not produce continuation options —
+     * it returns a normal chat response for brainstorming and discussion.
+     *
+     * Conversation history tracking:
+     *  - `discussCurrentMessages` stores API-level messages (system prompt,
+     *    context heads from compaction, and chat turns).
+     *  - Injected context (vault + additional files) is built fresh on every
+     *    call and never stored in `discussCurrentMessages`, so it always
+     *    survives compaction and never double-counts in token estimates.
+     *
+     * Compaction strategy (rolling context head):
+     *  - When the token budget (conversation + files + new message) meets or
+     *    exceeds the compaction threshold, the older portion of the
+     *    conversation is summarized by the AI into a single context head.
+     *  - The new user message is always preserved below the context head.
+     */
+    async sendDiscussion(
+        plugin: EventideQuillPlugin,
+        message: string,
+        images?: string[],
+        mentionPaths?: string[]
+    ): Promise<void> {
+        const turn = await this.prepareManuscriptTurn(plugin, message, images, mentionPaths);
+        if (!turn) return;
+        const { chat, fullText, proseForContext, injectedContext, vaultContext } = turn;
         // Inject the "recommend Direct/Fulfill for the active file" guidance ONLY
         // when NOT in review-discuss mode. In review-discuss, the system prompt
         // explicitly authorizes editing the active manuscript — this message
@@ -1659,73 +1693,9 @@ export class CoWriterSession {
         images?: string[],
         mentionPaths?: string[]
     ): Promise<void> {
-        const chat = plugin.getDefaultChatProvider();
-        if (!chat.provider) {
-            new Notice('Quill: No AI provider configured. Set one up in settings.');
-            return;
-        }
-        plugin.warnIfQueueRunning();
-        notifyMobileStreamRisk();
-
-        // Use the active file if available; fall back to stored manuscriptPath.
-        // Coach mode works without an active file — same rationale as discuss.
-        const activeFile = plugin.app.workspace.getActiveFile();
-        const filePath = activeFile?.path ?? this.manuscriptPath;
-        if (filePath) this.manuscriptPath = filePath;
-
-        const markdownView = filePath ? findEditorView(plugin.app, filePath) : null;
-        const editor = markdownView?.editor ?? null;
-
-        // Populate context engine (only when we have an editor).
-        if (editor && filePath && !plugin.currentAssembly) {
-            await plugin.assembleDocumentContext(editor.getValue(), filePath);
-        }
-
-        this.cancelGeneration();
-        // Create the abort controller early so the image-prep step (Regime B
-        // proxy caption call) and compaction can both be cancelled via Stop,
-        // not just the streaming loop below.
-        this.abortController = new AbortController();
-        this.app = plugin.app;
-        this.currentOptions = [];
-        this.optionsLoading = true;
-        this.onOptionsLoading?.(true);
-        if (editor) this.lockEditor();
-
-        // Add user message to display history (same as sendDiscussion)
-        this.pushChatMessage({
-            role: 'user',
-            content: message,
-            ...(images && images.length > 0 ? { images } : {}),
-            ...(mentionPaths && mentionPaths.length > 0 ? { mentionPaths } : {})
-        });
-
-        const fullText = editor?.getValue() ?? '';
-        const proseForContext = editor ? proseBeforeCursorOrDoc(editor, 4000) : '';
-
-        // Build injected context
-        const injectedContext: ChatMessage[] = [];
-        const vaultContext =
-            plugin.settings.coWriterVaultContext && plugin.currentAssembly
-                ? buildVaultContext(plugin.currentAssembly.contextItems)
-                : '';
-        if (vaultContext) {
-            injectedContext.push({ role: 'system', content: `Vault context for reference:\n${vaultContext}` });
-        }
-        const additionalContextMessages = await loadAdditionalContext(
-            plugin,
-            mergeContextPaths(this.contextFilePaths, mentionPaths),
-            fullText
-        );
-        injectedContext.push(...additionalContextMessages);
-        const coachPlotMap = await buildPlotMapMessage(plugin);
-        if (coachPlotMap) {
-            injectedContext.push(coachPlotMap);
-        }
-        const coachDirective = buildDirectiveMessage(plugin, proseForContext);
-        if (coachDirective) {
-            injectedContext.push(coachDirective);
-        }
+        const turn = await this.prepareManuscriptTurn(plugin, message, images, mentionPaths);
+        if (!turn) return;
+        const { chat, proseForContext, injectedContext, vaultContext } = turn;
         const coachActiveFileMsg = buildActiveFileMessage(plugin);
         if (coachActiveFileMsg) {
             injectedContext.push(coachActiveFileMsg);
