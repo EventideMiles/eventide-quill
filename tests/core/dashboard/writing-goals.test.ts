@@ -18,6 +18,26 @@ import {
 
 const fixedDate = (y: number, m: number, d: number) => new Date(y, m - 1, d).getTime();
 
+describe('writing-goals — default state factory', () => {
+    it('returns a value-equal copy of DEFAULT_WRITING_GOALS_STATE with fresh nested maps', () => {
+        const state = defaultWritingGoalsState();
+        expect(state).to.deep.equal(DEFAULT_WRITING_GOALS_STATE);
+        expect(state.lastSeen).to.not.equal(DEFAULT_WRITING_GOALS_STATE.lastSeen);
+        expect(state.days).to.not.equal(DEFAULT_WRITING_GOALS_STATE.days);
+    });
+
+    it('mutating a factory copy leaves the frozen default untouched', () => {
+        const state = defaultWritingGoalsState();
+        state.lastSeen['manuscript'] = 100;
+        state.days['2026-01-01'] = 50;
+        expect(DEFAULT_WRITING_GOALS_STATE.lastSeen).to.deep.equal({});
+        expect(DEFAULT_WRITING_GOALS_STATE.days).to.deep.equal({});
+        expect(() => {
+            (DEFAULT_WRITING_GOALS_STATE as WritingGoalsState).bestStreak = 99;
+        }).to.throw();
+    });
+});
+
 describe('writing-goals — dateKey', () => {
     it('formats a local YYYY-MM-DD', () => {
         expect(dateKey(fixedDate(2026, 1, 5))).to.equal('2026-01-05');

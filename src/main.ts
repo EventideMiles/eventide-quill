@@ -116,7 +116,6 @@ import {
     type ManuscriptFileData
 } from './core/dashboard/manuscript-file';
 import {
-    DEFAULT_WRITING_GOALS_STATE,
     computeStreak,
     defaultWritingGoalsState,
     loadWritingGoals,
