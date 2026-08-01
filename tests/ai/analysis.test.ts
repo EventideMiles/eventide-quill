@@ -7,9 +7,15 @@ import {
 } from '../../src/ai/analysis';
 
 describe('analysis — ANALYSIS_MODES registry', () => {
-    it('has the four critical-analysis modes with unique ids', () => {
+    it('has the five critical-analysis modes with unique ids', () => {
         const ids = ANALYSIS_MODES.map((m) => m.id);
-        expect(ids).to.deep.equal(['plot-logic', 'character-consistency', 'continuity', 'voice-drift']);
+        expect(ids).to.deep.equal([
+            'plot-logic',
+            'character-consistency',
+            'continuity',
+            'voice-drift',
+            'lore-consistency'
+        ]);
         expect(new Set(ids).size).to.equal(ids.length);
         for (const mode of ANALYSIS_MODES) {
             expect(mode.label.length).to.be.greaterThan(0);
@@ -21,6 +27,7 @@ describe('analysis — ANALYSIS_MODES registry', () => {
 describe('analysis — getAnalysisModeById', () => {
     it('finds a registered mode by id', () => {
         expect(getAnalysisModeById('continuity')?.label).to.equal('Continuity');
+        expect(getAnalysisModeById('lore-consistency')?.label).to.equal('Lore consistency');
     });
     it('returns undefined for an unknown id', () => {
         expect(getAnalysisModeById('nope')).to.equal(undefined);
@@ -28,7 +35,13 @@ describe('analysis — getAnalysisModeById', () => {
 });
 
 describe('analysis — buildAnalysisMessages', () => {
-    const modes: AnalysisMode[] = ['plot-logic', 'character-consistency', 'continuity', 'voice-drift'];
+    const modes: AnalysisMode[] = [
+        'plot-logic',
+        'character-consistency',
+        'continuity',
+        'voice-drift',
+        'lore-consistency'
+    ];
 
     it('returns a [system, user] pair whose user message includes the analyzed text', () => {
         const messages = buildAnalysisMessages('plot-logic', { text: 'The detective entered.', scope: 'selection' });

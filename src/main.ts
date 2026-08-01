@@ -785,6 +785,12 @@ export default class EventideQuillPlugin extends Plugin {
                                 await this.requestAnalysis('voice-drift', 'auto');
                             });
                         });
+                        sub.addItem((s) => {
+                            s.setTitle('Lore consistency').onClick(async () => {
+                                await this.openReviewPanel();
+                                await this.requestAnalysis('lore-consistency', 'auto');
+                            });
+                        });
                     });
                 }
 
@@ -1057,6 +1063,15 @@ export default class EventideQuillPlugin extends Plugin {
             editorCallback: async (editor) => {
                 await this.openReviewPanel();
                 await this.requestAnalysis('voice-drift', 'auto');
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-analyze-lore-consistency',
+            name: 'Quill: Analyze lore consistency',
+            editorCallback: async (editor) => {
+                await this.openReviewPanel();
+                await this.requestAnalysis('lore-consistency', 'auto');
             }
         });
 

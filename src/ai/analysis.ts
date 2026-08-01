@@ -6,8 +6,8 @@ import type { ExtractedEntity, VoiceMarker } from '../core/context-engine/types'
 import type { NarrativeVoicePreset } from '../types';
 import { buildCodeFence } from '../utils/text-analysis';
 
-/** The four critical-analysis modes. */
-export type AnalysisMode = 'plot-logic' | 'character-consistency' | 'continuity' | 'voice-drift';
+/** The five critical-analysis modes. */
+export type AnalysisMode = 'plot-logic' | 'character-consistency' | 'continuity' | 'voice-drift' | 'lore-consistency';
 
 /** The input scope for an analysis request. */
 export type AnalysisScope = 'selection' | 'scene' | 'document';
@@ -43,6 +43,11 @@ export const ANALYSIS_MODES: AnalysisModeConfig[] = [
         id: 'voice-drift',
         label: 'Voice drift',
         description: 'POV slips, tense shifts, rhythm divergence from baseline.'
+    },
+    {
+        id: 'lore-consistency',
+        label: 'Lore consistency',
+        description: 'Contradictions between the manuscript and your lorebook entries.'
     }
 ];
 

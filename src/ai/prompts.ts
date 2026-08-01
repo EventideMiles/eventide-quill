@@ -638,6 +638,8 @@ export function getAnalysisModePrompt(
             return getContinuityScanPrompt(options?.plotThreads, options?.vaultContext, baseOptions);
         case 'voice-drift':
             return getVoiceDriftPrompt(options?.voiceMarker, options?.vaultContext, baseOptions);
+        case 'lore-consistency':
+            return getLoreConsistencyPrompt(options?.characters, options?.vaultContext, baseOptions);
     }
 }
 
@@ -814,6 +816,36 @@ function getVoiceDriftPrompt(
             `- Description ratio: ${voiceMarker.descriptionRatio}`
         );
     }
+    return withVaultContext(parts, vaultContext);
+}
+
+/** Build the critical-analysis prompt focused on lorebook consistency (manuscript vs canonical lore entries). */
+function getLoreConsistencyPrompt(
+    characters?: ExtractedEntity[],
+    vaultContext?: string,
+    baseOptions?: AnalysisBasePromptOptions
+): string {
+    const parts = [
+        ...getAnalysisBasePrompt(baseOptions),
+        '',
+        'Focus on lorebook consistency — contradictions between the manuscript and the canonical lore entries:',
+        "- Physical descriptions in the manuscript that conflict with a character or location's lore entry (eye or hair color, height, age, distinctive features).",
+        '- Relationship errors: two characters described differently than their established lore relationships (family, faction allegiance, rivalry).',
+        '- Timeline or biographical facts that contradict a lore entry (birthplace, title, prior events, established history).',
+        "- Names or aliases used inconsistently, or an entity described in a way that conflicts with its lore entry's type or nature.",
+        '- Treat each contradiction as an observation, not an error — the writer may have revised the lore or intend the discrepancy.'
+    ];
+    if (characters && characters.length > 0) {
+        parts.push(
+            '',
+            'Named characters in this manuscript — verify each against its lorebook entry:',
+            formatCharacterEntries(characters)
+        );
+    }
+    parts.push(
+        '',
+        'Before reporting a contradiction, use lore_siblings and vault_lookup to read the relevant lore entry in full, and cite the entry name alongside the manuscript line. Do not assume a contradiction from memory — confirm it against the entry.'
+    );
     return withVaultContext(parts, vaultContext);
 }
 
