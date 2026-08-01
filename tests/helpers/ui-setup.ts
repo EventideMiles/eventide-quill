@@ -155,5 +155,11 @@ g.setIcon = (_el: HTMLElement, _icon: string): void => {
 g.setTooltip = (_el: HTMLElement, _tooltip: string): void => {
     /* no-op */
 };
+// ResizeObserver polyfill — happy-dom doesn't provide it.
+(g as Record<string, unknown>).ResizeObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+};
 
 export {};

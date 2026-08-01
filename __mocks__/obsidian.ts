@@ -99,9 +99,19 @@ export class App {
         getActiveFile(): TFile | null {
             return null;
         },
+        getActiveViewOfType(): unknown {
+            return null;
+        },
+        getLeavesOfType(): unknown[] {
+            return [];
+        },
         getLeaf(): { openFile(_f: TFile): Promise<void> } {
             return { async openFile() {} };
-        }
+        },
+        on(_event: string, _cb: (...args: unknown[]) => void): unknown {
+            return { detach: () => {} };
+        },
+        offref(_ref: unknown): void {}
     };
     metadataCache = {
         getFileCache(_file: TFile): unknown {
@@ -153,6 +163,18 @@ export class Component {
     registerInterval(id: number): number {
         this._cleanups.push(() => clearInterval(id));
         return id;
+    }
+
+    registerEvent(_eventRef: unknown): this {
+        return this;
+    }
+
+    addChild(child: Component): Component {
+        if (typeof (child as { onload?: () => void }).onload === 'function') (child as { onload: () => void }).onload();
+        this._cleanups.push(() => {
+            if (typeof (child as { onunload?: () => void }).onunload === 'function') (child as { onunload: () => void }).onunload();
+        });
+        return child;
     }
 
     unload(): void {
@@ -520,4 +542,100 @@ export class FuzzySuggestModal<T> {
     setPlaceholder(_p: string): this {
         return this;
     }
+}
+
+/** Stub WorkspaceLeaf — the container Obsidian places views into. */
+export class WorkspaceLeaf {
+    containerEl: HTMLElement;
+    view: unknown = null;
+    app: App;
+    constructor(app?: App) {
+        this.app = app ?? new App();
+        this.containerEl = document.createElement('div');
+    }
+}
+
+/** Stub View base — extends Component with containerEl + app from the leaf. */
+export abstract class View extends Component {
+    app: App;
+    containerEl: HTMLElement;
+    contentEl: HTMLElement;
+    icon = '';
+    constructor(leaf: WorkspaceLeaf) {
+        super();
+        this.app = leaf.app;
+        this.containerEl = leaf.containerEl;
+        this.contentEl = this.containerEl.createDiv({ cls: 'view-content' });
+    }
+    onload(): void {}
+    onunload(): void {}
+    abstract onOpen(): void;
+    abstract onClose(): void;
+}
+
+/** Stub ItemView — the base for sidebar/plugin views. */
+export abstract class ItemView extends View {
+    abstract getViewType(): string;
+    abstract getDisplayText(): string;
+    getIcon(): string {
+        return '';
+    }
+}
+
+/** Stub MarkdownView — used only for instanceof checks. */
+export class MarkdownView {
+    editor = {
+        getValue: () => '',
+        getCursor: () => ({ line: 0, ch: 0 }),
+        setCursor: () => {},
+        getSelection: () => '',
+        replaceRange: () => {},
+        posToOffset: () => 0,
+        offsetToPos: () => ({ line: 0, ch: 0 })
+    };
+    file: TFile | null = null;
+}
+
+/** Stub PluginSettingTab — base for the enriched EventideQuillSettingTab. */
+export class PluginSettingTab {
+    app: App;
+    plugin: { settings: Record<string, unknown>; saveSettings(): Promise<void> };
+    containerEl: HTMLElement;
+    settingItems: unknown[] = [];
+
+    constructor(app: App, plugin: unknown) {
+        this.app = app;
+        this.plugin = plugin as PluginSettingTab['plugin'];
+        this.containerEl = document.createElement('div');
+    }
+
+    getControlValue(key: string): unknown {
+        return this.plugin.settings?.[key];
+    }
+
+    setControlValue(key: string, value: unknown): void | Promise<void> {
+        if (this.plugin.settings) this.plugin.settings[key] = value;
+    }
+
+    update(): void {}
+    refreshDomState(): void {}
+    display(): void {}
+    hide(): void {}
+}
+
+/** Stub SettingPage — abstract base for imperative sub-pages (provider pages, etc). */
+export abstract class SettingPage {
+    rootEl: HTMLElement;
+    titlebarEl: HTMLElement;
+    containerEl: HTMLElement;
+    title = '';
+
+    constructor() {
+        this.rootEl = document.createElement('div');
+        this.titlebarEl = document.createElement('div');
+        this.containerEl = document.createElement('div');
+    }
+
+    abstract display(): void;
+    hide(): void {}
 }
