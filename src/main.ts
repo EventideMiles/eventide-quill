@@ -3965,18 +3965,28 @@ export default class EventideQuillPlugin extends Plugin {
                 }
             }
         } catch (err: unknown) {
-            if (err instanceof Error && err.name === 'AbortError') {
-                await this.lintPanel?.reviewChatFinished();
-                return;
-            }
-            const msg = err instanceof Error ? err.message : String(err);
-            await this.lintPanel?.reviewChatError(msg);
-            new Notice('Quill: Manuscript analysis chat failed.');
+            if (await this.handleReviewChatError(err, 'Quill: Manuscript analysis chat failed.')) return;
         } finally {
             if (this.manuscriptAnalysisAbort === myAbort) {
                 this.manuscriptAnalysisAbort = null;
             }
         }
+    }
+
+    /**
+     * Handle a review-chat stream error: on abort, finish the panel and signal
+     * the caller to return; otherwise surface the message via the panel + a
+     * Notice. Returns true for an abort so the caller can early-return.
+     */
+    private async handleReviewChatError(err: unknown, noticeText: string): Promise<boolean> {
+        if (err instanceof Error && err.name === 'AbortError') {
+            await this.lintPanel?.reviewChatFinished();
+            return true;
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        await this.lintPanel?.reviewChatError(msg);
+        new Notice(noticeText);
+        return false;
     }
 
     /**
@@ -4291,13 +4301,7 @@ export default class EventideQuillPlugin extends Plugin {
                 }
             }
         } catch (err: unknown) {
-            if (err instanceof Error && err.name === 'AbortError') {
-                await this.lintPanel?.reviewChatFinished();
-                return;
-            }
-            const msg = err instanceof Error ? err.message : String(err);
-            await this.lintPanel?.reviewChatError(msg);
-            new Notice('Quill: Analysis chat failed.');
+            if (await this.handleReviewChatError(err, 'Quill: Analysis chat failed.')) return;
         } finally {
             if (this.analysisAbort === myAnalysisAbort) {
                 this.analysisAbort = null;
@@ -6304,13 +6308,7 @@ export default class EventideQuillPlugin extends Plugin {
                 }
             }
         } catch (err: unknown) {
-            if (err instanceof Error && err.name === 'AbortError') {
-                await this.lintPanel?.reviewChatFinished();
-                return;
-            }
-            const msg = err instanceof Error ? err.message : String(err);
-            await this.lintPanel?.reviewChatError(msg);
-            new Notice('Quill: Chat response failed.');
+            if (await this.handleReviewChatError(err, 'Quill: Chat response failed.')) return;
         } finally {
             // Only clear feedbackAbort if it still matches our controller,
             // so a newer request's controller is not accidentally cleared.

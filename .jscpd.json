@@ -5,5 +5,5 @@
     "minTokens": 70,
     "mode": "weak",
     "ignore": ["**/node_modules/**"],
-    "threshold": 2
+    "threshold": 1.8
 }
