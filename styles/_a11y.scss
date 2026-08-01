@@ -1,0 +1,24 @@
+// Accessibility — keyboard focus indicators for non-input controls.
+//
+// Buttons and role=button elements across the Quill panels have no native
+// focus ring (Obsidian resets button outlines), leaving keyboard users with
+// no visible focus. Text inputs already signal focus via a border-color
+// change in their per-panel :focus rules, so they are excluded here to avoid
+// double indicators. :focus-visible restricts the ring to keyboard
+// navigation so mouse users see a clean UI (WCAG 2.4.7 Focus Visible).
+
+.quill-sidebar,
+.quill-cowriter-panel,
+.quill-review-panel,
+.quill-context-panel,
+.quill-dashboard-panel,
+.quill-lorebook-panel,
+.quill-feedback-panel,
+.quill-settings-root {
+    button:focus-visible,
+    a:focus-visible,
+    [role='button']:focus-visible {
+        outline: 2px solid var(--text-accent);
+        outline-offset: 2px;
+    }
+}

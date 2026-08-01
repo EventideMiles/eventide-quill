@@ -1600,7 +1600,7 @@ export class ReviewPanel extends AbstractChatPanel {
 
             if (this.resultsState === 'loading') {
                 header.createSpan({ cls: 'quill-review-panel__status', text: 'Analyzing...' });
-                scroll.createDiv({ cls: 'quill-review-panel__report' }).setText('');
+                scroll.createDiv({ cls: 'quill-review-panel__report', attr: { 'aria-live': 'polite' } }).setText('');
             } else if (this.resultsState === 'complete') {
                 header.createSpan({
                     cls: 'quill-review-panel__status quill-review-panel__status--done',

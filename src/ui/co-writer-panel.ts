@@ -1080,6 +1080,12 @@ export class CoWriterPanel extends AbstractChatPanel {
         if (!svg || svg.children.length === 0) {
             el.textContent = fallback;
         }
+        // Icon-only buttons have no text content for screen readers; mirror the
+        // tooltip into an accessible name so the control is announced.
+        if (!el.getAttribute('aria-label')) {
+            const title = el.getAttribute('title');
+            if (title) el.setAttribute('aria-label', title);
+        }
     }
 
     /** Render the scrollable chat area with messages or initialize prompt. */
