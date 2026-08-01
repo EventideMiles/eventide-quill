@@ -669,12 +669,19 @@ export class EventideQuillSettingTab extends PluginSettingTab {
      * at the page level) and calls each page's `display()` on open.
      */
     getSettingDefinitions(): SettingDefinitionItem[] {
+        // Setup completion — drives the Welcome page's attention indicator.
+        const setupComplete =
+            this.plugin.settings.aiProviders.length > 0 &&
+            !!this.plugin.settings.aiDefaultChatProvider &&
+            !!this.plugin.currentManuscriptFolder &&
+            this.plugin.settings.writingDailyGoal > 0;
         return [
             {
                 type: 'page',
                 name: 'Welcome',
                 desc: 'Getting started, features, and privacy.',
-                items: this.welcomeItems()
+                items: this.welcomeItems(),
+                status: setupComplete ? null : 'warning'
             },
             {
                 type: 'page',

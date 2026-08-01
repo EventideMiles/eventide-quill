@@ -67,10 +67,12 @@ export function defaultWritingGoalsState(): WritingGoalsState {
     };
 }
 
+/** Path to the writing-goals sidecar under the plugin data directory. */
 export function writingGoalsPath(dataDir: string): string {
     return normalizePath(`${dataDir}/${WRITING_GOALS_FILENAME}`);
 }
 
+/** Load the writing-goals ledger from its sidecar (best-effort; defaults on miss/corruption). */
 export async function loadWritingGoals(vault: Vault, dataDir: string): Promise<WritingGoalsState> {
     const path = writingGoalsPath(dataDir);
     try {
@@ -88,6 +90,7 @@ export async function loadWritingGoals(vault: Vault, dataDir: string): Promise<W
     }
 }
 
+/** Persist the writing-goals ledger to its sidecar (best-effort; never throws). */
 export async function saveWritingGoals(vault: Vault, dataDir: string, state: WritingGoalsState): Promise<void> {
     const path = writingGoalsPath(dataDir);
     try {
@@ -165,11 +168,13 @@ export function computeStreak(state: WritingGoalsState, goal: number, now: numbe
     return streak;
 }
 
+/** Start a focus session anchored to the current manuscript word count. */
 export function startSession(state: WritingGoalsState, folder: string, total: number, now: number): WritingGoalsState {
     state.session = { startMs: now, folder, startTotal: total };
     return state;
 }
 
+/** End the active focus session (clears the session field; no-op if none). */
 export function stopSession(state: WritingGoalsState): WritingGoalsState {
     state.session = null;
     return state;
