@@ -1078,23 +1078,27 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         const hasManuscript = !!this.plugin.currentManuscriptFolder;
         const hasGoal = this.plugin.settings.writingDailyGoal > 0;
 
+        // Each settings-referencing step carries an always-visible action so the
+        // writer can jump straight back to that setting from the checklist even
+        // after it is complete. "Open your manuscript" references no settings
+        // page, so it intentionally has no button.
         const setupSteps: { done: boolean; label: string; hint: string; actionLabel?: string; action?: () => void }[] =
             [
                 {
                     done: hasProviders,
                     label: 'Add an AI provider',
                     hint: 'Ollama, LM Studio, or any OpenAI-compatible endpoint. (AI providers page)',
-                    actionLabel: hasProviders ? undefined : 'Add',
+                    actionLabel: hasProviders ? 'Take me there' : 'Add',
                     action: hasProviders
-                        ? undefined
+                        ? () => this.openSettingsPage('AI providers')
                         : () => new AddProviderModal(this.app, (t, ep) => this.addProvider(t, ep)).open()
                 },
                 {
                     done: hasChatModel,
                     label: 'Pick a default chat model',
                     hint: 'The model used for chat, feedback, and the co-writer. (Default models page)',
-                    actionLabel: hasChatModel ? undefined : 'Open',
-                    action: hasChatModel ? undefined : () => this.openSettingsPage('AI providers', 'Default models')
+                    actionLabel: 'Take me there',
+                    action: () => this.openSettingsPage('AI providers', 'Default chat model', 'Default models')
                 },
                 {
                     done: hasManuscript,
@@ -1105,8 +1109,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     done: hasGoal,
                     label: 'Set a daily writing goal',
                     hint: 'Track a writing streak on the dashboard. (General page)',
-                    actionLabel: hasGoal ? undefined : 'Open',
-                    action: hasGoal ? undefined : () => this.openSettingsPage('General', 'Daily writing goal')
+                    actionLabel: 'Take me there',
+                    action: () => this.openSettingsPage('General', 'Daily writing goal')
                 }
             ];
         const completed = setupSteps.filter((s) => s.done).length;
@@ -2057,14 +2061,19 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 
     /**
-     * Deep-link into a top-level settings sub-page by name (e.g. "AI providers",
-     * "General"). Uses Obsidian's internal settings-nav API — `openTabById` is
+     * Deep-link into a settings page by name (e.g. "AI providers", "General"),
+     * optionally hopping into a sub-page and scrolling to a specific setting
+     * within it. Uses Obsidian's internal settings-nav API — `openTabById` is
      * the long-standing convention; `getNavigableSettingItems`/`activateSettingItem`
      * are its 1.13 declarative counterparts. Feature-detected: if the internal
      * API is unavailable (renamed/removed in a future build), falls back to just
      * opening the plugin tab so the writer can pick the page themselves.
+     *
+     * Navigation is poll-based because every hop (root list → page → sub-page)
+     * re-renders asynchronously; `waitForAndActivate` retries until the target
+     * entry shows up in `getNavigableSettingItems()` before activating it.
      */
-    openSettingsPage(pageName: string, settingName?: string): void {
+    openSettingsPage(pageName: string, settingName?: string, subPageName?: string): void {
         const app = this.app as unknown as {
             setting?: {
                 open?: () => void;
@@ -2079,27 +2088,36 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         if (!s?.open || !s.openTabById) return;
         s.open();
         s.openTabById(this.plugin.manifest.id);
-        // Reset to the root page list so the target page entry is visible.
+        // Reset to the root page list so the target page entry is visible
+        // (we may currently be deep in a sub-page).
         if (typeof s.clearPageStack === 'function') s.clearPageStack();
 
-        // clearPageStack triggers an async re-render — retry until the root
-        // page list is available, then activate the target + scroll to setting.
         // settings.ts — no Component lifecycle; window.setTimeout (one-shot).
-        let attempts = 0;
-        const navigate = (): void => {
+        const waitForAndActivate = (name: string, then: () => void, attempts = 0): void => {
             const items = typeof s.getNavigableSettingItems === 'function' ? s.getNavigableSettingItems() : [];
             const target = items.find((el: HTMLElement) => {
-                const name = el.querySelector('.setting-item-name')?.textContent?.trim() ?? '';
-                return name === pageName;
+                const elName = el.querySelector('.setting-item-name')?.textContent?.trim() ?? '';
+                return elName === name;
             });
             if (target && typeof s.activateSettingItem === 'function') {
                 s.activateSettingItem(target);
-                if (settingName) this.scrollToSetting(settingName);
-            } else if (++attempts < 15) {
-                window.setTimeout(navigate, 60);
+                then();
+            } else if (attempts < 15) {
+                window.setTimeout(() => waitForAndActivate(name, then, attempts + 1), 60);
             }
         };
-        navigate();
+
+        const hopIntoSubPage = (): void => {
+            if (!subPageName) {
+                if (settingName) this.scrollToSetting(settingName);
+                return;
+            }
+            waitForAndActivate(subPageName, () => {
+                if (settingName) this.scrollToSetting(settingName);
+            });
+        };
+
+        waitForAndActivate(pageName, hopIntoSubPage);
     }
 
     /**

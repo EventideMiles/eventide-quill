@@ -104,6 +104,50 @@ describe('Settings UI', () => {
         );
     }
 
+    /**
+     * Click the always-visible action button on a Welcome checklist row (e.g.
+     * "Pick a default chat model"). The checklist lives inside the settings
+     * page element, which on desktop Obsidian is in a separate window's
+     * document — so it is found via `getCurrentPageEl()`, not `document`.
+     */
+    async function clickWelcomeChecklistButton(rowLabel: string): Promise<boolean> {
+        return browser.execute((label: string) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const s = (window as unknown as { app: any }).app.setting;
+            const pageEl = typeof s.getCurrentPageEl === 'function' ? s.getCurrentPageEl() : null;
+            if (!pageEl) return false;
+            const row = Array.from(
+                pageEl.querySelectorAll('.quill-settings__welcome-checklist-row') as NodeListOf<HTMLElement>
+            ).find((r) => (r.textContent ?? '').includes(label));
+            const btn = row?.querySelector<HTMLElement>('button.quill-settings__welcome-checklist-btn');
+            if (!btn) return false;
+            btn.click();
+            return true;
+        }, rowLabel);
+    }
+
+    /** Current settings page stack titles (e.g. ['AI providers', 'Default models']). */
+    async function currentPageStack(): Promise<string[]> {
+        return browser.execute(() => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const s = (window as unknown as { app: any }).app.setting;
+            return (s.pageStack ?? []).map((p: { page: { title?: string } }) => p.page.title ?? '');
+        }) as Promise<string[]>;
+    }
+
+    /** Names of every `.setting-item` on the current settings page. */
+    async function currentPageSettingNames(): Promise<string[]> {
+        return browser.execute(() => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const s = (window as unknown as { app: any }).app.setting;
+            const pageEl = typeof s.getCurrentPageEl === 'function' ? s.getCurrentPageEl() : null;
+            if (!pageEl) return [];
+            return Array.from(pageEl.querySelectorAll('.setting-item') as NodeListOf<HTMLElement>).map(
+                (el) => el.querySelector('.setting-item-name')?.textContent?.trim() ?? ''
+            );
+        }) as Promise<string[]>;
+    }
+
     it('opens the Eventide Quill settings tab with six navigable pages', async () => {
         await openPluginSettings();
         const names = (await browser.execute(() => {
@@ -212,6 +256,65 @@ describe('Settings UI', () => {
         if (orig.enableAggressiveGremlins && (await readSettings<{ enableAggressiveGremlins: boolean }>()).enableAggressiveGremlins === false) {
             await toggleSettingByName(/aggressive scan/i);
         }
+        await closeSettings();
+    });
+
+    /** Number of flash-highlighted settings on the current page. */
+    async function flashCount(): Promise<number> {
+        return browser.execute(() => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const s = (window as unknown as { app: any }).app.setting;
+            const pageEl = typeof s.getCurrentPageEl === 'function' ? s.getCurrentPageEl() : null;
+            if (!pageEl) return 0;
+            return pageEl.querySelectorAll('.quill-settings__flash').length;
+        }) as Promise<number>;
+    }
+
+    async function waitForPageStack(expected: string[]): Promise<void> {
+        await browser.waitUntil(
+            async () => JSON.stringify(await currentPageStack()) === JSON.stringify(expected),
+            { timeout: 8000, timeoutMsg: `page stack never reached ${JSON.stringify(expected)}: ${JSON.stringify(await currentPageStack())}` }
+        );
+    }
+
+    it('Welcome "Take me there" on chat model deep-links into Default models', async () => {
+        await openPluginSettings();
+        await openSettingsPage('Welcome');
+
+        const clicked = await clickWelcomeChecklistButton('Pick a default chat model');
+        expect(clicked).to.equal(true, 'could not locate the chat-model checklist button — selector drift');
+
+        await waitForPageStack(['AI providers', 'Default models']);
+        const names = await currentPageSettingNames();
+        expect(names).to.include('Default chat model');
+        await browser.waitUntil(async () => (await flashCount()) === 1, {
+            timeout: 8000,
+            timeoutMsg: 'Default chat model was not flash-highlighted after deep-link'
+        });
+        await closeSettings();
+    });
+
+    it('Welcome "Take me there" on daily goal lands on the General setting', async () => {
+        await openPluginSettings();
+        await openSettingsPage('Welcome');
+
+        const clicked = await clickWelcomeChecklistButton('Set a daily writing goal');
+        expect(clicked).to.equal(true, 'could not locate the daily-goal checklist button — selector drift');
+
+        await waitForPageStack(['General']);
+        const names = await currentPageSettingNames();
+        expect(names).to.include('Daily writing goal');
+        await closeSettings();
+    });
+
+    it('Welcome "Take me there" on AI provider lands on the AI providers page', async () => {
+        await openPluginSettings();
+        await openSettingsPage('Welcome');
+
+        const clicked = await clickWelcomeChecklistButton('Add an AI provider');
+        expect(clicked).to.equal(true, 'could not locate the AI-provider checklist button — selector drift');
+
+        await waitForPageStack(['AI providers']);
         await closeSettings();
     });
 });
