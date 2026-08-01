@@ -14,7 +14,7 @@ MIT license. Built from scratch. Mobile-ready. Local-model first.
 
 ## Environment & tooling
 
-- **Package manager: npm**
+- **Package manager: npm** — pinned to `npm@11.16.0` via the `packageManager` field; `.npmrc` `engine-strict` + `engines.npm >= 11.16.0` fail installs on older npm (the `allowScripts` fields are only honored from npm 11.16.0). CI pins npm before `npm ci` (`npm install -g "npm@^11.16.0"`).
 - **Bundler: esbuild** (configured in `esbuild.config.mjs`)
 - **Styles: Sass / SCSS** — source under `styles/` (entry `styles/main.scss` + `_*.scss` partials), compiled to `styles.css` by the `sass` package. See "Styling" below.
 - **Formatter: Prettier** (`prettier.config.mjs`: `singleQuote`, `tabWidth: 4`, `printWidth: 120`, `trailingComma: 'none'`, `semi: true`)

@@ -34,6 +34,10 @@
 	},
 	"keywords": [],
 	"license": "MIT",
+	"packageManager": "npm@11.16.0",
+	"engines": {
+		"npm": ">=11.16.0"
+	},
 	"devDependencies": {
 		"@eslint/js": "^9.39.4",
 		"@types/chai": "^5.2.3",
