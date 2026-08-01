@@ -73,6 +73,9 @@ export interface EventideQuillSettings {
     enableAiWrapUps: boolean;
     enableGremlins: boolean;
     enableAggressiveGremlins: boolean;
+    enableCrutchWords: boolean;
+    crutchWords: string[];
+    crutchWordThreshold: number;
     lintOnSave: boolean;
     aiProviders: ProviderConfig[];
     aiDefaultChatProvider: string;
@@ -316,6 +319,9 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     enableAiWrapUps: true,
     enableGremlins: true,
     enableAggressiveGremlins: false,
+    enableCrutchWords: true,
+    crutchWords: [],
+    crutchWordThreshold: 5,
     lintOnSave: false,
     aiProviders: [
         {
@@ -1781,6 +1787,24 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         });
     }
 
+    /** Comma-separated text field bound to the crutch-words list setting. */
+    private renderCrutchWordsField(setting: Setting): void {
+        const input = setting.controlEl.createEl('input', {
+            type: 'text',
+            cls: 'quill-crutch-words-input',
+            attr: { placeholder: 'Just, really, that' }
+        });
+        input.value = this.plugin.settings.crutchWords.join(', ');
+        input.addEventListener('blur', () => {
+            this.plugin.settings.crutchWords = input.value
+                .split(',')
+                .map((s) => s.trim().toLowerCase())
+                .filter((s) => s.length > 0);
+            void this.plugin.saveSettings();
+            input.value = this.plugin.settings.crutchWords.join(', ');
+        });
+    }
+
     /** Comma-separated text field bound to a generic string[] settings field. */
     private renderStringListField(setting: Setting, key: 'loreEntryImageSectionHeaders'): void {
         const input = setting.controlEl.createEl('input', { type: 'text', cls: 'quill-stringlist-input' });
@@ -1931,6 +1955,32 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             },
             {
                 type: 'group',
+                heading: 'Crutch words',
+                items: [
+                    {
+                        name: 'Crutch-word detection',
+                        desc: 'Flag your personal overused words (defined below) once each exceeds the limit. On by default; does nothing until you add words.',
+                        control: { type: 'toggle', key: 'enableCrutchWords' }
+                    },
+                    {
+                        name: 'Crutch words',
+                        desc: 'Comma-separated words you tend to overuse (e.g. "just, really, that"). Each is flagged once it appears more than the limit below.',
+                        render: (setting) => this.renderCrutchWordsField(setting)
+                    },
+                    {
+                        name: 'Crutch-word limit',
+                        desc: 'A crutch word is flagged once it appears more than this many times in the document.',
+                        control: {
+                            type: 'number',
+                            key: 'crutchWordThreshold',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
+                    }
+                ]
+            },
+            {
+                type: 'group',
                 heading: 'AI detection',
                 items: [
                     {
@@ -2021,6 +2071,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         s.enableAiWrapUps = d.enableAiWrapUps;
         s.enableGremlins = d.enableGremlins;
         s.enableAggressiveGremlins = d.enableAggressiveGremlins;
+        s.enableCrutchWords = d.enableCrutchWords;
+        s.crutchWords = d.crutchWords;
+        s.crutchWordThreshold = d.crutchWordThreshold;
         await this.plugin.saveSettings();
         this.update();
     }

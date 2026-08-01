@@ -20,6 +20,9 @@
     "enableAiWrapUps": true,
     "enableGremlins": true,
     "enableAggressiveGremlins": false,
+    "enableCrutchWords": true,
+    "crutchWords": [],
+    "crutchWordThreshold": 5,
     "lintOnSave": false,
     "aiProviders": [
         {

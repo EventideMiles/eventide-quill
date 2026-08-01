@@ -8,6 +8,7 @@ import {
     checkAiNegation,
     checkAiWrapUps,
     checkComplexWords,
+    checkCrutchWords,
     checkDialogueTags,
     checkDuplicateText,
     checkEchoes,
@@ -43,6 +44,9 @@ export interface LintOptions {
     enableGremlins?: boolean;
     enableAggressiveGremlins?: boolean;
     enableDuplicateText?: boolean;
+    enableCrutchWords?: boolean;
+    crutchWords?: string[];
+    crutchWordThreshold?: number;
 }
 
 /** Run all enabled lint rules against `text` and return the combined results. */
@@ -125,6 +129,10 @@ export function lint(text: string, options?: LintOptions): LintResult[] {
 
     if (opts.enableDuplicateText ?? true) {
         run(() => checkDuplicateText(text), 'duplicate-text');
+    }
+
+    if (opts.enableCrutchWords ?? true) {
+        run(() => checkCrutchWords(text, opts.crutchWords ?? [], opts.crutchWordThreshold ?? 5), 'crutch-words');
     }
 
     results.sort((a, b) => a.line - b.line || a.column - b.column);

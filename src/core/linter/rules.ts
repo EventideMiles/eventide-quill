@@ -750,3 +750,51 @@ export function checkDuplicateText(text: string): LintResult[] {
 
     return results;
 }
+
+/** Escape RegExp special characters in a user-supplied crutch word. */
+function escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Flag user-defined crutch words that appear more than `threshold` times across
+ * the whole document. Unlike the static qualifier / AI-cliché rules (which flag
+ * every instance of a fixed list), this surfaces the writer's personal
+ * overused words — once a word's count exceeds the threshold, every occurrence
+ * is flagged so the writer sees each spot that needs attention. An empty list
+ * or counts at or below the threshold produce no results.
+ */
+export function checkCrutchWords(text: string, words: string[], threshold: number = 5): LintResult[] {
+    const sanitized = words.map((w) => w.trim().toLowerCase()).filter((w) => w.length > 0);
+    if (sanitized.length === 0) return [];
+
+    const pattern = new RegExp(`\\b(${sanitized.map(escapeRegExp).join('|')})\\b`, 'gi');
+    const counts = new Map<string, number>();
+    const hits: { index: number; matched: string; key: string }[] = [];
+    let match: RegExpExecArray | null;
+
+    while ((match = pattern.exec(text)) !== null) {
+        const captured = match[1];
+        if (!captured) continue;
+        const key = captured.toLowerCase();
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+        hits.push({ index: match.index, matched: match[0], key });
+    }
+
+    const results: LintResult[] = [];
+    for (const { index, matched, key } of hits) {
+        const count = counts.get(key) ?? 0;
+        if (count <= threshold) continue;
+        const pos = posAtOffset(text, index);
+        results.push({
+            line: pos.line,
+            column: pos.column,
+            length: matched.length,
+            message: `Crutch word "${key}" appears ${count} times (limit ${threshold}). Consider varying or cutting.`,
+            severity: 'warning',
+            rule: 'crutch-words'
+        });
+    }
+
+    return results;
+}

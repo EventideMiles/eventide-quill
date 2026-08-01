@@ -15,7 +15,8 @@ import {
     checkAiWrapUps,
     checkGremlins,
     checkDialogueTags,
-    checkTellingVsShowing
+    checkTellingVsShowing,
+    checkCrutchWords
 } from '../../../src/core/linter/rules';
 
 describe('checkLongSentences', () => {
@@ -281,5 +282,58 @@ describe('checkTellingVsShowing', () => {
         const results = checkTellingVsShowing('He was angry about the news.');
         expect(results.length).toBeGreaterThanOrEqual(1);
         expect(results[0]!.rule).toBe('telling-vs-showing');
+    });
+});
+
+describe('checkCrutchWords', () => {
+    it('returns nothing for an empty word list', () => {
+        expect(checkCrutchWords('just just just just just just', [], 5)).toEqual([]);
+    });
+
+    it('returns nothing when the count is at or below the threshold', () => {
+        const text = 'just really just really just really';
+        expect(checkCrutchWords(text, ['just', 'really'], 5)).toEqual([]);
+    });
+
+    it('flags every occurrence once the count exceeds the threshold', () => {
+        const text = 'just one. just two. just three. just four. just five. just six.';
+        const results = checkCrutchWords(text, ['just'], 5);
+        expect(results).toHaveLength(6);
+        expect(results.every((r) => r.rule === 'crutch-words' && r.severity === 'warning')).toBe(true);
+        expect(results[0]!.message).toContain('6 times');
+        expect(results[0]!.message).toContain('limit 5');
+    });
+
+    it('matches case-insensitively and whole-word only', () => {
+        // 7 valid whole-word 'just' (mixed case); 'justrous' and 'unjust' must not match.
+        const text = 'Just just just just just justrous unjust just just';
+        const results = checkCrutchWords(text, ['just'], 5);
+        expect(results).toHaveLength(7);
+    });
+
+    it('respects a custom threshold', () => {
+        const text = 'really really really';
+        expect(checkCrutchWords(text, ['really'], 2)).toHaveLength(3);
+        expect(checkCrutchWords(text, ['really'], 5)).toEqual([]);
+    });
+
+    it('escapes regex-special characters in a listed word', () => {
+        // '3.14' must match literally; without escaping the dot is a wildcard and '3X14' would match too.
+        const text = '3.14 3.14 3.14 3.14 3.14 3.14 3X14';
+        expect(checkCrutchWords(text, ['3.14'], 5)).toHaveLength(6);
+    });
+
+    it('normalizes the supplied list (trims, lowercases, drops empties)', () => {
+        const text = 'really really really really really really';
+        expect(checkCrutchWords(text, ['  REALLY  ', '', '   '], 5)).toHaveLength(6);
+    });
+
+    it('reports 1-based line, 0-based column, and the matched length', () => {
+        const text = 'just here.\njust there.\njust again makes six with just just just.';
+        const results = checkCrutchWords(text, ['just'], 5);
+        expect(results).toHaveLength(6);
+        expect(results[0]!.line).toBe(1);
+        expect(results[0]!.column).toBe(0);
+        expect(results[0]!.length).toBe(4);
     });
 });

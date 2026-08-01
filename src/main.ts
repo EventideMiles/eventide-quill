@@ -1256,7 +1256,10 @@ export default class EventideQuillPlugin extends Plugin {
             enableAiHedging: ai && this.settings.enableAiHedging,
             enableAiWrapUps: ai && this.settings.enableAiWrapUps,
             enableGremlins: this.settings.enableGremlins,
-            enableAggressiveGremlins: this.settings.enableAggressiveGremlins
+            enableAggressiveGremlins: this.settings.enableAggressiveGremlins,
+            enableCrutchWords: prose && this.settings.enableCrutchWords,
+            crutchWords: this.settings.crutchWords,
+            crutchWordThreshold: this.settings.crutchWordThreshold
         });
 
         const lines = text.split('\n');
