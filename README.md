@@ -54,8 +54,8 @@ Copy `main.js`, `manifest.json`, and `styles.css` to `VaultFolder/.obsidian/plug
 ## Development
 
 - `npm run dev` — esbuild watch mode (hot reload).
-- `npm run build` — dev build (SCSS + Prettier + typecheck + bundle; `__DEV__` on).
-- `npm run build:release` — production build (minified, no sourcemaps). Used by release CI.
+- `npm run build` — production build (SCSS + typecheck + minified bundle; `__DEV__` off). Used by release CI; matches the released `main.js` byte-for-byte.
+- `npm run build:dev` — dev build (SCSS + Prettier + typecheck + bundle; `__DEV__` on, inline sourcemaps). Local iteration only.
 - `npm run lint` — ESLint + stylelint (SCSS).
 - `npm run sass` — build `styles.css` from `styles/main.scss`.
 
@@ -68,7 +68,7 @@ Styles are authored in SCSS and compiled to `styles.css` — edit the sources un
 - **Pluggable providers.** Ollama by default, plus any OpenAI-compatible endpoint (LM Studio is the primary local test target; OpenAI and other compatible servers work too). Anthropic Claude and Google Gemini ship native provider implementations (prompt caching + extended thinking on Anthropic; safety-filter reporting on Gemini) — though their OpenAI-compatible endpoints work too if you prefer.
 - **Capability-based model roles.** Models declare a role (`chat`, `embed`, `image`, or `chat-image`); the right model is resolved per task — a non-vision model never receives pixels.
 - **Subagents for context isolation.** Heavy batch tasks run in a fresh context and return a summary, so the main conversation stays lean and responsive — local-model friendly (one inference at a time).
-- **Mobile as a first-class target.** The plugin ships with `isDesktopOnly: false`, `requestUrl` transport, and touch-target sizing — but it has not yet been smoke-tested on a real mobile device. A Capacitor install + on-device pass is scheduled for immediately after the 2.0.0 release; report mobile issues against the `2.0.0` milestone.
+- **Mobile as a first-class target.** The plugin ships with `isDesktopOnly: false`, `requestUrl` transport, and touch-target sizing — but it has not yet been smoke-tested on a real mobile device. A Capacitor install + on-device pass is scheduled for immediately after the 2.0.1 release; report mobile issues against the `2.0.1` milestone.
 
 ## Network & privacy
 
