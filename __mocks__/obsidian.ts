@@ -91,6 +91,12 @@ export class Vault {
             return { files: [], folders: [] };
         }
     };
+    getFiles(): TFile[] {
+        return [];
+    }
+    getMarkdownFiles(): TFile[] {
+        return [];
+    }
 }
 
 export class App {

@@ -27,7 +27,10 @@ function applyOpts(el: HTMLElement, o: DomOpts): void {
         return;
     }
     const opts = o as Record<string, unknown>;
-    if (opts.cls) el.className = String(opts.cls);
+    if (opts.cls) {
+        const clsVal = opts.cls;
+        el.className = Array.isArray(clsVal) ? clsVal.join(' ') : String(clsVal);
+    }
     if (opts.text != null) el.textContent = String(opts.text);
     if (opts.attr && typeof opts.attr === 'object') {
         for (const [k, v] of Object.entries(opts.attr)) el.setAttribute(k, String(v));

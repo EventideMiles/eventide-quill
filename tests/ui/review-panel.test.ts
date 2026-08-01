@@ -23,7 +23,6 @@ function makePlugin(): EventideQuillPlugin {
         getFeedbackJobs: () => [],
         getDefaultChatProvider: () => ({ provider: null, modelId: '' }),
         listChatModels: () => [],
-        settings2: null
     } as unknown as EventideQuillPlugin;
 }
 

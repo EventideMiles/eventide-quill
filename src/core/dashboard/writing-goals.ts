@@ -39,15 +39,33 @@ export interface WritingGoalsState {
     session: WritingSession | null;
 }
 
-export const DEFAULT_WRITING_GOALS_STATE: WritingGoalsState = {
+/**
+ * Frozen base shape for a fresh ledger. Nested objects are empty so the
+ * freeze is shallow — callers must use {@link defaultWritingGoalsState} to
+ * get mutable copies.
+ */
+export const DEFAULT_WRITING_GOALS_STATE: Readonly<WritingGoalsState> = Object.freeze({
     version: 1,
-    lastSeen: {},
+    lastSeen: Object.freeze({}) as Record<string, number>,
     todayDate: '',
     todayWords: 0,
-    days: {},
+    days: Object.freeze({}) as Record<string, number>,
     bestStreak: 0,
     session: null
-};
+});
+
+/** Return a fresh, mutable copy of the default state with independent maps. */
+export function defaultWritingGoalsState(): WritingGoalsState {
+    return {
+        version: 1,
+        lastSeen: {},
+        todayDate: '',
+        todayWords: 0,
+        days: {},
+        bestStreak: 0,
+        session: null
+    };
+}
 
 export function writingGoalsPath(dataDir: string): string {
     return normalizePath(`${dataDir}/${WRITING_GOALS_FILENAME}`);
@@ -56,12 +74,17 @@ export function writingGoalsPath(dataDir: string): string {
 export async function loadWritingGoals(vault: Vault, dataDir: string): Promise<WritingGoalsState> {
     const path = writingGoalsPath(dataDir);
     try {
-        if (!(await vault.adapter.exists(path))) return { ...DEFAULT_WRITING_GOALS_STATE };
+        if (!(await vault.adapter.exists(path))) return defaultWritingGoalsState();
         const raw = await vault.adapter.read(path);
         const parsed = JSON.parse(raw) as Partial<WritingGoalsState>;
-        return { ...DEFAULT_WRITING_GOALS_STATE, ...parsed, lastSeen: parsed.lastSeen ?? {}, days: parsed.days ?? {} };
+        return {
+            ...defaultWritingGoalsState(),
+            ...parsed,
+            lastSeen: parsed.lastSeen ?? {},
+            days: parsed.days ?? {}
+        };
     } catch {
-        return { ...DEFAULT_WRITING_GOALS_STATE };
+        return defaultWritingGoalsState();
     }
 }
 

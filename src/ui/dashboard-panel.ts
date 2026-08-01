@@ -237,8 +237,8 @@ function renderWritingGoals(
         text: active ? 'Stop session' : 'Start session'
     });
     component.registerDomEvent(btn, 'click', () => {
-        if (plugin.writingGoals.session) plugin.stopWritingSession();
-        else plugin.startWritingSession();
+        if (plugin.writingGoals.session) void plugin.stopWritingSession();
+        else void plugin.startWritingSession();
     });
     const stat = sessionRow.createSpan({ cls: 'quill-dashboard-panel__session-stat' });
     const drawSession = () => {

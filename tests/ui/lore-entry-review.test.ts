@@ -28,13 +28,15 @@ describe('lore-entry-review — rewriteImageEmbeds', () => {
     });
 
     it('handles multiple replacements in one pass', () => {
-        const content = '![[a.png]] and ![[b.png]]';
+        const content = '![[alpha.png]] and ![[beta.png]]';
         const result = rewriteImageEmbeds(content, [
-            { original: 'a.png', resolved: 'x/a.png' },
-            { original: 'b.png', resolved: 'y/b.png' }
+            { original: 'alpha.png', resolved: 'x/renamed-alpha.png' },
+            { original: 'beta.png', resolved: 'y/renamed-beta.png' }
         ]);
-        expect(result).to.include('![[a.png]]');
-        expect(result).to.include('![[b.png]]');
+        expect(result).to.include('![[renamed-alpha.png]]');
+        expect(result).to.include('![[renamed-beta.png]]');
+        expect(result).to.not.include('![[alpha.png]]');
+        expect(result).to.not.include('![[beta.png]]');
     });
 });
 

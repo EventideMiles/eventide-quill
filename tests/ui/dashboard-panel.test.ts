@@ -115,7 +115,7 @@ describe('dashboard-panel — renderDashboardTab', () => {
 
         // Manuscript summary heading + total words.
         expect(container.textContent).to.include('Manuscript');
-        expect(container.textContent).to.include('10,000');
+        expect(container.textContent).to.include((10000).toLocaleString());
 
         // Writing goals card (the 2.0.0 flagship).
         expect(container.textContent).to.include('Writing goals');

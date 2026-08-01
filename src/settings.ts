@@ -1109,7 +1109,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         for (const step of setupSteps) {
             const row = checklist.createDiv({ cls: 'quill-settings__welcome-checklist-row' });
             row.createSpan({
-                cls: `quill-settings__welcome-checklist-mark${step.done ? ' is-done' : ''}`,
+                cls: `quill-settings__welcome-checklist-mark${step.done ? ' quill-settings__welcome-checklist-mark--done' : ''}`,
                 text: step.done ? '\u2713' : '\u25CB'
             });
             const body = row.createDiv({ cls: 'quill-settings__welcome-checklist-body' });

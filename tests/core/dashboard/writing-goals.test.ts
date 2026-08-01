@@ -4,6 +4,7 @@ import {
     DEFAULT_WRITING_GOALS_STATE,
     computeStreak,
     dateKey,
+    defaultWritingGoalsState,
     loadWritingGoals,
     recordProgress,
     saveWritingGoals,
@@ -26,7 +27,7 @@ describe('writing-goals — dateKey', () => {
 
 describe('writing-goals — recordProgress', () => {
     it('sets the per-folder baseline on the first observation (no delta credited)', () => {
-        const state = { ...DEFAULT_WRITING_GOALS_STATE };
+        const state = defaultWritingGoalsState();
         recordProgress(state, 'manuscript', 1000, fixedDate(2026, 1, 1));
         expect(state.lastSeen['manuscript']).to.equal(1000);
         expect(state.todayWords).to.equal(0);
@@ -34,7 +35,7 @@ describe('writing-goals — recordProgress', () => {
     });
 
     it('credits net increases since the last observation to today', () => {
-        const state = { ...DEFAULT_WRITING_GOALS_STATE };
+        const state = defaultWritingGoalsState();
         const now = fixedDate(2026, 1, 1);
         recordProgress(state, 'manuscript', 1000, now);
         recordProgress(state, 'manuscript', 1500, now);
@@ -44,7 +45,7 @@ describe('writing-goals — recordProgress', () => {
     });
 
     it('does not subtract on a word-count decrease (net-words semantics)', () => {
-        const state = { ...DEFAULT_WRITING_GOALS_STATE };
+        const state = defaultWritingGoalsState();
         const now = fixedDate(2026, 1, 1);
         recordProgress(state, 'manuscript', 1000, now);
         recordProgress(state, 'manuscript', 1500, now);
@@ -54,7 +55,7 @@ describe('writing-goals — recordProgress', () => {
     });
 
     it('tracks folders independently', () => {
-        const state = { ...DEFAULT_WRITING_GOALS_STATE };
+        const state = defaultWritingGoalsState();
         const now = fixedDate(2026, 1, 1);
         recordProgress(state, 'book-a', 1000, now);
         recordProgress(state, 'book-b', 500, now);
@@ -65,7 +66,7 @@ describe('writing-goals — recordProgress', () => {
 
     it('finalizes the previous day and rolls the baseline at midnight', () => {
         const state: WritingGoalsState = {
-            ...DEFAULT_WRITING_GOALS_STATE,
+            ...defaultWritingGoalsState(),
             todayDate: '2026-01-01',
             todayWords: 500,
             lastSeen: { manuscript: 1000 }
@@ -85,18 +86,18 @@ describe('writing-goals — computeStreak', () => {
     const today = fixedDate(2026, 1, 5);
 
     it('returns 0 when the goal is disabled (<=0)', () => {
-        const state = { ...DEFAULT_WRITING_GOALS_STATE, todayWords: 9999 };
+        const state = { ...defaultWritingGoalsState(), todayWords: 9999 };
         expect(computeStreak(state, 0, today)).to.equal(0);
     });
 
     it('counts today when the goal is already met', () => {
-        const state: WritingGoalsState = { ...DEFAULT_WRITING_GOALS_STATE, todayWords: 600 };
+        const state: WritingGoalsState = { ...defaultWritingGoalsState(), todayWords: 600 };
         expect(computeStreak(state, goal, today)).to.equal(1);
     });
 
     it('counts today plus consecutive met days behind it', () => {
         const state: WritingGoalsState = {
-            ...DEFAULT_WRITING_GOALS_STATE,
+            ...defaultWritingGoalsState(),
             todayWords: 600,
             days: { '2026-01-04': 500, '2026-01-03': 700, '2026-01-02': 500 }
         };
@@ -105,7 +106,7 @@ describe('writing-goals — computeStreak', () => {
 
     it('grace: an unmet today does not break a streak built on prior days', () => {
         const state: WritingGoalsState = {
-            ...DEFAULT_WRITING_GOALS_STATE,
+            ...defaultWritingGoalsState(),
             todayWords: 0,
             days: { '2026-01-04': 500, '2026-01-03': 600 }
         };
@@ -114,7 +115,7 @@ describe('writing-goals — computeStreak', () => {
 
     it('breaks when a day behind the run did not meet the goal', () => {
         const state: WritingGoalsState = {
-            ...DEFAULT_WRITING_GOALS_STATE,
+            ...defaultWritingGoalsState(),
             todayWords: 600,
             days: { '2026-01-04': 500, '2026-01-03': 100 } // Jan 3 missed
         };
@@ -123,7 +124,7 @@ describe('writing-goals — computeStreak', () => {
 
     it('returns 0 when nothing is met and no history qualifies', () => {
         const state: WritingGoalsState = {
-            ...DEFAULT_WRITING_GOALS_STATE,
+            ...defaultWritingGoalsState(),
             todayWords: 0,
             days: { '2026-01-04': 100 }
         };
@@ -133,7 +134,7 @@ describe('writing-goals — computeStreak', () => {
 
 describe('writing-goals — sessions', () => {
     it('starts, measures words + elapsed, and stops', () => {
-        const state = { ...DEFAULT_WRITING_GOALS_STATE };
+        const state = defaultWritingGoalsState();
         startSession(state, 'manuscript', 1000, 10_000);
         expect(state.session).to.not.equal(null);
         expect(sessionWords(state, 1500)).to.equal(500);
@@ -152,7 +153,7 @@ describe('writing-goals — sidecar persistence', () => {
         const vault = makeMemoryVault();
         const dir = '.test-data';
         const state: WritingGoalsState = {
-            ...DEFAULT_WRITING_GOALS_STATE,
+            ...defaultWritingGoalsState(),
             todayDate: '2026-01-05',
             todayWords: 750,
             days: { '2026-01-04': 500 },
@@ -167,15 +168,15 @@ describe('writing-goals — sidecar persistence', () => {
 
     it('returns defaults when the sidecar is absent', async () => {
         const loaded = await loadWritingGoals(makeMemoryVault(), '.missing');
-        expect(loaded).to.deep.equal(DEFAULT_WRITING_GOALS_STATE);
+        expect(loaded).to.deep.equal(defaultWritingGoalsState());
     });
 
     it('returns defaults when the sidecar is corrupt', async () => {
         const vault = makeMemoryVault();
-        await saveWritingGoals(vault, '.corrupt', { ...DEFAULT_WRITING_GOALS_STATE });
+        await saveWritingGoals(vault, '.corrupt', defaultWritingGoalsState());
         // Corrupt the file directly.
         await vault.adapter.write('.corrupt/writing-goals.json', '{ not valid json');
         const loaded = await loadWritingGoals(vault, '.corrupt');
-        expect(loaded).to.deep.equal(DEFAULT_WRITING_GOALS_STATE);
+        expect(loaded).to.deep.equal(defaultWritingGoalsState());
     });
 });

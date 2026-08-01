@@ -64,27 +64,14 @@ describe('Writing goals & sessions', () => {
         expect((await readSession())?.session ?? null).to.equal(null);
 
         // Start a session via the card button.
-        const started = (await browser.execute(() => {
-            const sidebar = document.querySelector('.quill-sidebar');
-            const btns = Array.from((sidebar ?? document).querySelectorAll<HTMLButtonElement>('button'));
-            const m = btns.find((b) => (b.textContent ?? '').trim() === 'Start session' && b.offsetParent !== null);
-            if (!m) return false;
-            m.click();
-            return true;
-        })) as boolean;
+        const started = await clickSidebarButton('Start session');
         expect(started).to.equal(true, 'could not find/click the Start session button');
         await browser.pause(300);
         expect((await readSession())?.session ?? null).to.not.equal(null);
 
         // Stop the session.
-        const stopped = (await browser.execute(() => {
-            const sidebar = document.querySelector('.quill-sidebar');
-            const btns = Array.from((sidebar ?? document).querySelectorAll<HTMLButtonElement>('button'));
-            const m = btns.find((b) => (b.textContent ?? '').trim() === 'Stop session' && b.offsetParent !== null);
-            if (!m) return false;
-            m.click();
-            return true;
-        })) as boolean;
+        const stopped = await clickSidebarButton('Stop session');
+        expect(stopped).to.equal(true, 'could not find/click the Stop session button');
         expect(stopped).to.equal(true, 'could not find/click the Stop session button');
         await browser.pause(300);
         expect((await readSession())?.session ?? null).to.equal(null);

@@ -36,6 +36,7 @@ export {
     DEFAULT_WRITING_GOALS_STATE,
     computeStreak,
     dateKey,
+    defaultWritingGoalsState,
     loadWritingGoals,
     recordProgress,
     saveWritingGoals,
