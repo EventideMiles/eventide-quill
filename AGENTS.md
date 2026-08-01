@@ -72,7 +72,7 @@ The test suite covers the deterministic core (text analysis, linter rules, reada
 9. Manual smoke test in Obsidian (especially on mobile) for UI or provider changes that the mocked E2E suite doesn't exercise.
 10. For release builds, also run `npm run build:release` to verify minification and `__DEV__` tree-shaking work correctly.
 
-CI (`.github/workflows/lint.yml`) runs `build` + `test` + `lint` + `lint:dup` + `lint:orphans` on every push and PR across Node 20/22/24. CI for releases (`.github/workflows/release.yml`) runs `build:release` instead. The mocked E2E suite runs in its own job (`.github/workflows/e2e.yml`) on every PR — Ubuntu-latest, latest Obsidian, single instance — adds ~5min to the PR check (the ~100MB Obsidian bundle is cached via `actions/cache`). The live suite is local-only and never in CI.
+CI (`.github/workflows/lint.yml`) runs `build` + `test` + `lint` + `lint:dup` + `lint:orphans` on every push and PR across Node 22/24 (Node 20 dropped after EOL — a dev-only transitive dep, `@electron/get` v5 via `obsidian-launcher`, requires Node ≥22.12). CI for releases (`.github/workflows/release.yml`) runs `build:release` instead. The mocked E2E suite runs in its own job (`.github/workflows/e2e.yml`) on every PR — Ubuntu-latest, latest Obsidian, single instance — adds ~5min to the PR check (the ~100MB Obsidian bundle is cached via `actions/cache`). The live suite is local-only and never in CI.
 
 ## Testing
 
