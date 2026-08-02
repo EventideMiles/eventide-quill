@@ -2495,6 +2495,19 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         );
                     }
                 });
+            })
+            .then((s) => {
+                // Gemini's body is nested (generationConfig, systemInstruction), so
+                // the merge is shallow — point advanced users at the schema.
+                if (provider.type === 'gemini') {
+                    s.descEl.append(' Gemini uses a nested generationConfig — see ');
+                    s.descEl.createEl('a', {
+                        href: 'https://ai.google.dev/api/generate-content',
+                        text: "Google's documentation",
+                        attr: { target: '_blank', rel: 'noreferrer noopener' }
+                    });
+                    s.descEl.append(' for the full schema.');
+                }
             });
     }
 
