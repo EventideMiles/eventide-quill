@@ -1,17 +1,18 @@
 import {
     type AiProvider,
     type AnthropicThinkingBlockKind,
+    type ChatChunk,
     type ChatMessage,
     type ToolCallRequest,
     type ToolDefinition
 } from './provider';
 
 /** Finish reasons that mean the model hit the output-token cap mid-response. */
-const TRUNCATION_FINISH_REASONS = new Set(['length', 'max_tokens', 'MAX_TOKENS']);
+export const TRUNCATION_FINISH_REASONS = new Set(['length', 'max_tokens', 'MAX_TOKENS']);
 /** Cap on auto-continue rounds so a runaway model cannot loop forever. */
-const MAX_CONTINUE_ROUNDS = 3;
+export const MAX_CONTINUE_ROUNDS = 3;
 /** Nudge sent to resume a truncated response: resume mid-sentence, no preamble/repeat. */
-const CONTINUE_NUDGE =
+export const CONTINUE_NUDGE =
     'Continue exactly where your previous message left off. Resume the text mid-sentence — do not repeat any text, do not acknowledge, and do not add a heading or an apology.';
 
 /**
@@ -101,9 +102,15 @@ export async function streamToolAwareRound(
                 if (!roundSawReasoning) {
                     roundSawReasoning = true;
                     sawReasoning = true;
-                    response = '';
                     roundResponse = '';
-                    callbacks.onClear();
+                    // Only clear the accumulated response + display on the first
+                    // round (the draft-before-thought pattern). On a continuation
+                    // round the accumulated text is real prose from a prior
+                    // truncated round — wiping it would lose the writer's output.
+                    if (continueRounds === 0) {
+                        response = '';
+                        callbacks.onClear();
+                    }
                 }
                 thought += chunk.thought;
                 callbacks.onThoughtChange(thought);
@@ -177,5 +184,55 @@ export async function streamToolAwareRound(
             thought = '';
         }
         return { response, thought, toolCalls, thinkingBlocks, finishReason };
+    }
+}
+
+/**
+ * Wrap a review/streaming path with max_tokens auto-continue. Text from
+ * continuation rounds splices into the same stream transparently — the
+ * consumer's for-await loop + done handler need no changes.
+ *
+ * On truncation (finish reason `length` / `max_tokens` / `MAX_TOKENS`), the
+ * wrapper appends the round's output + a resume nudge to the messages and calls
+ * `createStream` again, up to {@link MAX_CONTINUE_ROUNDS} times. The consumer
+ * sees one continuous stream with a single done chunk at the end carrying the
+ * final finish reason.
+ *
+ * @param createStream  A callback that builds a fresh provider stream from a
+ *                      message array (e.g. `(msgs) => getFeedback(provider,
+ *                      persona, { ..., existingMessages: msgs })`).
+ * @param initialMessages  The base messages for the first round.
+ * @param maxRounds    Cap on continuation rounds (default {@link MAX_CONTINUE_ROUNDS}).
+ */
+export async function* continueReviewStream(
+    createStream: (messages: ChatMessage[]) => AsyncGenerator<ChatChunk>,
+    initialMessages: ChatMessage[],
+    maxRounds: number = MAX_CONTINUE_ROUNDS
+): AsyncGenerator<ChatChunk> {
+    let messages = initialMessages;
+    let roundResponse = '';
+    for (let round = 0; round <= maxRounds; round++) {
+        let roundFinishReason: string | undefined;
+        const stream = createStream(messages);
+        for await (const chunk of stream) {
+            if (chunk.done) {
+                roundFinishReason = chunk.finishReason;
+                break;
+            }
+            if (chunk.text) roundResponse += chunk.text;
+            yield chunk;
+        }
+        // Continue only when truncated AND within the bound.
+        if (!roundFinishReason || !TRUNCATION_FINISH_REASONS.has(roundFinishReason) || round >= maxRounds) {
+            yield { text: '', done: true, finishReason: roundFinishReason };
+            return;
+        }
+        // Append this round's output + a resume nudge for the next round.
+        messages = [
+            ...messages,
+            { role: 'assistant', content: roundResponse },
+            { role: 'user', content: CONTINUE_NUDGE }
+        ];
+        roundResponse = '';
     }
 }

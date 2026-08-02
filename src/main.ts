@@ -38,6 +38,7 @@ import {
     entityFromId
 } from './utils/frontmatter';
 import { buildFeedbackMessages, getChunkedFeedback, getPersonaById, getFeedback } from './ai/feedback';
+import { continueReviewStream } from './ai/co-writer-streaming';
 import { getReviewDiscussSystemPrompt } from './ai/prompts';
 import {
     type FeedbackJob,
@@ -3435,21 +3436,27 @@ export default class EventideQuillPlugin extends Plugin {
         this.manuscriptAnalysisCurrentMessages = [...prepared.existingMessages];
 
         try {
-            const stream = getManuscriptAnalysis(chat.provider, mode, {
-                mode,
-                metrics: prepared.metrics,
-                manuscriptText: prepared.manuscriptText,
-                manuscriptName: prepared.manuscriptName,
-                vaultContext,
-                plotMapText,
-                customInstruction,
-                model: chat.modelId,
-                signal: this.manuscriptAnalysisAbort.signal,
-                temperature: this.settings.manuscriptAnalysisTemperature,
-                maxTokens: this.settings.manuscriptAnalysisMaxOutputTokens,
-                existingMessages: prepared.existingMessages,
-                compacted: prepared.wasCompacted
-            });
+            const provider = chat.provider;
+            const abortSignal = this.manuscriptAnalysisAbort.signal;
+            const stream = continueReviewStream(
+                (msgs) =>
+                    getManuscriptAnalysis(provider, mode, {
+                        mode,
+                        metrics: prepared.metrics,
+                        manuscriptText: prepared.manuscriptText,
+                        manuscriptName: prepared.manuscriptName,
+                        vaultContext,
+                        plotMapText,
+                        customInstruction,
+                        model: chat.modelId,
+                        signal: abortSignal,
+                        temperature: this.settings.manuscriptAnalysisTemperature,
+                        maxTokens: this.settings.manuscriptAnalysisMaxOutputTokens,
+                        existingMessages: msgs,
+                        compacted: prepared.wasCompacted
+                    }),
+                prepared.existingMessages
+            );
             let fullResponse = '';
             for await (const chunk of stream) {
                 if (chunk.done) {
@@ -4162,25 +4169,31 @@ export default class EventideQuillPlugin extends Plugin {
         this.analysisCurrentMessages = [...initialWithLore];
 
         try {
-            const stream = getAnalysis(chat.provider, mode, {
-                text: resolved.text,
-                scope: resolved.scope,
-                lineStart: resolved.lineStart,
-                lineEnd: resolved.lineEnd,
-                fileName: resolved.fileName,
-                vaultContext,
-                voiceMarker,
-                characters,
-                plotThreads,
-                model: chat.modelId,
-                signal: this.analysisAbort.signal,
-                customInstruction,
-                temperature: this.settings.analysisTemperature,
-                maxTokens: this.settings.analysisMaxOutputTokens,
-                existingMessages: initialWithLore,
-                registry: analysisRegistry,
-                ctx: { plugin: this, signal: this.analysisAbort.signal }
-            });
+            const provider = chat.provider;
+            const abortSignal = this.analysisAbort.signal;
+            const stream = continueReviewStream(
+                (msgs) =>
+                    getAnalysis(provider, mode, {
+                        text: resolved.text,
+                        scope: resolved.scope,
+                        lineStart: resolved.lineStart,
+                        lineEnd: resolved.lineEnd,
+                        fileName: resolved.fileName,
+                        vaultContext,
+                        voiceMarker,
+                        characters,
+                        plotThreads,
+                        model: chat.modelId,
+                        signal: abortSignal,
+                        customInstruction,
+                        temperature: this.settings.analysisTemperature,
+                        maxTokens: this.settings.analysisMaxOutputTokens,
+                        existingMessages: msgs,
+                        registry: analysisRegistry,
+                        ctx: { plugin: this, signal: abortSignal }
+                    }),
+                initialWithLore
+            );
 
             let fullResponse = '';
             for await (const chunk of stream) {
@@ -5262,16 +5275,24 @@ export default class EventideQuillPlugin extends Plugin {
                           }
                       });
                   })()
-                : getFeedback(chat.provider, persona, {
-                      vaultContext,
-                      narrativePreset: this.settings.narrativeVoicePreset,
-                      model: chat.modelId,
-                      temperature: this.settings.analysisTemperature,
-                      maxTokens: this.settings.analysisMaxOutputTokens,
-                      signal: this.feedbackAbort.signal,
-                      customInstruction,
-                      existingMessages: apiMessages
-                  });
+                : (() => {
+                      const provider = chat.provider;
+                      const abortSignal = this.feedbackAbort.signal;
+                      return continueReviewStream(
+                          (msgs) =>
+                              getFeedback(provider, persona, {
+                                  vaultContext,
+                                  narrativePreset: this.settings.narrativeVoicePreset,
+                                  model: chat.modelId,
+                                  temperature: this.settings.analysisTemperature,
+                                  maxTokens: this.settings.analysisMaxOutputTokens,
+                                  signal: abortSignal,
+                                  customInstruction,
+                                  existingMessages: msgs
+                              }),
+                          apiMessages
+                      );
+                  })();
 
             let fullResponse = '';
             for await (const chunk of stream) {
