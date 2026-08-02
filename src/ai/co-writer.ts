@@ -65,6 +65,7 @@ import { resolveNoteFile } from './tools/lore-edit-helpers';
 import { CACHE_HIT_MARKER } from './tools/fandom-lookup';
 import { tryNudgeTextToolLeak, createProposeEntryTool } from './tools';
 import { buildInternalToolsMessage, buildNetworkToolsMessage } from './co-writer-tool-prompts';
+import { buildMemoryMessage } from './memory-prompts';
 import { streamToolAwareRound } from './co-writer-streaming';
 import {
     sanitizeProse,
@@ -1274,6 +1275,10 @@ export class CoWriterSession {
         if (discussInternalMsg) {
             injectedContext.push(discussInternalMsg);
         }
+        const discussMemoryMsg = await buildMemoryMessage(plugin);
+        if (discussMemoryMsg) {
+            injectedContext.push(discussMemoryMsg);
+        }
 
         // Build the user prompt. For review-discuss, skip the limited
         // "Passage up to cursor" section — the full document is already
@@ -1707,6 +1712,10 @@ export class CoWriterSession {
         const coachInternalMsg = buildInternalToolsMessage(plugin);
         if (coachInternalMsg) {
             injectedContext.push(coachInternalMsg);
+        }
+        const coachMemoryMsg = await buildMemoryMessage(plugin);
+        if (coachMemoryMsg) {
+            injectedContext.push(coachMemoryMsg);
         }
 
         // Initialize coach session on first call
@@ -2369,12 +2378,15 @@ export class CoWriterSession {
         const toolDefs = registry?.toToolDefinitions();
         this.toolTokenOverhead = registry?.estimateTokens() ?? 0;
         const maxTokens = chat.provider.config.maxContextTokens;
+        // Pre-fetch the memory message once: the token-estimate closure
+        // below (sync) and the loreInjectedContext push (below) both need it.
+        const loreMemoryMsg = await buildMemoryMessage(plugin);
         const ctx: ToolContext = {
             plugin,
             // Mirror the per-round prefix actually sent to the model (system +
             // active-file awareness + budget message + network-tools hint +
-            // conversation), not just the conversation skeleton, so sizing
-            // tools see the true remaining window.
+            // memory index + conversation), not just the conversation
+            // skeleton, so sizing tools see the true remaining window.
             consumedTokens: () => {
                 const injected: ChatMessage[] = [];
                 const activeFileMsg = buildActiveFileMessage(plugin);
@@ -2383,6 +2395,7 @@ export class CoWriterSession {
                 if (budgetMsg) injected.push(budgetMsg);
                 const networkMsg = buildNetworkToolsMessage(plugin);
                 if (networkMsg) injected.push(networkMsg);
+                if (loreMemoryMsg) injected.push(loreMemoryMsg);
                 const roundBase: ChatMessage[] =
                     this.loreCoachMessages.length > 0
                         ? [this.loreCoachMessages[0]!, ...injected, ...this.loreCoachMessages.slice(1)]
@@ -2396,6 +2409,7 @@ export class CoWriterSession {
         if (loreActiveFileMsg) loreInjectedContext.push(loreActiveFileMsg);
         const loreNetworkMsg = buildNetworkToolsMessage(plugin);
         if (loreNetworkMsg) loreInjectedContext.push(loreNetworkMsg);
+        if (loreMemoryMsg) loreInjectedContext.push(loreMemoryMsg);
 
         const compactPct = Math.max(50, Math.min(95, this.settingsOrDefault(plugin).contextCompactAtPercent)) / 100;
         const conversationTokens = this.estimateRequestTokens(this.loreCoachMessages);
@@ -2475,6 +2489,7 @@ export class CoWriterSession {
                 if (activeFileMsg) injected.push(activeFileMsg);
                 if (budgetMsg) injected.push(budgetMsg);
                 if (networkMsg) injected.push(networkMsg);
+                if (loreMemoryMsg) injected.push(loreMemoryMsg);
                 const messagesForCall =
                     injected.length > 0 && this.loreCoachMessages.length > 0
                         ? [this.loreCoachMessages[0]!, ...injected, ...this.loreCoachMessages.slice(1)]

@@ -253,7 +253,7 @@ describe('save_memory + recall_memory + delete_memory — round-trip integration
         const saveResult = (await saveMemoryTool.execute({ content: 'delete', heading: 'Delete' }, ctx)) as string;
         const idMatch = saveResult.match(/quill-mem-\d+/);
         expect(idMatch).not.toBeNull();
-        const id = idMatch[0];
+        const id = idMatch![0];
 
         const delResult = await deleteMemoryTool.execute({ id }, ctx);
         expect(delResult).toContain('Deleted memory');
