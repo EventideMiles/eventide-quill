@@ -2469,32 +2469,53 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     'Reserved keys (model, messages, stream) are ignored.'
             )
             .addTextArea((area) => {
-                const extra = provider.extraRequestBody;
-                area.setPlaceholder('{"reasoning_effort": "high"}').setValue(
-                    extra && Object.keys(extra).length > 0 ? JSON.stringify(extra, null, 2) : ''
-                );
+                area.setPlaceholder('{"reasoning_effort": "high"}').setValue(provider.extraRequestBody ?? '');
                 area.inputEl.rows = 3;
-                area.inputEl.addEventListener('blur', () => {
+                // Live JSON lint is DISPLAY ONLY — it flags malformed input with
+                // an inline error + red border as the writer types. The raw text
+                // is always saved so in-progress edits persist; the provider
+                // parses + merges only valid JSON, so malformed parameters never
+                // reach a request.
+                const status = area.inputEl.parentElement?.createDiv({ cls: 'quill-extra-body__status' });
+                /** Set the inline lint status message and toggle the error UI. */
+                const setStatus = (msg: string | null): void => {
+                    if (!status) return;
+                    if (msg) {
+                        status.setText(msg);
+                        status.addClass('quill-extra-body__status--error');
+                        area.inputEl.addClass('quill-extra-body__input--invalid');
+                    } else {
+                        status.setText('');
+                        status.removeClass('quill-extra-body__status--error');
+                        area.inputEl.removeClass('quill-extra-body__input--invalid');
+                    }
+                };
+                /** Lint the textarea value for display; does not gate saving. */
+                const lint = (): void => {
                     const raw = area.inputEl.value.trim();
                     if (raw === '') {
-                        provider.extraRequestBody = undefined;
-                        void this.plugin.saveSettings();
+                        setStatus(null);
                         return;
                     }
                     try {
                         const parsed: unknown = JSON.parse(raw);
-                        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-                            throw new Error('value must be a JSON object');
-                        }
-                        provider.extraRequestBody = parsed as Record<string, unknown>;
-                        void this.plugin.saveSettings();
-                    } catch (e) {
-                        new Notice(
-                            'Extra request parameters must be a JSON object' +
-                                (e instanceof Error ? `: ${e.message}` : '')
+                        setStatus(
+                            typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+                                ? null
+                                : 'Must be a JSON object (not an array or a bare value).'
                         );
+                    } catch (e) {
+                        setStatus(`Invalid JSON: ${e instanceof Error ? e.message : 'parse error'}`);
                     }
+                };
+                area.inputEl.addEventListener('input', () => lint());
+                // Save the raw text unconditionally — malformed input persists for
+                // the writer to fix but is never applied (the provider ignores it).
+                area.inputEl.addEventListener('blur', () => {
+                    provider.extraRequestBody = area.inputEl.value.trim() || undefined;
+                    void this.plugin.saveSettings();
                 });
+                lint();
             })
             .then((s) => {
                 // Gemini's body is nested (generationConfig, systemInstruction), so

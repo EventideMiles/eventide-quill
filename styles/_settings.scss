@@ -562,3 +562,22 @@ div[class*='quill-settings-content-'].is-hidden {
         background-color: var(--text-highlight-bg);
     }
 }
+
+// Live JSON lint for the provider "Extra request parameters" field. The status
+// line sits under the textarea; --error + the invalid border flag malformed
+// input as the writer types. Display only — the raw text is always saved; the
+// provider ignores malformed values at request time.
+.quill-extra-body__status {
+    width: 100%;
+    margin-top: $space-xs;
+    font-size: var(--font-smaller);
+    color: var(--text-muted);
+
+    &--error {
+        color: var(--text-error);
+    }
+}
+
+.quill-extra-body__input--invalid {
+    border-color: var(--text-error);
+}
