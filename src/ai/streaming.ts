@@ -190,6 +190,8 @@ interface Delta {
     content?: string;
     /** Reasoning / thinking content from OpenAI reasoning models (o1, o3) or compatible. */
     reasoning_content?: string;
+    /** Reasoning field used by some OpenAI-compatible gateways (e.g. NanoGPT's default endpoint) and OpenAI's reasoning-summary API. */
+    reasoning?: string;
     /** Generic thinking field used by some OpenAI-compatible providers. */
     thinking?: string;
     /**
@@ -493,7 +495,7 @@ export function openAiSseDataToChunk(parsed: OpenAiSseData): ChatChunk | null {
     if (!firstChoice) return null;
 
     const delta = firstChoice.delta;
-    const reasoning = delta?.reasoning_content ?? delta?.thinking ?? '';
+    const reasoning = delta?.reasoning_content ?? delta?.reasoning ?? delta?.thinking ?? '';
 
     // Per the OpenAI reasoning-model spec, `reasoning_content` (or `thinking`)
     // and `content` are mutually exclusive: during the reasoning phase content

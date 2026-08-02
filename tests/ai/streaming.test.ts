@@ -175,6 +175,15 @@ describe('openAiSseDataToChunk', () => {
         expect(chunk!.thought).toBe('reasoning');
     });
 
+    it('routes the reasoning field (NanoGPT default endpoint / OpenAI reasoning-summary) to thought', () => {
+        const data: OpenAiSseData = {
+            choices: [{ delta: { content: 'should-be-dropped', reasoning: 'nano-gpt thinking' }, finish_reason: null }]
+        };
+        const chunk = openAiSseDataToChunk(data);
+        expect(chunk!.text).toBe('');
+        expect(chunk!.thought).toBe('nano-gpt thinking');
+    });
+
     it('extracts tool-call fragments', () => {
         const data: OpenAiSseData = {
             choices: [
