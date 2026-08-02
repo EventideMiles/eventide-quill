@@ -1,5 +1,5 @@
 /**
- * Writing goals & sessions — the deterministic core of the 2.0.1 flagship.
+ * Writing goals & sessions — the deterministic core of the 2.1.0 flagship.
  *
  * Tracks a daily words-written ledger (derived from manuscript word-count
  * deltas observed on dashboard refresh), a writing streak, and an optional

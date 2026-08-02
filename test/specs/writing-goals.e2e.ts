@@ -5,7 +5,7 @@ import { openFile, openQuillSidebar, isMobileEmulation } from '../helpers/obsidi
 
 /**
  * Writing goals & sessions — dashboard card render + focus-session lifecycle.
- * Exercises the 2.0.1 flagship end-to-end: open a manuscript, refresh the
+ * Exercises the 2.1.0 flagship end-to-end: open a manuscript, refresh the
  * dashboard so the goals card has metrics, then drive the session button and
  * verify the ledger state changes.
  */
