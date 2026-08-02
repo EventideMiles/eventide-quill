@@ -103,13 +103,13 @@ export async function streamToolAwareRound(
                 if (!roundSawReasoning) {
                     roundSawReasoning = true;
                     sawReasoning = true;
-                    roundResponse = '';
-                    // Only clear the accumulated response + display on the first
-                    // round (the draft-before-thought pattern). On a continuation
-                    // round the accumulated text is real prose from a prior
-                    // truncated round — wiping it would lose the writer's output.
+                    // Only clear on the first round (the draft-before-thought
+                    // pattern). On a continuation round the accumulated text is
+                    // real prose from a prior truncated round — wiping it would
+                    // lose the writer's output.
                     if (continueRounds === 0) {
                         response = '';
+                        roundResponse = '';
                         callbacks.onClear();
                     }
                 }
@@ -214,10 +214,12 @@ export async function* continueReviewStream(
     let roundResponse = '';
     for (let round = 0; round <= maxRounds; round++) {
         let roundFinishReason: string | undefined;
+        let roundThinkingBlocks: AnthropicThinkingBlockKind[] | undefined;
         const stream = createStream(messages);
         for await (const chunk of stream) {
             if (chunk.done) {
                 roundFinishReason = chunk.finishReason;
+                if (chunk.thinkingBlocks) roundThinkingBlocks = chunk.thinkingBlocks;
                 break;
             }
             if (chunk.text) roundResponse += chunk.text;
@@ -229,9 +231,15 @@ export async function* continueReviewStream(
             return;
         }
         // Append this round's output + a resume nudge for the next round.
+        // Replay Anthropic thinking blocks (signed) so extended-thinking
+        // continuations don't trigger a 400 from the Anthropic API.
         messages = [
             ...messages,
-            { role: 'assistant', content: roundResponse },
+            {
+                role: 'assistant',
+                content: roundResponse,
+                ...(roundThinkingBlocks ? { thinkingBlocks: roundThinkingBlocks } : {})
+            },
             { role: 'user', content: CONTINUE_NUDGE }
         ];
         roundResponse = '';

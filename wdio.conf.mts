@@ -51,7 +51,7 @@ async function resolveLmStudioModels(): Promise<{ chat: string; embed: string }>
     if (!res.ok) throw new Error(`LM Studio /v1/models returned ${res.status}`);
     const body = (await res.json()) as { data?: Array<{ id: string }> };
     const ids = body.data?.map((m) => m.id) ?? [];
-    const chat = ids[0];
+    const chat = ids.find((id) => !/embed|nomic|bge|e5/i.test(id)) ?? ids[0];
     if (!chat) throw new Error('LM Studio /v1/models returned no models');
     // Prefer a dedicated embedding model for the embed provider so live
     // analysis/feedback tests exercise the real embeddings path — the chat
