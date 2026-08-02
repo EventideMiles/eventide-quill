@@ -297,6 +297,48 @@ export interface EventideQuillSettings {
     autoSaveFeedbackReports: boolean;
     /** Vault folder for auto-saved feedback reports. Created on first write. `normalizePath()`-wrapped on every constructed path. Default `eventide-quill-reports`. */
     feedbackReportFolder: string;
+    /**
+     * Master toggle for the memories system. Off = the feature vanishes
+     * entirely from the model's awareness (no `save_memory` /
+     * `recall_memory` / `delete_memory` tools registered, no memory
+     * system-prompt clause, no index auto-injected into co-writer context).
+     * The escape hatch for writers on very small local models where every
+     * context token matters. Default: on.
+     */
+    memoriesEnabled: boolean;
+    /**
+     * Vault folder for memory files. Created on first write. Each top-level
+     * manuscript folder gets one `<scope>.memories.md` plus a `_global.memories.md`
+     * for cross-manuscript context. `normalizePath()`-wrapped on every path.
+     * Default `Memories`.
+     */
+    memoriesFolder: string;
+    /**
+     * On = the model's `save_memory` calls land in the vault immediately
+     * (with a toast so the writer notices). Off = each save stages to the
+     * change-review queue as a "pending memory" card. **Deletes always
+     * stage regardless of this toggle** — silent destructive ops are
+     * too risky to auto-apply. Default: on.
+     */
+    memoriesAutoSave: boolean;
+    /**
+     * On = full memory bodies are auto-injected into co-writer context
+     * instead of just the index (heading + first sentence). For writers
+     * running powerful models with large context windows. Off = hybrid
+     * retrieval (small index always injected, full bodies fetched on
+     * demand via `recall_memory`). Default: off.
+     */
+    memoriesFullInject: boolean;
+    /**
+     * Cap on the number of index entries auto-injected into co-writer
+     * context per session. Lowered automatically for small-context local
+     * models (under ~8k tokens) to stay within budget. Default 20.
+     */
+    memoriesMaxIndexEntries: number;
+    /** Cap on the number of entries `recall_memory` returns in one call. Default 10. */
+    memoriesRecallMaxEntries: number;
+    /** Soft cap on memories per file, mostly hygiene. The UI shows a "consider pruning" hint when exceeded. Default 100. */
+    memoriesMaxPerFile: number;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -421,7 +463,14 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     feedbackQueueLimit: 20,
     feedbackQueueAutoRun: true,
     autoSaveFeedbackReports: true,
-    feedbackReportFolder: 'eventide-quill-reports'
+    feedbackReportFolder: 'eventide-quill-reports',
+    memoriesEnabled: true,
+    memoriesFolder: 'Memories',
+    memoriesAutoSave: true,
+    memoriesFullInject: false,
+    memoriesMaxIndexEntries: 20,
+    memoriesRecallMaxEntries: 10,
+    memoriesMaxPerFile: 100
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
