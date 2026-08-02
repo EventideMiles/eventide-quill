@@ -119,7 +119,7 @@ export async function exportPluginData(
 }
 
 /** Create each missing ancestor directory of `filePath` (some adapters do not create parents). */
-async function ensureAncestors(adapter: DataAdapter, filePath: string): Promise<void> {
+export async function ensureAncestors(adapter: DataAdapter, filePath: string): Promise<void> {
     const parts = normalizePath(filePath).split('/');
     for (let i = 1; i < parts.length; i++) {
         const partial = normalizePath(parts.slice(0, i).join('/'));

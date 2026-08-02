@@ -72,7 +72,7 @@ import { resolveSessionsDir, listSessions, saveSession, loadSession, deleteSessi
 import { SessionListModal } from './ui/session-list-modal';
 import { ConfirmModal } from './ui/confirm-modal';
 import { FilenameModal } from './ui/filename-modal';
-import { exportPluginData, importPluginData, parsePluginDataBundle } from './core/portability';
+import { ensureAncestors, exportPluginData, importPluginData, parsePluginDataBundle } from './core/portability';
 import { ReportSuggestModal } from './ui/report-suggest-modal';
 import type { InputMode } from './ui/co-writer-panel';
 import {
@@ -5052,6 +5052,7 @@ export default class EventideQuillPlugin extends Plugin {
                     const dest = normalizePath(path);
                     /** Write the bundle and show the success notice. */
                     const writeBundle = async (): Promise<void> => {
+                        await ensureAncestors(this.app.vault.adapter, dest);
                         await this.app.vault.adapter.write(dest, JSON.stringify(bundle, null, 2));
                         new Notice(
                             `Quill: Exported ${Object.keys(bundle.files).length} file(s) to ${dest}. ` +

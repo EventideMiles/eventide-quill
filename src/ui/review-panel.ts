@@ -1599,12 +1599,17 @@ export class ReviewPanel extends AbstractChatPanel {
             }
 
             if (this.resultsState === 'loading') {
-                header.createSpan({ cls: 'quill-review-panel__status', text: 'Analyzing...' });
+                header.createSpan({
+                    cls: 'quill-review-panel__status',
+                    text: 'Analyzing...',
+                    attr: { 'aria-live': 'polite' }
+                });
                 scroll.createDiv({ cls: 'quill-review-panel__report' }).setText('');
             } else if (this.resultsState === 'complete') {
                 header.createSpan({
                     cls: 'quill-review-panel__status quill-review-panel__status--done',
-                    text: 'Done'
+                    text: 'Done',
+                    attr: { 'aria-live': 'polite' }
                 });
                 const report = scroll.createDiv({ cls: 'quill-review-panel__report-rendered' });
                 await MarkdownRenderer.render(
