@@ -524,14 +524,17 @@ div[class*='quill-settings-content-'].is-hidden {
     }
 }
 
-// Complex multi-field render items (slash-command editor, lorebook folder list,
-// folder Top-K overrides) render their whole editor inside .setting-item-control
-// — the narrow right column of an Obsidian setting-item — which cramps every
-// input into one column. Stack these setting-items vertically (label + desc on
-// top, the editor below at the full page width) so the inputs/textareas get the
-// horizontal space they need. :has() is supported in Obsidian's Chromium.
+// Complex multi-field / wide-input render items (slash-command editor, lorebook
+// folder list, folder Top-K overrides, and the provider "Extra request
+// parameters" JSON textarea) render their whole editor inside
+// .setting-item-control — the narrow right column of an Obsidian setting-item —
+// which cramps every input into one column. Stack these setting-items
+// vertically (label + desc on top, the editor below at the full page width) so
+// the inputs/textareas + their lint status get the horizontal space they need.
+// :has() is supported in Obsidian's Chromium.
 .setting-item:has(.quill-slash-command-list),
-.setting-item:has(.quill-folder-overrides-list) {
+.setting-item:has(.quill-folder-overrides-list),
+.setting-item:has(.quill-extra-body__status) {
     display: block;
 
     > .setting-item-info {
