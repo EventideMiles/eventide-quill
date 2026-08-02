@@ -989,6 +989,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.compacting = true;
             compactBtn.disabled = true;
             compactBtn.title = 'Compacting\u2026';
+            compactBtn.setAttribute('aria-label', 'Compacting\u2026');
             try {
                 await this.onCompact?.();
             } finally {

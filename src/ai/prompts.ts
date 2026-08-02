@@ -842,10 +842,17 @@ function getLoreConsistencyPrompt(
             formatCharacterEntries(characters)
         );
     }
-    parts.push(
-        '',
-        'Before reporting a contradiction, use lore_siblings and vault_lookup to read the relevant lore entry in full, and cite the entry name alongside the manuscript line. Do not assume a contradiction from memory — confirm it against the entry.'
-    );
+    if (baseOptions?.toolsAvailable) {
+        parts.push(
+            '',
+            'Before reporting a contradiction, use lore_siblings and vault_lookup to read the relevant lore entry in full, and cite the entry name alongside the manuscript line. Do not assume a contradiction from memory — confirm it against the entry.'
+        );
+    } else {
+        parts.push(
+            '',
+            'Before reporting a contradiction, review the lore entries provided in your context above. Cite the entry name alongside the manuscript line. Do not assume a contradiction from memory — confirm it against the supplied context.'
+        );
+    }
     return withVaultContext(parts, vaultContext);
 }
 

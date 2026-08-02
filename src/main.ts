@@ -5050,11 +5050,25 @@ export default class EventideQuillPlugin extends Plugin {
                 try {
                     const bundle = await exportPluginData(this.app.vault.adapter, this.pluginDataDir, this.manifest.id);
                     const dest = normalizePath(path);
-                    await this.app.vault.adapter.write(dest, JSON.stringify(bundle, null, 2));
-                    new Notice(
-                        `Quill: Exported ${Object.keys(bundle.files).length} plugin data file(s) to ${dest}.`,
-                        6000
-                    );
+                    /** Write the bundle and show the success notice. */
+                    const writeBundle = async (): Promise<void> => {
+                        await this.app.vault.adapter.write(dest, JSON.stringify(bundle, null, 2));
+                        new Notice(
+                            `Quill: Exported ${Object.keys(bundle.files).length} file(s) to ${dest}. ` +
+                                'This backup contains API keys in plaintext — store it securely.',
+                            8000
+                        );
+                    };
+                    if (await this.app.vault.adapter.exists(dest)) {
+                        new ConfirmModal(
+                            this.app,
+                            'Overwrite existing file?',
+                            `"${dest}" already exists. Overwrite it with this backup?`,
+                            writeBundle
+                        ).open();
+                    } else {
+                        await writeBundle();
+                    }
                 } catch (e) {
                     console.error('Quill export failed', e);
                     new Notice('Quill: Export failed — see console for details.');
@@ -5078,6 +5092,12 @@ export default class EventideQuillPlugin extends Plugin {
                     }
                     const text = await this.app.vault.adapter.read(src);
                     const bundle = parsePluginDataBundle(text);
+                    if (bundle.pluginId && bundle.pluginId !== this.manifest.id) {
+                        new Notice(
+                            `Quill: This backup was created for plugin "${bundle.pluginId}", not "${this.manifest.id}". Import aborted.`
+                        );
+                        return;
+                    }
                     const count = Object.keys(bundle.files).length;
                     new ConfirmModal(
                         this.app,
@@ -5091,6 +5111,7 @@ export default class EventideQuillPlugin extends Plugin {
                                     bundle
                                 );
                                 await this.loadSettings();
+                                this.rebuildProviders();
                                 new Notice(
                                     `Quill: Imported ${written} file(s). Reload the plugin (disable + enable, or restart Obsidian) so conversations and the queue appear.`,
                                     10000

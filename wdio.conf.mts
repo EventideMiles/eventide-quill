@@ -165,10 +165,18 @@ export const config: WebdriverIO.Config = {
      */
     async onPrepare() {
         if (isLive) {
-            const { chat, embed } = await resolveLmStudioModels();
-            rewriteDataJsonForLive(chat, embed);
-            // eslint-disable-next-line no-console
-            console.log(`[wdio.conf] live mode — data.json: chat "${chat}", embed "${embed}"`);
+            try {
+                const { chat, embed } = await resolveLmStudioModels();
+                rewriteDataJsonForLive(chat, embed);
+                // eslint-disable-next-line no-console
+                console.log(`[wdio.conf] live mode — data.json: chat "${chat}", embed "${embed}"`);
+            } catch (e) {
+                // Don't crash — the live specs' before() hook self-skips when
+                // LM Studio is unreachable, so an empty/error data.json still
+                // produces a clean skip rather than a hard failure.
+                // eslint-disable-next-line no-console
+                console.warn(`[wdio.conf] live mode — LM Studio preflight failed: ${e instanceof Error ? e.message : String(e)}. Specs will skip.`);
+            }
             return;
         }
         const port = Number(env.E2E_MOCK_PORT ?? 43194);

@@ -2507,7 +2507,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         const errorSetting = new Setting(containerEl)
             .setName('Extra request parameters errors')
             .setDesc('Only shows content when the JSON above does not parse as a valid JSON object.');
-        const errorTextEl = errorSetting.controlEl.createSpan({ cls: 'quill-extra-body__error-text' });
+        const errorTextEl = errorSetting.controlEl.createSpan({
+            cls: 'quill-extra-body__error-text',
+            attr: { 'aria-live': 'polite' }
+        });
         const errorItemEl = errorSetting.settingEl;
         errorItemEl.hide();
         lint = (): void => {

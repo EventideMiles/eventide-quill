@@ -124,4 +124,12 @@ describe('getAnalysisModePrompt — lore-consistency', () => {
         expect(prompt).toMatch(/absolute line number/i);
         expect(prompt).toContain('grep_notes');
     });
+
+    it('omits lore_siblings/vault_lookup references when tools are unavailable', () => {
+        const prompt = getAnalysisModePrompt('lore-consistency', { toolsAvailable: false });
+        expect(prompt).toMatch(/lorebook/i);
+        expect(prompt).not.toContain('lore_siblings');
+        expect(prompt).not.toContain('vault_lookup');
+        expect(prompt).toContain('supplied context');
+    });
 });

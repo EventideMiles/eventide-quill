@@ -33,7 +33,7 @@ export interface PluginDataBundle {
 /** Strip the dataDir prefix from a full vault path, normalizing separators. */
 function relativize(path: string, dataDir: string): string | null {
     const prefix = normalizePath(dataDir);
-    if (!path.startsWith(prefix)) return null;
+    if (path !== prefix && !path.startsWith(prefix + '/')) return null;
     const rel = path.slice(prefix.length).replace(/^[/\\]+/, '');
     return rel.length > 0 ? rel : null;
 }
@@ -144,7 +144,12 @@ export async function importPluginData(
     bundle: PluginDataBundle,
     onProgress?: (done: number, total: number) => void
 ): Promise<number> {
-    if (typeof bundle.schemaVersion !== 'number' || bundle.files == null || typeof bundle.files !== 'object') {
+    if (
+        bundle.schemaVersion !== PLUGIN_DATA_BUNDLE_SCHEMA_VERSION ||
+        !bundle.files ||
+        typeof bundle.files !== 'object' ||
+        Array.isArray(bundle.files)
+    ) {
         throw new Error('Invalid Eventide Quill backup: missing schemaVersion or files map.');
     }
     const entries = Object.entries(bundle.files);
@@ -167,7 +172,12 @@ export async function importPluginData(
 /** Parse and validate a backup file's text into a bundle. */
 export function parsePluginDataBundle(text: string): PluginDataBundle {
     const parsed = JSON.parse(text) as Partial<PluginDataBundle>;
-    if (typeof parsed.schemaVersion !== 'number' || typeof parsed.files !== 'object' || parsed.files === null) {
+    if (
+        typeof parsed.schemaVersion !== 'number' ||
+        typeof parsed.files !== 'object' ||
+        parsed.files === null ||
+        Array.isArray(parsed.files)
+    ) {
         throw new Error('This file is not a valid Eventide Quill backup.');
     }
     return {
