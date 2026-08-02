@@ -2476,7 +2476,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 // is always saved so in-progress edits persist; the provider
                 // parses + merges only valid JSON, so malformed parameters never
                 // reach a request.
-                const status = area.inputEl.parentElement?.createDiv({ cls: 'quill-extra-body__status' });
+                const status = area.inputEl.closest('.setting-item')?.createDiv({ cls: 'quill-extra-body__status' });
                 /** Set the inline lint status message and toggle the error UI. */
                 const setStatus = (msg: string | null): void => {
                     if (!status) return;

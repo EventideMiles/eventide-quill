@@ -524,17 +524,14 @@ div[class*='quill-settings-content-'].is-hidden {
     }
 }
 
-// Complex multi-field / wide-input render items (slash-command editor, lorebook
-// folder list, folder Top-K overrides, and the provider "Extra request
-// parameters" JSON textarea) render their whole editor inside
-// .setting-item-control — the narrow right column of an Obsidian setting-item —
-// which cramps every input into one column. Stack these setting-items
-// vertically (label + desc on top, the editor below at the full page width) so
-// the inputs/textareas + their lint status get the horizontal space they need.
-// :has() is supported in Obsidian's Chromium.
+// Complex multi-field render items (slash-command editor, lorebook folder list,
+// folder Top-K overrides) render their whole editor inside .setting-item-control
+// — the narrow right column of an Obsidian setting-item — which cramps every
+// input into one column. Stack these setting-items vertically (label + desc on
+// top, the editor below at the full page width) so the inputs/textareas get the
+// horizontal space they need. :has() is supported in Obsidian's Chromium.
 .setting-item:has(.quill-slash-command-list),
-.setting-item:has(.quill-folder-overrides-list),
-.setting-item:has(.quill-extra-body__status) {
+.setting-item:has(.quill-folder-overrides-list) {
     display: block;
 
     > .setting-item-info {
@@ -566,12 +563,18 @@ div[class*='quill-settings-content-'].is-hidden {
     }
 }
 
-// Live JSON lint for the provider "Extra request parameters" field. The status
-// line sits under the textarea; --error + the invalid border flag malformed
-// input as the writer types. Display only — the raw text is always saved; the
-// provider ignores malformed values at request time.
+// Live JSON lint for the provider "Extra request parameters" field. The lint
+// line is a full-width row BELOW the setting-item's normal label/input row
+// (appended as a direct child of the .setting-item, after the control) — not
+// crammed into the control column beside the textarea. The :has() rule wraps
+// the row so the status lands on its own line. Display only — the raw text is
+// always saved; the provider ignores malformed values at request time.
+.setting-item:has(.quill-extra-body__status) {
+    flex-wrap: wrap;
+}
+
 .quill-extra-body__status {
-    width: 100%;
+    flex: 0 0 100%;
     margin-top: $space-xs;
     font-size: var(--font-smaller);
     color: var(--text-muted);
