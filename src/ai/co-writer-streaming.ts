@@ -13,7 +13,8 @@ export const TRUNCATION_FINISH_REASONS = new Set(['length', 'max_tokens', 'MAX_T
 export const MAX_CONTINUE_ROUNDS = 3;
 /** Nudge sent to resume a truncated response: resume mid-sentence, no preamble/repeat. */
 export const CONTINUE_NUDGE =
-    'Continue exactly where your previous message left off. Resume the text mid-sentence — do not repeat any text, do not acknowledge, and do not add a heading or an apology.';
+    'Continue exactly where your previous message left off. Resume the text mid-sentence — ' +
+    'do not repeat any text, do not acknowledge, and do not add a heading or an apology.';
 
 /**
  * Callbacks for {@link streamToolAwareRound}. The caller owns session state
