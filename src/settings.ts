@@ -766,11 +766,16 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     private renderBridgeContent(containerEl: HTMLElement, render: (content: HTMLElement) => void): void {
         containerEl.empty();
         containerEl.addClass('quill-settings-root');
-        render(containerEl);
+        // Render into a scroll-area so a long bridge page (provider fields +
+        // model list + test buttons) scrolls. Without this wrapper the content
+        // sat directly inside .quill-settings-root (overflow: hidden) and was
+        // clipped — the provider/model data below the fold was unreachable.
+        const scroll = containerEl.createDiv({ cls: 'quill-settings__scroll-area' });
+        render(scroll);
         // Wrap runs of settings under each heading into bordered sections,
         // matching the pre-2.0.1 grouped look. Each tab renders into a single
         // `.quill-settings-content-*` div created by its render method.
-        const content = containerEl.querySelector<HTMLElement>('[class*="quill-settings-content-"]');
+        const content = scroll.querySelector<HTMLElement>('[class*="quill-settings-content-"]');
         if (content) this.groupSettingsByHeading(content);
         containerEl.createDiv({ cls: 'quill-settings__footer' });
     }
