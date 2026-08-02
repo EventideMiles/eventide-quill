@@ -7,7 +7,7 @@ import type { AiProvider, ChatChunk, ChatMessage } from '../../src/ai/provider';
  * sequential call, recording the messages it was passed so continuation tests
  * can assert on the resume payload.
  */
-function mockProvider(rounds: ChatChunk[][]): { provider: AiProvider; calls: ChatMessage[][] } {
+function mockProvider(rounds: Array<Array<Partial<ChatChunk>>>): { provider: AiProvider; calls: ChatMessage[][] } {
     let call = 0;
     const calls: ChatMessage[][] = [];
     const provider = {
@@ -15,7 +15,8 @@ function mockProvider(rounds: ChatChunk[][]): { provider: AiProvider; calls: Cha
             calls.push(opts.messages);
             return (async function* generator(): AsyncGenerator<ChatChunk> {
                 const chunks = rounds[call++] ?? [];
-                for (const c of chunks) yield c;
+                // Normalize partial fixtures (text-only / done-only / thought-only) into full ChatChunks.
+                for (const c of chunks) yield { text: '', done: false, ...c };
             })();
         }
     };
@@ -81,12 +82,25 @@ describe('streamToolAwareRound — auto-continue on max_tokens truncation', () =
 
     it('stops after the bounded number of continuation rounds', async () => {
         // Every round truncates and never finishes — the bound prevents an infinite loop.
-        const round: ChatChunk[] = [{ text: 'more ' }, { done: true, finishReason: 'length' }];
+        const round: Partial<ChatChunk>[] = [{ text: 'more ' }, { done: true, finishReason: 'length' }];
         const { provider, calls } = mockProvider([round, round, round, round]);
         const result = await streamToolAwareRound(provider, { messages: [{ role: 'user', content: 'go' }] }, noCallbacks);
         // 1 initial round + 3 continuations (MAX_CONTINUE_ROUNDS) = 4 rounds, then returns truncated.
         expect(calls).toHaveLength(4);
         expect(result.finishReason).toBe('length');
         expect(result.response).toBe('more more more more ');
+    });
+
+    it('promotes thought to the response when a reasoning model produces no content', async () => {
+        // A model that opens a <think> block and never closes it (or puts its
+        // whole answer inside thinking tags) yields only thought chunks — the
+        // visible response would be empty. The accumulator promotes the thought
+        // so the writer sees the output instead of a blank bubble.
+        const { provider } = mockProvider([
+            [{ thought: 'reasoning...' }, { thought: 'the real answer' }, { done: true, finishReason: 'stop' }]
+        ]);
+        const result = await streamToolAwareRound(provider, { messages: [{ role: 'user', content: 'go' }] }, noCallbacks);
+        expect(result.response).toBe('reasoning...the real answer');
+        expect(result.thought).toBe('');
     });
 });

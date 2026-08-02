@@ -166,6 +166,16 @@ export async function streamToolAwareRound(
 
         finishReason = roundFinishReason ?? finishReason;
         thinkingBlocks = roundThinkingBlocks ?? thinkingBlocks;
+        // Reasoning-model fallback: if the model put its output in the thinking
+        // channel — it opened a <think> block and never closed it, or placed its
+        // whole answer inside thinking tags — the visible response would be
+        // empty and the writer sees a blank bubble. Promote the thought so the
+        // model's output shows. This only fires when no content text was
+        // produced, so it never discards real response content.
+        if (response.trim().length === 0 && thought.trim().length > 0) {
+            response = thought;
+            thought = '';
+        }
         return { response, thought, toolCalls, thinkingBlocks, finishReason };
     }
 }
