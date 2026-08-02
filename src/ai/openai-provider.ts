@@ -7,6 +7,7 @@ import {
     EmbedOptions,
     EmbedResult,
     ModelInfo,
+    mergeExtraRequestBody,
     ProviderConfig,
     ProviderError,
     resolveModel,
@@ -158,6 +159,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
             bodyObj.tool_choice = options.toolChoice ?? 'auto';
         }
 
+        mergeExtraRequestBody(bodyObj, this.config.extraRequestBody);
         const body = JSON.stringify(bodyObj);
 
         if (isStreamingSupported()) {

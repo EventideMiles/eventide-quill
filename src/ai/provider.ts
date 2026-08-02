@@ -29,6 +29,32 @@ export interface ProviderConfig {
      * Currently Anthropic-only; reserved for future OpenAI reasoning models.
      */
     thinkingBudgetTokens?: number;
+    /**
+     * Advanced: arbitrary JSON object merged into every chat-completion
+     * request body for this provider (shallow merge). Power-user escape hatch
+     * for gateway-specific knobs the plugin doesn't model — e.g.
+     * `{"reasoning_effort":"high"}` (OpenAI / NanoGPT), GLM
+     * `{"thinking":{"type":"enabled","clear_thinking":false}}`, or
+     * `{"reasoning":{"exclude":true}}`. Reserved identity keys (`model`,
+     * `messages`, `stream`) are stripped by the provider before merge.
+     */
+    extraRequestBody?: Record<string, unknown>;
+}
+
+/** Body keys a provider always sets itself; never overridable via extraRequestBody. */
+const RESERVED_BODY_KEYS = new Set(['model', 'messages', 'stream']);
+
+/**
+ * Merge a provider's advanced {@link ProviderConfig.extraRequestBody} JSON into
+ * a request body, dropping reserved identity keys (`model`, `messages`,
+ * `stream`) so a typo can't break the request. Shallow merge — the supplied
+ * value wins for any non-reserved key.
+ */
+export function mergeExtraRequestBody(body: Record<string, unknown>, extra: Record<string, unknown> | undefined): void {
+    if (!extra) return;
+    for (const [key, value] of Object.entries(extra)) {
+        if (!RESERVED_BODY_KEYS.has(key)) body[key] = value;
+    }
 }
 
 /**

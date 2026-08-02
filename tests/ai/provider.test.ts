@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+    mergeExtraRequestBody,
     roleSatisfies,
     resolveModel,
     buildUrl,
@@ -126,5 +127,45 @@ describe('ProviderError', () => {
 
     it('is an Error instance', () => {
         expect(new ProviderError('msg', 0, '')).toBeInstanceOf(Error);
+    });
+});
+
+describe('mergeExtraRequestBody', () => {
+    it('merges non-reserved keys into the body', () => {
+        const body: Record<string, unknown> = { model: 'x', temperature: 0.7 };
+        mergeExtraRequestBody(body, { reasoning_effort: 'high', thinking: { type: 'enabled' } });
+        expect(body).toEqual({
+            model: 'x',
+            temperature: 0.7,
+            reasoning_effort: 'high',
+            thinking: { type: 'enabled' }
+        });
+    });
+
+    it('strips reserved identity keys (model, messages, stream)', () => {
+        const body: Record<string, unknown> = { model: 'real', messages: [], stream: true };
+        mergeExtraRequestBody(body, {
+            model: 'override',
+            messages: [{ role: 'user' }],
+            stream: false,
+            reasoning_effort: 'low'
+        });
+        expect(body.model).toBe('real');
+        expect(body.messages).toEqual([]);
+        expect(body.stream).toBe(true);
+        expect(body).toHaveProperty('reasoning_effort', 'low');
+    });
+
+    it('is a no-op when extra is undefined', () => {
+        const body: Record<string, unknown> = { model: 'x' };
+        mergeExtraRequestBody(body, undefined);
+        expect(body).toEqual({ model: 'x' });
+    });
+
+    it('overwrites existing non-reserved keys (shallow merge, last wins)', () => {
+        const body: Record<string, unknown> = { temperature: 0.7, top_p: 0.9 };
+        mergeExtraRequestBody(body, { temperature: 0.5 });
+        expect(body.temperature).toBe(0.5);
+        expect(body.top_p).toBe(0.9);
     });
 });

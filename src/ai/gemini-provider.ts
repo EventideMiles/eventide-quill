@@ -8,6 +8,7 @@ import {
     EmbedOptions,
     EmbedResult,
     ModelInfo,
+    mergeExtraRequestBody,
     ProviderConfig,
     ProviderError,
     resolveModel,
@@ -286,6 +287,7 @@ export class GeminiProvider implements AiProvider {
             }
         }
 
+        mergeExtraRequestBody(bodyObj, this.config.extraRequestBody);
         const body = JSON.stringify(bodyObj);
 
         if (isStreamingSupported()) {

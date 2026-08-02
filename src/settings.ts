@@ -2456,6 +2456,46 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }
                 })
             );
+
+        // Extra request parameters (advanced) — arbitrary JSON merged into every
+        // chat-completion request body. Power-user escape hatch for gateway-
+        // specific knobs (reasoning_effort, GLM thinking config, …). Mirrors the
+        // raw addEventListener-on-blur idiom used by the surrounding fields.
+        new Setting(containerEl)
+            .setName('Extra request parameters')
+            .setDesc(
+                'Advanced. A JSON object merged into every chat request body — e.g. ' +
+                    '{"reasoning_effort": "high"} or {"thinking": {"type": "enabled"}}. ' +
+                    'Reserved keys (model, messages, stream) are ignored.'
+            )
+            .addTextArea((area) => {
+                const extra = provider.extraRequestBody;
+                area.setPlaceholder('{"reasoning_effort": "high"}').setValue(
+                    extra && Object.keys(extra).length > 0 ? JSON.stringify(extra, null, 2) : ''
+                );
+                area.inputEl.rows = 3;
+                area.inputEl.addEventListener('blur', () => {
+                    const raw = area.inputEl.value.trim();
+                    if (raw === '') {
+                        provider.extraRequestBody = undefined;
+                        void this.plugin.saveSettings();
+                        return;
+                    }
+                    try {
+                        const parsed: unknown = JSON.parse(raw);
+                        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+                            throw new Error('value must be a JSON object');
+                        }
+                        provider.extraRequestBody = parsed as Record<string, unknown>;
+                        void this.plugin.saveSettings();
+                    } catch (e) {
+                        new Notice(
+                            'Extra request parameters must be a JSON object' +
+                                (e instanceof Error ? `: ${e.message}` : '')
+                        );
+                    }
+                });
+            });
     }
 
     /** Render the model list for a provider. */

@@ -8,6 +8,7 @@ import {
     EmbedOptions,
     EmbedResult,
     ModelInfo,
+    mergeExtraRequestBody,
     ProviderConfig,
     ProviderError,
     resolveModel,
@@ -343,6 +344,7 @@ export class AnthropicProvider implements AiProvider {
         const bodyObj = buildAnthropicRequestBody(options.messages, options, this.config, this.name);
         const url = buildUrl(this.config.endpoint, '/messages');
         const headers = this.buildHeaders();
+        mergeExtraRequestBody(bodyObj, this.config.extraRequestBody);
         const body = JSON.stringify(bodyObj);
 
         if (isStreamingSupported()) {
