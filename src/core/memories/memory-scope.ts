@@ -139,3 +139,20 @@ export function memoryFilePath(scopeKey: string, memoriesFolder: string): string
     return normalizePath(`${memoriesFolder}/${safeKey}${MEMORY_FILE_SUFFIX}`);
 }
 
+/**
+ * True when `filePath` points at a file inside the memories folder (any
+ * memory file, in any scope). Used by the raw-edit guard on the generic
+ * editing tools (`edit_note`, `insert_note`, `append_to_note`, `revise_edit`)
+ * so the model can't bypass the dedicated `save_memory` / `delete_memory`
+ * tools and clobber block IDs by editing the raw markdown.
+ *
+ * Handles both flat (`Memories/...`) and nested (`Quill/Memories/...`)
+ * memories-folder configurations via a normalized startsWith check.
+ */
+export function isMemoryFilePath(filePath: string, memoriesFolder: string): boolean {
+    if (!filePath) return false;
+    const normalizedFile = normalizePath(filePath);
+    const normalizedFolder = normalizePath(memoriesFolder);
+    return normalizedFile === normalizedFolder || normalizedFile.startsWith(`${normalizedFolder}/`);
+}
+

@@ -10,6 +10,7 @@ import {
     resolveNoteFile
 } from './lore-edit-helpers';
 import { checkAiIsms } from '../ai-ism-detector';
+import { isMemoryFilePath } from '../../core/memories/memory-scope';
 import type { TFile } from 'obsidian';
 
 /**
@@ -201,6 +202,12 @@ export const editNoteTool: Tool = {
         if (aiIsmError) return aiIsmError;
 
         const { plugin } = ctx;
+        // Raw-edit guard: memory files are managed exclusively by save_memory
+        // / delete_memory so the block-ID minting and re-tokenize logic can't
+        // be bypassed by generic editing tools.
+        if (isMemoryFilePath(path, plugin.settings.memoriesFolder)) {
+            return 'Error: memory files cannot be edited with edit_note. Use save_memory or delete_memory instead.';
+        }
         const file = resolveNoteFile(plugin, path);
         if (!file) return `Error: note "${path}" not found in the vault.`;
 

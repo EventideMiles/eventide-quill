@@ -1,6 +1,7 @@
 import type { Tool, ToolContext } from './tool';
 import { readNoteContent, resolveNoteFile } from './lore-edit-helpers';
 import { findParagraphByStart, stageEdit } from './edit-note';
+import { isMemoryFilePath } from '../../core/memories/memory-scope';
 
 /**
  * Remove an entire paragraph from a note. The paragraph opens as a red inline
@@ -60,6 +61,12 @@ export const deleteParagraphTool: Tool = {
         }
 
         const { plugin } = ctx;
+        // Raw-edit guard: memory files are managed exclusively by save_memory
+        // / delete_memory so the block-ID minting and re-tokenize logic can't
+        // be bypassed by generic editing tools.
+        if (isMemoryFilePath(path, plugin.settings.memoriesFolder)) {
+            return 'Error: memory files cannot be edited with delete_paragraph. Use save_memory or delete_memory instead.';
+        }
         const file = resolveNoteFile(plugin, path);
         if (!file) return `Error: note "${path}" not found in the vault.`;
 
