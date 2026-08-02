@@ -46,18 +46,24 @@ const vault = 'test/vaults/simple';
  */
 const isLive = env.E2E_LIVE === '1' || process.argv.some((a) => a.includes('test/specs/live'));
 
-async function resolveLmStudioModel(): Promise<string> {
+async function resolveLmStudioModels(): Promise<{ chat: string; embed: string }> {
     const res = await fetch('http://localhost:1234/v1/models');
     if (!res.ok) throw new Error(`LM Studio /v1/models returned ${res.status}`);
     const body = (await res.json()) as { data?: Array<{ id: string }> };
-    const first = body.data?.[0]?.id;
-    if (!first) throw new Error('LM Studio /v1/models returned no models');
-    return first;
+    const ids = body.data?.map((m) => m.id) ?? [];
+    const chat = ids[0];
+    if (!chat) throw new Error('LM Studio /v1/models returned no models');
+    // Prefer a dedicated embedding model for the embed provider so live
+    // analysis/feedback tests exercise the real embeddings path — the chat
+    // model (often an instruction-tuned LLM) typically can't embed. Falls back
+    // to the chat model when no embed model is loaded.
+    const embed = ids.find((id) => /embed|nomic|bge|e5/i.test(id)) ?? chat;
+    return { chat, embed };
 }
 
-function rewriteDataJsonForLive(modelId: string): void {
-    // Read the committed example, swap the endpoint + model id to point at the
-    // real LM Studio with the actually-loaded model, then write the working
+function rewriteDataJsonForLive(chatModelId: string, embedModelId: string): void {
+    // Read the committed example, swap the endpoint + model ids to point at the
+    // real LM Studio with the actually-loaded models, then write the working
     // `data.json` (gitignored).
     const pluginDir = path.join(vault, '.obsidian', 'plugins', 'eventide-quill');
     const examplePath = path.join(pluginDir, 'data.json.example');
@@ -66,16 +72,23 @@ function rewriteDataJsonForLive(modelId: string): void {
     const providers = Array.isArray(template.aiProviders)
         ? [...(template.aiProviders as object[])]
         : [];
+    const models =
+        embedModelId === chatModelId
+            ? [{ id: chatModelId, role: 'both', model: chatModelId }]
+            : [
+                  { id: chatModelId, role: 'both', model: chatModelId },
+                  { id: embedModelId, role: 'embed', model: embedModelId }
+              ];
     providers[0] = {
         ...(providers[0] as object),
         name: 'LM Studio (live E2E)',
         endpoint: 'http://localhost:1234/v1',
-        models: [{ id: modelId, role: 'both', model: modelId }]
+        models
     };
     template.aiProviders = providers;
     const providerId = (providers[0] as { id: string }).id;
-    template.aiDefaultChatProvider = `${providerId}/${modelId}`;
-    template.aiDefaultEmbedProvider = `${providerId}/${modelId}`;
+    template.aiDefaultChatProvider = `${providerId}/${chatModelId}`;
+    template.aiDefaultEmbedProvider = `${providerId}/${embedModelId}`;
     fs.writeFileSync(dataPath, JSON.stringify(template, null, 4) + '\n', 'utf8');
 }
 
@@ -152,10 +165,10 @@ export const config: WebdriverIO.Config = {
      */
     async onPrepare() {
         if (isLive) {
-            const modelId = await resolveLmStudioModel();
-            rewriteDataJsonForLive(modelId);
+            const { chat, embed } = await resolveLmStudioModels();
+            rewriteDataJsonForLive(chat, embed);
             // eslint-disable-next-line no-console
-            console.log(`[wdio.conf] live mode — data.json pointed at LM Studio model "${modelId}"`);
+            console.log(`[wdio.conf] live mode — data.json: chat "${chat}", embed "${embed}"`);
             return;
         }
         const port = Number(env.E2E_MOCK_PORT ?? 43194);
