@@ -1,19 +1,19 @@
 import { Notice } from 'obsidian';
 import type { Tool, ToolContext } from './tool';
 import { findEntryAcrossScopes, removeMemoryEntry } from '../../core/memories/memory-store';
+import { confirmMemoryAction } from '../../core/memories/memory-confirm';
 
 /**
  * The `delete_memory` tool — removes a memory section by block ID. Per the
  * design contract, deletes are SILENT and DESTRUCTIVE: the writer may not
  * have seen the memory yet. So even when `memoriesAutoSave` is on (which
- * lets `save_memory` land without review), `delete_memory` always stages
- * through the review queue.
+ * lets `save_memory` land without review), `delete_memory` always shows a
+ * confirmation modal so the writer explicitly approves the deletion.
  *
- * PHASE 4 NOTE: the review-queue integration lands in Phase 8. For now,
- * this tool performs the delete directly with a prominent Notice ("Quill:
- * deleted memory '<heading>'") so the writer sees that a deletion happened
- * and can undo via Obsidian's file recovery if needed. Phase 8 will replace
- * the direct delete with a review-card staging flow.
+ * The model's tool call awaits the writer's choice. If the writer confirms,
+ * the delete proceeds and the tool returns success. If the writer cancels,
+ * the tool returns "delete cancelled" — the model should accept that and
+ * not retry without an explicit writer instruction.
  *
  * The ID-based targeting makes deletes unambiguous — `save_memory` returns
  * the minted block ID in its confirmation, and `recall_memory` shows IDs
@@ -67,7 +67,31 @@ export const deleteMemoryTool: Tool = {
             );
         }
 
-        // Phase 4: direct delete. Phase 8 will stage this through the review queue.
+        // Show a confirmation modal — deletes always require explicit writer
+        // approval regardless of the memoriesAutoSave toggle (silent
+        // destructive ops are too risky to auto-apply). The model's tool call
+        // awaits the writer's choice.
+        const bodyPreview =
+            found.entry.body.length > 200
+                ? `${found.entry.body.slice(0, 200).trimEnd()}…`
+                : found.entry.body;
+        const messageLines = [
+            `"${found.entry.heading}" (id: ${found.entry.id})`,
+            '',
+            bodyPreview || '(no body)',
+            '',
+            'The deleted text can be recovered from Obsidian\'s file recovery if needed.'
+        ];
+        const confirmed = await confirmMemoryAction(
+            plugin.app,
+            'Delete this memory?',
+            messageLines.join('\n'),
+            'Delete'
+        );
+        if (!confirmed) {
+            return `Delete cancelled by the writer — "${found.entry.heading}" was NOT removed.`;
+        }
+
         // removeMemoryEntry preserves the file's title and intro.
         await removeMemoryEntry(plugin, found.scopeKey, found.entry.id);
 
@@ -75,7 +99,7 @@ export const deleteMemoryTool: Tool = {
 
         return (
             `Deleted memory "${found.entry.heading}" (id: ${found.entry.id}). ` +
-            `The writer can recover the text from Obsidian's file recovery if needed.`
+            `The writer approved the deletion.`
         );
     }
 };

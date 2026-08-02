@@ -3,6 +3,7 @@ import type { Tool, ToolContext } from './tool';
 import { nextBlockId, type MemoryEntry } from '../../core/memories/memory-file';
 import { GLOBAL_MEMORY_SCOPE } from '../../core/memories/memory-scope';
 import { readMemoryFile, resolveScopeArg, writeMemoryFile } from '../../core/memories/memory-store';
+import { confirmMemoryAction } from '../../core/memories/memory-confirm';
 
 /**
  * The `save_memory` tool — persists a fact the model has learned about the
@@ -24,9 +25,11 @@ import { readMemoryFile, resolveScopeArg, writeMemoryFile } from '../../core/mem
  *
  * When `memoriesAutoSave` is on (the default), the save lands in the vault
  * immediately and a Notice confirms ("Saved memory: '<heading>'"). When
- * off, the save stages to the review queue — but Phase 8 wires that path
- * in. For now, both modes write directly; the toggle's effect (staging
- * to the review queue) is a Phase 8 concern.
+ * off, the save shows a confirmation modal with the proposed heading + body
+ * so the writer explicitly approves before the write. The full design
+ * (pending-memory cards in the sidebar's review surface, alongside pending
+ * lore edits) is a follow-up — see `.planning/pr-memories.md` § Out of
+ * scope. This modal gets us the safety property without that infrastructure.
  *
  * SCOPE
  *
@@ -159,14 +162,36 @@ export const saveMemoryTool: Tool = {
             newEntries = [...result.file.entries, newEntry];
         }
 
+        // Confirmation modal when memoriesAutoSave is off. The toggle's
+        // safety property: explicit writer approval before any save lands.
+        if (!plugin.settings.memoriesAutoSave) {
+            const bodyPreview = content.length > 400 ? `${content.slice(0, 400).trimEnd()}…` : content;
+            const scopeDesc = scopeKey === GLOBAL_MEMORY_SCOPE ? 'global pool' : `'${label}' pool`;
+            const messageLines = [
+                `Heading: ${savedHeading}`,
+                `Scope: ${scopeDesc}`,
+                '',
+                bodyPreview
+            ];
+            const confirmed = await confirmMemoryAction(
+                plugin.app,
+                'Save this memory?',
+                messageLines.join('\n'),
+                'Save'
+            );
+            if (!confirmed) {
+                return `Save cancelled by the writer — "${savedHeading}" was NOT saved.`;
+            }
+        }
+
         await writeMemoryFile(plugin, scopeKey, {
             title: result.file.title,
             intro: result.file.intro,
             entries: newEntries
         });
 
-        // Phase 4: always confirm with a Notice. Phase 8 will branch on
-        // memoriesAutoSave (off → stage to review queue, no Notice).
+        // When memoriesAutoSave is on, confirm with a Notice (no modal —
+        // auto-save is the default low-friction path).
         const scopeNote = scopeKey === GLOBAL_MEMORY_SCOPE ? 'global' : label;
         new Notice(`Quill: saved memory — "${savedHeading}" (${scopeNote})`);
 

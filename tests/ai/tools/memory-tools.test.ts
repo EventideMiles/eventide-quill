@@ -1,9 +1,23 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TFile } from 'obsidian';
+
+// Mock the confirmation modal so tests don't need a DOM. Default resolves
+// true (writer approves); individual tests override to test the cancel path.
+vi.mock('../../../src/core/memories/memory-confirm', () => ({
+    confirmMemoryAction: vi.fn().mockResolvedValue(true)
+}));
+
+// Imported AFTER the vi.mock above so the mock is in effect.
 import { saveMemoryTool } from '../../../src/ai/tools/save-memory';
 import { recallMemoryTool } from '../../../src/ai/tools/recall-memory';
 import { deleteMemoryTool } from '../../../src/ai/tools/delete-memory';
+import { confirmMemoryAction } from '../../../src/core/memories/memory-confirm';
 import type { ToolContext } from '../../../src/ai/tools/tool';
+
+beforeEach(() => {
+    vi.mocked(confirmMemoryAction).mockReset();
+    vi.mocked(confirmMemoryAction).mockResolvedValue(true);
+});
 
 /**
  * In-memory vault stub for memory-tool tests. Models the slice of the Vault
@@ -295,6 +309,37 @@ describe('save_memory + recall_memory + delete_memory — round-trip integration
         const { ctx } = makeCtx({ memoriesEnabled: false });
         const result = await deleteMemoryTool.execute({ id: 'quill-mem-001' }, ctx);
         expect(result).toContain('disabled');
+    });
+
+    it('delete does NOT remove the entry when the writer cancels the confirm modal', async () => {
+        vi.mocked(confirmMemoryAction).mockResolvedValue(false);
+        const { ctx, state } = makeCtx({});
+        const saveResult = (await saveMemoryTool.execute({ content: 'keep this', heading: 'Keep' }, ctx)) as string;
+        const id = saveResult.match(/quill-mem-\d+/)![0];
+        const delResult = await deleteMemoryTool.execute({ id }, ctx);
+        expect(delResult).toContain('cancelled');
+        expect(delResult).toContain('NOT removed');
+        // Entry still present in the file.
+        const content = state.files.get('Memories/_global.memories.md')!;
+        expect(content).toContain('## Keep');
+    });
+
+    it('save with memoriesAutoSave off does NOT write when the writer cancels', async () => {
+        vi.mocked(confirmMemoryAction).mockResolvedValue(false);
+        const { ctx, state } = makeCtx({ memoriesAutoSave: false });
+        const result = await saveMemoryTool.execute({ content: 'should not save', heading: 'X' }, ctx);
+        expect(result).toContain('cancelled');
+        expect(result).toContain('NOT saved');
+        expect(state.files.has('Memories/_global.memories.md')).toBe(false);
+    });
+
+    it('save with memoriesAutoSave off DOES write when the writer confirms', async () => {
+        const { ctx, state } = makeCtx({ memoriesAutoSave: false });
+        // Default mock resolves true.
+        const result = await saveMemoryTool.execute({ content: 'confirmed save', heading: 'Y' }, ctx);
+        expect(result).toContain('Saved memory');
+        expect(state.files.has('Memories/_global.memories.md')).toBe(true);
+        expect(state.files.get('Memories/_global.memories.md')!).toContain('## Y');
     });
 });
 
