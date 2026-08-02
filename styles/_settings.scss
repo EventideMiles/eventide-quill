@@ -563,25 +563,14 @@ div[class*='quill-settings-content-'].is-hidden {
     }
 }
 
-// Live JSON lint for the provider "Extra request parameters" field. The lint
-// line is a full-width row BELOW the setting-item's normal label/input row
-// (appended as a direct child of the .setting-item, after the control) — not
-// crammed into the control column beside the textarea. The :has() rule wraps
-// the row so the status lands on its own line. Display only — the raw text is
-// always saved; the provider ignores malformed values at request time.
-.setting-item:has(.quill-extra-body__status) {
-    flex-wrap: wrap;
-}
-
-.quill-extra-body__status {
-    flex: 0 0 100%;
-    margin-top: $space-xs;
+// Live JSON lint lives in a DEDICATED "Extra request parameters errors" setting
+// box (a separate setting-item below the field) that only appears when the JSON
+// is malformed — so the main field keeps the normal description | textarea row.
+// The error text is always red (the box only shows when there is an error);
+// the textarea also gets a red border while invalid.
+.quill-extra-body__error-text {
+    color: var(--text-error);
     font-size: var(--font-smaller);
-    color: var(--text-muted);
-
-    &--error {
-        color: var(--text-error);
-    }
 }
 
 .quill-extra-body__input--invalid {

@@ -2461,6 +2461,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         // chat-completion request body. Power-user escape hatch for gateway-
         // specific knobs (reasoning_effort, GLM thinking config, …). Mirrors the
         // raw addEventListener-on-blur idiom used by the surrounding fields.
+        // "Extra request parameters" is a normal setting row (description | textarea)
+        // like every other field. Lint feedback lives in a SEPARATE setting box
+        // below ("Extra request parameters errors") that only appears when the
+        // JSON is malformed, so the main field's layout never gets distorted.
+        let lint: () => void;
+        let textareaEl: HTMLTextAreaElement | null = null;
         new Setting(containerEl)
             .setName('Extra request parameters')
             .setDesc(
@@ -2469,53 +2475,17 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     'Reserved keys (model, messages, stream) are ignored.'
             )
             .addTextArea((area) => {
+                textareaEl = area.inputEl;
                 area.setPlaceholder('{"reasoning_effort": "high"}').setValue(provider.extraRequestBody ?? '');
                 area.inputEl.rows = 3;
-                // Live JSON lint is DISPLAY ONLY — it flags malformed input with
-                // an inline error + red border as the writer types. The raw text
-                // is always saved so in-progress edits persist; the provider
-                // parses + merges only valid JSON, so malformed parameters never
-                // reach a request.
-                const status = area.inputEl.closest('.setting-item')?.createDiv({ cls: 'quill-extra-body__status' });
-                /** Set the inline lint status message and toggle the error UI. */
-                const setStatus = (msg: string | null): void => {
-                    if (!status) return;
-                    if (msg) {
-                        status.setText(msg);
-                        status.addClass('quill-extra-body__status--error');
-                        area.inputEl.addClass('quill-extra-body__input--invalid');
-                    } else {
-                        status.setText('');
-                        status.removeClass('quill-extra-body__status--error');
-                        area.inputEl.removeClass('quill-extra-body__input--invalid');
-                    }
-                };
-                /** Lint the textarea value for display; does not gate saving. */
-                const lint = (): void => {
-                    const raw = area.inputEl.value.trim();
-                    if (raw === '') {
-                        setStatus(null);
-                        return;
-                    }
-                    try {
-                        const parsed: unknown = JSON.parse(raw);
-                        setStatus(
-                            typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-                                ? null
-                                : 'Must be a JSON object (not an array or a bare value).'
-                        );
-                    } catch (e) {
-                        setStatus(`Invalid JSON: ${e instanceof Error ? e.message : 'parse error'}`);
-                    }
-                };
                 area.inputEl.addEventListener('input', () => lint());
                 // Save the raw text unconditionally — malformed input persists for
-                // the writer to fix but is never applied (the provider ignores it).
+                // the writer to fix but is never applied (the provider parses +
+                // merges only valid JSON at request time).
                 area.inputEl.addEventListener('blur', () => {
                     provider.extraRequestBody = area.inputEl.value.trim() || undefined;
                     void this.plugin.saveSettings();
                 });
-                lint();
             })
             .then((s) => {
                 // Gemini's body is nested (generationConfig, systemInstruction), so
@@ -2530,6 +2500,41 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     s.descEl.append(' for the full schema.');
                 }
             });
+
+        // Dedicated errors box — a separate, read-only setting that only appears
+        // when the JSON above is malformed. Display-only lint; the raw text is
+        // always saved and the provider never applies malformed values.
+        const errorSetting = new Setting(containerEl)
+            .setName('Extra request parameters errors')
+            .setDesc('Only shows content when the JSON above does not parse as a valid JSON object.');
+        const errorTextEl = errorSetting.controlEl.createSpan({ cls: 'quill-extra-body__error-text' });
+        const errorItemEl = errorSetting.settingEl;
+        errorItemEl.hide();
+        lint = (): void => {
+            if (!textareaEl) return;
+            const raw = textareaEl.value.trim();
+            let msg: string | null = null;
+            if (raw !== '') {
+                try {
+                    const parsed: unknown = JSON.parse(raw);
+                    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+                        msg = 'Must be a JSON object (not an array or a bare value).';
+                    }
+                } catch (e) {
+                    msg = `Invalid JSON: ${e instanceof Error ? e.message : 'parse error'}`;
+                }
+            }
+            if (msg) {
+                errorTextEl.setText(msg);
+                textareaEl.addClass('quill-extra-body__input--invalid');
+                errorItemEl.show();
+            } else {
+                errorTextEl.setText('');
+                textareaEl.removeClass('quill-extra-body__input--invalid');
+                errorItemEl.hide();
+            }
+        };
+        lint();
     }
 
     /** Render the model list for a provider. */
