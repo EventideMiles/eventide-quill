@@ -40,7 +40,7 @@ export class QuillSidebarView extends ItemView {
     private activeTopTab: TopTab = 'linter';
     private activeLinterSubTab: LinterSubTab = 'results';
     private dashboardSubTab: 'overview' | 'pending' | 'settings' = 'overview';
-    private lorebookSubTab: 'document' | 'manuscript' | 'relationships' = 'document';
+    private lorebookSubTab: 'document' | 'manuscript' | 'relationships' | 'memories' = 'document';
     private container!: HTMLElement;
     private tabBar!: HTMLElement;
     private content!: HTMLElement;
@@ -534,14 +534,15 @@ export class QuillSidebarView extends ItemView {
         }
     }
 
-    /** Render the Lorebook sub-tab bar (Document / Manuscript / Relationships). */
+    /** Render the Lorebook sub-tab bar (Document / Manuscript / Relationships / Memories). */
     private renderLorebookSubTabBar() {
         const subTabBar = this.content.createDiv({ cls: 'quill-sidebar__subtab-bar' });
 
-        const tabs: { id: 'document' | 'manuscript' | 'relationships'; label: string }[] = [
+        const tabs: { id: 'document' | 'manuscript' | 'relationships' | 'memories'; label: string }[] = [
             { id: 'document', label: 'Document' },
             { id: 'manuscript', label: 'Manuscript' },
-            { id: 'relationships', label: 'Relationships' }
+            { id: 'relationships', label: 'Relationships' },
+            { id: 'memories', label: 'Memories' }
         ];
 
         for (const tab of tabs) {
@@ -556,6 +557,9 @@ export class QuillSidebarView extends ItemView {
                     void this.plugin.refreshLorebookManuscriptCoverage(true);
                 } else if (tab.id === 'relationships') {
                     this.plugin.refreshLorebookRelationships();
+                } else if (tab.id === 'memories') {
+                    // Memories sub-tab reads on each render — no plugin-level cache to refresh.
+                    this.render();
                 } else {
                     void this.plugin.refreshLorebookDocumentCoverage();
                 }
