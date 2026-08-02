@@ -149,6 +149,16 @@ describe('openAiSseDataToChunk', () => {
             choices: [{ delta: {}, finish_reason: 'stop' }]
         };
         expect(openAiSseDataToChunk(data)!.done).toBe(true);
+        expect(openAiSseDataToChunk(data)!.finishReason).toBe('stop');
+    });
+
+    it('surfaces finish_reason "length" so consumers can detect truncation', () => {
+        const data: OpenAiSseData = {
+            choices: [{ delta: { content: 'truncated mid-sent' }, finish_reason: 'length' }]
+        };
+        const chunk = openAiSseDataToChunk(data)!;
+        expect(chunk.done).toBe(true);
+        expect(chunk.finishReason).toBe('length');
     });
 
     it('routes reasoning_content to thought and drops content (mirror guard)', () => {
@@ -206,6 +216,12 @@ describe('ollamaNdjsonLineToChunk', () => {
     it('marks done when done is true', () => {
         const chunk = ollamaNdjsonLineToChunk({ done: true });
         expect(chunk.done).toBe(true);
+    });
+
+    it('surfaces done_reason as finishReason for truncation detection', () => {
+        const chunk = ollamaNdjsonLineToChunk({ done: true, done_reason: 'length' });
+        expect(chunk.done).toBe(true);
+        expect(chunk.finishReason).toBe('length');
     });
 
     it('synthesizes tool-call ids with content hash', () => {
@@ -611,6 +627,15 @@ describe('geminiSseDataToChunk', () => {
             candidates: [{ content: { role: 'model', parts: [{ text: 'done' }] }, finishReason: 'STOP' }]
         });
         expect(chunk!.done).toBe(true);
+        expect(chunk!.finishReason).toBe('STOP');
+    });
+
+    it('surfaces MAX_TOKENS so consumers can detect truncation', () => {
+        const chunk = geminiSseDataToChunk({
+            candidates: [{ content: { role: 'model', parts: [{ text: 'truncated' }] }, finishReason: 'MAX_TOKENS' }]
+        });
+        expect(chunk!.done).toBe(true);
+        expect(chunk!.finishReason).toBe('MAX_TOKENS');
     });
 
     it('synthesizes tool-call fragments from functionCall parts', () => {

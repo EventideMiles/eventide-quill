@@ -293,6 +293,13 @@ export interface ChatChunk {
     toolCalls?: ToolCallFragment[];
     /** True for the final chunk in the stream. */
     done: boolean;
+    /**
+     * The provider's terminal finish/stop reason when reported (OpenAI/Ollama
+     * `finish_reason`/`done_reason`, Anthropic `stop_reason`, Gemini
+     * `finishReason`). Consumers inspect it to detect a
+     * `length` / `max_tokens` / `MAX_TOKENS` truncation and continue.
+     */
+    finishReason?: string;
     model?: string;
     usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
     /**

@@ -261,7 +261,7 @@ src/
     image-utils.ts (decode → downscale → JPEG base64),
     co-writer-tool-prompts.ts (buildInternalToolsMessage + buildNetworkToolsMessage — extracted tool-guidance prompts with the shared tool-discipline clause),
     co-writer-utils.ts (pure helpers extracted from the monolith: sanitizeProse, summarizeToolArgs, the stopping-point trio, buildVaultContext, editorCursorOffset + sibling cursor helpers, stubDanglingToolCalls),
-    co-writer-streaming.ts (streamToolAwareRound — the one-round streaming+tool-fragment accumulator shared by discuss/coach/lorebook),
+    co-writer-streaming.ts (streamToolAwareRound — the streaming+tool-fragment accumulator shared by discuss/coach/lorebook; auto-continues a response truncated at max_tokens by sending a resume nudge and splicing the streamed text, bounded to MAX_CONTINUE_ROUNDS),
     co-writer.ts (~4.3k lines, largest file in repo — discuss/coach/fulfill/lorebook-coach
                   modes, each with its own tool loop; NOT streamWithTools),
     subagent-session.ts (SubagentSession — isolated-context lorebook batch runner

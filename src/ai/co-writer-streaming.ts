@@ -6,6 +6,14 @@ import {
     type ToolDefinition
 } from './provider';
 
+/** Finish reasons that mean the model hit the output-token cap mid-response. */
+const TRUNCATION_FINISH_REASONS = new Set(['length', 'max_tokens', 'MAX_TOKENS']);
+/** Cap on auto-continue rounds so a runaway model cannot loop forever. */
+const MAX_CONTINUE_ROUNDS = 3;
+/** Nudge sent to resume a truncated response: resume mid-sentence, no preamble/repeat. */
+const CONTINUE_NUDGE =
+    'Continue exactly where your previous message left off. Resume the text mid-sentence — do not repeat any text, do not acknowledge, and do not add a heading or an apology.';
+
 /**
  * Callbacks for {@link streamToolAwareRound}. The caller owns session state
  * (e.g. the thought buffer) and updates it inside these callbacks — the
@@ -47,67 +55,117 @@ export async function streamToolAwareRound(
     thought: string;
     toolCalls: ToolCallRequest[];
     thinkingBlocks?: AnthropicThinkingBlockKind[];
+    finishReason?: string;
 }> {
     let response = '';
     let thought = '';
     let sawReasoning = false;
     let thinkingBlocks: AnthropicThinkingBlockKind[] | undefined;
-    const fragmentBuffer = new Map<number, { id?: string; name?: string; arguments: string }>();
+    let finishReason: string | undefined;
+    let messages = options.messages;
+    const toolDefs = options.tools;
+    let continueRounds = 0;
 
-    const stream = provider.chatCompletion({
-        ...options,
-        toolChoice: options.tools && options.tools.length > 0 ? 'auto' : undefined
-    });
+    for (;;) {
+        // Per-round accumulators. `response`/`thought` accumulate across
+        // continuation rounds (the displayed text + returned reasoning are the
+        // union); `roundResponse` is this round's output only, used as the
+        // assistant message when nudging the model to continue.
+        let roundResponse = '';
+        let roundSawReasoning = sawReasoning;
+        let roundThinkingBlocks: AnthropicThinkingBlockKind[] | undefined;
+        let roundFinishReason: string | undefined;
+        const fragmentBuffer = new Map<number, { id?: string; name?: string; arguments: string }>();
 
-    for await (const chunk of stream) {
-        if (chunk.done) {
-            // Capture Anthropic thinking blocks carried on the terminal
-            // chunk so the caller can stamp them onto the assistant message
-            // (required for extended-thinking + tool-use replay).
-            if (chunk.thinkingBlocks) thinkingBlocks = chunk.thinkingBlocks;
-            break;
-        }
+        const stream = provider.chatCompletion({
+            messages,
+            model: options.model,
+            maxTokens: options.maxTokens,
+            temperature: options.temperature,
+            signal: options.signal,
+            tools: toolDefs,
+            toolChoice: toolDefs && toolDefs.length > 0 ? 'auto' : undefined
+        });
 
-        if (chunk.thought) {
-            if (!sawReasoning) {
-                sawReasoning = true;
-                response = '';
-                callbacks.onClear();
+        for await (const chunk of stream) {
+            if (chunk.done) {
+                // Capture Anthropic thinking blocks carried on the terminal
+                // chunk so the caller can stamp them onto the assistant message
+                // (required for extended-thinking + tool-use replay).
+                if (chunk.thinkingBlocks) roundThinkingBlocks = chunk.thinkingBlocks;
+                if (chunk.finishReason) roundFinishReason = chunk.finishReason;
+                break;
             }
-            thought += chunk.thought;
-            callbacks.onThoughtChange(thought);
-        }
 
-        if (chunk.text) {
-            response += chunk.text;
-            callbacks.onChunk(chunk.text);
-        }
+            if (chunk.thought) {
+                if (!roundSawReasoning) {
+                    roundSawReasoning = true;
+                    sawReasoning = true;
+                    response = '';
+                    roundResponse = '';
+                    callbacks.onClear();
+                }
+                thought += chunk.thought;
+                callbacks.onThoughtChange(thought);
+            }
 
-        if (chunk.toolCalls) {
-            for (const frag of chunk.toolCalls) {
-                const existing = fragmentBuffer.get(frag.index);
-                if (existing) {
-                    if (frag.id !== undefined) existing.id = frag.id;
-                    if (frag.name !== undefined) existing.name = frag.name;
-                    if (frag.arguments !== undefined) existing.arguments += frag.arguments;
-                } else {
-                    fragmentBuffer.set(frag.index, {
-                        id: frag.id,
-                        name: frag.name,
-                        arguments: frag.arguments ?? ''
-                    });
+            if (chunk.text) {
+                roundResponse += chunk.text;
+                response += chunk.text;
+                callbacks.onChunk(chunk.text);
+            }
+
+            if (chunk.toolCalls) {
+                for (const frag of chunk.toolCalls) {
+                    const existing = fragmentBuffer.get(frag.index);
+                    if (existing) {
+                        if (frag.id !== undefined) existing.id = frag.id;
+                        if (frag.name !== undefined) existing.name = frag.name;
+                        if (frag.arguments !== undefined) existing.arguments += frag.arguments;
+                    } else {
+                        fragmentBuffer.set(frag.index, {
+                            id: frag.id,
+                            name: frag.name,
+                            arguments: frag.arguments ?? ''
+                        });
+                    }
                 }
             }
         }
+
+        const toolCalls: ToolCallRequest[] = [...fragmentBuffer.entries()]
+            .sort(([a], [b]) => a - b)
+            .map(([idx, acc]) => ({
+                id: acc.id ?? `call_${idx}`,
+                name: acc.name ?? '',
+                arguments: acc.arguments
+            }));
+
+        // Auto-continue when the round was truncated by the output-token cap
+        // (`length` / `max_tokens` / `MAX_TOKENS`) AND produced no tool calls
+        // — a tool round is the caller's job to loop on, and a truncated tool
+        // call is a different failure. Append this round's output + a resume
+        // nudge and stream again; onChunk keeps splicing the continuation into
+        // the same chat bubble. Bounded so a runaway model cannot loop forever.
+        const truncated = !!roundFinishReason && TRUNCATION_FINISH_REASONS.has(roundFinishReason);
+        if (toolCalls.length === 0 && truncated && continueRounds < MAX_CONTINUE_ROUNDS) {
+            continueRounds++;
+            finishReason = roundFinishReason;
+            thinkingBlocks = roundThinkingBlocks ?? thinkingBlocks;
+            messages = [
+                ...messages,
+                {
+                    role: 'assistant',
+                    content: roundResponse,
+                    ...(roundThinkingBlocks ? { thinkingBlocks: roundThinkingBlocks } : {})
+                },
+                { role: 'user', content: CONTINUE_NUDGE }
+            ];
+            continue;
+        }
+
+        finishReason = roundFinishReason ?? finishReason;
+        thinkingBlocks = roundThinkingBlocks ?? thinkingBlocks;
+        return { response, thought, toolCalls, thinkingBlocks, finishReason };
     }
-
-    const toolCalls: ToolCallRequest[] = [...fragmentBuffer.entries()]
-        .sort(([a], [b]) => a - b)
-        .map(([idx, acc]) => ({
-            id: acc.id ?? `call_${idx}`,
-            name: acc.name ?? '',
-            arguments: acc.arguments
-        }));
-
-    return { response, thought, toolCalls, thinkingBlocks };
 }
