@@ -71,6 +71,7 @@ export async function* streamWithTools(
     let lastUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
     let lastModel: string | undefined;
     let lastThinkingBlocks: AnthropicThinkingBlockKind[] | undefined;
+    let lastFinishReason: string | undefined;
 
     for (let round = 0; round <= maxRounds; round++) {
         // After the last allowed tool round, run one forced final pass
@@ -94,6 +95,7 @@ export async function* streamWithTools(
             // Anthropic thinking blocks ride on the terminal chunk; capture
             // them so the assistant message below can replay them next round.
             if (chunk.thinkingBlocks) lastThinkingBlocks = chunk.thinkingBlocks;
+            if (chunk.finishReason) lastFinishReason = chunk.finishReason;
 
             if (chunk.text) {
                 assistantText += chunk.text;
@@ -136,6 +138,7 @@ export async function* streamWithTools(
             const doneChunk: ChatChunk = { text: '', done: true };
             if (lastModel) doneChunk.model = lastModel;
             if (lastUsage) doneChunk.usage = lastUsage;
+            if (lastFinishReason) doneChunk.finishReason = lastFinishReason;
             yield doneChunk;
             return;
         }
@@ -197,5 +200,6 @@ export async function* streamWithTools(
     const doneChunk: ChatChunk = { text: '', done: true };
     if (lastModel) doneChunk.model = lastModel;
     if (lastUsage) doneChunk.usage = lastUsage;
+    if (lastFinishReason) doneChunk.finishReason = lastFinishReason;
     yield doneChunk;
 }

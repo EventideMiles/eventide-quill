@@ -129,5 +129,11 @@ export const RULE_INFO: Record<string, RuleInfo> = {
         description:
             'Flags consecutive paragraphs or passages with high word overlap (70%+) — a common artifact when AI edits accidentally duplicate or near-duplicate text.',
         example: 'Check whether the duplicated text was left behind by an AI edit and remove the redundant copy.'
+    },
+    'crutch-words': {
+        name: 'Crutch words',
+        description:
+            'Flags your personal overused words once each appears more than the configured limit. The list is user-defined (settings), so it catches the words you overuse rather than generic AI tells.',
+        example: 'Add your crutch words in settings; each is flagged once it crosses your limit.'
     }
 };

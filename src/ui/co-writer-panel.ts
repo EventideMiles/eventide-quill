@@ -989,6 +989,7 @@ export class CoWriterPanel extends AbstractChatPanel {
             this.compacting = true;
             compactBtn.disabled = true;
             compactBtn.title = 'Compacting\u2026';
+            compactBtn.setAttribute('aria-label', 'Compacting\u2026');
             try {
                 await this.onCompact?.();
             } finally {
@@ -1079,6 +1080,12 @@ export class CoWriterPanel extends AbstractChatPanel {
         const svg = el.querySelector('svg');
         if (!svg || svg.children.length === 0) {
             el.textContent = fallback;
+        }
+        // Icon-only buttons have no text content for screen readers; mirror the
+        // tooltip into an accessible name so the control is announced.
+        if (!el.getAttribute('aria-label')) {
+            const title = el.getAttribute('title');
+            if (title) el.setAttribute('aria-label', title);
         }
     }
 

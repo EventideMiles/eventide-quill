@@ -320,4 +320,35 @@ describe('Settings UI', () => {
         await waitForPageStack(['AI providers']);
         await closeSettings();
     });
+
+    it('renders the "+ add command" affordance and appends a slash command (regression: add buttons were lost in the 2.1.0 declarative migration)', async () => {
+        await openPluginSettings();
+        await openSettingsPage('Lorebook');
+
+        const before = await readSettings<{ slashCommands: unknown[] }>();
+        expect(before.slashCommands.length).to.equal(0);
+
+        // The add button lives inside the settings page element (a separate
+        // document on desktop), so scope the query via getCurrentPageEl — same
+        // pattern as clickWelcomeChecklistButton.
+        const clicked = await browser.execute(() => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const s = (window as unknown as { app: any }).app.setting;
+            const pageEl = typeof s.getCurrentPageEl === 'function' ? s.getCurrentPageEl() : null;
+            const btn = pageEl?.querySelector('.quill-slash-command-list__add') as HTMLElement | null;
+            if (!btn) return false;
+            btn.click();
+            return true;
+        });
+        expect(clicked, 'could not find the "+ add command" button — selector drift').to.equal(true);
+
+        await browser.waitUntil(
+            async () => {
+                const s = await readSettings<{ slashCommands: unknown[] }>();
+                return s.slashCommands.length === 1;
+            },
+            { timeout: 8000, timeoutMsg: 'slash command was not added after clicking "+ add command"' }
+        );
+        await closeSettings();
+    });
 });

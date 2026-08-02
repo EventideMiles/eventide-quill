@@ -73,6 +73,9 @@ export interface EventideQuillSettings {
     enableAiWrapUps: boolean;
     enableGremlins: boolean;
     enableAggressiveGremlins: boolean;
+    enableCrutchWords: boolean;
+    crutchWords: string[];
+    crutchWordThreshold: number;
     lintOnSave: boolean;
     aiProviders: ProviderConfig[];
     aiDefaultChatProvider: string;
@@ -87,6 +90,8 @@ export interface EventideQuillSettings {
      * not reappear in this vault.
      */
     anthropicBanRiskAcknowledged: boolean;
+    /** One-time acknowledgment of the copy-editor (grammar) persona's caveat. */
+    copyEditorAck: boolean;
     transformTemperature: number;
     transformVaultContext: boolean;
     transformMaxOutputTokens: number;
@@ -120,7 +125,7 @@ export interface EventideQuillSettings {
      * markers (keeping `quillAnchorId` so rewind still works), and a free
      * refinement pass runs before the AI compaction fallback when a
      * conversation approaches the threshold. Off = pure AI compaction only
-     * (the pre-2.0.1 behavior). See `src/ai/context-refinement.ts`.
+     * (the pre-2.1.0 behavior). See `src/ai/context-refinement.ts`.
      */
     contextRefinementEnabled: boolean;
     contextIncludeVaultContext: boolean;
@@ -255,14 +260,14 @@ export interface EventideQuillSettings {
      * returns a length-aware message routing the model to `edit_note` /
      * `insert_note` / `append_to_note` instead. Prevents duplicate notes that
      * strand [[wikilinks]] pointing at the original. Off = unconditional
-     * create (the pre-2.0.1 behavior) — escape hatch.
+     * create (the pre-2.1.0 behavior) — escape hatch.
      */
     lorePreferEditOverCreate: boolean;
     /**
      * When on, follow-up discussion of a review report runs through the
      * co-writer session machinery with editing tools enabled, so the editor
      * can propose specific, reviewable inline-diff edits (not just advisory
-     * prose). Off preserves the pre-2.0.1 text-only chat behavior. Default:
+     * prose). Off preserves the pre-2.1.0 text-only chat behavior. Default:
      * on.
      */
     reviewSuggestedEditsEnabled: boolean;
@@ -316,6 +321,9 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     enableAiWrapUps: true,
     enableGremlins: true,
     enableAggressiveGremlins: false,
+    enableCrutchWords: true,
+    crutchWords: [],
+    crutchWordThreshold: 5,
     lintOnSave: false,
     aiProviders: [
         {
@@ -336,6 +344,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     aiDefaultEmbedProvider: 'local-default/local-embed',
     aiDefaultImageProvider: '',
     anthropicBanRiskAcknowledged: false,
+    copyEditorAck: false,
     transformTemperature: 1.0,
     transformVaultContext: true,
     transformMaxOutputTokens: 4096,
@@ -757,11 +766,16 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     private renderBridgeContent(containerEl: HTMLElement, render: (content: HTMLElement) => void): void {
         containerEl.empty();
         containerEl.addClass('quill-settings-root');
-        render(containerEl);
+        // Render into a scroll-area so a long bridge page (provider fields +
+        // model list + test buttons) scrolls. Without this wrapper the content
+        // sat directly inside .quill-settings-root (overflow: hidden) and was
+        // clipped — the provider/model data below the fold was unreachable.
+        const scroll = containerEl.createDiv({ cls: 'quill-settings__scroll-area' });
+        render(scroll);
         // Wrap runs of settings under each heading into bordered sections,
-        // matching the pre-2.0.1 grouped look. Each tab renders into a single
+        // matching the pre-2.1.0 grouped look. Each tab renders into a single
         // `.quill-settings-content-*` div created by its render method.
-        const content = containerEl.querySelector<HTMLElement>('[class*="quill-settings-content-"]');
+        const content = scroll.querySelector<HTMLElement>('[class*="quill-settings-content-"]');
         if (content) this.groupSettingsByHeading(content);
         containerEl.createDiv({ cls: 'quill-settings__footer' });
     }
@@ -769,7 +783,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     /**
      * Re-render the currently-open bridge page in place after a mutation
      * (add/remove provider, slash command, folder override, etc.). Replaces the
-     * pre-2.0.1 `this.refreshBridge()` full re-render. Falls back to `update()` when
+     * pre-2.1.0 `this.refreshBridge()` full re-render. Falls back to `update()` when
      * no bridge page is active (e.g. at the root definition list). As tabs
      * convert to declarative controls (Phases 2–6), their mutation handlers
      * switch to `this.update()` / `this.refreshDomState()` and this method is
@@ -909,8 +923,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             removeBtn.addEventListener('click', () => {
                 this.plugin.settings.lorebookFolders = this.plugin.settings.lorebookFolders.filter((f) => f !== folder);
                 delete this.plugin.settings.lorebookFolderTypes[folder];
-                void this.plugin.saveSettings();
-                this.renderLorebookFolders(container);
+                void this.plugin.saveSettings().then(() => this.update());
             });
         }
     }
@@ -1533,7 +1546,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         ];
     }
 
-    /** Restore-defaults action for the General page (resets across all tabs, matching pre-2.0.1 behavior). */
+    /** Restore-defaults action for the General page (resets across all tabs, matching pre-2.1.0 behavior). */
     private async restoreGeneralDefaults(): Promise<void> {
         const s = this.plugin.settings;
         const d = DEFAULT_SETTINGS;
@@ -1748,16 +1761,51 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 name: 'Slash commands',
                 desc: 'Shortcut snippets for the co-writer chat input. Typing "/" at the start of a line opens a picker listing matching commands; choosing one inserts the body into the input, fully editable before sending. Empty list (the default) disables the picker. Names must be kebab-case (lowercase letters, digits, hyphens; must start with a letter).',
                 render: (setting) => {
-                    const container = setting.controlEl.createDiv({ cls: 'quill-slash-command-list' });
-                    this.renderSlashCommands(container);
+                    const wrap = setting.controlEl.createDiv({ cls: 'quill-slash-command-list' });
+                    /** (Re)render the command cards plus the add-command affordance. */
+                    const draw = () => {
+                        wrap.empty();
+                        this.renderSlashCommands(wrap);
+                        const addBtn = wrap.createEl('button', {
+                            text: '+ add command',
+                            cls: 'quill-slash-command-list__add'
+                        });
+                        addBtn.addEventListener('click', () => {
+                            this.plugin.settings.slashCommands.push({ name: '', description: '', body: '' });
+                            void this.plugin.saveSettings().then(() => this.update());
+                        });
+                    };
+                    draw();
                 }
             },
             {
                 name: 'Lorebook folders',
                 desc: 'Folders scanned for lore entries. Any Markdown file under one of these folders is treated as a lore entry. Set a per-folder type default so every file inherits it without frontmatter; leave as mixed to type files individually via the quill-type key.',
                 render: (setting) => {
-                    const container = setting.controlEl.createDiv({ cls: 'quill-folder-overrides-list' });
-                    this.renderLorebookFolders(container);
+                    const wrap = setting.controlEl.createDiv({ cls: 'quill-folder-overrides-list' });
+                    /** (Re)render the folder rows plus the add-folder affordance. */
+                    const draw = () => {
+                        wrap.empty();
+                        this.renderLorebookFolders(wrap);
+                        const addBtn = wrap.createEl('button', {
+                            text: '+ add folder',
+                            cls: 'quill-folder-overrides-list__add'
+                        });
+                        addBtn.addEventListener('click', () => {
+                            const folders = this.getVaultFolders().filter(
+                                (f) => !this.plugin.settings.lorebookFolders.includes(f)
+                            );
+                            new FolderSuggestModal(this.app, folders, (folder) => {
+                                if (this.plugin.settings.lorebookFolders.includes(folder)) {
+                                    new Notice('Folder is already a lorebook folder.');
+                                    return;
+                                }
+                                this.plugin.settings.lorebookFolders.push(folder);
+                                void this.plugin.saveSettings().then(() => this.update());
+                            }).open();
+                        });
+                    };
+                    draw();
                 }
             }
         ];
@@ -1778,6 +1826,24 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 .filter((s) => s.length > 0);
             void this.plugin.saveSettings();
             input.value = this.plugin.settings.lorebookFandomWikis.join(', ');
+        });
+    }
+
+    /** Comma-separated text field bound to the crutch-words list setting. */
+    private renderCrutchWordsField(setting: Setting): void {
+        const input = setting.controlEl.createEl('input', {
+            type: 'text',
+            cls: 'quill-crutch-words-input',
+            attr: { placeholder: 'Just, really, that' }
+        });
+        input.value = this.plugin.settings.crutchWords.join(', ');
+        input.addEventListener('blur', () => {
+            this.plugin.settings.crutchWords = input.value
+                .split(',')
+                .map((s) => s.trim().toLowerCase())
+                .filter((s) => s.length > 0);
+            void this.plugin.saveSettings();
+            input.value = this.plugin.settings.crutchWords.join(', ');
         });
     }
 
@@ -1931,6 +1997,32 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             },
             {
                 type: 'group',
+                heading: 'Crutch words',
+                items: [
+                    {
+                        name: 'Crutch-word detection',
+                        desc: 'Flag your personal overused words (defined below) once each exceeds the limit. On by default; does nothing until you add words.',
+                        control: { type: 'toggle', key: 'enableCrutchWords' }
+                    },
+                    {
+                        name: 'Crutch words',
+                        desc: 'Comma-separated words you tend to overuse (e.g. "just, really, that"). Each is flagged once it appears more than the limit below.',
+                        render: (setting) => this.renderCrutchWordsField(setting)
+                    },
+                    {
+                        name: 'Crutch-word limit',
+                        desc: 'A crutch word is flagged once it appears more than this many times in the document.',
+                        control: {
+                            type: 'number',
+                            key: 'crutchWordThreshold',
+                            min: 1,
+                            validate: (v) => (v >= 1 ? undefined : 'Value must be a number >= 1')
+                        }
+                    }
+                ]
+            },
+            {
+                type: 'group',
                 heading: 'AI detection',
                 items: [
                     {
@@ -2021,6 +2113,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         s.enableAiWrapUps = d.enableAiWrapUps;
         s.enableGremlins = d.enableGremlins;
         s.enableAggressiveGremlins = d.enableAggressiveGremlins;
+        s.enableCrutchWords = d.enableCrutchWords;
+        s.crutchWords = d.crutchWords;
+        s.crutchWordThreshold = d.crutchWordThreshold;
         await this.plugin.saveSettings();
         this.update();
     }
@@ -2361,6 +2456,88 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }
                 })
             );
+
+        // Extra request parameters (advanced) — arbitrary JSON merged into every
+        // chat-completion request body. Power-user escape hatch for gateway-
+        // specific knobs (reasoning_effort, GLM thinking config, …). Mirrors the
+        // raw addEventListener-on-blur idiom used by the surrounding fields.
+        // "Extra request parameters" is a normal setting row (description | textarea)
+        // like every other field. Lint feedback lives in a SEPARATE setting box
+        // below ("Extra request parameters errors") that only appears when the
+        // JSON is malformed, so the main field's layout never gets distorted.
+        let lint: () => void;
+        let textareaEl: HTMLTextAreaElement | null = null;
+        new Setting(containerEl)
+            .setName('Extra request parameters')
+            .setDesc(
+                'Advanced. A JSON object merged into every chat request body — e.g. ' +
+                    '{"reasoning_effort": "high"} or {"thinking": {"type": "enabled"}}. ' +
+                    'Reserved keys (model, messages, stream) are ignored.'
+            )
+            .addTextArea((area) => {
+                textareaEl = area.inputEl;
+                area.setPlaceholder('{"reasoning_effort": "high"}').setValue(provider.extraRequestBody ?? '');
+                area.inputEl.rows = 3;
+                area.inputEl.addEventListener('input', () => lint());
+                // Save the raw text unconditionally — malformed input persists for
+                // the writer to fix but is never applied (the provider parses +
+                // merges only valid JSON at request time).
+                area.inputEl.addEventListener('blur', () => {
+                    provider.extraRequestBody = area.inputEl.value.trim() || undefined;
+                    void this.plugin.saveSettings();
+                });
+            })
+            .then((s) => {
+                // Gemini's body is nested (generationConfig, systemInstruction), so
+                // the merge is shallow — point advanced users at the schema.
+                if (provider.type === 'gemini') {
+                    s.descEl.append(' Gemini uses a nested generationConfig — see ');
+                    s.descEl.createEl('a', {
+                        href: 'https://ai.google.dev/api/generate-content',
+                        text: "Google's documentation",
+                        attr: { target: '_blank', rel: 'noreferrer noopener' }
+                    });
+                    s.descEl.append(' for the full schema.');
+                }
+            });
+
+        // Dedicated errors box — a separate, read-only setting that only appears
+        // when the JSON above is malformed. Display-only lint; the raw text is
+        // always saved and the provider never applies malformed values.
+        const errorSetting = new Setting(containerEl)
+            .setName('Extra request parameters errors')
+            .setDesc('Only shows content when the JSON above does not parse as a valid JSON object.');
+        const errorTextEl = errorSetting.controlEl.createSpan({
+            cls: 'quill-extra-body__error-text',
+            attr: { 'aria-live': 'polite' }
+        });
+        const errorItemEl = errorSetting.settingEl;
+        errorItemEl.hide();
+        lint = (): void => {
+            if (!textareaEl) return;
+            const raw = textareaEl.value.trim();
+            let msg: string | null = null;
+            if (raw !== '') {
+                try {
+                    const parsed: unknown = JSON.parse(raw);
+                    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+                        msg = 'Must be a JSON object (not an array or a bare value).';
+                    }
+                } catch (e) {
+                    msg = `Invalid JSON: ${e instanceof Error ? e.message : 'parse error'}`;
+                }
+            }
+            if (msg) {
+                errorTextEl.setText(msg);
+                textareaEl.addClass('quill-extra-body__input--invalid');
+                errorItemEl.show();
+            } else {
+                errorTextEl.setText('');
+                textareaEl.removeClass('quill-extra-body__input--invalid');
+                errorItemEl.hide();
+            }
+        };
+        lint();
     }
 
     /** Render the model list for a provider. */
@@ -2829,7 +3006,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     },
                     {
                         name: 'Proactive editor chat',
-                        desc: 'After a report finishes, the follow-up discussion runs through the co-writer session with editing tools enabled, so the editor can propose specific, reviewable inline-diff edits (not just advisory prose). Every proposed edit still requires your approval before it reaches the vault. Turn off to keep the pre-2.0.1 text-only chat behavior. Default: on.',
+                        desc: 'After a report finishes, the follow-up discussion runs through the co-writer session with editing tools enabled, so the editor can propose specific, reviewable inline-diff edits (not just advisory prose). Every proposed edit still requires your approval before it reaches the vault. Turn off to keep the pre-2.1.0 text-only chat behavior. Default: on.',
                         control: { type: 'toggle', key: 'reviewSuggestedEditsEnabled' }
                     },
                     {

@@ -190,6 +190,8 @@ interface Delta {
     content?: string;
     /** Reasoning / thinking content from OpenAI reasoning models (o1, o3) or compatible. */
     reasoning_content?: string;
+    /** Reasoning field used by some OpenAI-compatible gateways (e.g. NanoGPT's default endpoint) and OpenAI's reasoning-summary API. */
+    reasoning?: string;
     /** Generic thinking field used by some OpenAI-compatible providers. */
     thinking?: string;
     /**
@@ -259,6 +261,8 @@ interface OllamaChatLine {
         }>;
     };
     done?: boolean;
+    /** Ollama's terminal reason (`stop`, `length`, …) — surfaced as the chunk's finishReason. */
+    done_reason?: string;
     model?: string;
 }
 
@@ -491,7 +495,7 @@ export function openAiSseDataToChunk(parsed: OpenAiSseData): ChatChunk | null {
     if (!firstChoice) return null;
 
     const delta = firstChoice.delta;
-    const reasoning = delta?.reasoning_content ?? delta?.thinking ?? '';
+    const reasoning = delta?.reasoning_content ?? delta?.reasoning ?? delta?.thinking ?? '';
 
     // Per the OpenAI reasoning-model spec, `reasoning_content` (or `thinking`)
     // and `content` are mutually exclusive: during the reasoning phase content
@@ -514,7 +518,8 @@ export function openAiSseDataToChunk(parsed: OpenAiSseData): ChatChunk | null {
     const chunk: ChatChunk = {
         text,
         thought: reasoning || undefined,
-        done: finishReason !== null && finishReason !== undefined
+        done: finishReason !== null && finishReason !== undefined,
+        finishReason: finishReason ?? undefined
     };
 
     // Extract streamed tool-call fragments. The model emits tool_calls in
@@ -555,6 +560,9 @@ export function ollamaNdjsonLineToChunk(raw: Record<string, unknown>): ChatChunk
     const done = line.done === true;
 
     const chunk: ChatChunk = { text, done };
+    if (done && typeof line.done_reason === 'string') {
+        chunk.finishReason = line.done_reason;
+    }
 
     // Ollama emits completed tool_calls as a single message with parsed
     // argument objects (not streamed as JSON string fragments like OpenAI).
@@ -871,7 +879,8 @@ export class AnthropicStreamAggregator {
                 const stopReason = delta?.stop_reason;
                 const chunk: ChatChunk = {
                     text: '',
-                    done: stopReason !== null && stopReason !== undefined
+                    done: stopReason !== null && stopReason !== undefined,
+                    finishReason: stopReason ?? undefined
                 };
                 if (usage && typeof usage.output_tokens === 'number') {
                     chunk.usage = {
@@ -999,7 +1008,8 @@ export function geminiSseDataToChunk(parsed: GeminiSseData): ChatChunk | null {
     const parts = candidate.content?.parts ?? [];
     const chunk: ChatChunk = {
         text: '',
-        done: candidate.finishReason !== null && candidate.finishReason !== undefined
+        done: candidate.finishReason !== null && candidate.finishReason !== undefined,
+        finishReason: candidate.finishReason ?? undefined
     };
 
     const toolCalls: ToolCallFragment[] = [];

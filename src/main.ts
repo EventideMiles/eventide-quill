@@ -38,6 +38,7 @@ import {
     entityFromId
 } from './utils/frontmatter';
 import { buildFeedbackMessages, getChunkedFeedback, getPersonaById, getFeedback } from './ai/feedback';
+import { continueReviewStream } from './ai/co-writer-streaming';
 import { getReviewDiscussSystemPrompt } from './ai/prompts';
 import {
     type FeedbackJob,
@@ -70,6 +71,8 @@ import { MobileStreamWatchdog, notifyMobileStreamRisk } from './ai/mobile-watchd
 import { resolveSessionsDir, listSessions, saveSession, loadSession, deleteSession } from './ai/conversation-store';
 import { SessionListModal } from './ui/session-list-modal';
 import { ConfirmModal } from './ui/confirm-modal';
+import { FilenameModal } from './ui/filename-modal';
+import { ensureAncestors, exportPluginData, importPluginData, parsePluginDataBundle } from './core/portability';
 import { ReportSuggestModal } from './ui/report-suggest-modal';
 import type { InputMode } from './ui/co-writer-panel';
 import {
@@ -785,6 +788,12 @@ export default class EventideQuillPlugin extends Plugin {
                                 await this.requestAnalysis('voice-drift', 'auto');
                             });
                         });
+                        sub.addItem((s) => {
+                            s.setTitle('Lore consistency').onClick(async () => {
+                                await this.openReviewPanel();
+                                await this.requestAnalysis('lore-consistency', 'auto');
+                            });
+                        });
                     });
                 }
 
@@ -1061,6 +1070,27 @@ export default class EventideQuillPlugin extends Plugin {
         });
 
         this.addCommand({
+            id: 'quill-analyze-lore-consistency',
+            name: 'Quill: Analyze lore consistency',
+            editorCallback: async (editor) => {
+                await this.openReviewPanel();
+                await this.requestAnalysis('lore-consistency', 'auto');
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-export-plugin-data',
+            name: 'Quill: Export plugin data (backup)',
+            callback: () => this.exportPluginDataCommand()
+        });
+
+        this.addCommand({
+            id: 'quill-import-plugin-data',
+            name: 'Quill: Import plugin data (restore)',
+            callback: () => this.importPluginDataCommand()
+        });
+
+        this.addCommand({
             id: 'quill-insert-directive',
             name: 'Quill: Insert inline directive',
             editorCallback: (editor) => {
@@ -1256,7 +1286,10 @@ export default class EventideQuillPlugin extends Plugin {
             enableAiHedging: ai && this.settings.enableAiHedging,
             enableAiWrapUps: ai && this.settings.enableAiWrapUps,
             enableGremlins: this.settings.enableGremlins,
-            enableAggressiveGremlins: this.settings.enableAggressiveGremlins
+            enableAggressiveGremlins: this.settings.enableAggressiveGremlins,
+            enableCrutchWords: prose && this.settings.enableCrutchWords,
+            crutchWords: this.settings.crutchWords,
+            crutchWordThreshold: this.settings.crutchWordThreshold
         });
 
         const lines = text.split('\n');
@@ -1949,6 +1982,51 @@ export default class EventideQuillPlugin extends Plugin {
             this.settings.contextMaxCharsPerFile
         );
         return messages;
+    }
+
+    /**
+     * Resolve the reference-context messages shared by the review-chat paths
+     * (critical-analysis chat + manuscript-analysis chat): active-document
+     * text, lore-reference + chat-context paths, folder-context items, then the
+     * reference file messages and the compaction budget figures. Editorial
+     * feedback is NOT a consumer — it layers manuscriptPaths + vaultContext.
+     */
+    private async resolveReviewReferenceContext(
+        provider: AiProvider
+    ): Promise<{ referenceMessages: ChatMessage[]; injectedTokens: number; maxTokens: number; compactPct: number }> {
+        const chatContextPaths = this.lintPanel?.reviewChatContextFiles() ?? [];
+
+        const activeFile = this.app.workspace.getActiveFile();
+        const documentText = activeFile ? await this.getFileText(activeFile.path) : '';
+
+        const { regularPaths: resolvedRefPaths, messages: refEmbedMessages } = await this.resolveEmbedPathsToMessages(
+            [...this.loreReferencePaths(), ...chatContextPaths],
+            'Reference file',
+            documentText,
+            this.settings.contextMaxCharsPerFile
+        );
+
+        try {
+            if (this.currentAssembly) {
+                await this.resolveFolderContextItems(this.currentAssembly, documentText);
+            }
+        } catch {
+            // Best-effort
+        }
+
+        const refFileMessages = await readVaultFiles(
+            this.app.vault,
+            resolvedRefPaths,
+            'Reference file',
+            this.settings.contextMaxCharsPerFile
+        );
+        const referenceMessages = [...refEmbedMessages, ...refFileMessages];
+        const injectedTokens = estimateTokens(referenceMessages);
+
+        const maxTokens = provider.config.maxContextTokens;
+        const compactPct = Math.max(50, Math.min(95, this.settings.contextCompactAtPercent)) / 100;
+
+        return { referenceMessages, injectedTokens, maxTokens, compactPct };
     }
 
     /**
@@ -3358,21 +3436,27 @@ export default class EventideQuillPlugin extends Plugin {
         this.manuscriptAnalysisCurrentMessages = [...prepared.existingMessages];
 
         try {
-            const stream = getManuscriptAnalysis(chat.provider, mode, {
-                mode,
-                metrics: prepared.metrics,
-                manuscriptText: prepared.manuscriptText,
-                manuscriptName: prepared.manuscriptName,
-                vaultContext,
-                plotMapText,
-                customInstruction,
-                model: chat.modelId,
-                signal: this.manuscriptAnalysisAbort.signal,
-                temperature: this.settings.manuscriptAnalysisTemperature,
-                maxTokens: this.settings.manuscriptAnalysisMaxOutputTokens,
-                existingMessages: prepared.existingMessages,
-                compacted: prepared.wasCompacted
-            });
+            const provider = chat.provider;
+            const abortSignal = this.manuscriptAnalysisAbort.signal;
+            const stream = continueReviewStream(
+                (msgs) =>
+                    getManuscriptAnalysis(provider, mode, {
+                        mode,
+                        metrics: prepared.metrics,
+                        manuscriptText: prepared.manuscriptText,
+                        manuscriptName: prepared.manuscriptName,
+                        vaultContext,
+                        plotMapText,
+                        customInstruction,
+                        model: chat.modelId,
+                        signal: abortSignal,
+                        temperature: this.settings.manuscriptAnalysisTemperature,
+                        maxTokens: this.settings.manuscriptAnalysisMaxOutputTokens,
+                        existingMessages: msgs,
+                        compacted: prepared.wasCompacted
+                    }),
+                prepared.existingMessages
+            );
             let fullResponse = '';
             for await (const chunk of stream) {
                 if (chunk.done) {
@@ -3819,40 +3903,9 @@ export default class EventideQuillPlugin extends Plugin {
         this.lintPanel?.reviewChatStartLoading();
 
         // Chat context files are injected fresh as system messages on every call.
-        const chatContextPaths = this.lintPanel?.reviewChatContextFiles() ?? [];
-
-        // Get the active document text for embedding queries.
-        const activeFile = this.app.workspace.getActiveFile();
-        const documentText = activeFile ? await this.getFileText(activeFile.path) : '';
-
-        // Resolve any embed-prefixed paths in chat context files.
-        const { regularPaths: resolvedRefPaths, messages: refEmbedMessages } = await this.resolveEmbedPathsToMessages(
-            [...this.loreReferencePaths(), ...chatContextPaths],
-            'Reference file',
-            documentText,
-            this.settings.contextMaxCharsPerFile
+        const { referenceMessages, injectedTokens, maxTokens, compactPct } = await this.resolveReviewReferenceContext(
+            chat.provider
         );
-
-        // Resolve folder context items in the assembly.
-        try {
-            if (this.currentAssembly) {
-                await this.resolveFolderContextItems(this.currentAssembly, documentText);
-            }
-        } catch {
-            // Best-effort
-        }
-
-        const refFileMessages = await readVaultFiles(
-            this.app.vault,
-            resolvedRefPaths,
-            'Reference file',
-            this.settings.contextMaxCharsPerFile
-        );
-        const referenceMessages = [...refEmbedMessages, ...refFileMessages];
-        const injectedTokens = estimateTokens(referenceMessages);
-
-        const maxTokens = chat.provider.config.maxContextTokens;
-        const compactPct = Math.max(50, Math.min(95, this.settings.contextCompactAtPercent)) / 100;
 
         const hypothetical = [...this.manuscriptAnalysisCurrentMessages, { role: 'user' as const, content: message }];
         const conversationTokens = estimateTokens(hypothetical) + injectedTokens;
@@ -3919,18 +3972,28 @@ export default class EventideQuillPlugin extends Plugin {
                 }
             }
         } catch (err: unknown) {
-            if (err instanceof Error && err.name === 'AbortError') {
-                await this.lintPanel?.reviewChatFinished();
-                return;
-            }
-            const msg = err instanceof Error ? err.message : String(err);
-            await this.lintPanel?.reviewChatError(msg);
-            new Notice('Quill: Manuscript analysis chat failed.');
+            if (await this.handleReviewChatError(err, 'Quill: Manuscript analysis chat failed.')) return;
         } finally {
             if (this.manuscriptAnalysisAbort === myAbort) {
                 this.manuscriptAnalysisAbort = null;
             }
         }
+    }
+
+    /**
+     * Handle a review-chat stream error: on abort, finish the panel and signal
+     * the caller to return; otherwise surface the message via the panel + a
+     * Notice. Returns true for an abort so the caller can early-return.
+     */
+    private async handleReviewChatError(err: unknown, noticeText: string): Promise<boolean> {
+        if (err instanceof Error && err.name === 'AbortError') {
+            await this.lintPanel?.reviewChatFinished();
+            return true;
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        await this.lintPanel?.reviewChatError(msg);
+        new Notice(noticeText);
+        return false;
     }
 
     /**
@@ -4106,25 +4169,31 @@ export default class EventideQuillPlugin extends Plugin {
         this.analysisCurrentMessages = [...initialWithLore];
 
         try {
-            const stream = getAnalysis(chat.provider, mode, {
-                text: resolved.text,
-                scope: resolved.scope,
-                lineStart: resolved.lineStart,
-                lineEnd: resolved.lineEnd,
-                fileName: resolved.fileName,
-                vaultContext,
-                voiceMarker,
-                characters,
-                plotThreads,
-                model: chat.modelId,
-                signal: this.analysisAbort.signal,
-                customInstruction,
-                temperature: this.settings.analysisTemperature,
-                maxTokens: this.settings.analysisMaxOutputTokens,
-                existingMessages: initialWithLore,
-                registry: analysisRegistry,
-                ctx: { plugin: this, signal: this.analysisAbort.signal }
-            });
+            const provider = chat.provider;
+            const abortSignal = this.analysisAbort.signal;
+            const stream = continueReviewStream(
+                (msgs) =>
+                    getAnalysis(provider, mode, {
+                        text: resolved.text,
+                        scope: resolved.scope,
+                        lineStart: resolved.lineStart,
+                        lineEnd: resolved.lineEnd,
+                        fileName: resolved.fileName,
+                        vaultContext,
+                        voiceMarker,
+                        characters,
+                        plotThreads,
+                        model: chat.modelId,
+                        signal: abortSignal,
+                        customInstruction,
+                        temperature: this.settings.analysisTemperature,
+                        maxTokens: this.settings.analysisMaxOutputTokens,
+                        existingMessages: msgs,
+                        registry: analysisRegistry,
+                        ctx: { plugin: this, signal: abortSignal }
+                    }),
+                initialWithLore
+            );
 
             let fullResponse = '';
             for await (const chunk of stream) {
@@ -4183,40 +4252,9 @@ export default class EventideQuillPlugin extends Plugin {
         // Chat context files (reference material added mid-conversation) are
         // injected fresh as system messages on every call, mirroring feedback.
         // They are NOT stored in analysisCurrentMessages so they survive compaction.
-        const chatContextPaths = this.lintPanel?.reviewChatContextFiles() ?? [];
-
-        // Get the active document text for embedding queries.
-        const activeFile = this.app.workspace.getActiveFile();
-        const documentText = activeFile ? await this.getFileText(activeFile.path) : '';
-
-        // Resolve any embed-prefixed paths in chat context files.
-        const { regularPaths: resolvedRefPaths, messages: refEmbedMessages } = await this.resolveEmbedPathsToMessages(
-            [...this.loreReferencePaths(), ...chatContextPaths],
-            'Reference file',
-            documentText,
-            this.settings.contextMaxCharsPerFile
+        const { referenceMessages, injectedTokens, maxTokens, compactPct } = await this.resolveReviewReferenceContext(
+            chat.provider
         );
-
-        // Resolve folder context items in the assembly.
-        try {
-            if (this.currentAssembly) {
-                await this.resolveFolderContextItems(this.currentAssembly, documentText);
-            }
-        } catch {
-            // Best-effort
-        }
-
-        const refFileMessages = await readVaultFiles(
-            this.app.vault,
-            resolvedRefPaths,
-            'Reference file',
-            this.settings.contextMaxCharsPerFile
-        );
-        const referenceMessages = [...refEmbedMessages, ...refFileMessages];
-        const injectedTokens = estimateTokens(referenceMessages);
-
-        const maxTokens = chat.provider.config.maxContextTokens;
-        const compactPct = Math.max(50, Math.min(95, this.settings.contextCompactAtPercent)) / 100;
 
         // Hypothetical total INCLUDING reference files + new user message.
         const hypothetical = [...this.analysisCurrentMessages, { role: 'user' as const, content: message }];
@@ -4276,13 +4314,7 @@ export default class EventideQuillPlugin extends Plugin {
                 }
             }
         } catch (err: unknown) {
-            if (err instanceof Error && err.name === 'AbortError') {
-                await this.lintPanel?.reviewChatFinished();
-                return;
-            }
-            const msg = err instanceof Error ? err.message : String(err);
-            await this.lintPanel?.reviewChatError(msg);
-            new Notice('Quill: Analysis chat failed.');
+            if (await this.handleReviewChatError(err, 'Quill: Analysis chat failed.')) return;
         } finally {
             if (this.analysisAbort === myAnalysisAbort) {
                 this.analysisAbort = null;
@@ -4997,6 +5029,112 @@ export default class EventideQuillPlugin extends Plugin {
         return result;
     }
 
+    /** Show the one-time skepticism caveat the first time the copy-editor (grammar) persona runs. */
+    private maybeShowCopyEditorNotice(personaId: string): void {
+        if (personaId === 'copy-editor' && !this.settings.copyEditorAck) {
+            this.settings.copyEditorAck = true;
+            void this.saveSettings();
+            new Notice(
+                'Quill: The copy editor gives advisory grammar notes. Great novelists often break these rules — treat the suggestions skeptically.',
+                8000
+            );
+        }
+    }
+
+    /** Export settings + all writer-owned sidecars to a vault backup file. */
+    private exportPluginDataCommand(): void {
+        new FilenameModal(
+            this.app,
+            'eventide-quill-backup.json',
+            async (path) => {
+                try {
+                    const bundle = await exportPluginData(this.app.vault.adapter, this.pluginDataDir, this.manifest.id);
+                    const dest = normalizePath(path);
+                    /** Write the bundle and show the success notice. */
+                    const writeBundle = async (): Promise<void> => {
+                        await ensureAncestors(this.app.vault.adapter, dest);
+                        await this.app.vault.adapter.write(dest, JSON.stringify(bundle, null, 2));
+                        new Notice(
+                            `Quill: Exported ${Object.keys(bundle.files).length} file(s) to ${dest}. ` +
+                                'This backup contains API keys in plaintext — store it securely.',
+                            8000
+                        );
+                    };
+                    if (await this.app.vault.adapter.exists(dest)) {
+                        new ConfirmModal(
+                            this.app,
+                            'Overwrite existing file?',
+                            `"${dest}" already exists. Overwrite it with this backup?`,
+                            writeBundle
+                        ).open();
+                    } else {
+                        await writeBundle();
+                    }
+                } catch (e) {
+                    console.error('Quill export failed', e);
+                    new Notice('Quill: Export failed — see console for details.');
+                }
+            },
+            'Export plugin data'
+        ).open();
+    }
+
+    /** Restore settings + writer-owned sidecars from a vault backup file (destructive). */
+    private importPluginDataCommand(): void {
+        new FilenameModal(
+            this.app,
+            'eventide-quill-backup.json',
+            async (path) => {
+                const src = normalizePath(path);
+                try {
+                    if (!(await this.app.vault.adapter.exists(src))) {
+                        new Notice(`Quill: Backup file not found at ${src}.`);
+                        return;
+                    }
+                    const text = await this.app.vault.adapter.read(src);
+                    const bundle = parsePluginDataBundle(text);
+                    if (bundle.pluginId && bundle.pluginId !== this.manifest.id) {
+                        new Notice(
+                            `Quill: This backup was created for plugin "${bundle.pluginId}", not "${this.manifest.id}". Import aborted.`
+                        );
+                        return;
+                    }
+                    const count = Object.keys(bundle.files).length;
+                    new ConfirmModal(
+                        this.app,
+                        'Import plugin data?',
+                        `This overwrites ALL plugin data in this vault (${count} files: settings, saved conversations, feedback queue, dashboards, writing goals, fandom cache). This cannot be undone — export a backup first if unsure.`,
+                        async () => {
+                            try {
+                                const written = await importPluginData(
+                                    this.app.vault.adapter,
+                                    this.pluginDataDir,
+                                    bundle
+                                );
+                                await this.loadSettings();
+                                this.rebuildProviders();
+                                new Notice(
+                                    `Quill: Imported ${written} file(s). Reload the plugin (disable + enable, or restart Obsidian) so conversations and the queue appear.`,
+                                    10000
+                                );
+                            } catch (e) {
+                                console.error('Quill import failed', e);
+                                new Notice(
+                                    'Quill: Import failed — ' + (e instanceof Error ? e.message : 'see console')
+                                );
+                            }
+                        },
+                        'Overwrite'
+                    ).open();
+                } catch (e) {
+                    console.error('Quill import failed', e);
+                    new Notice('Quill: Import failed — ' + (e instanceof Error ? e.message : 'see console'));
+                }
+            },
+            'Import plugin data'
+        ).open();
+    }
+
     /**
      * Request AI feedback on the context manuscripts with the selected persona.
      * Streams the response into the Results sub-tab.
@@ -5006,6 +5144,7 @@ export default class EventideQuillPlugin extends Plugin {
      * never pollutes token counts.
      */
     async requestFeedback(personaId: string, customInstruction?: string): Promise<void> {
+        this.maybeShowCopyEditorNotice(personaId);
         const persona = personaId === 'custom' ? undefined : getPersonaById(personaId);
         if (personaId !== 'custom' && !persona) {
             new Notice('Quill: Unknown feedback persona.');
@@ -5158,16 +5297,24 @@ export default class EventideQuillPlugin extends Plugin {
                           }
                       });
                   })()
-                : getFeedback(chat.provider, persona, {
-                      vaultContext,
-                      narrativePreset: this.settings.narrativeVoicePreset,
-                      model: chat.modelId,
-                      temperature: this.settings.analysisTemperature,
-                      maxTokens: this.settings.analysisMaxOutputTokens,
-                      signal: this.feedbackAbort.signal,
-                      customInstruction,
-                      existingMessages: apiMessages
-                  });
+                : (() => {
+                      const provider = chat.provider;
+                      const abortSignal = this.feedbackAbort.signal;
+                      return continueReviewStream(
+                          (msgs) =>
+                              getFeedback(provider, persona, {
+                                  vaultContext,
+                                  narrativePreset: this.settings.narrativeVoicePreset,
+                                  model: chat.modelId,
+                                  temperature: this.settings.analysisTemperature,
+                                  maxTokens: this.settings.analysisMaxOutputTokens,
+                                  signal: abortSignal,
+                                  customInstruction,
+                                  existingMessages: msgs
+                              }),
+                          apiMessages
+                      );
+                  })();
 
             let fullResponse = '';
             for await (const chunk of stream) {
@@ -5440,6 +5587,7 @@ export default class EventideQuillPlugin extends Plugin {
      * scheduler runs it single-slot FIFO when the slot is free.
      */
     async submitFeedbackJob(personaId: string, focusPrompt?: string): Promise<void> {
+        this.maybeShowCopyEditorNotice(personaId);
         if (!(await this.gateQueueSubmit())) return;
         const job = await this.buildDocumentFeedbackJob(personaId, focusPrompt);
         if (!job) return;
@@ -6203,13 +6351,7 @@ export default class EventideQuillPlugin extends Plugin {
                 }
             }
         } catch (err: unknown) {
-            if (err instanceof Error && err.name === 'AbortError') {
-                await this.lintPanel?.reviewChatFinished();
-                return;
-            }
-            const msg = err instanceof Error ? err.message : String(err);
-            await this.lintPanel?.reviewChatError(msg);
-            new Notice('Quill: Chat response failed.');
+            if (await this.handleReviewChatError(err, 'Quill: Chat response failed.')) return;
         } finally {
             // Only clear feedbackAbort if it still matches our controller,
             // so a newer request's controller is not accidentally cleared.

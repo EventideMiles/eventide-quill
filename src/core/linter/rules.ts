@@ -196,6 +196,45 @@ function echoPhrasePosition(
     return posAtOffset(text, offset);
 }
 
+/** Detect repeated sentence-starts within one paragraph and push echo findings into `results`. */
+function detectEchoesInParagraph(
+    sentences: ReturnType<typeof splitSentences>,
+    paraStartOffset: number,
+    text: string,
+    results: LintResult[]
+): void {
+    const starts = sentences.map((s) => {
+        const words = s.text.match(/\b\w+\b/g);
+        return words ? words.slice(0, 2).join(' ').toLowerCase() : '';
+    });
+
+    const startCount = new Map<string, number[]>();
+    starts.forEach((start, idx) => {
+        if (!start) return;
+        const indices = startCount.get(start) || [];
+        indices.push(idx);
+        startCount.set(start, indices);
+    });
+
+    for (const [start, indices] of startCount) {
+        if (indices.length >= 2) {
+            const idx = indices[0];
+            if (idx === undefined) continue;
+            const first = sentences[idx];
+            if (!first) continue;
+            const pos = echoPhrasePosition(text, paraStartOffset, first.start);
+            results.push({
+                line: pos.line,
+                column: pos.column,
+                length: start.length,
+                message: `Echo: "${start}" starts ${indices.length} sentences in this paragraph.`,
+                severity: 'info',
+                rule: 'echoes'
+            });
+        }
+    }
+}
+
 /** Flag paragraphs where multiple sentences start with the same two words. */
 export function checkEchoes(text: string): LintResult[] {
     const results: LintResult[] = [];
@@ -214,37 +253,7 @@ export function checkEchoes(text: string): LintResult[] {
         const paraStartOffset = match.index - paraText.length + leadingTrim;
         const sentences = splitSentences(trimmed, ABBREVIATIONS);
         if (sentences.length < ECHO_THRESHOLD) continue;
-
-        const starts = sentences.map((s) => {
-            const words = s.text.match(/\b\w+\b/g);
-            return words ? words.slice(0, 2).join(' ').toLowerCase() : '';
-        });
-
-        const startCount = new Map<string, number[]>();
-        starts.forEach((start, idx) => {
-            if (!start) return;
-            const indices = startCount.get(start) || [];
-            indices.push(idx);
-            startCount.set(start, indices);
-        });
-
-        for (const [start, indices] of startCount) {
-            if (indices.length >= 2) {
-                const idx = indices[0];
-                if (idx === undefined) continue;
-                const first = sentences[idx];
-                if (!first) continue;
-                const pos = echoPhrasePosition(text, paraStartOffset, first.start);
-                results.push({
-                    line: pos.line,
-                    column: pos.column,
-                    length: start.length,
-                    message: `Echo: "${start}" starts ${indices.length} sentences in this paragraph.`,
-                    severity: 'info',
-                    rule: 'echoes'
-                });
-            }
-        }
+        detectEchoesInParagraph(sentences, paraStartOffset, text, results);
     }
 
     const tail = text.slice(searchFrom);
@@ -254,36 +263,7 @@ export function checkEchoes(text: string): LintResult[] {
         const paraStartOffset = searchFrom + leadingTrim;
         const sentences = splitSentences(remaining, ABBREVIATIONS);
         if (sentences.length >= ECHO_THRESHOLD) {
-            const starts = sentences.map((s) => {
-                const words = s.text.match(/\b\w+\b/g);
-                return words ? words.slice(0, 2).join(' ').toLowerCase() : '';
-            });
-
-            const startCount = new Map<string, number[]>();
-            starts.forEach((start, idx) => {
-                if (!start) return;
-                const indices = startCount.get(start) || [];
-                indices.push(idx);
-                startCount.set(start, indices);
-            });
-
-            for (const [start, indices] of startCount) {
-                if (indices.length >= 2) {
-                    const idx = indices[0];
-                    if (idx === undefined) continue;
-                    const first = sentences[idx];
-                    if (!first) continue;
-                    const pos = echoPhrasePosition(text, paraStartOffset, first.start);
-                    results.push({
-                        line: pos.line,
-                        column: pos.column,
-                        length: start.length,
-                        message: `Echo: "${start}" starts ${indices.length} sentences in this paragraph.`,
-                        severity: 'info',
-                        rule: 'echoes'
-                    });
-                }
-            }
+            detectEchoesInParagraph(sentences, paraStartOffset, text, results);
         }
     }
 
@@ -746,6 +726,54 @@ export function checkDuplicateText(text: string): LintResult[] {
         if (overlap >= DUPLICATE_OVERLAP_THRESHOLD) {
             reportAt(i + 2, overlap, 'passage');
         }
+    }
+
+    return results;
+}
+
+/** Escape RegExp special characters in a user-supplied crutch word. */
+function escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Flag user-defined crutch words that appear more than `threshold` times across
+ * the whole document. Unlike the static qualifier / AI-cliché rules (which flag
+ * every instance of a fixed list), this surfaces the writer's personal
+ * overused words — once a word's count exceeds the threshold, every occurrence
+ * is flagged so the writer sees each spot that needs attention. An empty list
+ * or counts at or below the threshold produce no results.
+ */
+export function checkCrutchWords(text: string, words: string[], threshold: number = 5): LintResult[] {
+    const sanitized = words.map((w) => w.trim().toLowerCase()).filter((w) => w.length > 0);
+    if (sanitized.length === 0) return [];
+
+    const pattern = new RegExp(`\\b(${sanitized.map(escapeRegExp).join('|')})\\b`, 'gi');
+    const counts = new Map<string, number>();
+    const hits: { index: number; matched: string; key: string }[] = [];
+    let match: RegExpExecArray | null;
+
+    while ((match = pattern.exec(text)) !== null) {
+        const captured = match[1];
+        if (!captured) continue;
+        const key = captured.toLowerCase();
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+        hits.push({ index: match.index, matched: match[0], key });
+    }
+
+    const results: LintResult[] = [];
+    for (const { index, matched, key } of hits) {
+        const count = counts.get(key) ?? 0;
+        if (count <= threshold) continue;
+        const pos = posAtOffset(text, index);
+        results.push({
+            line: pos.line,
+            column: pos.column,
+            length: matched.length,
+            message: `Crutch word "${key}" appears ${count} times (limit ${threshold}). Consider varying or cutting.`,
+            severity: 'warning',
+            rule: 'crutch-words'
+        });
     }
 
     return results;

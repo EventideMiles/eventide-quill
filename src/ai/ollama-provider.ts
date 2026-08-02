@@ -7,6 +7,7 @@ import {
     EmbedOptions,
     EmbedResult,
     ModelInfo,
+    mergeExtraRequestBody,
     ProviderConfig,
     ProviderError,
     resolveModel
@@ -126,6 +127,7 @@ export class OllamaProvider implements AiProvider {
             }));
         }
 
+        mergeExtraRequestBody(bodyObj, this.config.extraRequestBody);
         const body = JSON.stringify(bodyObj);
 
         const headers = { 'Content-Type': 'application/json' };

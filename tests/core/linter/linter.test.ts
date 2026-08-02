@@ -96,4 +96,26 @@ describe('lint orchestrator', () => {
         expect(rules.has('telling-vs-showing')).toBe(true);
         expect(rules.has('adverbs')).toBe(true);
     });
+
+    it('runs crutch-words check when enabled and over threshold', () => {
+        const text = 'just just just just just just';
+        expect(
+            lint(text, { enableCrutchWords: true, crutchWords: ['just'], crutchWordThreshold: 5 }).some(
+                (r) => r.rule === 'crutch-words'
+            )
+        ).toBe(true);
+    });
+
+    it('does NOT flag crutch words when disabled even over threshold', () => {
+        const text = 'just just just just just just';
+        expect(
+            lint(text, { enableCrutchWords: false, crutchWords: ['just'], crutchWordThreshold: 5 }).some(
+                (r) => r.rule === 'crutch-words'
+            )
+        ).toBe(false);
+    });
+
+    it('runs crutch-words by default but produces nothing with an empty list', () => {
+        expect(lint('just just just just just just').some((r) => r.rule === 'crutch-words')).toBe(false);
+    });
 });

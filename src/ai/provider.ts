@@ -29,6 +29,43 @@ export interface ProviderConfig {
      * Currently Anthropic-only; reserved for future OpenAI reasoning models.
      */
     thinkingBudgetTokens?: number;
+    /**
+     * Advanced: arbitrary JSON object as a raw string, merged into every chat-
+     * completion request body for this provider. Saved verbatim so in-progress
+     * edits persist even while malformed (the settings field soft-lints them),
+     * but the provider parses + merges only valid JSON objects — malformed
+     * input never reaches a request. Power-user escape hatch for gateway-
+     * specific knobs the plugin doesn't model — e.g. `{"reasoning_effort":
+     * "high"}` (OpenAI / NanoGPT), GLM `{"thinking":{"type":"enabled",
+     * "clear_thinking":false}}`. Reserved identity keys (`model`, `messages`,
+     * `stream`) are stripped before merge.
+     */
+    extraRequestBody?: string;
+}
+
+/** Body keys a provider always sets itself; never overridable via extraRequestBody. */
+const RESERVED_BODY_KEYS = new Set(['model', 'messages', 'stream']);
+
+/**
+ * Merge a provider's advanced {@link ProviderConfig.extraRequestBody} (raw JSON
+ * string) into a request body. Parses the string; on malformed input or a
+ * non-object value it does nothing — the field is saved as-is for the writer to
+ * fix, but malformed parameters never reach a request. Reserved identity keys
+ * (`model`, `messages`, `stream`) are stripped so a typo can't break the
+ * request. Shallow merge — the supplied value wins for any non-reserved key.
+ */
+export function mergeExtraRequestBody(body: Record<string, unknown>, extra: string | undefined): void {
+    if (!extra || extra.trim() === '') return;
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(extra);
+    } catch {
+        return;
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return;
+    for (const [key, value] of Object.entries(parsed)) {
+        if (!RESERVED_BODY_KEYS.has(key)) body[key] = value;
+    }
 }
 
 /**
@@ -293,6 +330,13 @@ export interface ChatChunk {
     toolCalls?: ToolCallFragment[];
     /** True for the final chunk in the stream. */
     done: boolean;
+    /**
+     * The provider's terminal finish/stop reason when reported (OpenAI/Ollama
+     * `finish_reason`/`done_reason`, Anthropic `stop_reason`, Gemini
+     * `finishReason`). Consumers inspect it to detect a
+     * `length` / `max_tokens` / `MAX_TOKENS` truncation and continue.
+     */
+    finishReason?: string;
     model?: string;
     usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
     /**

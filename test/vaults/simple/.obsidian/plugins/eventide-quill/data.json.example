@@ -20,6 +20,9 @@
     "enableAiWrapUps": true,
     "enableGremlins": true,
     "enableAggressiveGremlins": false,
+    "enableCrutchWords": true,
+    "crutchWords": [],
+    "crutchWordThreshold": 5,
     "lintOnSave": false,
     "aiProviders": [
         {
@@ -39,6 +42,7 @@
     "aiDefaultEmbedProvider": "lm-studio/local-model",
     "aiDefaultImageProvider": "",
     "anthropicBanRiskAcknowledged": false,
+    "copyEditorAck": false,
     "transformTemperature": 1.0,
     "transformVaultContext": true,
     "transformMaxOutputTokens": 4096,

@@ -61,6 +61,10 @@ Copy `main.js`, `manifest.json`, and `styles.css` to `VaultFolder/.obsidian/plug
 
 Styles are authored in SCSS and compiled to `styles.css` — edit the sources under `styles/`, not the build output. See `AGENTS.md` for the full architecture, conventions, and tooling.
 
+### Windows (without WSL)
+
+The dev toolchain targets Linux/macOS and Ubuntu CI. The `test:e2e:live` script uses inline env-var syntax (`E2E_LIVE=1`) that doesn't work in `cmd.exe`. If you develop on native Windows (not WSL), PRs adding [`cross-env`](https://www.npmjs.com/package/cross-env) to wrap that script are welcome — the maintainer doesn't have a Windows device to test against.
+
 ## Architecture
 
 - **Deterministic first, AI second.** Prose linter, character extraction, and metrics run locally without AI cost or latency.
@@ -68,7 +72,7 @@ Styles are authored in SCSS and compiled to `styles.css` — edit the sources un
 - **Pluggable providers.** Ollama by default, plus any OpenAI-compatible endpoint (LM Studio is the primary local test target; OpenAI and other compatible servers work too). Anthropic Claude and Google Gemini ship native provider implementations (prompt caching + extended thinking on Anthropic; safety-filter reporting on Gemini) — though their OpenAI-compatible endpoints work too if you prefer.
 - **Capability-based model roles.** Models declare a role (`chat`, `embed`, `image`, or `chat-image`); the right model is resolved per task — a non-vision model never receives pixels.
 - **Subagents for context isolation.** Heavy batch tasks run in a fresh context and return a summary, so the main conversation stays lean and responsive — local-model friendly (one inference at a time).
-- **Mobile as a first-class target.** The plugin ships with `isDesktopOnly: false`, `requestUrl` transport, and touch-target sizing — but it has not yet been smoke-tested on a real mobile device. A Capacitor install + on-device pass is scheduled for immediately after the 2.0.1 release; report mobile issues against the `2.0.1` milestone.
+- **Mobile as a first-class target.** The plugin ships with `isDesktopOnly: false`, `requestUrl` transport, and touch-target sizing, and has been smoke-tested on a real mobile device — issues found were addressed across the 1.x releases. Report mobile issues against the latest milestone.
 
 ## Network & privacy
 

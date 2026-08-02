@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+    mergeExtraRequestBody,
     roleSatisfies,
     resolveModel,
     buildUrl,
@@ -126,5 +127,61 @@ describe('ProviderError', () => {
 
     it('is an Error instance', () => {
         expect(new ProviderError('msg', 0, '')).toBeInstanceOf(Error);
+    });
+});
+
+describe('mergeExtraRequestBody', () => {
+    it('parses and merges a valid JSON object into the body', () => {
+        const body: Record<string, unknown> = { model: 'x', temperature: 0.7 };
+        mergeExtraRequestBody(body, '{"reasoning_effort":"high","thinking":{"type":"enabled"}}');
+        expect(body).toEqual({
+            model: 'x',
+            temperature: 0.7,
+            reasoning_effort: 'high',
+            thinking: { type: 'enabled' }
+        });
+    });
+
+    it('strips reserved identity keys (model, messages, stream)', () => {
+        const body: Record<string, unknown> = { model: 'real', messages: [], stream: true };
+        mergeExtraRequestBody(
+            body,
+            '{"model":"override","messages":[{"role":"user"}],"stream":false,"reasoning_effort":"low"}'
+        );
+        expect(body.model).toBe('real');
+        expect(body.messages).toEqual([]);
+        expect(body.stream).toBe(true);
+        expect(body).toHaveProperty('reasoning_effort', 'low');
+    });
+
+    it('is a no-op on malformed JSON (saved as-is by the UI, never applied)', () => {
+        const body: Record<string, unknown> = { model: 'x' };
+        mergeExtraRequestBody(body, '{"reasoning_effort":'); // truncated / missing brace
+        mergeExtraRequestBody(body, '{bad, commas,,}'); // bad commas + unquoted keys
+        mergeExtraRequestBody(body, '{"a": 1} trailing'); // trailing junk
+        expect(body).toEqual({ model: 'x' });
+    });
+
+    it('is a no-op when the parsed value is not an object', () => {
+        const body: Record<string, unknown> = { model: 'x' };
+        mergeExtraRequestBody(body, '[1, 2, 3]');
+        mergeExtraRequestBody(body, '5');
+        mergeExtraRequestBody(body, '"a string"');
+        expect(body).toEqual({ model: 'x' });
+    });
+
+    it('is a no-op on undefined / empty / whitespace-only input', () => {
+        const body: Record<string, unknown> = { model: 'x' };
+        mergeExtraRequestBody(body, undefined);
+        mergeExtraRequestBody(body, '');
+        mergeExtraRequestBody(body, '   ');
+        expect(body).toEqual({ model: 'x' });
+    });
+
+    it('overwrites existing non-reserved keys (shallow merge, last wins)', () => {
+        const body: Record<string, unknown> = { temperature: 0.7, top_p: 0.9 };
+        mergeExtraRequestBody(body, '{"temperature":0.5}');
+        expect(body.temperature).toBe(0.5);
+        expect(body.top_p).toBe(0.9);
     });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getReviewDiscussSystemPrompt } from '../../src/ai/prompts';
+import { getAnalysisModePrompt, getReviewDiscussSystemPrompt } from '../../src/ai/prompts';
 
 describe('getReviewDiscussSystemPrompt', () => {
     it('includes the tool-discipline clause', () => {
@@ -108,5 +108,28 @@ describe('getReviewDiscussSystemPrompt', () => {
             expect(prompt).not.toMatch(/Critical lens:/);
             expect(prompt).not.toMatch(/Manuscript lens:/);
         });
+    });
+});
+
+describe('getAnalysisModePrompt — lore-consistency', () => {
+    it('focuses on lorebook contradictions and instructs tool verification', () => {
+        const prompt = getAnalysisModePrompt('lore-consistency', { toolsAvailable: true });
+        expect(prompt).toMatch(/lorebook/i);
+        expect(prompt).toContain('vault_lookup');
+        expect(prompt).toContain('lore_siblings');
+    });
+
+    it('inherits the line-number grounding and verify-and-cite base', () => {
+        const prompt = getAnalysisModePrompt('lore-consistency', { toolsAvailable: true });
+        expect(prompt).toMatch(/absolute line number/i);
+        expect(prompt).toContain('grep_notes');
+    });
+
+    it('omits lore_siblings/vault_lookup references when tools are unavailable', () => {
+        const prompt = getAnalysisModePrompt('lore-consistency', { toolsAvailable: false });
+        expect(prompt).toMatch(/lorebook/i);
+        expect(prompt).not.toContain('lore_siblings');
+        expect(prompt).not.toContain('vault_lookup');
+        expect(prompt).toContain('supplied context');
     });
 });
