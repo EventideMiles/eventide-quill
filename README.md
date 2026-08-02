@@ -61,6 +61,10 @@ Copy `main.js`, `manifest.json`, and `styles.css` to `VaultFolder/.obsidian/plug
 
 Styles are authored in SCSS and compiled to `styles.css` — edit the sources under `styles/`, not the build output. See `AGENTS.md` for the full architecture, conventions, and tooling.
 
+### Windows (without WSL)
+
+The dev toolchain targets Linux/macOS and Ubuntu CI. The `test:e2e:live` script uses inline env-var syntax (`E2E_LIVE=1`) that doesn't work in `cmd.exe`. If you develop on native Windows (not WSL), PRs adding [`cross-env`](https://www.npmjs.com/package/cross-env) to wrap that script are welcome — the maintainer doesn't have a Windows device to test against.
+
 ## Architecture
 
 - **Deterministic first, AI second.** Prose linter, character extraction, and metrics run locally without AI cost or latency.
