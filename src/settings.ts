@@ -923,8 +923,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             removeBtn.addEventListener('click', () => {
                 this.plugin.settings.lorebookFolders = this.plugin.settings.lorebookFolders.filter((f) => f !== folder);
                 delete this.plugin.settings.lorebookFolderTypes[folder];
-                void this.plugin.saveSettings();
-                this.renderLorebookFolders(container);
+                void this.plugin.saveSettings().then(() => this.update());
             });
         }
     }
@@ -1762,16 +1761,51 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 name: 'Slash commands',
                 desc: 'Shortcut snippets for the co-writer chat input. Typing "/" at the start of a line opens a picker listing matching commands; choosing one inserts the body into the input, fully editable before sending. Empty list (the default) disables the picker. Names must be kebab-case (lowercase letters, digits, hyphens; must start with a letter).',
                 render: (setting) => {
-                    const container = setting.controlEl.createDiv({ cls: 'quill-slash-command-list' });
-                    this.renderSlashCommands(container);
+                    const wrap = setting.controlEl.createDiv({ cls: 'quill-slash-command-list' });
+                    /** (Re)render the command cards plus the add-command affordance. */
+                    const draw = () => {
+                        wrap.empty();
+                        this.renderSlashCommands(wrap);
+                        const addBtn = wrap.createEl('button', {
+                            text: '+ add command',
+                            cls: 'quill-slash-command-list__add'
+                        });
+                        addBtn.addEventListener('click', () => {
+                            this.plugin.settings.slashCommands.push({ name: '', description: '', body: '' });
+                            void this.plugin.saveSettings().then(() => this.update());
+                        });
+                    };
+                    draw();
                 }
             },
             {
                 name: 'Lorebook folders',
                 desc: 'Folders scanned for lore entries. Any Markdown file under one of these folders is treated as a lore entry. Set a per-folder type default so every file inherits it without frontmatter; leave as mixed to type files individually via the quill-type key.',
                 render: (setting) => {
-                    const container = setting.controlEl.createDiv({ cls: 'quill-folder-overrides-list' });
-                    this.renderLorebookFolders(container);
+                    const wrap = setting.controlEl.createDiv({ cls: 'quill-folder-overrides-list' });
+                    /** (Re)render the folder rows plus the add-folder affordance. */
+                    const draw = () => {
+                        wrap.empty();
+                        this.renderLorebookFolders(wrap);
+                        const addBtn = wrap.createEl('button', {
+                            text: '+ add folder',
+                            cls: 'quill-folder-overrides-list__add'
+                        });
+                        addBtn.addEventListener('click', () => {
+                            const folders = this.getVaultFolders().filter(
+                                (f) => !this.plugin.settings.lorebookFolders.includes(f)
+                            );
+                            new FolderSuggestModal(this.app, folders, (folder) => {
+                                if (this.plugin.settings.lorebookFolders.includes(folder)) {
+                                    new Notice('Folder is already a lorebook folder.');
+                                    return;
+                                }
+                                this.plugin.settings.lorebookFolders.push(folder);
+                                void this.plugin.saveSettings().then(() => this.update());
+                            }).open();
+                        });
+                    };
+                    draw();
                 }
             }
         ];
