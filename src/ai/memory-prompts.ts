@@ -1,11 +1,8 @@
 import type { ChatMessage } from './provider';
 import type EventideQuillPlugin from '../main';
-import { buildIndex, parseMemoryFile, type MemoryEntry } from '../core/memories/memory-file';
-import {
-    GLOBAL_MEMORY_SCOPE,
-    memoryFilePath,
-    resolveActiveScopeKey
-} from '../core/memories/memory-scope';
+import { buildIndex, type MemoryEntry } from '../core/memories/memory-file';
+import { GLOBAL_MEMORY_SCOPE, resolveActiveScopeKey } from '../core/memories/memory-scope';
+import { readMemoryFile } from '../core/memories/memory-store';
 
 /**
  * Memory-related system-prompt content: the auto-injected index of saved
@@ -93,55 +90,48 @@ export const MEMORY_DISCIPLINE_CLAUSE = [
 export async function buildMemoryMessage(plugin: EventideQuillPlugin): Promise<ChatMessage | null> {
     if (!plugin.settings.memoriesEnabled) return null;
 
-    const activeKey = resolveActiveScopeKey(plugin);
-    const memoriesFolder = plugin.settings.memoriesFolder;
-
     const sections: string[] = [];
-    if (activeKey !== GLOBAL_MEMORY_SCOPE) {
-        const activeSection = await readScopeSection(plugin, activeKey, memoriesFolder);
-        if (activeSection) sections.push(activeSection);
+    // readMemoryFile resolves the active scope via the same chain used by the
+    // tools (manuscript folder → active file → global). It also runs the
+    // re-tokenize pass (assignMissingIds + best-effort write-back) so
+    // writer-added sections get IDs minted before they're shown to the model.
+    const activeResult = await readMemoryFile(plugin, resolveActiveScopeKey(plugin));
+    if (activeResult.scopeKey !== GLOBAL_MEMORY_SCOPE && activeResult.file.entries.length > 0) {
+        const section = formatSection(plugin, activeResult.scopeKey, activeResult.file.entries);
+        if (section) sections.push(section);
     }
-    const globalSection = await readScopeSection(plugin, GLOBAL_MEMORY_SCOPE, memoriesFolder);
-    if (globalSection) sections.push(globalSection);
+    const globalResult = await readMemoryFile(plugin, GLOBAL_MEMORY_SCOPE);
+    if (globalResult.file.entries.length > 0) {
+        const section = formatSection(plugin, GLOBAL_MEMORY_SCOPE, globalResult.file.entries);
+        if (section) sections.push(section);
+    }
 
     if (sections.length === 0) return null;
     return { role: 'system', content: sections.join('\n\n') };
 }
 
 /**
- * Read a scope's memory file and format its entries as a prompt section.
- * Returns null when the file doesn't exist or has no entries. Runs the
- * re-tokenize pass on read (so writer-added sections get IDs minted
- * before being shown to the model).
+ * Format a scope's entries as a prompt section. Returns null when there are
+ * no entries to show (e.g. when the cap is 0). Uses the writer's settings
+ * for full-vs-preview injection and the entry cap.
  */
-async function readScopeSection(
+function formatSection(
     plugin: EventideQuillPlugin,
     scopeKey: string,
-    memoriesFolder: string
-): Promise<string | null> {
-    const path = memoryFilePath(scopeKey, memoriesFolder);
-    const file = plugin.app.vault.getAbstractFileByPath(path);
-    if (!file || typeof file !== 'object' || !('path' in file)) return null;
-
-    let raw: string;
-    try {
-        // Use the same type-narrowing approach as memory-store.readMemoryFile.
-        // Local import would cycle, so call vault.cachedRead directly.
-        raw = await plugin.app.vault.cachedRead(file as never);
-    } catch {
-        return null;
-    }
-
-    const parsed = parseMemoryFile(raw);
-    if (parsed.entries.length === 0) return null;
-
+    entries: readonly MemoryEntry[]
+): string | null {
+    if (entries.length === 0) return null;
     const label = scopeKey === GLOBAL_MEMORY_SCOPE ? 'Global' : scopeKey;
     const fullInject = plugin.settings.memoriesFullInject;
+    // Slice unconditionally so a cap of 0 yields no entries (matches
+    // buildIndex's behavior). Negative caps (treated as 0 by Math.max) also
+    // produce empty output rather than showing everything.
     const cap = Math.max(0, plugin.settings.memoriesMaxIndexEntries);
+    const shown = entries.slice(0, cap);
+    if (shown.length === 0) return null;
+    const truncated = entries.length > shown.length;
 
     const lines: string[] = [`## Memories (${label})`];
-    const shown = cap > 0 ? parsed.entries.slice(0, cap) : parsed.entries;
-    const truncated = parsed.entries.length > shown.length;
 
     if (fullInject) {
         for (const entry of shown) {
@@ -149,14 +139,14 @@ async function readScopeSection(
         }
     } else {
         const index = buildIndex(shown, shown.length);
-        for (let i = 0; i < index.length; i++) {
-            lines.push(formatPreview(index[i]!, index[i]!.id));
+        for (const entry of index) {
+            lines.push(formatPreview(entry));
         }
     }
 
     if (truncated) {
         lines.push(
-            `_(...${parsed.entries.length - shown.length} more — use \`recall_memory\` to see the rest of the "${label}" pool)_`
+            `_(...${entries.length - shown.length} more — use \`recall_memory\` to see the rest of the "${label}" pool)_`
         );
     }
     return lines.join('\n');
@@ -177,13 +167,10 @@ function formatFull(entry: MemoryEntry): string {
 }
 
 /** Format an entry as a hybrid-retrieval preview bullet (heading + first sentence). */
-function formatPreview(
-    entry: { id: string; heading: string; preview: string; tags: readonly string[] },
-    id: string
-): string {
+function formatPreview(entry: { id: string; heading: string; preview: string; tags: readonly string[] }): string {
     const tagsSuffix = entry.tags.length > 0 ? ` _[${entry.tags.map((t) => `#${t}`).join(', ')}]_` : '';
     if (!entry.preview) {
-        return `- **${entry.heading}** — ^${id}${tagsSuffix}`;
+        return `- **${entry.heading}** — ^${entry.id}${tagsSuffix}`;
     }
-    return `- **${entry.heading}** — ^${id}${tagsSuffix}\n  ${entry.preview}`;
+    return `- **${entry.heading}** — ^${entry.id}${tagsSuffix}\n  ${entry.preview}`;
 }

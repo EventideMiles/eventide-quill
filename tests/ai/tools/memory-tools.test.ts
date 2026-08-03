@@ -373,4 +373,81 @@ This one has an ID already.
         // The existing Tagged entry keeps its ID 005.
         expect(updated).toContain('^quill-mem-005');
     });
+
+    it('save after re-tokenize round-trips both the minted ID and the new entry', async () => {
+        // Seed an untagged writer-added section, then save a new memory via
+        // the tool. The save should preserve the minted ID for the untagged
+        // section (write-back completes before save) AND append the new entry.
+        const initial = `# Memories — Global
+
+## Manual entry
+
+Writer-typed, no ID yet.
+`;
+        const { ctx, state } = makeCtx({
+            files: { 'Memories/_global.memories.md': initial }
+        });
+        const saveResult = await saveMemoryTool.execute(
+            { content: 'AI-learned fact', heading: 'AI entry' },
+            ctx
+        );
+        expect(saveResult).toContain('Saved memory');
+        const content = state.files.get('Memories/_global.memories.md')!;
+        // Manual entry preserved (now has a minted ID from the re-tokenize pass).
+        expect(content).toContain('## Manual entry');
+        expect(content).toContain('Writer-typed, no ID yet.');
+        // AI entry was appended.
+        expect(content).toContain('## AI entry');
+        expect(content).toContain('AI-learned fact');
+        // Both entries have IDs (two `\^quill-mem-NNN` lines). The caret is a
+        // literal in the file (Obsidian block-ID syntax), not a regex anchor.
+        const idMatches = content.match(/\^quill-mem-\d+/g);
+        expect(idMatches?.length).toBeGreaterThanOrEqual(2);
+    });
+});
+
+describe('raw-edit guard — generic editing tools refuse memory paths', () => {
+    // The raw-edit guard runs AFTER resolveNoteFile (so bare memory filenames
+    // are caught via name resolution). That means each tool's arg validation
+    // runs first — pass valid args so the guard is what rejects.
+    it.each([
+        // [label, toolId, args]
+        [
+            'edit_note on memory file rejects',
+            'edit_note',
+            { path: 'Memories/Manuscript.memories.md', old_text: 'Body.', new_text: 'changed.' }
+        ],
+        [
+            'insert_note on memory file rejects (anchor path)',
+            'insert_note',
+            { path: 'Memories/Manuscript.memories.md', anchor: 'Body.', new_text: 'added.' }
+        ],
+        [
+            'insert_note on memory file rejects (at_top path)',
+            'insert_note',
+            { path: 'Memories/Manuscript.memories.md', position: 'at_top', new_text: 'added.' }
+        ],
+        [
+            'append_to_note on memory file rejects',
+            'append_to_note',
+            { path: 'Memories/Manuscript.memories.md', content: 'added.' }
+        ],
+        [
+            'delete_paragraph on memory file rejects',
+            'delete_paragraph',
+            { path: 'Memories/Manuscript.memories.md', old_text: 'Body.' }
+        ]
+    ])('%s', async (_label, toolId, args) => {
+        const { ctx } = makeCtx({
+            files: { 'Memories/Manuscript.memories.md': '# Memories\n\n## A\n\nBody.\n\n^quill-mem-001\n' }
+        });
+        const { createInternalToolRegistry } = await import('../../../src/ai/tools');
+        const registry = createInternalToolRegistry();
+        const tool = registry.get(toolId);
+        expect(tool).toBeDefined();
+        const result = await tool!.execute(args, ctx);
+        expect(typeof result).toBe('string');
+        expect(result).toMatch(/memory files cannot be edited/i);
+        expect(result).toMatch(/save_memory|delete_memory/);
+    });
 });

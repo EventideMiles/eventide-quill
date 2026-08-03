@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
     scopeKeyFromPath,
     isExcludedScope,
+    isMemoryFilePath,
     memoryFilePath,
     GLOBAL_MEMORY_SCOPE as GLOBAL,
     type ExclusionOptions
@@ -122,6 +123,23 @@ describe('memoryFilePath', () => {
 
     it('handles scope keys with spaces', () => {
         expect(memoryFilePath('My Book', 'Memories')).toBe('Memories/My Book.memories.md');
+    });
+});
+
+describe('isMemoryFilePath', () => {
+    it.each([
+        ['flat memories folder, direct file', 'Memories/Manuscript.memories.md', 'Memories', true],
+        ['flat memories folder, nested file', 'Memories/Sub/File.md', 'Memories', true],
+        ['nested memories folder, direct file', 'Quill/Memories/Manuscript.memories.md', 'Quill/Memories', true],
+        ['nested memories folder, deep file', 'Quill/Memories/a/b.md', 'Quill/Memories', true],
+        ['manuscript file (not memory)', 'Manuscript/Chapter 1.md', 'Memories', false],
+        ['prefix-sharing sibling: Memories2', 'Memories2/note.md', 'Memories', false],
+        ['prefix-sharing sibling: My Memories', 'My Memories/note.md', 'Memories', false],
+        ['bare filename at vault root', 'note.md', 'Memories', false],
+        ['memories folder itself (no file)', 'Memories', 'Memories', true],
+        ['empty path', '', 'Memories', false]
+    ])('%s', (_label, filePath, memoriesFolder, expected) => {
+        expect(isMemoryFilePath(filePath, memoriesFolder)).toBe(expected);
     });
 });
 

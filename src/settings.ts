@@ -315,10 +315,13 @@ export interface EventideQuillSettings {
     memoriesFolder: string;
     /**
      * On = the model's `save_memory` calls land in the vault immediately
-     * (with a toast so the writer notices). Off = each save stages to the
-     * change-review queue as a "pending memory" card. **Deletes always
-     * stage regardless of this toggle** — silent destructive ops are
-     * too risky to auto-apply. Default: on.
+     * (with a Notice so the writer notices). Off = each save shows a
+     * confirmation modal with the proposed heading + body so the writer
+     * explicitly approves before the write. **Deletes always show a
+     * confirmation modal regardless of this toggle** — silent destructive
+     * ops are too risky to auto-apply. The full review-card flow
+     * (pending-memory cards in the sidebar's change-review surface,
+     * alongside pending lore edits) is planned future work. Default: on.
      */
     memoriesAutoSave: boolean;
     /**
@@ -1638,6 +1641,13 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         s.loreEntryImageMaxPerEntry = d.loreEntryImageMaxPerEntry;
         s.loreEntryImageAttachments = d.loreEntryImageAttachments;
         s.loreEntryImageAttachmentFolder = d.loreEntryImageAttachmentFolder;
+        s.memoriesEnabled = d.memoriesEnabled;
+        s.memoriesFolder = d.memoriesFolder;
+        s.memoriesAutoSave = d.memoriesAutoSave;
+        s.memoriesFullInject = d.memoriesFullInject;
+        s.memoriesMaxIndexEntries = d.memoriesMaxIndexEntries;
+        s.memoriesRecallMaxEntries = d.memoriesRecallMaxEntries;
+        s.memoriesMaxPerFile = d.memoriesMaxPerFile;
         s.slashCommands = [...d.slashCommands];
         await this.plugin.saveSettings();
         this.update();
@@ -1803,6 +1813,65 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         name: 'Prefer editing existing lore',
                         desc: 'When the lorebook coach drafts a new entry whose exact name already matches a note in your vault, refuse the draft and point it at edit_note / insert_note / append_to_note instead. Avoids duplicate notes that strand [[wikilinks]] pointing at the original. Off = allow unconditional creation. Default: on.',
                         control: { type: 'toggle', key: 'lorePreferEditOverCreate' }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Memories',
+                items: [
+                    {
+                        name: 'Memories',
+                        desc: 'Let the AI save durable facts it learns about your manuscript and preferences (voice, intent behind flagged choices, worldbuilding notes that do not fit the typed-lore model). Saved as writer-editable markdown under the Memories folder; future sessions see them via an auto-injected index. Off = the feature vanishes entirely from the model awareness (no save_memory / recall_memory / delete_memory tools, no prompt clause, no index injected) — escape hatch for very small local models where every context token matters. Default: on.',
+                        control: { type: 'toggle', key: 'memoriesEnabled' }
+                    },
+                    {
+                        name: 'Memories folder',
+                        desc: 'Vault folder where memory files live. One <scope>.memories.md per top-level manuscript folder plus a _global.memories.md for cross-manuscript context. Created on first write. Default: Memories.',
+                        control: { type: 'folder', key: 'memoriesFolder' }
+                    },
+                    {
+                        name: 'Auto-save memories',
+                        desc: 'On = save_memory calls land in the vault immediately (with a Notice). Off = each save shows a confirmation modal with the proposed heading + body so you explicitly approve before the write. Deletes ALWAYS confirm regardless of this toggle. Default: on.',
+                        control: { type: 'toggle', key: 'memoriesAutoSave' }
+                    },
+                    {
+                        name: 'Inject full memory bodies',
+                        desc: 'On = full memory bodies are auto-injected into co-writer context instead of just the heading + first-sentence preview. For writers running powerful models with large context windows. Off = hybrid retrieval (small index always injected, full bodies fetched on demand via recall_memory). Default: off.',
+                        control: { type: 'toggle', key: 'memoriesFullInject' }
+                    },
+                    {
+                        name: 'Max index entries',
+                        desc: 'Cap on the number of memory entries auto-injected into co-writer context per session. Lowered automatically for small-context local models (under ~8k tokens) to stay within budget. Default: 20.',
+                        control: {
+                            type: 'number',
+                            key: 'memoriesMaxIndexEntries',
+                            min: 0,
+                            max: 200,
+                            validate: (v) => (v >= 0 && v <= 200 ? undefined : 'Value must be between 0 and 200')
+                        }
+                    },
+                    {
+                        name: 'Max recall entries',
+                        desc: 'Cap on the number of entries recall_memory returns in one call. Default: 10.',
+                        control: {
+                            type: 'number',
+                            key: 'memoriesRecallMaxEntries',
+                            min: 1,
+                            max: 100,
+                            validate: (v) => (v >= 1 && v <= 100 ? undefined : 'Value must be between 1 and 100')
+                        }
+                    },
+                    {
+                        name: 'Max memories per file',
+                        desc: 'Soft cap on memories per file, mostly hygiene. The Memories sub-tab shows a "consider pruning" hint when exceeded. Default: 100.',
+                        control: {
+                            type: 'number',
+                            key: 'memoriesMaxPerFile',
+                            min: 1,
+                            max: 1000,
+                            validate: (v) => (v >= 1 && v <= 1000 ? undefined : 'Value must be between 1 and 1000')
+                        }
                     }
                 ]
             },

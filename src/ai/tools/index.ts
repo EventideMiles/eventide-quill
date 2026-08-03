@@ -185,11 +185,9 @@ export function createLoreCoachToolRegistry(plugin: EventideQuillPlugin): ToolRe
     if (allowImages) {
         registry.register(attachLoreImageTool);
     }
-    // The lorebook coach reads and writes memories scoped to its lorebook
-    // pool — useful for capturing lore-coach-level preferences ("the writer
-    // prefers entries under 200 words"). Same memory toolset as the parent
-    // modes; scope resolution picks the lorebook pool automatically.
-    registerMemoryTools(plugin, registry);
+    // Memory tools are registered by the parent createToolRegistry, NOT here:
+    // createToolRegistry calls registerMemoryTools on whatever registry this
+    // function returns. Registering them here too would throw DuplicateToolError.
     return registry;
 }
 

@@ -242,13 +242,11 @@ export function serializeMemoryFile(file: MemoryFile, scopeLabel?: string): stri
 }
 
 /**
- * Compute the next block ID for the given entries. Finds the max existing
- * `quill-mem-N` N value and returns N+1, zero-padded to 3 digits for stable
- * lexical sort (`quill-mem-001` … `quill-mem-999`, then `quill-mem-1000`).
- *
- * Returns `quill-mem-001` when no entries have IDs yet (fresh file).
+ * Scan entries for the highest existing block-ID number. Returns 0 when no
+ * entries have IDs. Shared by {@link nextBlockId} and {@link assignMissingIds}
+ * so the max-ID scan lives in one place.
  */
-export function nextBlockId(entries: readonly MemoryEntry[]): string {
+function maxBlockIdN(entries: readonly MemoryEntry[]): number {
     let maxN = 0;
     for (const entry of entries) {
         const match = entry.id.match(BLOCK_ID_STORED_PATTERN);
@@ -257,7 +255,18 @@ export function nextBlockId(entries: readonly MemoryEntry[]): string {
             if (n > maxN) maxN = n;
         }
     }
-    return `${MEMORY_BLOCK_ID_PREFIX}${String(maxN + 1).padStart(3, '0')}`;
+    return maxN;
+}
+
+/**
+ * Compute the next block ID for the given entries. Finds the max existing
+ * `quill-mem-N` N value and returns N+1, zero-padded to 3 digits for stable
+ * lexical sort (`quill-mem-001` … `quill-mem-999`, then `quill-mem-1000`).
+ *
+ * Returns `quill-mem-001` when no entries have IDs yet (fresh file).
+ */
+export function nextBlockId(entries: readonly MemoryEntry[]): string {
+    return `${MEMORY_BLOCK_ID_PREFIX}${String(maxBlockIdN(entries) + 1).padStart(3, '0')}`;
 }
 
 /**
@@ -274,14 +283,7 @@ export function assignMissingIds(entries: readonly MemoryEntry[]): AssignIdsResu
         return { changed: false, entries };
     }
 
-    let nextN = 0;
-    for (const entry of entries) {
-        const match = entry.id.match(BLOCK_ID_STORED_PATTERN);
-        if (match) {
-            const n = parseInt(match[1]!, 10);
-            if (n > nextN) nextN = n;
-        }
-    }
+    let nextN = maxBlockIdN(entries);
 
     const result = entries.map((entry) => {
         if (entry.id) return entry;

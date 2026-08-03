@@ -190,8 +190,11 @@ export const saveMemoryTool: Tool = {
             entries: newEntries
         });
 
-        // When memoriesAutoSave is on, confirm with a Notice (no modal —
-        // auto-save is the default low-friction path).
+        // Notice on every successful save — covers both the memoriesAutoSave
+        // direct-write path AND the modal-confirm path (when the writer
+        // approves). Phase 8 follow-up will replace the modal path with
+        // pending-memory cards in the change-review surface; the Notice is
+        // the v1 confirmation in both flows.
         const scopeNote = scopeKey === GLOBAL_MEMORY_SCOPE ? 'global' : label;
         new Notice(`Quill: saved memory — "${savedHeading}" (${scopeNote})`);
 

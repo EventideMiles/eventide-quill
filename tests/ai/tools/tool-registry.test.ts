@@ -87,6 +87,23 @@ describe('createToolRegistry — review-discuss configuration', () => {
         expect(actual).toContain('vault_lookup');
     });
 
+    it('createToolRegistry(plugin, true, true) does not throw DuplicateToolError (lorebook coach path)', () => {
+        // Regression: createLoreCoachToolRegistry must NOT call registerMemoryTools
+        // because createToolRegistry does it on the returned registry. A duplicate
+        // call throws DuplicateToolError and surfaces in the lorebook-coach E2E as
+        // "assistant streaming never finished" because the sendLoreCoach catch
+        // block fires before any stream starts.
+        const plugin = makePlugin();
+        const reg = createToolRegistry(plugin, true, true)!;
+        // Memory tools registered exactly once each.
+        for (const id of ['save_memory', 'recall_memory', 'delete_memory']) {
+            const matches = reg.list().filter((t) => t.id === id);
+            expect(matches, `expected exactly one ${id}`).toHaveLength(1);
+        }
+        // Lorebook coach's own tools also present.
+        expect(reg.get('propose_entry')).toBeDefined();
+    });
+
     it('does NOT register propose_entry for review-discuss', () => {
         const plugin = makePlugin();
         const reg = createToolRegistry(plugin, false, true)!;

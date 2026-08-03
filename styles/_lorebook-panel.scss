@@ -402,7 +402,7 @@
     }
 
     &__card {
-        // Clickable card — affordance via cursor + hover tint.
+        // Clickable card — affordance via cursor + hover tint + focus ring.
         cursor: pointer;
         padding: var(--quill-spacing-sm, 8px) var(--quill-spacing-md, 12px);
         margin-bottom: var(--quill-spacing-xs, 4px);
@@ -411,11 +411,18 @@
         border-radius: var(--radius-m, 6px);
         transition: border-color 0.15s ease, background 0.15s ease;
 
-        &:hover,
-        &:focus {
+        &:hover {
             background: var(--background-modifier-hover);
             border-color: var(--interactive-accent);
-            outline: none;
+        }
+
+        // Keep a visible focus indicator for keyboard nav (tabindex=0 cards).
+        // Separate from :hover so keyboard users get a distinct affordance.
+        &:focus-visible {
+            background: var(--background-modifier-hover);
+            border-color: var(--interactive-accent);
+            outline: 2px solid var(--interactive-accent);
+            outline-offset: 2px;
         }
     }
 

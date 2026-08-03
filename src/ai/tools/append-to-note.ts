@@ -52,14 +52,13 @@ export const appendToNoteTool: Tool = {
         if (aiIsmError) return aiIsmError;
 
         const { plugin } = ctx;
-        // Raw-edit guard: memory files are managed exclusively by save_memory
-        // / delete_memory so the block-ID minting and re-tokenize logic can't
-        // be bypassed by generic editing tools.
-        if (isMemoryFilePath(path, plugin.settings.memoriesFolder)) {
-            return 'Error: memory files cannot be edited with append_to_note. Use save_memory or delete_memory instead.';
-        }
         const file = resolveNoteFile(plugin, path);
         if (!file) return `Error: note "${path}" not found in the vault.`;
+        // Raw-edit guard: check the RESOLVED path so a bare memory filename is
+        // caught after name resolution. See edit-note.ts for the rationale.
+        if (isMemoryFilePath(file.path, plugin.settings.memoriesFolder)) {
+            return 'Error: memory files cannot be edited with append_to_note. Use save_memory or delete_memory instead.';
+        }
 
         const existing = await readNoteContent(plugin, file.path);
         if (existing === null) return `Error: could not read "${file.path}".`;

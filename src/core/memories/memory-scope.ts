@@ -78,7 +78,15 @@ export function isExcludedScope(scopeKey: string, opts: ExclusionOptions): boole
     if (!scopeKey || scopeKey === GLOBAL_MEMORY_SCOPE) return true;
     if (HARDCODED_EXCLUDED_SCOPES.has(scopeKey)) return true;
     if (opts.configDirScope && scopeKey === opts.configDirScope) return true;
-    return scopeKey === normalizePath(opts.memoriesFolder);
+    // Compare against the memories folder's top-level scope (first path
+    // segment) so nested configurations like `Quill/Memories/` exclude the
+    // resolved `Quill` scope — matching how scope keys are derived from file
+    // paths everywhere else. We extract the first segment directly rather
+    // than using scopeKeyFromPath because that helper treats a bare
+    // top-level folder name as "no parent → global" (correct for files, wrong
+    // for the memories-folder configuration).
+    const memoriesScope = normalizePath(opts.memoriesFolder).split('/')[0] ?? '';
+    return scopeKey === memoriesScope;
 }
 
 /**

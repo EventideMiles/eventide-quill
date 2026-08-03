@@ -92,8 +92,16 @@ export const deleteMemoryTool: Tool = {
             return `Delete cancelled by the writer — "${found.entry.heading}" was NOT removed.`;
         }
 
-        // removeMemoryEntry preserves the file's title and intro.
-        await removeMemoryEntry(plugin, found.scopeKey, found.entry.id);
+        // removeMemoryEntry preserves the file's title and intro. It returns
+        // false when the ID was missing (e.g. the writer deleted the section
+        // manually in the markdown between our find and remove calls).
+        const removed = await removeMemoryEntry(plugin, found.scopeKey, found.entry.id);
+        if (!removed) {
+            return (
+                `Memory "${found.entry.heading}" (id: ${found.entry.id}) was no longer present in ` +
+                `the file — the writer may have deleted the section manually. No changes made.`
+            );
+        }
 
         new Notice(`Quill: deleted memory — "${found.entry.heading}"`);
 

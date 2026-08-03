@@ -72,11 +72,14 @@ export async function readMemoryFile(plugin: EventideQuillPlugin, scopeKey: stri
 
     const parsed = parseMemoryFile(raw);
 
-    // Re-tokenize: mint IDs for any writer-added sections without one. Best-effort
-    // write-back so the file stays canonical across edits.
+    // Re-tokenize: mint IDs for any writer-added sections without one. Await
+    // the write-back when IDs were minted so the file is canonical before any
+    // subsequent write (e.g. save_memory or removeMemoryEntry issued right
+    // after this read) doesn't race with the retokenization write. Best-effort:
+    // a failed write logs a warning but doesn't fail the read.
     const retokenized = assignMissingIds(parsed.entries);
     if (retokenized.changed) {
-        void writeMemoryFileRaw(vault, path, file, { ...parsed, entries: retokenized.entries });
+        await writeMemoryFileRaw(vault, path, file, { ...parsed, entries: retokenized.entries });
     }
 
     return {

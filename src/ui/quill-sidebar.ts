@@ -558,8 +558,9 @@ export class QuillSidebarView extends ItemView {
                 } else if (tab.id === 'relationships') {
                     this.plugin.refreshLorebookRelationships();
                 } else if (tab.id === 'memories') {
-                    // Memories sub-tab reads on each render — no plugin-level cache to refresh.
-                    this.render();
+                    // Memories sub-tab reads on each render — the unconditional
+                    // this.render() above already covers it; no plugin-level
+                    // cache to refresh.
                 } else {
                     void this.plugin.refreshLorebookDocumentCoverage();
                 }
