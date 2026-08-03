@@ -4290,7 +4290,7 @@ export class CoWriterSession {
 
     /**
      * Reset and seed the session for a `'review-discuss'` conversation — the
-     * entry point for v2.1.0's proactive editor chat. The system prompt and
+     * entry point for v2.2.0's proactive editor chat. The system prompt and
      * the just-completed report become the AI's opening turn: the system
      * message at index 0 of {@link discussCurrentMessages}, the report as the
      * first assistant message (id-stamped via {@link pushChatMessage} so it

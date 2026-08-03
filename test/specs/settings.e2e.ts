@@ -321,7 +321,7 @@ describe('Settings UI', () => {
         await closeSettings();
     });
 
-    it('renders the "+ add command" affordance and appends a slash command (regression: add buttons were lost in the 2.1.0 declarative migration)', async () => {
+    it('renders the "+ add command" affordance and appends a slash command (regression: add buttons were lost in the 2.2.0 declarative migration)', async () => {
         await openPluginSettings();
         await openSettingsPage('Lorebook');
 
