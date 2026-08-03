@@ -95,6 +95,20 @@ function makeCtx(opts: {
         currentManuscriptFolder: opts.currentManuscriptFolder ?? null,
         app: {
             vault,
+            // resolveNoteFile falls back to getFirstLinkpathDest when the
+            // path lookup fails — supports the bare-filename raw-edit guard
+            // case where the model passes 'Manuscript.memories.md' (basename
+            // only) and Obsidian's metadata cache resolves it.
+            metadataCache: {
+                getFirstLinkpathDest(link: string): TFile | null {
+                    for (const [path, file] of fileObjects) {
+                        if (path.endsWith(`/${link}`) || path === link || file.basename === link.replace(/\.memories\.md$/, '')) {
+                            return file;
+                        }
+                    }
+                    return null;
+                }
+            },
             workspace: {
                 getActiveFile(): TFile | null {
                     if (!state.activeFilePath) return null;
@@ -436,6 +450,11 @@ describe('raw-edit guard — generic editing tools refuse memory paths', () => {
             'delete_paragraph on memory file rejects',
             'delete_paragraph',
             { path: 'Memories/Manuscript.memories.md', old_text: 'Body.' }
+        ],
+        [
+            'edit_note on bare filename resolves then rejects (regression: name-lookup guard)',
+            'edit_note',
+            { path: 'Manuscript.memories.md', old_text: 'Body.', new_text: 'changed.' }
         ]
     ])('%s', async (_label, toolId, args) => {
         const { ctx } = makeCtx({

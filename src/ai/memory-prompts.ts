@@ -166,7 +166,12 @@ function formatFull(entry: MemoryEntry): string {
     return lines.join('\n');
 }
 
-/** Format an entry as a hybrid-retrieval preview bullet (heading + first sentence). */
+/**
+ * Format an entry as a hybrid-retrieval preview bullet. Includes the
+ * heading, the entry's block-ID handle (`^quill-mem-NNN`), optional tag
+ * list, and the one-sentence preview text from {@link buildIndex}. The
+ * preview line is omitted when the entry has an empty body.
+ */
 function formatPreview(entry: { id: string; heading: string; preview: string; tags: readonly string[] }): string {
     const tagsSuffix = entry.tags.length > 0 ? ` _[${entry.tags.map((t) => `#${t}`).join(', ')}]_` : '';
     if (!entry.preview) {

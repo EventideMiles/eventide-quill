@@ -1391,6 +1391,24 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 })
             );
 
+        new Setting(content)
+            .setName('Memories')
+            .setDesc(
+                'Lets the AI save durable facts it learns about your manuscript and preferences ' +
+                    'via three tools — save_memory, recall_memory, and delete_memory. Saved as ' +
+                    'writer-editable markdown under the Memories folder; future sessions see them ' +
+                    'via an auto-injected index. Off = all three tools vanish entirely from the ' +
+                    "model's awareness, no prompt clause, no index injected — escape hatch for very " +
+                    'small local models where every context token matters.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.memoriesEnabled).onChange(async (value) => {
+                    this.plugin.settings.memoriesEnabled = value;
+                    await this.plugin.saveSettings();
+                    this.refreshBridge();
+                })
+            );
+
         content.createDiv({
             cls: 'quill-settings__welcome-privacy',
             text:
