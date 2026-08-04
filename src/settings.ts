@@ -349,6 +349,14 @@ export interface EventideQuillSettings {
     memoriesRecallMaxEntries: number;
     /** Soft cap on memories per file, mostly hygiene. The UI shows a "consider pruning" hint when exceeded. Default 100. */
     memoriesMaxPerFile: number;
+    /**
+     * Internal one-time flag: true after the advisory Notice has been shown
+     * on the first AI-saved memory. NOT a user preference — just tracking so
+     * the advisory fires exactly once per install. Not exposed in the UI or
+     * restored by restoreGeneralDefaults (same pattern as
+     * `anthropicBanRiskAcknowledged` / `copyEditorAck`).
+     */
+    memoriesAdvisoryShown: boolean;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -481,7 +489,8 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     memoriesFullInject: false,
     memoriesMaxIndexEntries: 20,
     memoriesRecallMaxEntries: 10,
-    memoriesMaxPerFile: 100
+    memoriesMaxPerFile: 100,
+    memoriesAdvisoryShown: false
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];

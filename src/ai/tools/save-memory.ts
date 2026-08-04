@@ -198,6 +198,23 @@ export const saveMemoryTool: Tool = {
         const scopeNote = scopeKey === GLOBAL_MEMORY_SCOPE ? 'global' : label;
         new Notice(`Quill: saved memory — "${savedHeading}" (${scopeNote})`);
 
+        // One-time advisory on the first AI-saved memory. Explains what
+        // memories are, that they're included in future co-writer context
+        // (and thus sent to the writer's configured provider), and where to
+        // review/edit them. Fires exactly once per install, tracked by the
+        // memoriesAdvisoryShown flag. Not a consent gate — just awareness.
+        if (!plugin.settings.memoriesAdvisoryShown) {
+            plugin.settings.memoriesAdvisoryShown = true;
+            void plugin.saveSettings();
+            new Notice(
+                'The AI saved a memory to your vault. Saved memories are ' +
+                    'included in future co-writer context and sent to your ' +
+                    'configured provider. Review or edit them anytime under ' +
+                    'Lorebook → Memories.',
+                10_000
+            );
+        }
+
         const verb = existingIdx >= 0 ? 'Updated' : 'Saved';
         return (
             `${verb} memory "${savedHeading}" (id: ${mintedId}, scope: ${scopeNote}). ` +

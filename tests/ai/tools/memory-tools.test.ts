@@ -90,7 +90,10 @@ function makeCtx(opts: {
             memoriesFolder,
             memoriesAutoSave: opts.memoriesAutoSave ?? true,
             memoriesRecallMaxEntries: opts.memoriesRecallMaxEntries ?? 10,
-            memoriesMaxPerFile: 100
+            memoriesMaxPerFile: 100,
+            memoriesAdvisoryShown: false,
+            memoriesFullInject: false,
+            memoriesMaxIndexEntries: 20
         },
         currentManuscriptFolder: opts.currentManuscriptFolder ?? null,
         app: {
@@ -115,7 +118,8 @@ function makeCtx(opts: {
                     return fileObjects.get(state.activeFilePath) ?? makeFile(state.activeFilePath);
                 }
             }
-        }
+        },
+        async saveSettings(): Promise<void> {}
     };
 
     return { ctx: { plugin } as unknown as ToolContext, state };
@@ -212,6 +216,27 @@ describe('save_memory + recall_memory + delete_memory — round-trip integration
         const result = await saveMemoryTool.execute({}, ctx);
         expect(result).toContain('Error');
         expect(result).toContain('content');
+    });
+
+    it('first save sets memoriesAdvisoryShown to true; second save does not re-set', async () => {
+        const { ctx } = makeCtx({});
+        expect(ctx.plugin.settings.memoriesAdvisoryShown).toBe(false);
+        await saveMemoryTool.execute({ content: 'first', heading: 'A' }, ctx);
+        // Flag flipped after the first save.
+        expect(ctx.plugin.settings.memoriesAdvisoryShown).toBe(true);
+        // Second save — flag stays true (no re-fire path; the guard is
+        // `if (!settings.memoriesAdvisoryShown)` which is false now).
+        await saveMemoryTool.execute({ content: 'second', heading: 'B' }, ctx);
+        expect(ctx.plugin.settings.memoriesAdvisoryShown).toBe(true);
+    });
+
+    it('advisory does NOT fire when memoriesAdvisoryShown is already true', async () => {
+        const { ctx } = makeCtx({});
+        // Simulate a prior install where the advisory already fired.
+        ctx.plugin.settings.memoriesAdvisoryShown = true;
+        await saveMemoryTool.execute({ content: 'x', heading: 'X' }, ctx);
+        // Still true, no change.
+        expect(ctx.plugin.settings.memoriesAdvisoryShown).toBe(true);
     });
 
     it('save rejects when memoriesEnabled is off', async () => {
