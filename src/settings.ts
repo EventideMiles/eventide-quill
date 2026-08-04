@@ -164,6 +164,13 @@ export interface EventideQuillSettings {
     /** Daily writing word goal (0 disables goals/streak). Default 500. */
     writingDailyGoal: number;
     /**
+     * Minutes of inactivity before an active writing session auto-stops.
+     * When the writer stops typing for this long, the session ends and the
+     * credited duration excludes the idle tail (equivalent to "threshold
+     * subtracted from raw elapsed"). 0 disables the idle check. Default: 20.
+     */
+    writingSessionIdleMinutes: number;
+    /**
      * User-defined slash commands for the co-writer chat input. Typing
      * `/` at the start of a line opens a picker of matching commands;
      * choosing one inserts the body into the textarea, editable before
@@ -438,6 +445,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     dashboardMaxSnapshots: 100,
     readabilityFormula: 'reweighted-flesch',
     writingDailyGoal: 500,
+    writingSessionIdleMinutes: 20,
     slashCommands: [],
     lorebookFolders: [],
     lorebookFolderTypes: {},
@@ -1603,6 +1611,17 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             max: 100000,
                             validate: (v) => (v >= 0 && v <= 100000 ? undefined : 'Value must be between 0 and 100000')
                         }
+                    },
+                    {
+                        name: 'Session idle timeout',
+                        desc: 'Minutes of inactivity before an active writing session auto-stops. When you stop typing for this long, the session ends and the credited duration excludes the idle tail (equivalent to the threshold subtracted from the raw elapsed). 0 disables the idle check. Default: 20.',
+                        control: {
+                            type: 'number',
+                            key: 'writingSessionIdleMinutes',
+                            min: 0,
+                            max: 120,
+                            validate: (v) => (v >= 0 && v <= 120 ? undefined : 'Value must be between 0 and 120')
+                        }
                     }
                 ]
             },
@@ -1639,6 +1658,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         s.dashboardMaxSnapshots = d.dashboardMaxSnapshots;
         s.readabilityFormula = d.readabilityFormula;
         s.writingDailyGoal = d.writingDailyGoal;
+        s.writingSessionIdleMinutes = d.writingSessionIdleMinutes;
         s.lorebookFolders = [...d.lorebookFolders];
         s.lorebookFolderTypes = { ...d.lorebookFolderTypes };
         s.coWriterLoreContext = d.coWriterLoreContext;

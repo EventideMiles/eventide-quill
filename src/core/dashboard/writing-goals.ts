@@ -21,6 +21,10 @@ export interface WritingSession {
     folder: string;
     /** Manuscript total word count at session start. */
     startTotal: number;
+    /** Epoch ms of the most recent keystroke. Initially equals {@link startMs};
+     *  updated by `touchSession` on every `workspace.on('editor-change')` event.
+     *  Drives the idle-timeout auto-stop ({@link checkSessionIdle}). */
+    lastKeystrokeMs: number;
 }
 
 export interface WritingGoalsState {
@@ -85,6 +89,9 @@ function isWritingSession(value: unknown): value is WritingSession {
         typeof value.folder === 'string' &&
         typeof value.startTotal === 'number'
     );
+    // NOTE: lastKeystrokeMs is not required for backward compat — sessions
+    // persisted before the idle-timeout feature lack the field and get a
+    // sensible default on load (startMs) via the loader's coalesce step.
 }
 
 /** Every persisted field (when present) has its expected shape. Nullish `lastSeen`/`days`/`session` stay valid — the nullish-map handling maps them to defaults. */
@@ -118,7 +125,13 @@ export async function loadWritingGoals(vault: Vault, dataDir: string): Promise<W
             ...defaultWritingGoalsState(),
             ...parsed,
             lastSeen: parsed.lastSeen ?? {},
-            days: parsed.days ?? {}
+            days: parsed.days ?? {},
+            // Coalesce lastKeystrokeMs for sessions persisted before the
+            // idle-timeout feature (field absent → default to startMs so the
+            // first idle check sees the session as "just touched").
+            session: parsed.session
+                ? { ...parsed.session, lastKeystrokeMs: parsed.session.lastKeystrokeMs ?? parsed.session.startMs }
+                : null
         };
     } catch {
         return defaultWritingGoalsState();
@@ -206,8 +219,59 @@ export function computeStreak(state: WritingGoalsState, goal: number, now: numbe
 
 /** Start a focus session anchored to the current manuscript word count. */
 export function startSession(state: WritingGoalsState, folder: string, total: number, now: number): WritingGoalsState {
-    state.session = { startMs: now, folder, startTotal: total };
+    state.session = { startMs: now, folder, startTotal: total, lastKeystrokeMs: now };
     return state;
+}
+
+/**
+ * Mark the active session as just-touched (the writer typed something).
+ * Updates {@link WritingSession.lastKeystrokeMs} to `now`, which the
+ * idle-timeout check ({@link checkSessionIdle}) uses as the basis for
+ * "stopped + threshold subtracted from length". No-op when no session is
+ * active. Does NOT persist — callers persist on their own cadence (the
+ * 30s idle-check tick coalesces the write).
+ */
+export function touchSession(state: WritingGoalsState, now: number): WritingGoalsState {
+    if (state.session) state.session.lastKeystrokeMs = now;
+    return state;
+}
+
+/**
+ * Result of an idle-check tick. When `stopped` is true, `creditedMs` is the
+ * duration the writer actually spent typing (`lastKeystrokeMs - startMs`),
+ * which excludes the idle tail — equivalent to "threshold subtracted from
+ * raw elapsed". When false, the session continues.
+ */
+export interface SessionIdleCheck {
+    /** True when the idle threshold was met and the session was stopped. */
+    stopped: boolean;
+    /** Credited writing duration in ms (only set when `stopped`). */
+    creditedMs?: number;
+    /** Raw elapsed at the moment of stopping (only set when `stopped`). */
+    rawElapsedMs?: number;
+}
+
+/**
+ * Check whether the active session has been idle past `idleMs`. When idle
+ * time (`now - lastKeystrokeMs`) is greater than or equal to the threshold,
+ * the session is stopped and the credited duration (`lastKeystrokeMs -
+ * startMs`) is returned — equivalent to "threshold subtracted from raw
+ * elapsed". The session is cleared from state on stop.
+ *
+ * `idleMs <= 0` disables the idle check (the function is a no-op). This
+ * lets the writer turn the feature off via `writingSessionIdleMinutes: 0`.
+ *
+ * Pure aside from mutating `state.session` (the documented contract of
+ * every function in this module).
+ */
+export function checkSessionIdle(state: WritingGoalsState, now: number, idleMs: number): SessionIdleCheck {
+    if (idleMs <= 0 || !state.session) return { stopped: false };
+    const idleFor = now - state.session.lastKeystrokeMs;
+    if (idleFor < idleMs) return { stopped: false };
+    const creditedMs = Math.max(0, state.session.lastKeystrokeMs - state.session.startMs);
+    const rawElapsedMs = Math.max(0, now - state.session.startMs);
+    state.session = null;
+    return { stopped: true, creditedMs, rawElapsedMs };
 }
 
 /** End the active focus session (clears the session field; no-op if none). */
