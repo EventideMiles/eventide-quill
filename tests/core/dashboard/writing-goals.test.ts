@@ -380,4 +380,28 @@ describe('writing-goals — sidecar persistence', () => {
             lastKeystrokeMs: 5000
         });
     });
+
+    it('rejects a session with malformed lastKeystrokeMs (string) and falls back to defaults', async () => {
+        const vault = makeMemoryVault();
+        await vault.adapter.write(
+            '.malformed-session/writing-goals.json',
+            JSON.stringify({
+                version: 1,
+                lastSeen: {},
+                todayDate: '2026-01-05',
+                todayWords: 0,
+                days: {},
+                bestStreak: 0,
+                // lastKeystrokeMs is a string — isWritingSession rejects the
+                // session, so isValidWritingGoalsState fails (session is
+                // neither null nor a valid WritingSession). The loader falls
+                // through to defaults.
+                session: { startMs: 5000, folder: 'manuscript', startTotal: 100, lastKeystrokeMs: 'oops' }
+            })
+        );
+        const loaded = await loadWritingGoals(vault, '.malformed-session');
+        // The entire state is rejected — the malformed session must not
+        // propagate into checkSessionIdle's duration math.
+        expect(loaded.session).to.equal(null);
+    });
 });

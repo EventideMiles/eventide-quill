@@ -1860,7 +1860,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 items: [
                     {
                         name: 'Memories',
-                        desc: 'Let the AI save durable facts it learns about your manuscript and preferences (voice, intent behind flagged choices, worldbuilding notes that do not fit the typed-lore model). Saved as writer-editable markdown under the Memories folder; future sessions see them via an auto-injected index. Off = the feature vanishes entirely from the model awareness (no save_memory / recall_memory / delete_memory tools, no prompt clause, no index injected) — escape hatch for very small local models where every context token matters. Default: on.',
+                        desc: "Let the AI save durable facts it learns about your manuscript and preferences (voice, intent behind flagged choices, worldbuilding notes that do not fit the typed-lore model). Saved as writer-editable markdown under the Memories folder; future sessions see them via an auto-injected index. Off = the feature vanishes entirely from the model's awareness (no save_memory / recall_memory / delete_memory tools, no prompt clause, no index injected) — escape hatch for very small local models where every context token matters. Default: on.",
                         control: { type: 'toggle', key: 'memoriesEnabled' }
                     },
                     {
@@ -1870,7 +1870,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     },
                     {
                         name: 'Auto-save memories',
-                        desc: 'On = save_memory calls land in the vault immediately (with a Notice). Off = each save shows a confirmation modal with the proposed heading + body so you explicitly approve before the write. Deletes ALWAYS confirm regardless of this toggle. Default: on.',
+                        desc: 'On = save_memory calls land in the vault immediately (with a Notice). Off = each save shows a confirmation modal with the proposed heading + body so you explicitly approve before the write. Deletes always require confirmation regardless of this toggle. Default: on.',
                         control: { type: 'toggle', key: 'memoriesAutoSave' }
                     },
                     {

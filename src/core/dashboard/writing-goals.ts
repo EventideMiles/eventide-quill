@@ -87,11 +87,14 @@ function isWritingSession(value: unknown): value is WritingSession {
         isRecord(value) &&
         typeof value.startMs === 'number' &&
         typeof value.folder === 'string' &&
-        typeof value.startTotal === 'number'
+        typeof value.startTotal === 'number' &&
+        // lastKeystrokeMs is optional for backward compat (sessions persisted
+        // before the idle-timeout feature lack it). When present, it must be a
+        // number — malformed values (string, null) are rejected so the loader
+        // falls through to defaults rather than propagating invalid data into
+        // checkSessionIdle's duration math.
+        (value.lastKeystrokeMs === undefined || typeof value.lastKeystrokeMs === 'number')
     );
-    // NOTE: lastKeystrokeMs is not required for backward compat — sessions
-    // persisted before the idle-timeout feature lack the field and get a
-    // sensible default on load (startMs) via the loader's coalesce step.
 }
 
 /** Every persisted field (when present) has its expected shape. Nullish `lastSeen`/`days`/`session` stay valid — the nullish-map handling maps them to defaults. */
