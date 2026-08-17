@@ -86,5 +86,25 @@
 		"classic-level@3.0.0": true,
 		"edgedriver": false,
 		"geckodriver": false
+	},
+	"overrides": {
+		"eslint": {
+			"minimatch": {
+				"brace-expansion": "^1.1.18"
+			}
+		},
+		"mocha": {
+			"glob": "^13.0.6",
+			"serialize-javascript": "^7.1.0"
+		},
+		"@wdio/config": {
+			"glob": "^13.0.6"
+		},
+		"archiver-utils": {
+			"glob": "^13.0.6"
+		},
+		"@wdio/utils": {
+			"@puppeteer/browsers": "^3.2.0"
+		}
 	}
 }
