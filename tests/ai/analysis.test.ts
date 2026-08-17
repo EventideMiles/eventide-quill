@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-    ANALYSIS_MODES,
-    buildAnalysisMessages,
-    getAnalysisModeById,
-    type AnalysisMode
-} from '../../src/ai/analysis';
+import { ANALYSIS_MODES, buildAnalysisMessages, getAnalysisModeById, type AnalysisMode } from '../../src/ai/analysis';
 
 describe('analysis — ANALYSIS_MODES registry', () => {
     it('has the five critical-analysis modes with unique ids', () => {
@@ -57,6 +52,17 @@ describe('analysis — buildAnalysisMessages', () => {
             expect(messages).to.have.lengthOf(2);
             expect(messages[0]?.content.length).to.be.greaterThan(0);
         }
+    });
+
+    it('carries the response-language directive in the system prompt when set', () => {
+        const messages = buildAnalysisMessages('plot-logic', {
+            text: 'scene text',
+            scope: 'scene',
+            responseLanguage: 'French'
+        });
+        expect(messages[0]?.content).toContain('in French');
+        const plain = buildAnalysisMessages('plot-logic', { text: 'scene text', scope: 'scene' });
+        expect(plain[0]?.content).not.toContain('RESPONSE LANGUAGE');
     });
 
     it('accepts a tool registry (verify-and-cite path) without crashing', () => {

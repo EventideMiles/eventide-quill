@@ -74,6 +74,14 @@ describe('buildFeedbackMessages', () => {
         expect(messages[1]!.content).toContain('Focus on dialogue');
     });
 
+    it('carries the response-language directive in the system prompt when set', () => {
+        const messages = buildFeedbackMessages(undefined, { responseLanguage: 'French' });
+        expect(messages[0]!.content).toContain('in French');
+        // Without the option the prompt is untouched.
+        const plain = buildFeedbackMessages();
+        expect(plain[0]!.content).not.toContain('RESPONSE LANGUAGE');
+    });
+
     it('works without any arguments (defaults)', () => {
         const messages = buildFeedbackMessages();
         expect(messages[0]!.content.length).toBeGreaterThan(0);

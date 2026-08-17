@@ -470,7 +470,8 @@ async function streamEditorial(
     const baseMessages = buildFeedbackMessages(persona, {
         vaultContext: snapshot.vaultContext,
         narrativePreset: snapshot.narrativePreset,
-        customInstruction: job.focusPrompt
+        customInstruction: job.focusPrompt,
+        responseLanguage: plugin.settings.aiResponseLanguage
     });
     // [system, ...snapshot content, user instruction], mirroring requestFeedback.
     const apiMessages: ChatMessage[] = [baseMessages[0]!, ...snapshot.contentMessages, baseMessages[1]!];
@@ -483,6 +484,7 @@ async function streamEditorial(
             maxTokens: plugin.settings.analysisMaxOutputTokens,
             signal,
             customInstruction: job.focusPrompt,
+            responseLanguage: plugin.settings.aiResponseLanguage,
             existingMessages: apiMessages
         }),
         signal
@@ -511,6 +513,7 @@ async function streamCritical(
         characters: snapshot.characters,
         plotThreads: snapshot.plotThreads,
         customInstruction: job.focusPrompt,
+        responseLanguage: plugin.settings.aiResponseLanguage,
         registry: registry ?? undefined
     });
     // Inject lore references between the system prompt and user instruction,
@@ -534,6 +537,7 @@ async function streamCritical(
             customInstruction: job.focusPrompt,
             temperature: plugin.settings.analysisTemperature,
             maxTokens: plugin.settings.analysisMaxOutputTokens,
+            responseLanguage: plugin.settings.aiResponseLanguage,
             existingMessages: initialWithLore,
             registry: registry ?? undefined,
             ctx

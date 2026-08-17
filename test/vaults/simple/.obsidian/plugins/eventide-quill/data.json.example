@@ -43,6 +43,7 @@
     "aiDefaultImageProvider": "",
     "anthropicBanRiskAcknowledged": false,
     "copyEditorAck": false,
+    "aiResponseLanguage": "",
     "transformTemperature": 1.0,
     "transformVaultContext": true,
     "transformMaxOutputTokens": 4096,

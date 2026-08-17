@@ -1,6 +1,6 @@
 import { type AiProvider, type ChatChunk, type ChatMessage } from './provider';
 import { AI_MODE_CONFIGS } from './modes';
-import { getManuscriptAnalysisModePrompt } from './prompts';
+import { appendLanguageDirective, getManuscriptAnalysisModePrompt } from './prompts';
 import type { ManuscriptMetrics } from '../core/dashboard/types';
 import type { NarrativeVoicePreset } from '../types';
 import { buildCodeFence } from '../utils/text-analysis';
@@ -143,6 +143,8 @@ export interface ManuscriptAnalysisOptions {
     signal?: AbortSignal;
     /** Custom instruction from the writer. */
     customInstruction?: string;
+    /** Response language directive (`aiResponseLanguage` setting). Empty = none. */
+    responseLanguage?: string;
     /** Pre-built messages for follow-up turns (caller manages compaction). */
     existingMessages?: ChatMessage[];
     /** Whether the manuscript text is a compacted subset (embed/compress) rather than full text. */
@@ -200,7 +202,7 @@ export function buildManuscriptAnalysisMessages(
         );
     }
 
-    const systemContent = systemParts.join('\n');
+    const systemContent = appendLanguageDirective(systemParts.join('\n'), options.responseLanguage);
 
     const userContent = ['Analyze the following manuscript.', '', fence, options.manuscriptText, fence].join('\n');
 

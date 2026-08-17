@@ -92,6 +92,17 @@ export interface EventideQuillSettings {
     anthropicBanRiskAcknowledged: boolean;
     /** One-time acknowledgment of the copy-editor (grammar) persona's caveat. */
     copyEditorAck: boolean;
+    /**
+     * Language the AI writes its responses in (analysis, explanations,
+     * questions, suggestions). Free-form (e.g., "French", "Français",
+     * "Japanese"). Empty (default) = no directive — the model follows its
+     * own judgment and the manuscript's language. Injected as a directive
+     * into every AI surface's system prompt via
+     * `appendLanguageDirective` (src/ai/prompts.ts); drafted/rewritten
+     * story prose follows the manuscript's language regardless, unless the
+     * writer explicitly asks otherwise.
+     */
+    aiResponseLanguage: string;
     transformTemperature: number;
     transformVaultContext: boolean;
     transformMaxOutputTokens: number;
@@ -405,6 +416,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     aiDefaultImageProvider: '',
     anthropicBanRiskAcknowledged: false,
     copyEditorAck: false,
+    aiResponseLanguage: '',
     transformTemperature: 1.0,
     transformVaultContext: true,
     transformMaxOutputTokens: 4096,
@@ -2993,6 +3005,21 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             ]
         });
         return [
+            {
+                type: 'group',
+                heading: 'Response language',
+                items: [
+                    {
+                        name: 'AI response language',
+                        desc: 'Language the AI writes its responses in — analysis, explanations, questions, and suggestions. Free-form (e.g., "French", "Français", "Japanese"). Applies to every AI surface: reviews, co-writer chat, linter fixes, transformations. Drafted and rewritten story prose still follows your manuscript\u2019s language unless you ask otherwise. Empty = the model decides.',
+                        control: {
+                            type: 'text',
+                            key: 'aiResponseLanguage',
+                            placeholder: 'e.g., French (empty = model decides)'
+                        }
+                    }
+                ]
+            },
             {
                 type: 'group',
                 heading: 'Selection transformations',
