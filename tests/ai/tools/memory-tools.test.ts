@@ -119,7 +119,10 @@ function makeCtx(opts: {
                 }
             }
         },
-        async saveSettings(): Promise<void> {}
+        // Spy (not a stub) so the advisory tests can assert the flag flip is
+        // actually PERSISTED — a dropped saveSettings call would otherwise
+        // pass the in-memory flag assertions silently.
+        saveSettings: vi.fn().mockResolvedValue(undefined)
     };
 
     return { ctx: { plugin } as unknown as ToolContext, state };
@@ -220,23 +223,29 @@ describe('save_memory + recall_memory + delete_memory — round-trip integration
 
     it('first save sets memoriesAdvisoryShown to true; second save does not re-set', async () => {
         const { ctx } = makeCtx({});
+        const saveSettings = vi.mocked(ctx.plugin.saveSettings);
         expect(ctx.plugin.settings.memoriesAdvisoryShown).toBe(false);
         await saveMemoryTool.execute({ content: 'first', heading: 'A' }, ctx);
-        // Flag flipped after the first save.
+        // Flag flipped after the first save — and persisted exactly once.
         expect(ctx.plugin.settings.memoriesAdvisoryShown).toBe(true);
+        expect(saveSettings).toHaveBeenCalledTimes(1);
         // Second save — flag stays true (no re-fire path; the guard is
-        // `if (!settings.memoriesAdvisoryShown)` which is false now).
+        // `if (!settings.memoriesAdvisoryShown)` which is false now), and no
+        // redundant persist fires.
         await saveMemoryTool.execute({ content: 'second', heading: 'B' }, ctx);
         expect(ctx.plugin.settings.memoriesAdvisoryShown).toBe(true);
+        expect(saveSettings).toHaveBeenCalledTimes(1);
     });
 
     it('advisory does NOT fire when memoriesAdvisoryShown is already true', async () => {
         const { ctx } = makeCtx({});
+        const saveSettings = vi.mocked(ctx.plugin.saveSettings);
         // Simulate a prior install where the advisory already fired.
         ctx.plugin.settings.memoriesAdvisoryShown = true;
         await saveMemoryTool.execute({ content: 'x', heading: 'X' }, ctx);
-        // Still true, no change.
+        // Still true, no change — and no persist call fired at all.
         expect(ctx.plugin.settings.memoriesAdvisoryShown).toBe(true);
+        expect(saveSettings).not.toHaveBeenCalled();
     });
 
     it('save rejects when memoriesEnabled is off', async () => {
