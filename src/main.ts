@@ -40,7 +40,7 @@ import {
 } from './utils/frontmatter';
 import { buildFeedbackMessages, getChunkedFeedback, getPersonaById, getFeedback } from './ai/feedback';
 import { continueReviewStream } from './ai/co-writer-streaming';
-import { getReviewDiscussSystemPrompt } from './ai/prompts';
+import { appendLanguageDirective, getReviewDiscussSystemPrompt } from './ai/prompts';
 import {
     type FeedbackJob,
     mintJobId,
@@ -734,9 +734,7 @@ export default class EventideQuillPlugin extends Plugin {
         // session is auto-stopped and the credited duration (excluding the
         // idle tail) is shown in a Notice. 30s precision is sufficient given
         // the default 20-minute threshold. registerInterval is lifecycle-safe.
-        this.registerInterval(
-            window.setInterval(() => void this.checkWritingSessionIdle(), 30_000)
-        );
+        this.registerInterval(window.setInterval(() => void this.checkWritingSessionIdle(), 30_000));
 
         this.registerEvent(
             this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor) => {
@@ -2884,7 +2882,10 @@ export default class EventideQuillPlugin extends Plugin {
             void this.snapshotCoWriterSession(false);
             this.currentCoWriterSessionId = null;
         }
-        const systemPrompt = getReviewDiscussSystemPrompt(engine, engineLabel);
+        const systemPrompt = appendLanguageDirective(
+            getReviewDiscussSystemPrompt(engine, engineLabel),
+            this.settings.aiResponseLanguage
+        );
         this.coWriterSession.seedForReviewDiscuss({ engine, systemPrompt, reportText, contextMessages });
     }
 
@@ -3356,7 +3357,8 @@ export default class EventideQuillPlugin extends Plugin {
             vaultContext,
             plotMapText,
             customInstruction,
-            compacted: wasCompacted
+            compacted: wasCompacted,
+            responseLanguage: this.settings.aiResponseLanguage
         });
         const loreReferenceMessages = await this.loreReferenceMessages(manuscriptText);
         const existingMessages = loreReferenceMessages.length
@@ -4191,6 +4193,7 @@ export default class EventideQuillPlugin extends Plugin {
             characters,
             plotThreads,
             customInstruction,
+            responseLanguage: this.settings.aiResponseLanguage,
             registry: analysisRegistry
         });
         // Lore reference embeds (gated on reviewLoreContext) injected between the
@@ -5313,7 +5316,8 @@ export default class EventideQuillPlugin extends Plugin {
         const initialMessages = buildFeedbackMessages(persona, {
             vaultContext,
             narrativePreset: this.settings.narrativeVoicePreset,
-            customInstruction
+            customInstruction,
+            responseLanguage: this.settings.aiResponseLanguage
         });
         this.feedbackCurrentMessages = [...initialMessages];
 
@@ -5357,6 +5361,7 @@ export default class EventideQuillPlugin extends Plugin {
                           temperature: this.settings.analysisTemperature,
                           signal: this.feedbackAbort.signal,
                           customInstruction,
+                          responseLanguage: this.settings.aiResponseLanguage,
                           vaultContext,
                           narrativePreset: this.settings.narrativeVoicePreset,
                           onProgress: (current, total) => {
@@ -5377,6 +5382,7 @@ export default class EventideQuillPlugin extends Plugin {
                                   maxTokens: this.settings.analysisMaxOutputTokens,
                                   signal: abortSignal,
                                   customInstruction,
+                                  responseLanguage: this.settings.aiResponseLanguage,
                                   existingMessages: msgs
                               }),
                           apiMessages
@@ -5945,7 +5951,8 @@ export default class EventideQuillPlugin extends Plugin {
             const systemMsg = buildFeedbackMessages(persona, {
                 vaultContext: snapshot.vaultContext,
                 narrativePreset: snapshot.narrativePreset,
-                customInstruction: job.focusPrompt
+                customInstruction: job.focusPrompt,
+                responseLanguage: this.settings.aiResponseLanguage
             })[0]!;
             const engineLabel = persona?.name ?? 'Editorial feedback';
             if (this.settings.reviewSuggestedEditsEnabled) {
@@ -5966,7 +5973,8 @@ export default class EventideQuillPlugin extends Plugin {
                 voiceMarker: snapshot.voiceMarker,
                 characters: snapshot.characters,
                 plotThreads: snapshot.plotThreads,
-                customInstruction: job.focusPrompt
+                customInstruction: job.focusPrompt,
+                responseLanguage: this.settings.aiResponseLanguage
             })[0]!;
             const label = getAnalysisModeById(snapshot.mode)?.label ?? snapshot.mode;
             if (this.settings.reviewSuggestedEditsEnabled) {
@@ -6053,7 +6061,8 @@ export default class EventideQuillPlugin extends Plugin {
         if (engine === 'editorial') {
             const persona = personaId === 'custom' ? undefined : getPersonaById(personaId ?? '');
             const systemMsg = buildFeedbackMessages(persona, {
-                narrativePreset: this.settings.narrativeVoicePreset
+                narrativePreset: this.settings.narrativeVoicePreset,
+                responseLanguage: this.settings.aiResponseLanguage
             })[0]!;
             const engineLabel = persona?.name ?? 'Editorial feedback';
             if (this.settings.reviewSuggestedEditsEnabled) {
@@ -6067,7 +6076,11 @@ export default class EventideQuillPlugin extends Plugin {
             // sendAnalysisChatMessage injects reference files only, so bake the
             // current source document into the seed as context.
             const docText = await this.getFileText(sourceFile.path);
-            const systemMsg = buildAnalysisMessages(modeStr as AnalysisMode, { text: '', scope: 'document' })[0]!;
+            const systemMsg = buildAnalysisMessages(modeStr as AnalysisMode, {
+                text: '',
+                scope: 'document',
+                responseLanguage: this.settings.aiResponseLanguage
+            })[0]!;
             const label = getAnalysisModeById(modeStr as AnalysisMode)?.label ?? modeStr ?? 'Critical analysis';
             if (this.settings.reviewSuggestedEditsEnabled) {
                 this.beginReviewDiscuss('critical', reportText, label);

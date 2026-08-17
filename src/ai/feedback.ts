@@ -1,5 +1,5 @@
 import { type AiProvider, type ChatChunk, type ChatMessage } from './provider';
-import { getSystemPrompt } from './prompts';
+import { appendLanguageDirective, getSystemPrompt } from './prompts';
 import { AI_MODE_CONFIGS } from './modes';
 import { chunkManuscript } from './manuscript-compaction';
 import { estimateTokens } from '../utils/tokens';
@@ -103,6 +103,8 @@ export interface FeedbackOptions {
     signal?: AbortSignal;
     /** Custom instruction from the writer, appended to the user message. */
     customInstruction?: string;
+    /** Response language directive (`aiResponseLanguage` setting). Empty = none. */
+    responseLanguage?: string;
     /** Pre-built messages to use instead of constructing system + user messages. */
     existingMessages?: ChatMessage[];
 }
@@ -131,7 +133,8 @@ export function buildFeedbackMessages(persona?: FeedbackPersona, options?: Feedb
             content: getSystemPrompt('analysis', {
                 vaultContext: options?.vaultContext,
                 narrativePreset: options?.narrativePreset,
-                persona
+                persona,
+                responseLanguage: options?.responseLanguage
             })
         },
         {
@@ -202,6 +205,7 @@ export async function* getChunkedFeedback(
         temperature?: number;
         signal?: AbortSignal;
         customInstruction?: string;
+        responseLanguage?: string;
         vaultContext?: string;
         narrativePreset?: NarrativeVoicePreset;
         onProgress?: (current: number, total: number) => void;
@@ -216,7 +220,8 @@ export async function* getChunkedFeedback(
     const baseMessages = buildFeedbackMessages(persona, {
         vaultContext: options.vaultContext,
         narrativePreset: options.narrativePreset,
-        customInstruction: options.customInstruction
+        customInstruction: options.customInstruction,
+        responseLanguage: options.responseLanguage
     });
     const systemPrompt = baseMessages[0]!.content;
     const systemTokens = estimateTokens(systemPrompt);
@@ -319,7 +324,7 @@ export async function* getChunkedFeedback(
 
     const synthesisStream = provider.chatCompletion({
         messages: [
-            { role: 'system', content: synthesisSystem },
+            { role: 'system', content: appendLanguageDirective(synthesisSystem, options.responseLanguage) },
             { role: 'user', content: sectionFeedback.join('\n\n---\n\n') }
         ],
         model,

@@ -1,5 +1,5 @@
 import { type AiProvider, type ChatChunk, type ChatMessage } from './provider';
-import { getAnalysisModePrompt } from './prompts';
+import { appendLanguageDirective, getAnalysisModePrompt } from './prompts';
 import { AI_MODE_CONFIGS } from './modes';
 import { streamWithTools, type ToolContext, type ToolRegistry } from './tools';
 import type { ExtractedEntity, VoiceMarker } from '../core/context-engine/types';
@@ -107,6 +107,8 @@ export interface AnalysisOptions {
     signal?: AbortSignal;
     /** Custom instruction from the writer, appended to the user message. */
     customInstruction?: string;
+    /** Response language directive (`aiResponseLanguage` setting). Empty = none. */
+    responseLanguage?: string;
     /** Pre-built messages for follow-up turns (caller manages compaction). */
     existingMessages?: ChatMessage[];
     /** Tool registry for verify-and-cite analysis. When present, getAnalysis
@@ -152,14 +154,17 @@ export function buildAnalysisMessages(mode: AnalysisMode, options: AnalysisOptio
     return [
         {
             role: 'system',
-            content: getAnalysisModePrompt(mode, {
-                voiceMarker: options.voiceMarker,
-                characters: options.characters,
-                plotThreads: options.plotThreads,
-                vaultContext: options.vaultContext,
-                toolsAvailable,
-                networkToolsAvailable
-            })
+            content: appendLanguageDirective(
+                getAnalysisModePrompt(mode, {
+                    voiceMarker: options.voiceMarker,
+                    characters: options.characters,
+                    plotThreads: options.plotThreads,
+                    vaultContext: options.vaultContext,
+                    toolsAvailable,
+                    networkToolsAvailable
+                }),
+                options.responseLanguage
+            )
         },
         {
             role: 'user',
