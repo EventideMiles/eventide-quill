@@ -40,8 +40,11 @@ function makeCtx(opts: {
     files?: Record<string, string>;
     activeFilePath?: string | null;
     currentManuscriptFolder?: string | null;
-}): { ctx: ToolContext; state: VaultState } {
+}): { ctx: ToolContext; state: VaultState; saveSettings: ReturnType<typeof vi.fn> } {
     const memoriesFolder = opts.memoriesFolder ?? 'Memories';
+    // Mock-plugin saveSettings spy — see the plugin literal below for why the
+    // reference is hoisted into this scope.
+    const saveSettings = vi.fn().mockResolvedValue(undefined);
     const state: VaultState = {
         files: new Map(Object.entries(opts.files ?? {})),
         folders: new Set(),
@@ -121,11 +124,13 @@ function makeCtx(opts: {
         },
         // Spy (not a stub) so the advisory tests can assert the flag flip is
         // actually PERSISTED — a dropped saveSettings call would otherwise
-        // pass the in-memory flag assertions silently.
-        saveSettings: vi.fn().mockResolvedValue(undefined)
+        // pass the in-memory flag assertions silently. Held in a local const
+        // (returned from makeCtx) because referencing it detached off the
+        // plugin object trips @typescript-eslint/unbound-method.
+        saveSettings
     };
 
-    return { ctx: { plugin } as unknown as ToolContext, state };
+    return { ctx: { plugin } as unknown as ToolContext, state, saveSettings };
 }
 
 /** Build a TFile stub with the given path (basename derived from the path). */
@@ -222,8 +227,7 @@ describe('save_memory + recall_memory + delete_memory — round-trip integration
     });
 
     it('first save sets memoriesAdvisoryShown to true; second save does not re-set', async () => {
-        const { ctx } = makeCtx({});
-        const saveSettings = vi.mocked(ctx.plugin.saveSettings);
+        const { ctx, saveSettings } = makeCtx({});
         expect(ctx.plugin.settings.memoriesAdvisoryShown).toBe(false);
         await saveMemoryTool.execute({ content: 'first', heading: 'A' }, ctx);
         // Flag flipped after the first save — and persisted exactly once.
@@ -238,8 +242,7 @@ describe('save_memory + recall_memory + delete_memory — round-trip integration
     });
 
     it('advisory does NOT fire when memoriesAdvisoryShown is already true', async () => {
-        const { ctx } = makeCtx({});
-        const saveSettings = vi.mocked(ctx.plugin.saveSettings);
+        const { ctx, saveSettings } = makeCtx({});
         // Simulate a prior install where the advisory already fired.
         ctx.plugin.settings.memoriesAdvisoryShown = true;
         await saveMemoryTool.execute({ content: 'x', heading: 'X' }, ctx);
