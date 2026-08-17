@@ -1,6 +1,6 @@
 import { LintResult } from '../core/linter/types';
 import { AiProvider, ChatMessage } from './provider';
-import { getSystemPrompt, getLinterUserPrompt, appendLanguageDirective, type WikiLinkBehavior } from './prompts';
+import { getSystemPrompt, getLinterUserPrompt, type WikiLinkBehavior } from './prompts';
 
 /** Configuration for the AI linter fix request. */
 export interface LinterAiOptions {

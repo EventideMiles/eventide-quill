@@ -5316,7 +5316,8 @@ export default class EventideQuillPlugin extends Plugin {
         const initialMessages = buildFeedbackMessages(persona, {
             vaultContext,
             narrativePreset: this.settings.narrativeVoicePreset,
-            customInstruction
+            customInstruction,
+            responseLanguage: this.settings.aiResponseLanguage
         });
         this.feedbackCurrentMessages = [...initialMessages];
 
@@ -5950,7 +5951,8 @@ export default class EventideQuillPlugin extends Plugin {
             const systemMsg = buildFeedbackMessages(persona, {
                 vaultContext: snapshot.vaultContext,
                 narrativePreset: snapshot.narrativePreset,
-                customInstruction: job.focusPrompt
+                customInstruction: job.focusPrompt,
+                responseLanguage: this.settings.aiResponseLanguage
             })[0]!;
             const engineLabel = persona?.name ?? 'Editorial feedback';
             if (this.settings.reviewSuggestedEditsEnabled) {
@@ -6059,7 +6061,8 @@ export default class EventideQuillPlugin extends Plugin {
         if (engine === 'editorial') {
             const persona = personaId === 'custom' ? undefined : getPersonaById(personaId ?? '');
             const systemMsg = buildFeedbackMessages(persona, {
-                narrativePreset: this.settings.narrativeVoicePreset
+                narrativePreset: this.settings.narrativeVoicePreset,
+                responseLanguage: this.settings.aiResponseLanguage
             })[0]!;
             const engineLabel = persona?.name ?? 'Editorial feedback';
             if (this.settings.reviewSuggestedEditsEnabled) {
@@ -6073,7 +6076,11 @@ export default class EventideQuillPlugin extends Plugin {
             // sendAnalysisChatMessage injects reference files only, so bake the
             // current source document into the seed as context.
             const docText = await this.getFileText(sourceFile.path);
-            const systemMsg = buildAnalysisMessages(modeStr as AnalysisMode, { text: '', scope: 'document' })[0]!;
+            const systemMsg = buildAnalysisMessages(modeStr as AnalysisMode, {
+                text: '',
+                scope: 'document',
+                responseLanguage: this.settings.aiResponseLanguage
+            })[0]!;
             const label = getAnalysisModeById(modeStr as AnalysisMode)?.label ?? modeStr ?? 'Critical analysis';
             if (this.settings.reviewSuggestedEditsEnabled) {
                 this.beginReviewDiscuss('critical', reportText, label);
