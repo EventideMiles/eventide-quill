@@ -22,6 +22,9 @@ import { runResearchTool } from './research';
 import { reviseEditTool } from './revise-edit';
 import { runLorebookBatchTool } from './run-lorebook-batch';
 import { vaultLookupTool } from './vault-lookup';
+import { saveMemoryTool } from './save-memory';
+import { recallMemoryTool } from './recall-memory';
+import { deleteMemoryTool } from './delete-memory';
 import type EventideQuillPlugin from '../../main';
 
 export { ToolRegistry, executeToolCall } from './tool';
@@ -49,6 +52,9 @@ export { reviseEditTool } from './revise-edit';
 export { runLorebookBatchTool } from './run-lorebook-batch';
 export { runResearchTool } from './research';
 export { vaultLookupTool } from './vault-lookup';
+export { saveMemoryTool } from './save-memory';
+export { recallMemoryTool } from './recall-memory';
+export { deleteMemoryTool } from './delete-memory';
 export {
     detectTextToolCall,
     buildToolNudgeMessage,
@@ -83,6 +89,12 @@ export interface InternalToolOptions {
  * lorebook coach drops `manuscript_mentions` / `grep_notes` / `refresh_dashboard`
  * — its system prompt never references them, so registering them only spends
  * tool-definition tokens on every request).
+ *
+ * Memory tools (`save_memory` / `recall_memory` / `delete_memory`) are
+ * registered separately by {@link registerMemoryTools} so the memory
+ * feature is independently gated by `memoriesEnabled` (not coupled to
+ * `coWriterToolsEnabled`). Call {@link registerMemoryTools} after this
+ * when memories are on.
  */
 export function createInternalToolRegistry(opts?: InternalToolOptions): ToolRegistry {
     const includeManuscript = opts?.manuscript ?? true;
@@ -107,6 +119,21 @@ export function createInternalToolRegistry(opts?: InternalToolOptions): ToolRegi
 }
 
 /**
+ * Register the three memory tools (`save_memory`, `recall_memory`,
+ * `delete_memory`) on `registry`. Gated by `memoriesEnabled` independently
+ * of `coWriterToolsEnabled` so the writer can disable memory features even
+ * while keeping the rest of the tool surface on. No-op when memories are
+ * disabled — the feature vanishes entirely from the model's awareness
+ * (no tools registered, no system-prompt clause, no index injected).
+ */
+export function registerMemoryTools(plugin: EventideQuillPlugin, registry: ToolRegistry): void {
+    if (!plugin.settings.memoriesEnabled) return;
+    registry.register(saveMemoryTool);
+    registry.register(recallMemoryTool);
+    registry.register(deleteMemoryTool);
+}
+
+/**
  * Build a READ-ONLY registry for research / lore-batch subagents: the lookup
  * and sizing tools, but NO editing tools (edit_note / insert_note /
  * append_to_note / revise_edit) and NO subagent spawners. With
@@ -124,6 +151,12 @@ export function createReadOnlyToolRegistry(plugin: EventideQuillPlugin, includeE
     registry.register(grepNotesTool);
     registry.register(measureFolderTool);
     registry.register(calculateFileSizesTool);
+    // Read-only subagents (research) get memory RECALL but not save/delete —
+    // a subagent shouldn't persist memories on its own; the parent surfaces
+    // findings and the writer's turn decides what's worth saving.
+    if (plugin.settings.memoriesEnabled) {
+        registry.register(recallMemoryTool);
+    }
     if (includeExternal) {
         registerExternalTools(registry, plugin);
     }
@@ -152,6 +185,9 @@ export function createLoreCoachToolRegistry(plugin: EventideQuillPlugin): ToolRe
     if (allowImages) {
         registry.register(attachLoreImageTool);
     }
+    // Memory tools are registered by the parent createToolRegistry, NOT here:
+    // createToolRegistry calls registerMemoryTools on whatever registry this
+    // function returns. Registering them here too would throw DuplicateToolError.
     return registry;
 }
 
@@ -193,6 +229,13 @@ export function createToolRegistry(
     }
 
     registerExternalTools(registry, plugin);
+
+    // Memory tools register on every parent-mode registry when enabled, so
+    // the model has them in every co-writer surface (discuss / coach /
+    // review-discuss). Independent of `coWriterToolsEnabled` (above guard)
+    // so a writer can keep tools on but memories off (e.g. for a small
+    // local model where every context token matters).
+    registerMemoryTools(plugin, registry);
 
     return registry;
 }

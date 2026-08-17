@@ -1,4 +1,5 @@
 import type { ChatMessage } from './provider';
+import { MEMORY_DISCIPLINE_CLAUSE } from './memory-prompts';
 import { fandomReachability } from './tools/fandom-cache';
 import type EventideQuillPlugin from '../main';
 
@@ -117,19 +118,38 @@ export function buildInternalToolsMessage(plugin: EventideQuillPlugin): ChatMess
     // Mirror createToolRegistry(): no tools at all when tools are disabled, so
     // the prompt never advertises tools the model can't actually call.
     if (!plugin.settings.coWriterToolsEnabled) return null;
+    const lines = [
+        'You have internal vault tools to ground your feedback in the manuscript and notes:',
+        '- manuscript_mentions: where a character, place, or plot thread appears in the active manuscript (pass empty to list every entity the extractor found).',
+        "- vault_lookup: read a note's full text by path or name (frontmatter stripped). Reserve it for a SPECIFIC note you need in full.",
+        '- grep_notes: search for text across vault files to find where something is mentioned.',
+        "- lore_siblings: list other lore entries near a given one. Shows each entry's image labels (when present) as `(images: Default form (2), Alternate form)` — the count suffix (N) means N images share that label.",
+        '- get_lore_image: when a lore entry has images (you saw them via lore_siblings OR you saw ![[file.png]] embeds in a vault_lookup result), call this to actually SEE them. By default returns EVERY image attached to the entry — this is the recommended call so multi-image galleries are fully visible. Narrow with `label` (images under one subheading) and/or `index` (1-based position within the label-filtered set, useful when the count suffix shows multiple images under one label). Particularly important for character appearance, locations, maps, and any visual reference — do not describe art from filename or context alone when you can fetch the pixels.',
+        'To learn the cast and world (characters, locations, plot threads), reach for manuscript_mentions — it lists the entities directly, saving a vault_lookup. If it returns "no entities," the dashboard has not been scanned: call refresh_dashboard (with a manuscript file path) and retry.',
+        'Reach for these when a question of fact about the manuscript or vault would sharpen your answer. Tool results stay in context — read judiciously.',
+        ''
+    ];
+    // When memories are on, advertise save_memory / recall_memory /
+    // delete_memory alongside the internal tools and ship the discipline
+    // clause so the model knows WHEN to save. Mirrors registerMemoryTools:
+    // memories require coWriterToolsEnabled (so this branch only runs when
+    // the outer guard passed) and add an independent on/off via
+    // memoriesEnabled.
+    if (plugin.settings.memoriesEnabled) {
+        lines.push(
+            'You also have memory tools to persist and recall context you learn:',
+            '- save_memory: save a durable fact (preference, worldbuilding note, intent behind a choice). Future sessions will see it.',
+            '- recall_memory: fetch full bodies of saved memories matching a query (the auto-injected Memories section shows the index).',
+            '- delete_memory: remove a memory by its block ID (only when the writer explicitly asks).',
+            ''
+        );
+    }
+    lines.push(TOOL_DISCIPLINE);
+    if (plugin.settings.memoriesEnabled) {
+        lines.push('', MEMORY_DISCIPLINE_CLAUSE);
+    }
     return {
         role: 'system',
-        content: [
-            'You have internal vault tools to ground your feedback in the manuscript and notes:',
-            '- manuscript_mentions: where a character, place, or plot thread appears in the active manuscript (pass empty to list every entity the extractor found).',
-            "- vault_lookup: read a note's full text by path or name (frontmatter stripped). Reserve it for a SPECIFIC note you need in full.",
-            '- grep_notes: search for text across vault files to find where something is mentioned.',
-            "- lore_siblings: list other lore entries near a given one. Shows each entry's image labels (when present) as `(images: Default form (2), Alternate form)` — the count suffix (N) means N images share that label.",
-            '- get_lore_image: when a lore entry has images (you saw them via lore_siblings OR you saw ![[file.png]] embeds in a vault_lookup result), call this to actually SEE them. By default returns EVERY image attached to the entry — this is the recommended call so multi-image galleries are fully visible. Narrow with `label` (images under one subheading) and/or `index` (1-based position within the label-filtered set, useful when the count suffix shows multiple images under one label). Particularly important for character appearance, locations, maps, and any visual reference — do not describe art from filename or context alone when you can fetch the pixels.',
-            'To learn the cast and world (characters, locations, plot threads), reach for manuscript_mentions — it lists the entities directly, saving a vault_lookup. If it returns "no entities," the dashboard has not been scanned: call refresh_dashboard (with a manuscript file path) and retry.',
-            'Reach for these when a question of fact about the manuscript or vault would sharpen your answer. Tool results stay in context — read judiciously.',
-            '',
-            TOOL_DISCIPLINE
-        ].join('\n')
+        content: lines.join('\n')
     };
 }

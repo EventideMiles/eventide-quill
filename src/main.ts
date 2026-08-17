@@ -1,5 +1,6 @@
 import {
     Editor,
+    MarkdownFileInfo,
     MarkdownView,
     Menu,
     normalizePath,
@@ -126,6 +127,8 @@ import {
     saveWritingGoals,
     startSession,
     stopSession,
+    touchSession,
+    checkSessionIdle,
     type WritingGoalsState
 } from './core/dashboard/writing-goals';
 
@@ -703,6 +706,37 @@ export default class EventideQuillPlugin extends Plugin {
                 }, intervalMs)
             );
         }
+
+        // Writing-session keystroke tracking. `editor-change` fires on every
+        // keystroke in a markdown editor; we update `session.lastKeystrokeMs`
+        // in-memory only (no persist on every keystroke — the idle-check tick
+        // coalesces the sidecar write). Only keystrokes in the session's
+        // manuscript folder count — typing in unrelated notes doesn't reset
+        // the idle timer.
+        this.registerEvent(
+            this.app.workspace.on('editor-change', (_editor: Editor, info: MarkdownView | MarkdownFileInfo) => {
+                const session = this.writingGoals.session;
+                if (!session) return;
+                // Only MarkdownView has .file; MarkdownFileInfo (e.g. sidebar
+                // editors) doesn't — skip those. Only count keystrokes in the
+                // session's manuscript folder; typing in unrelated notes
+                // doesn't reset the idle timer.
+                if (!(info instanceof MarkdownView)) return;
+                const folder = info.file?.parent?.path ?? '';
+                if (folder === session.folder) {
+                    touchSession(this.writingGoals, Date.now());
+                }
+            })
+        );
+
+        // Writing-session idle-timeout check. Runs every 30 seconds; when the
+        // active session has been idle past `writingSessionIdleMinutes`, the
+        // session is auto-stopped and the credited duration (excluding the
+        // idle tail) is shown in a Notice. 30s precision is sufficient given
+        // the default 20-minute threshold. registerInterval is lifecycle-safe.
+        this.registerInterval(
+            window.setInterval(() => void this.checkWritingSessionIdle(), 30_000)
+        );
 
         this.registerEvent(
             this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor) => {
@@ -4575,6 +4609,39 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
+     * Auto-stop an idle writing session. Called every 30 seconds by the
+     * idle-check tick registered in `onload`. When the active session has
+     * been idle (no keystrokes) for `writingSessionIdleMinutes` minutes,
+     * the session is stopped and the credited duration (excluding the idle
+     * tail) is surfaced via a Notice. When the session is still active
+     * after the check, the latest `lastKeystrokeMs` is persisted so it
+     * survives an Obsidian restart (at most 30s of keystroke data lost).
+     * No-op when the idle timeout is disabled (0) or no session is active.
+     */
+    private async checkWritingSessionIdle(): Promise<void> {
+        await this.writingGoalsLoading;
+        const idleMinutes = this.settings.writingSessionIdleMinutes;
+        if (idleMinutes <= 0 || !this.writingGoals.session) return;
+        const idleMs = idleMinutes * 60_000;
+        const result = checkSessionIdle(this.writingGoals, Date.now(), idleMs);
+        // Persist on every tick — whether stopped or still active. The
+        // stopped case clears the session (needs a write); the still-active
+        // case captures the latest lastKeystrokeMs from touchSession (so a
+        // crash/restart loses at most 30s of keystroke data). Throttled by
+        // the 30s tick cadence, not per-keystroke.
+        void saveWritingGoals(this.app.vault, this.pluginDataDir, this.writingGoals);
+        if (result.stopped) {
+            this.lintPanel?.refreshDashboardPanel();
+            const credited = result.creditedMs ?? 0;
+            const creditedLabel = formatSessionDuration(credited);
+            new Notice(
+                `Quill: writing session auto-stopped after ${idleMinutes} min of inactivity ` +
+                    `(${creditedLabel} credited).`
+            );
+        }
+    }
+
+    /**
      * Refresh document-scoped lorebook coverage.
      *
      * Reads the active document's text and runs substring matching against
@@ -6360,4 +6427,18 @@ export default class EventideQuillPlugin extends Plugin {
             }
         }
     }
+}
+
+/**
+ * Format a session duration in ms as a human-readable label for Notices.
+ * Returns "N min" or "N hr M min" (rounded down). Sub-minute durations
+ * report "less than a minute". Used by {@link checkWritingSessionIdle}.
+ */
+function formatSessionDuration(ms: number): string {
+    const totalMin = Math.floor(ms / 60_000);
+    if (totalMin < 1) return 'less than a minute';
+    const hr = Math.floor(totalMin / 60);
+    const min = totalMin % 60;
+    if (hr < 1) return `${min} min`;
+    return min > 0 ? `${hr} hr ${min} min` : `${hr} hr`;
 }

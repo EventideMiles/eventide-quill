@@ -4,7 +4,7 @@ import { obsidianPage } from 'wdio-obsidian-service';
 import { openFile, openQuillSidebar } from '../../helpers/obsidian-helpers.js';
 
 /**
- * Live lore-consistency critical-analysis — validates the new (2.1.0) 5th
+ * Live lore-consistency critical-analysis — validates the new (2.2.0) 5th
  * critical mode end-to-end against a real local model: the prompt is accepted,
  * the (possibly tool-augmented + embedding-backed) stream completes, and a
  * non-empty report renders in the Review tab. With a dedicated embed model

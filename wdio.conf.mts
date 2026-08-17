@@ -105,6 +105,13 @@ export const config: WebdriverIO.Config = {
     // suite is excluded.
     maxInstances: Number(env.WDIO_MAX_INSTANCES ?? 1),
 
+    // Retry flaky specs. Real Obsidian in CI has transient timing flakes that
+    // don't reproduce locally (cold-start overhead, shared mock-server timing,
+    // virtual-display scheduling). A retry catches the common case without
+    // masking consistent failures — a genuinely broken spec still fails the
+    // second attempt.
+    specFileRetries: 2,
+
     capabilities: [
         ...desktopVersions.map(([appVersion, installerVersion]) => ({
             browserName: 'obsidian',

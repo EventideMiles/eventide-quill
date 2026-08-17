@@ -125,7 +125,7 @@ export interface EventideQuillSettings {
      * markers (keeping `quillAnchorId` so rewind still works), and a free
      * refinement pass runs before the AI compaction fallback when a
      * conversation approaches the threshold. Off = pure AI compaction only
-     * (the pre-2.1.0 behavior). See `src/ai/context-refinement.ts`.
+     * (the pre-2.2.0 behavior). See `src/ai/context-refinement.ts`.
      */
     contextRefinementEnabled: boolean;
     contextIncludeVaultContext: boolean;
@@ -163,6 +163,13 @@ export interface EventideQuillSettings {
     readabilityFormula: ReadabilityFormula;
     /** Daily writing word goal (0 disables goals/streak). Default 500. */
     writingDailyGoal: number;
+    /**
+     * Minutes of inactivity before an active writing session auto-stops.
+     * When the writer stops typing for this long, the session ends and the
+     * credited duration excludes the idle tail (equivalent to "threshold
+     * subtracted from raw elapsed"). 0 disables the idle check. Default: 20.
+     */
+    writingSessionIdleMinutes: number;
     /**
      * User-defined slash commands for the co-writer chat input. Typing
      * `/` at the start of a line opens a picker of matching commands;
@@ -260,14 +267,14 @@ export interface EventideQuillSettings {
      * returns a length-aware message routing the model to `edit_note` /
      * `insert_note` / `append_to_note` instead. Prevents duplicate notes that
      * strand [[wikilinks]] pointing at the original. Off = unconditional
-     * create (the pre-2.1.0 behavior) — escape hatch.
+     * create (the pre-2.2.0 behavior) — escape hatch.
      */
     lorePreferEditOverCreate: boolean;
     /**
      * When on, follow-up discussion of a review report runs through the
      * co-writer session machinery with editing tools enabled, so the editor
      * can propose specific, reviewable inline-diff edits (not just advisory
-     * prose). Off preserves the pre-2.1.0 text-only chat behavior. Default:
+     * prose). Off preserves the pre-2.2.0 text-only chat behavior. Default:
      * on.
      */
     reviewSuggestedEditsEnabled: boolean;
@@ -297,6 +304,59 @@ export interface EventideQuillSettings {
     autoSaveFeedbackReports: boolean;
     /** Vault folder for auto-saved feedback reports. Created on first write. `normalizePath()`-wrapped on every constructed path. Default `eventide-quill-reports`. */
     feedbackReportFolder: string;
+    /**
+     * Master toggle for the memories system. Off = the feature vanishes
+     * entirely from the model's awareness (no `save_memory` /
+     * `recall_memory` / `delete_memory` tools registered, no memory
+     * system-prompt clause, no index auto-injected into co-writer context).
+     * The escape hatch for writers on very small local models where every
+     * context token matters. Default: on.
+     */
+    memoriesEnabled: boolean;
+    /**
+     * Vault folder for memory files. Created on first write. Each top-level
+     * manuscript folder gets one `<scope>.memories.md` plus a `_global.memories.md`
+     * for cross-manuscript context. `normalizePath()`-wrapped on every path.
+     * Default `Memories`.
+     */
+    memoriesFolder: string;
+    /**
+     * On = the model's `save_memory` calls land in the vault immediately
+     * (with a Notice so the writer notices). Off = each save shows a
+     * confirmation modal with the proposed heading + body so the writer
+     * explicitly approves before the write. **Deletes always show a
+     * confirmation modal regardless of this toggle** — silent destructive
+     * ops are too risky to auto-apply. The full review-card flow
+     * (pending-memory cards in the sidebar's change-review surface,
+     * alongside pending lore edits) is planned future work. Default: on.
+     */
+    memoriesAutoSave: boolean;
+    /**
+     * On = full memory bodies are auto-injected into co-writer context
+     * instead of just the index (heading + first sentence). For writers
+     * running powerful models with large context windows. Off = hybrid
+     * retrieval (small index always injected, full bodies fetched on
+     * demand via `recall_memory`). Default: off.
+     */
+    memoriesFullInject: boolean;
+    /**
+     * Cap on the number of index entries auto-injected into co-writer
+     * context per session. Lowered automatically for small-context local
+     * models (under ~8k tokens) to stay within budget. Default 20.
+     */
+    memoriesMaxIndexEntries: number;
+    /** Cap on the number of entries `recall_memory` returns in one call. Default 10. */
+    memoriesRecallMaxEntries: number;
+    /** Soft cap on memories per file, mostly hygiene. The UI shows a "consider pruning" hint when exceeded. Default 100. */
+    memoriesMaxPerFile: number;
+    /**
+     * Internal one-time flag: true after the advisory Notice has been shown
+     * on the first AI-saved memory. NOT a user preference — just tracking so
+     * the advisory fires exactly once per install. Not exposed in the UI or
+     * restored by restoreGeneralDefaults (same pattern as
+     * `anthropicBanRiskAcknowledged` / `copyEditorAck`).
+     */
+    memoriesAdvisoryShown: boolean;
 }
 
 export const DEFAULT_SETTINGS: EventideQuillSettings = {
@@ -393,6 +453,7 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     dashboardMaxSnapshots: 100,
     readabilityFormula: 'reweighted-flesch',
     writingDailyGoal: 500,
+    writingSessionIdleMinutes: 20,
     slashCommands: [],
     lorebookFolders: [],
     lorebookFolderTypes: {},
@@ -421,7 +482,15 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     feedbackQueueLimit: 20,
     feedbackQueueAutoRun: true,
     autoSaveFeedbackReports: true,
-    feedbackReportFolder: 'eventide-quill-reports'
+    feedbackReportFolder: 'eventide-quill-reports',
+    memoriesEnabled: true,
+    memoriesFolder: 'Memories',
+    memoriesAutoSave: true,
+    memoriesFullInject: false,
+    memoriesMaxIndexEntries: 20,
+    memoriesRecallMaxEntries: 10,
+    memoriesMaxPerFile: 100,
+    memoriesAdvisoryShown: false
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
@@ -773,7 +842,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         const scroll = containerEl.createDiv({ cls: 'quill-settings__scroll-area' });
         render(scroll);
         // Wrap runs of settings under each heading into bordered sections,
-        // matching the pre-2.1.0 grouped look. Each tab renders into a single
+        // matching the pre-2.2.0 grouped look. Each tab renders into a single
         // `.quill-settings-content-*` div created by its render method.
         const content = scroll.querySelector<HTMLElement>('[class*="quill-settings-content-"]');
         if (content) this.groupSettingsByHeading(content);
@@ -783,7 +852,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     /**
      * Re-render the currently-open bridge page in place after a mutation
      * (add/remove provider, slash command, folder override, etc.). Replaces the
-     * pre-2.1.0 `this.refreshBridge()` full re-render. Falls back to `update()` when
+     * pre-2.2.0 `this.refreshBridge()` full re-render. Falls back to `update()` when
      * no bridge page is active (e.g. at the root definition list). As tabs
      * convert to declarative controls (Phases 2–6), their mutation handlers
      * switch to `this.update()` / `this.refreshDomState()` and this method is
@@ -1339,6 +1408,24 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 })
             );
 
+        new Setting(content)
+            .setName('Memories')
+            .setDesc(
+                'Lets the AI save durable facts it learns about your manuscript and preferences ' +
+                    'via three tools — save_memory, recall_memory, and delete_memory. Saved as ' +
+                    'writer-editable markdown under the Memories folder; future sessions see them ' +
+                    'via an auto-injected index. Off = all three tools vanish entirely from the ' +
+                    "model's awareness, no prompt clause, no index injected — escape hatch for very " +
+                    'small local models where every context token matters.'
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.memoriesEnabled).onChange(async (value) => {
+                    this.plugin.settings.memoriesEnabled = value;
+                    await this.plugin.saveSettings();
+                    this.refreshBridge();
+                })
+            );
+
         content.createDiv({
             cls: 'quill-settings__welcome-privacy',
             text:
@@ -1533,6 +1620,17 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                             max: 100000,
                             validate: (v) => (v >= 0 && v <= 100000 ? undefined : 'Value must be between 0 and 100000')
                         }
+                    },
+                    {
+                        name: 'Session idle timeout',
+                        desc: 'Minutes of inactivity before an active writing session auto-stops. When you stop typing for this long, the session ends and the credited duration excludes the idle tail (equivalent to the threshold subtracted from the raw elapsed). 0 disables the idle check. Default: 20.',
+                        control: {
+                            type: 'number',
+                            key: 'writingSessionIdleMinutes',
+                            min: 0,
+                            max: 120,
+                            validate: (v) => (v >= 0 && v <= 120 ? undefined : 'Value must be between 0 and 120')
+                        }
                     }
                 ]
             },
@@ -1546,7 +1644,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         ];
     }
 
-    /** Restore-defaults action for the General page (resets across all tabs, matching pre-2.1.0 behavior). */
+    /** Restore-defaults action for the General page (resets across all tabs, matching pre-2.2.0 behavior). */
     private async restoreGeneralDefaults(): Promise<void> {
         const s = this.plugin.settings;
         const d = DEFAULT_SETTINGS;
@@ -1569,6 +1667,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         s.dashboardMaxSnapshots = d.dashboardMaxSnapshots;
         s.readabilityFormula = d.readabilityFormula;
         s.writingDailyGoal = d.writingDailyGoal;
+        s.writingSessionIdleMinutes = d.writingSessionIdleMinutes;
         s.lorebookFolders = [...d.lorebookFolders];
         s.lorebookFolderTypes = { ...d.lorebookFolderTypes };
         s.coWriterLoreContext = d.coWriterLoreContext;
@@ -1589,6 +1688,13 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         s.loreEntryImageMaxPerEntry = d.loreEntryImageMaxPerEntry;
         s.loreEntryImageAttachments = d.loreEntryImageAttachments;
         s.loreEntryImageAttachmentFolder = d.loreEntryImageAttachmentFolder;
+        s.memoriesEnabled = d.memoriesEnabled;
+        s.memoriesFolder = d.memoriesFolder;
+        s.memoriesAutoSave = d.memoriesAutoSave;
+        s.memoriesFullInject = d.memoriesFullInject;
+        s.memoriesMaxIndexEntries = d.memoriesMaxIndexEntries;
+        s.memoriesRecallMaxEntries = d.memoriesRecallMaxEntries;
+        s.memoriesMaxPerFile = d.memoriesMaxPerFile;
         s.slashCommands = [...d.slashCommands];
         await this.plugin.saveSettings();
         this.update();
@@ -1754,6 +1860,65 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         name: 'Prefer editing existing lore',
                         desc: 'When the lorebook coach drafts a new entry whose exact name already matches a note in your vault, refuse the draft and point it at edit_note / insert_note / append_to_note instead. Avoids duplicate notes that strand [[wikilinks]] pointing at the original. Off = allow unconditional creation. Default: on.',
                         control: { type: 'toggle', key: 'lorePreferEditOverCreate' }
+                    }
+                ]
+            },
+            {
+                type: 'group',
+                heading: 'Memories',
+                items: [
+                    {
+                        name: 'Memories',
+                        desc: "Let the AI save durable facts it learns about your manuscript and preferences (voice, intent behind flagged choices, worldbuilding notes that do not fit the typed-lore model). Saved as writer-editable markdown under the Memories folder; future sessions see them via an auto-injected index. Off = the feature vanishes entirely from the model's awareness (no save_memory / recall_memory / delete_memory tools, no prompt clause, no index injected) — escape hatch for very small local models where every context token matters. Default: on.",
+                        control: { type: 'toggle', key: 'memoriesEnabled' }
+                    },
+                    {
+                        name: 'Memories folder',
+                        desc: 'Vault folder where memory files live. One <scope>.memories.md per top-level manuscript folder plus a _global.memories.md for cross-manuscript context. Created on first write. Default: Memories.',
+                        control: { type: 'folder', key: 'memoriesFolder' }
+                    },
+                    {
+                        name: 'Auto-save memories',
+                        desc: 'On = save_memory calls land in the vault immediately (with a Notice). Off = each save shows a confirmation modal with the proposed heading + body so you explicitly approve before the write. Deletes always require confirmation regardless of this toggle. Default: on.',
+                        control: { type: 'toggle', key: 'memoriesAutoSave' }
+                    },
+                    {
+                        name: 'Inject full memory bodies',
+                        desc: 'On = full memory bodies are auto-injected into co-writer context instead of just the heading + first-sentence preview. For writers running powerful models with large context windows. Off = hybrid retrieval (small index always injected, full bodies fetched on demand via recall_memory). Default: off.',
+                        control: { type: 'toggle', key: 'memoriesFullInject' }
+                    },
+                    {
+                        name: 'Max index entries',
+                        desc: 'Cap on the number of memory entries auto-injected into co-writer context per session. Lowered automatically for small-context local models (under ~8k tokens) to stay within budget. Default: 20.',
+                        control: {
+                            type: 'number',
+                            key: 'memoriesMaxIndexEntries',
+                            min: 0,
+                            max: 200,
+                            validate: (v) => (v >= 0 && v <= 200 ? undefined : 'Value must be between 0 and 200')
+                        }
+                    },
+                    {
+                        name: 'Max recall entries',
+                        desc: 'Cap on the number of entries recall_memory returns in one call. Default: 10.',
+                        control: {
+                            type: 'number',
+                            key: 'memoriesRecallMaxEntries',
+                            min: 1,
+                            max: 100,
+                            validate: (v) => (v >= 1 && v <= 100 ? undefined : 'Value must be between 1 and 100')
+                        }
+                    },
+                    {
+                        name: 'Max memories per file',
+                        desc: 'Soft cap on memories per file, mostly hygiene. The Memories sub-tab shows a "consider pruning" hint when exceeded. Default: 100.',
+                        control: {
+                            type: 'number',
+                            key: 'memoriesMaxPerFile',
+                            min: 1,
+                            max: 1000,
+                            validate: (v) => (v >= 1 && v <= 1000 ? undefined : 'Value must be between 1 and 1000')
+                        }
                     }
                 ]
             },
@@ -3006,7 +3171,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     },
                     {
                         name: 'Proactive editor chat',
-                        desc: 'After a report finishes, the follow-up discussion runs through the co-writer session with editing tools enabled, so the editor can propose specific, reviewable inline-diff edits (not just advisory prose). Every proposed edit still requires your approval before it reaches the vault. Turn off to keep the pre-2.1.0 text-only chat behavior. Default: on.',
+                        desc: 'After a report finishes, the follow-up discussion runs through the co-writer session with editing tools enabled, so the editor can propose specific, reviewable inline-diff edits (not just advisory prose). Every proposed edit still requires your approval before it reaches the vault. Turn off to keep the pre-2.2.0 text-only chat behavior. Default: on.',
                         control: { type: 'toggle', key: 'reviewSuggestedEditsEnabled' }
                     },
                     {

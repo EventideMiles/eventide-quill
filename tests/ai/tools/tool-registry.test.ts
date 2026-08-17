@@ -10,6 +10,8 @@ import type EventideQuillPlugin from '../../../src/main';
 function makePlugin(overrides: Record<string, unknown> = {}): EventideQuillPlugin {
     const settings: Record<string, unknown> = {
         coWriterToolsEnabled: true,
+        memoriesEnabled: true,
+        memoriesFolder: 'Memories',
         lorebookNetworkTools: false,
         lorebookImageTools: false,
         lorebookFandomAllowAllWikis: false,
@@ -59,12 +61,47 @@ describe('createToolRegistry — review-discuss configuration', () => {
         expect(reg).not.toBeNull();
     });
 
-    it('registers exactly the internal tools + subagent spawners, no extras', () => {
+    it('registers exactly the internal tools + subagent spawners + memory tools, no extras', () => {
         const plugin = makePlugin();
         const reg = createToolRegistry(plugin, false, true)!;
-        const expected = [...INTERNAL_TOOL_IDS, 'run_lorebook_batch', 'run_research'];
+        const expected = [
+            ...INTERNAL_TOOL_IDS,
+            'run_lorebook_batch',
+            'run_research',
+            'save_memory',
+            'recall_memory',
+            'delete_memory'
+        ];
         const actual = reg.list().map((t) => t.id);
         expect(actual.sort()).toEqual(expected.sort());
+    });
+
+    it('omits memory tools when memoriesEnabled is off (independent kill switch)', () => {
+        const plugin = makePlugin({ memoriesEnabled: false });
+        const reg = createToolRegistry(plugin, false, true)!;
+        const actual = reg.list().map((t) => t.id);
+        expect(actual).not.toContain('save_memory');
+        expect(actual).not.toContain('recall_memory');
+        expect(actual).not.toContain('delete_memory');
+        // Other internal tools still registered.
+        expect(actual).toContain('vault_lookup');
+    });
+
+    it('createToolRegistry(plugin, true, true) does not throw DuplicateToolError (lorebook coach path)', () => {
+        // Regression: createLoreCoachToolRegistry must NOT call registerMemoryTools
+        // because createToolRegistry does it on the returned registry. A duplicate
+        // call throws DuplicateToolError and surfaces in the lorebook-coach E2E as
+        // "assistant streaming never finished" because the sendLoreCoach catch
+        // block fires before any stream starts.
+        const plugin = makePlugin();
+        const reg = createToolRegistry(plugin, true, true)!;
+        // Memory tools registered exactly once each.
+        for (const id of ['save_memory', 'recall_memory', 'delete_memory']) {
+            const matches = reg.list().filter((t) => t.id === id);
+            expect(matches, `expected exactly one ${id}`).toHaveLength(1);
+        }
+        // Lorebook coach's own tools also present.
+        expect(reg.get('propose_entry')).toBeDefined();
     });
 
     it('does NOT register propose_entry for review-discuss', () => {

@@ -332,3 +332,152 @@
         background: var(--background-modifier-hover);
     }
 }
+
+// ============================================================================
+// Memories sub-tab — cards listing saved memories with click-to-open.
+// ============================================================================
+
+.quill-memories-panel {
+    &__header {
+        margin-bottom: var(--quill-spacing-md, 12px);
+
+        h3 {
+            margin: 0 0 var(--quill-spacing-xs, 4px) 0;
+            font-size: var(--h3-size, 1.1em);
+            font-weight: var(--h3-weight, 600);
+        }
+    }
+
+    &__subtitle {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: var(--font-smallest, 11px);
+        line-height: 1.4;
+    }
+
+    &__actions {
+        display: flex;
+        gap: var(--quill-spacing-xs, 4px);
+        margin-bottom: var(--quill-spacing-md, 12px);
+    }
+
+    &__action-btn {
+        // Mirrors the lorebook refresh button — small, unobtrusive.
+        font-size: var(--font-small, 12px);
+        padding: 4px 10px;
+        border-radius: var(--radius-s, 4px);
+        background: var(--interactive-normal);
+        color: var(--text-normal);
+        border: 1px solid var(--background-modifier-border);
+        cursor: pointer;
+
+        &:hover {
+            background: var(--interactive-hover);
+            border-color: var(--interactive-accent-hover);
+        }
+
+        &--secondary {
+            background: transparent;
+            color: var(--text-muted);
+
+            &:hover {
+                color: var(--text-normal);
+            }
+        }
+    }
+
+    &__section {
+        margin-bottom: var(--quill-spacing-md, 12px);
+    }
+
+    &__section-label {
+        font-size: var(--font-small, 12px);
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: var(--quill-spacing-xs, 4px);
+        padding-bottom: var(--quill-spacing-xs, 4px);
+        border-bottom: 1px solid var(--background-modifier-border);
+    }
+
+    &__card {
+        // Clickable card — affordance via cursor + hover tint + focus ring.
+        cursor: pointer;
+        padding: var(--quill-spacing-sm, 8px) var(--quill-spacing-md, 12px);
+        margin-bottom: var(--quill-spacing-xs, 4px);
+        background: var(--background-secondary);
+        border: 1px solid var(--background-modifier-border);
+        border-radius: var(--radius-m, 6px);
+        transition: border-color 0.15s ease, background 0.15s ease;
+
+        &:hover {
+            background: var(--background-modifier-hover);
+            border-color: var(--interactive-accent);
+        }
+
+        // Keep a visible focus indicator for keyboard nav (tabindex=0 cards).
+        // Separate from :hover so keyboard users get a distinct affordance.
+        &:focus-visible {
+            background: var(--background-modifier-hover);
+            border-color: var(--interactive-accent);
+            outline: 2px solid var(--interactive-accent);
+            outline-offset: 2px;
+        }
+    }
+
+    &__card-heading {
+        display: flex;
+        align-items: baseline;
+        gap: var(--quill-spacing-xs, 4px);
+        margin-bottom: 2px;
+    }
+
+    &__card-title {
+        font-weight: 600;
+        font-size: var(--font-ui-small, 13px);
+        color: var(--text-normal);
+        flex: 1;
+        // Truncate long titles with ellipsis so the block ID stays visible.
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    &__card-id {
+        // Block ID — small, muted, monospace. Shown so the writer can
+        // reference it for delete_memory calls in the co-writer chat.
+        font-family: var(--font-monospace, monospace);
+        font-size: var(--font-smallest, 11px);
+        color: var(--text-faint);
+        background: var(--background-modifier-hover);
+        padding: 1px 4px;
+        border-radius: var(--radius-s, 3px);
+    }
+
+    &__card-body {
+        font-size: var(--font-small, 12px);
+        color: var(--text-muted);
+        line-height: 1.45;
+        // Cap height so very long bodies don't blow up the card. The
+        // writer clicks to see the full text in the markdown view.
+        max-height: 4.4em;
+        overflow: hidden;
+        position: relative;
+    }
+
+    &__card-tags {
+        margin-top: var(--quill-spacing-xs, 4px);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+
+    &__card-tag {
+        font-size: var(--font-smallest, 11px);
+        color: var(--text-muted);
+        background: var(--background-modifier-hover);
+        padding: 1px 6px;
+        border-radius: 10px;
+    }
+}

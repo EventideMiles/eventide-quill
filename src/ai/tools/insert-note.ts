@@ -8,6 +8,7 @@ import {
     splitFrontmatter
 } from './lore-edit-helpers';
 import { checkAiIsms } from '../ai-ism-detector';
+import { isMemoryFilePath } from '../../core/memories/memory-scope';
 
 /**
  * Propose inserting content into an existing note without removing anything.
@@ -151,6 +152,11 @@ export const insertNoteTool: Tool = {
         const { plugin } = ctx;
         const file = resolveNoteFile(plugin, path);
         if (!file) return `Error: note "${path}" not found in the vault.`;
+        // Raw-edit guard: check the RESOLVED path so a bare memory filename is
+        // caught after name resolution. See edit-note.ts for the rationale.
+        if (isMemoryFilePath(file.path, plugin.settings.memoriesFolder)) {
+            return 'Error: memory files cannot be edited with insert_note. Use save_memory or delete_memory instead.';
+        }
 
         const raw = await readNoteContent(plugin, file.path);
         if (raw === null) return `Error: could not read "${file.path}".`;

@@ -1,6 +1,7 @@
 import type { Tool, ToolContext } from './tool';
 import { openNoteForEdit, overlapError, pushLoreEditDiff, readNoteContent, resolveNoteFile } from './lore-edit-helpers';
 import { checkAiIsms } from '../ai-ism-detector';
+import { isMemoryFilePath } from '../../core/memories/memory-scope';
 
 /**
  * Propose appending content to the end of an existing note. The note opens
@@ -53,6 +54,11 @@ export const appendToNoteTool: Tool = {
         const { plugin } = ctx;
         const file = resolveNoteFile(plugin, path);
         if (!file) return `Error: note "${path}" not found in the vault.`;
+        // Raw-edit guard: check the RESOLVED path so a bare memory filename is
+        // caught after name resolution. See edit-note.ts for the rationale.
+        if (isMemoryFilePath(file.path, plugin.settings.memoriesFolder)) {
+            return 'Error: memory files cannot be edited with append_to_note. Use save_memory or delete_memory instead.';
+        }
 
         const existing = await readNoteContent(plugin, file.path);
         if (existing === null) return `Error: could not read "${file.path}".`;

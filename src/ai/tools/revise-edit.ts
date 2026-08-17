@@ -1,5 +1,6 @@
 import type { Tool, ToolContext } from './tool';
 import { openNoteForEdit, pushLoreEditDiff, resolveNoteFile } from './lore-edit-helpers';
+import { isMemoryFilePath } from '../../core/memories/memory-scope';
 
 /**
  * Revise the CONTENT of a pending lore edit already proposed to a note (via
@@ -70,6 +71,11 @@ export const reviseEditTool: Tool = {
         const { plugin } = ctx;
         const file = resolveNoteFile(plugin, path);
         if (!file) return `Error: note "${path}" not found in the vault.`;
+        // Raw-edit guard: check the RESOLVED path so a bare memory filename is
+        // caught after name resolution. See edit-note.ts for the rationale.
+        if (isMemoryFilePath(file.path, plugin.settings.memoriesFolder)) {
+            return 'Error: memory files cannot be edited with revise_edit. Use save_memory or delete_memory instead.';
+        }
 
         const session = plugin.coWriterSession;
         const entry = session.loreEdits.get(file.path);
