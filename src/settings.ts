@@ -2923,8 +2923,10 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 try {
                     await this.plugin.saveSettings();
                 } catch (err) {
-                    // Disk is untouched when saveSettings() rejects, so undo
-                    // the in-memory deletion rather than letting them drift.
+                    // saveSettings() rejects only when the settings write
+                    // failed (post-save refresh errors are logged inside
+                    // saveSettings), so disk is untouched here — undo the
+                    // in-memory deletion rather than letting them drift.
                     const msg = err instanceof Error ? err.message : String(err);
                     s.aiProviders.splice(idx, 0, provider);
                     s.aiDefaultChatProvider = prevChat;
