@@ -2295,8 +2295,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
      * delete control). Public so {@link ProviderSettingPage} can call it; reuses
      * the private card renderers. Mutation handlers inside call refreshBridge(),
      * which re-renders the open provider page in place (via the bridge
-     * machinery). The delete section is the exception — it re-renders the whole
-     * tab because the page being viewed disappears along with its provider.
+     * machinery). The delete section is the exception — confirming it re-renders
+     * the whole tab and pops back to the "AI providers" list page, because the
+     * page being viewed disappears along with its provider.
      */
     renderProviderPage(containerEl: HTMLElement, provider: ProviderConfig): void {
         this.renderProviderFields(containerEl, provider);
@@ -2701,9 +2702,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     /**
      * Ask for confirmation, then remove the given provider from settings.
      * The provider is matched BY ID (names may repeat). On confirm the default
-     * model keys are validated before saving, and a full settings re-render
-     * runs (unlike the in-page refreshBridge() mutation handlers) because the
-     * page being viewed disappears along with its provider.
+     * model keys are validated before saving, then the whole tab re-renders
+     * (unlike the in-page refreshBridge() mutation handlers) because the page
+     * being viewed disappears along with its provider — and the settings nav
+     * pops back to the "AI providers" list page, since update() alone leaves
+     * the deleted provider's detail page mounted.
      */
     private confirmDeleteProvider(provider: ProviderConfig): void {
         const s = this.plugin.settings;
@@ -2728,7 +2731,15 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 if (idx !== -1) {
                     s.aiProviders.splice(idx, 1);
                     this.validateDefaultProviders();
-                    void this.plugin.saveSettings().then(() => this.update());
+                    void this.plugin.saveSettings().then(() => {
+                        // update() re-stores the definitions so the list reflects
+                        // the deletion but leaves the stale detail page mounted;
+                        // openSettingsPage() then clears the page stack and lands
+                        // on the providers list (no-op if the internal nav API is
+                        // unavailable).
+                        this.update();
+                        this.openSettingsPage('AI providers');
+                    });
                 }
             },
             'Delete'

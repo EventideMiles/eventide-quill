@@ -70,7 +70,11 @@ function makeHarness(
         aiDefaultImageProvider: defaults[2]
     };
     const saveSettings = vi.fn(async (): Promise<void> => {});
-    const plugin = { settings, saveSettings } as unknown as EventideQuillPlugin;
+    const plugin = {
+        settings,
+        saveSettings,
+        manifest: { id: 'eventide-quill' }
+    } as unknown as EventideQuillPlugin;
     const tab = new EventideQuillSettingTab(new App(), plugin);
     const container = createDiv();
     tab.renderProviderPage(container, target);
@@ -106,6 +110,13 @@ function lastModal(): ConfirmModal {
     return modal;
 }
 
+/** Build a fake navigable-settings entry whose name cell matches `name` (for the app.setting nav stub). */
+function navEntry(name: string): HTMLElement {
+    const item = createDiv();
+    item.createDiv({ cls: 'setting-item-name', text: name });
+    return item;
+}
+
 describe('provider detail page — Delete provider control', () => {
     it('renders a visible warning-styled Delete button in a "Delete provider" row', () => {
         const provider = makeProvider();
@@ -122,7 +133,8 @@ describe('provider detail page — Delete provider control', () => {
     it('opens the confirmation modal on click; cancelling leaves settings untouched', () => {
         const a = makeProvider({ id: 'prov-a', name: 'Provider A' });
         const b = makeProvider({ id: 'prov-b', name: 'Provider B' });
-        const { settings, saveSettings, container } = makeHarness(a, [a, b]);
+        const { tab, settings, saveSettings, container } = makeHarness(a, [a, b]);
+        const openSpy = vi.spyOn(tab, 'openSettingsPage');
 
         clickButton(findSettingRow(container, 'Delete provider'), 'Delete');
 
@@ -137,9 +149,10 @@ describe('provider detail page — Delete provider control', () => {
 
         expect(settings.aiProviders).to.have.lengthOf(2);
         expect(saveSettings).not.toHaveBeenCalled();
+        expect(openSpy).not.toHaveBeenCalled();
     });
 
-    it('confirming removes the provider, saves, and clears the dangling default-model keys', async () => {
+    it('confirming removes the provider, saves, clears the dangling default-model keys, and navigates back to the provider list', async () => {
         const a = makeProvider({
             id: 'prov-a',
             name: 'Provider A',
@@ -148,6 +161,9 @@ describe('provider detail page — Delete provider control', () => {
         const b = makeProvider({ id: 'prov-b', name: 'Provider B' });
         const { tab, settings, saveSettings, container } = makeHarness(a, [a, b], ['prov-a/m1', 'prov-a/m2', 'prov-a/m3']);
         const updateSpy = vi.spyOn(tab, 'update');
+        // No-op: the real method would feature-detect and early-return on the
+        // stub App; mocking keeps the assertion hermetic and the call recorded.
+        const openSpy = vi.spyOn(tab, 'openSettingsPage').mockImplementation(() => {});
 
         clickButton(findSettingRow(container, 'Delete provider'), 'Delete');
         clickButton(lastModal().contentEl, 'Delete');
@@ -157,8 +173,14 @@ describe('provider detail page — Delete provider control', () => {
         expect(settings.aiDefaultEmbedProvider).to.equal('');
         expect(settings.aiDefaultImageProvider).to.equal('');
         expect(saveSettings).toHaveBeenCalledTimes(1);
-        // The re-render fires from saveSettings().then(...) — wait for the microtask chain.
+        // The re-render + navigation fire from saveSettings().then(...) — wait
+        // for the microtask chain.
         await vi.waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+        // The stale detail page is left mounted by update(), so the tab pops
+        // back to the providers list page afterwards.
+        expect(openSpy).toHaveBeenCalledTimes(1);
+        expect(openSpy).toHaveBeenCalledWith('AI providers');
+        expect(saveSettings.mock.invocationCallOrder[0]!).toBeLessThan(openSpy.mock.invocationCallOrder[0]!);
     });
 
     it('warns in the modal when the provider backs default models and when it is the last one', () => {
@@ -188,5 +210,30 @@ describe('provider detail page — Delete provider control', () => {
         clickButton(lastModal().contentEl, 'Delete');
 
         expect(settings.aiProviders.map((p) => p.id)).to.deep.equal(['prov-a']);
+    });
+
+    it('post-delete navigation drives the internal settings-nav API (open → openTabById → clearPageStack → activate)', async () => {
+        const a = makeProvider({ id: 'prov-a', name: 'Provider A' });
+        const { tab, settings, saveSettings, container } = makeHarness(a, [a]);
+        // The nav entry is available on the first poll, so the whole nav
+        // sequence runs synchronously inside the save .then — no pending timers.
+        const nav = {
+            open: vi.fn(),
+            openTabById: vi.fn(),
+            clearPageStack: vi.fn(),
+            getNavigableSettingItems: vi.fn((): HTMLElement[] => [navEntry('AI providers')]),
+            activateSettingItem: vi.fn()
+        };
+        (tab as unknown as { app: { setting: unknown } }).app = { setting: nav };
+
+        clickButton(findSettingRow(container, 'Delete provider'), 'Delete');
+        clickButton(lastModal().contentEl, 'Delete');
+
+        expect(saveSettings).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(nav.activateSettingItem).toHaveBeenCalledTimes(1));
+        expect(nav.open).toHaveBeenCalledTimes(1);
+        expect(nav.openTabById).toHaveBeenCalledWith('eventide-quill');
+        expect(nav.clearPageStack).toHaveBeenCalledTimes(1);
+        expect(settings.aiProviders).to.have.lengthOf(0);
     });
 });
