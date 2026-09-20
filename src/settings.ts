@@ -2883,7 +2883,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
      * (unlike the in-page refreshBridge() mutation handlers) because the page
      * being viewed disappears along with its provider — and the settings nav
      * pops back to the "AI providers" list page, since update() alone leaves
-     * the deleted provider's detail page mounted.
+     * the deleted provider's detail page mounted. If saveSettings() rejects,
+     * the in-memory deletion is rolled back (provider reinserted at its
+     * original index, default keys restored) and a Notice surfaces the error —
+     * the re-render and navigation are skipped so the tab doesn't claim a
+     * deletion that never reached disk.
      */
     private confirmDeleteProvider(provider: ProviderConfig): void {
         const s = this.plugin.settings;
@@ -2903,21 +2907,39 @@ export class EventideQuillSettingTab extends PluginSettingTab {
             this.app,
             'Delete provider?',
             message,
-            () => {
+            async () => {
                 const idx = s.aiProviders.findIndex((p) => p.id === provider.id);
-                if (idx !== -1) {
-                    s.aiProviders.splice(idx, 1);
-                    this.validateDefaultProviders();
-                    void this.plugin.saveSettings().then(() => {
-                        // update() re-stores the definitions so the list reflects
-                        // the deletion but leaves the stale detail page mounted;
-                        // openSettingsPage() then clears the page stack and lands
-                        // on the providers list (no-op if the internal nav API is
-                        // unavailable).
-                        this.update();
-                        this.openSettingsPage('AI providers');
-                    });
+                if (idx === -1) return;
+                // Snapshot before mutating: on a failed save the rollback must
+                // reinsert the provider at its original index AND restore the
+                // three default keys, since validateDefaultProviders() may have
+                // cleared them as a side effect of the (undone) deletion.
+                const prevChat = s.aiDefaultChatProvider;
+                const prevEmbed = s.aiDefaultEmbedProvider;
+                const prevImage = s.aiDefaultImageProvider;
+                s.aiProviders.splice(idx, 1);
+                this.validateDefaultProviders();
+                try {
+                    await this.plugin.saveSettings();
+                } catch (err) {
+                    // Disk is untouched when saveSettings() rejects, so undo
+                    // the in-memory deletion rather than letting them drift.
+                    const msg = err instanceof Error ? err.message : String(err);
+                    s.aiProviders.splice(idx, 0, provider);
+                    s.aiDefaultChatProvider = prevChat;
+                    s.aiDefaultEmbedProvider = prevEmbed;
+                    s.aiDefaultImageProvider = prevImage;
+                    new Notice(`Quill: Could not save the provider deletion — it was undone. (${msg})`);
+                    return;
                 }
+                // update() re-stores the definitions so the list reflects
+                // the deletion but leaves the stale detail page mounted;
+                // openSettingsPage() then clears the page stack and lands
+                // on the providers list (no-op if the internal nav API is
+                // unavailable). Reached only after a successful save — a
+                // failure rolls back above and skips the re-render/navigation.
+                this.update();
+                this.openSettingsPage('AI providers');
             },
             'Delete'
         ).open();

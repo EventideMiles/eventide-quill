@@ -2,6 +2,7 @@
 import '../helpers/ui-setup';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, Modal } from 'obsidian';
+import * as obsidian from 'obsidian';
 import { EventideQuillSettingTab } from '../../src/settings';
 import { ConfirmModal } from '../../src/ui/confirm-modal';
 import type { ModelConfig, ModelRole, ProviderConfig } from '../../src/ai/provider';
@@ -210,6 +211,44 @@ describe('provider detail page — Delete provider control', () => {
         clickButton(lastModal().contentEl, 'Delete');
 
         expect(settings.aiProviders.map((p) => p.id)).to.deep.equal(['prov-a']);
+    });
+
+    it('rolls back the in-memory deletion and shows a Notice when saveSettings() rejects, skipping re-render and navigation', async () => {
+        const a = makeProvider({
+            id: 'prov-a',
+            name: 'Provider A',
+            models: [makeModel('m1', 'chat', 'model-a')]
+        });
+        const b = makeProvider({ id: 'prov-b', name: 'Provider B' });
+        const { tab, settings, saveSettings, container } = makeHarness(a, [a, b], ['prov-a/m1', '', '']);
+        saveSettings.mockRejectedValue(new Error('disk full'));
+        const updateSpy = vi.spyOn(tab, 'update');
+        const openSpy = vi.spyOn(tab, 'openSettingsPage').mockImplementation(() => {});
+        // The mocked obsidian module's Notice is spied (call-through) so the
+        // failure path's error Notice can be asserted without rendering UI.
+        const noticeSpy = vi.spyOn(obsidian, 'Notice');
+
+        clickButton(findSettingRow(container, 'Delete provider'), 'Delete');
+        clickButton(lastModal().contentEl, 'Delete');
+
+        await vi.waitFor(() => expect(noticeSpy).toHaveBeenCalledTimes(1));
+        // The provider is back at its original index and the default key —
+        // cleared by validateDefaultProviders() during the attempt — is
+        // restored to its pre-delete value.
+        expect(settings.aiProviders.map((p) => p.id)).to.deep.equal(['prov-a', 'prov-b']);
+        expect(settings.aiDefaultChatProvider).to.equal('prov-a/m1');
+        expect(settings.aiDefaultEmbedProvider).to.equal('');
+        expect(settings.aiDefaultImageProvider).to.equal('');
+        // The Notice names the undo and surfaces the underlying error.
+        const noticeArg = noticeSpy.mock.calls[0]?.[0];
+        const noticeText = typeof noticeArg === 'string' ? noticeArg : (noticeArg?.textContent ?? '');
+        expect(noticeText).to.contain('undone');
+        expect(noticeText).to.contain('disk full');
+        // The success-path re-render + navigation never fire on failure.
+        expect(updateSpy).not.toHaveBeenCalled();
+        expect(openSpy).not.toHaveBeenCalled();
+
+        noticeSpy.mockRestore();
     });
 
     it('post-delete navigation drives the internal settings-nav API (open → openTabById → clearPageStack → activate)', async () => {
