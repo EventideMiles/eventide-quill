@@ -43,6 +43,7 @@
     "aiDefaultImageProvider": "",
     "anthropicBanRiskAcknowledged": false,
     "copyEditorAck": false,
+    "aiResponseLanguage": "",
     "transformTemperature": 1.0,
     "transformVaultContext": true,
     "transformMaxOutputTokens": 4096,
@@ -122,5 +123,12 @@
     "feedbackQueueLimit": 20,
     "feedbackQueueAutoRun": true,
     "autoSaveFeedbackReports": true,
-    "feedbackReportFolder": "eventide-quill-reports"
+    "feedbackReportFolder": "eventide-quill-reports",
+    "memoriesEnabled": true,
+    "memoriesFolder": "Memories",
+    "memoriesAutoSave": true,
+    "memoriesFullInject": false,
+    "memoriesMaxIndexEntries": 20,
+    "memoriesRecallMaxEntries": 10,
+    "memoriesMaxPerFile": 100
 }

@@ -1,6 +1,7 @@
 import type { Tool, ToolContext } from './tool';
 import { readNoteContent, resolveNoteFile } from './lore-edit-helpers';
 import { findParagraphByStart, stageEdit } from './edit-note';
+import { isMemoryFilePath } from '../../core/memories/memory-scope';
 
 /**
  * Remove an entire paragraph from a note. The paragraph opens as a red inline
@@ -62,6 +63,11 @@ export const deleteParagraphTool: Tool = {
         const { plugin } = ctx;
         const file = resolveNoteFile(plugin, path);
         if (!file) return `Error: note "${path}" not found in the vault.`;
+        // Raw-edit guard: check the RESOLVED path so a bare memory filename is
+        // caught after name resolution. See edit-note.ts for the rationale.
+        if (isMemoryFilePath(file.path, plugin.settings.memoriesFolder)) {
+            return 'Error: memory files cannot be edited with delete_paragraph. Use save_memory or delete_memory instead.';
+        }
 
         const content = await readNoteContent(plugin, file.path);
         if (content === null) return `Error: could not read "${file.path}".`;

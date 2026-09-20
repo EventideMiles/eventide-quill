@@ -294,6 +294,7 @@ export class FixWithAiModal extends Modal {
                     model: defaultChat.modelId,
                     temperature: this.plugin.settings.linterTemperature,
                     maxTokens: this.plugin.settings.linterMaxOutputTokens,
+                    responseLanguage: this.plugin.settings.aiResponseLanguage,
                     signal: this.currentAbort.signal
                 },
                 customInstruction,

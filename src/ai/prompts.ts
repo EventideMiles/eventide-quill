@@ -15,6 +15,35 @@ import {
 export type WikiLinkBehavior = 'preserve' | 'adaptive';
 
 /**
+ * Append the response-language directive to a system prompt. No-op when
+ * `language` is empty (the default — the model decides, matching the
+ * manuscript). The directive pins every user-facing RESPONSE surface
+ * (analysis, explanations, questions, suggestions, labels) to the writer's
+ * chosen language while leaving drafted/rewritten story prose tied to the
+ * manuscript's own language — a French writer reviewing an English passage
+ * gets French notes without the rewrite silently switching languages.
+ *
+ * Quill's system prompts are English-authored and prescriptive; without
+ * this directive they dominate the model's language choice even when the
+ * provider-level system prompt or a custom instruction asks for another
+ * language (most OpenAI-compatible servers REPLACE the system prompt
+ * rather than merging, and buried custom instructions lose to an explicit
+ * persona). Issue #57.
+ */
+export function appendLanguageDirective(prompt: string, language?: string): string {
+    const lang = language?.trim();
+    if (!lang) return prompt;
+    return (
+        prompt +
+        '\n\n' +
+        `RESPONSE LANGUAGE: Write all of your responses — analysis, explanations, questions, ` +
+        `suggestions, and labels — in ${lang}. When you draft, rewrite, or continue story prose, ` +
+        `follow the language of the writer's manuscript unless they explicitly ask otherwise. ` +
+        `Keep quoted text, proper nouns, technical terms, and file paths unchanged.`
+    );
+}
+
+/**
  * Get the instruction string for the given wiki link behavior mode.
  * Used across all prose-generation prompts.
  */
@@ -183,32 +212,36 @@ export function getSystemPrompt(
         narrativePreset?: NarrativeVoicePreset;
         persona?: FeedbackPersona;
         wikiLinkBehavior?: WikiLinkBehavior;
+        responseLanguage?: string;
     }
 ): string {
-    switch (mode) {
-        case 'narrative':
-            return getNarrativeSystemPrompt(
-                options?.vaultContext ?? '',
-                options?.narrativePreset ?? 'third-limited',
-                options?.wikiLinkBehavior
-            );
-        case 'analysis':
-            return getAnalysisSystemPrompt(options?.persona, options?.vaultContext);
-        case 'critical':
-            // The shared critical-analysis base. Mode-specific focus (plot logic,
-            // character consistency, continuity, voice drift) is layered on top by
-            // getAnalysisModePrompt(); this base alone reads as the "no specific focus"
-            // critical review. Useful for callers that want the critical voice without
-            // pinning a sub-mode.
-            return getAnalysisBasePrompt().join('\n');
-        case 'linter':
-            return getLinterSystemPrompt(options?.wikiLinkBehavior);
-        case 'manuscript-analysis':
-            // The shared manuscript-analysis base. Mode-specific focus (scene taxonomy,
-            // structural arc, etc.) is layered on by getManuscriptAnalysisModePrompt().
-            // This base alone reads as the "general structural review" prompt.
-            return getManuscriptAnalysisBase();
-    }
+    const base = (() => {
+        switch (mode) {
+            case 'narrative':
+                return getNarrativeSystemPrompt(
+                    options?.vaultContext ?? '',
+                    options?.narrativePreset ?? 'third-limited',
+                    options?.wikiLinkBehavior
+                );
+            case 'analysis':
+                return getAnalysisSystemPrompt(options?.persona, options?.vaultContext);
+            case 'critical':
+                // The shared critical-analysis base. Mode-specific focus (plot logic,
+                // character consistency, continuity, voice drift) is layered on top by
+                // getAnalysisModePrompt(); this base alone reads as the "no specific focus"
+                // critical review. Useful for callers that want the critical voice without
+                // pinning a sub-mode.
+                return getAnalysisBasePrompt().join('\n');
+            case 'linter':
+                return getLinterSystemPrompt(options?.wikiLinkBehavior);
+            case 'manuscript-analysis':
+                // The shared manuscript-analysis base. Mode-specific focus (scene taxonomy,
+                // structural arc, etc.) is layered on by getManuscriptAnalysisModePrompt().
+                // This base alone reads as the "general structural review" prompt.
+                return getManuscriptAnalysisBase();
+        }
+    })();
+    return appendLanguageDirective(base, options?.responseLanguage);
 }
 
 /**

@@ -5,6 +5,12 @@ import type { LoreCoverage, LoreEntry, LoreEntryType, LoreRelationships } from '
 import { findLoreFolder, parseLoreType } from '../core/dashboard/lorebook-scanner';
 import { LORE_ENTRY_TYPES } from '../core/dashboard/lorebook-types';
 import { getActiveDocument, renderDocumentHeader } from './document-header';
+import type { MemoryEntry } from '../core/memories/memory-file';
+import { GLOBAL_MEMORY_SCOPE } from '../core/memories/memory-scope';
+import { readActiveAndGlobal } from '../core/memories/memory-store';
+
+/** Lorebook sub-tab ids known to {@link renderLorebookTab}. */
+export type LorebookSubTab = 'document' | 'manuscript' | 'relationships' | 'memories';
 
 /**
  * Render the Lorebook tab content into `container`.
@@ -28,9 +34,17 @@ export function renderLorebookTab(
     container: HTMLElement,
     plugin: EventideQuillPlugin,
     component: Component,
-    subtab: 'document' | 'manuscript' | 'relationships'
+    subtab: LorebookSubTab
 ): void {
     container.empty();
+
+    // Memories sub-tab branches early — it has its own data source (memory
+    // files, not lorebook coverage) and its own action bar (no "scan
+    // lorebook" — memory files are read on each render).
+    if (subtab === 'memories') {
+        renderLorebookMemoriesTab(container, plugin, component);
+        return;
+    }
 
     const doc = getActiveDocument(plugin.app);
     renderDocumentHeader(container, doc);
@@ -594,4 +608,223 @@ function renderActiveEntryEditor(
                 ? 'Effective: untyped (no folder default; add a quill-type or set a folder default).'
                 : `Effective: ${LORE_TYPE_LABELS[effective]}.`
     });
+}
+
+/**
+ * Render the Memories sub-tab. Shows memories saved by the AI (or by the
+ * writer directly in the markdown) for the active scope + global pool, with
+ * one card per memory section.
+ *
+ * The render is async-filled: a "Loading…" placeholder is replaced once the
+ * memory files have been read + parsed. Memory files are small (typically
+ * <5k chars even with dozens of entries), so we re-read on every render
+ * rather than maintaining a separate cache.
+ *
+ * Writer actions:
+ *   - Click a card → opens the underlying `.memories.md` file in the editor
+ *     so the writer can edit / delete the section directly. (Lorebook-style
+ *     sovereignty: the file is the source of truth, the UI is a view.)
+ *   - "New memory" button → opens the active scope's file with a fresh
+ *     `## ` heading template at the bottom; the writer types and saves.
+ *   - "Refresh" button → re-reads (useful after editing the file in another
+ *     tab to pull the latest into the sidebar).
+ *
+ * Empty states:
+ *   - Memories disabled (master kill switch) → settings hint.
+ *   - No active scope + no global entries → "no memories yet" with a hint
+ *     that the AI saves memories as it learns about the manuscript.
+ */
+function renderLorebookMemoriesTab(container: HTMLElement, plugin: EventideQuillPlugin, component: Component): void {
+    if (!plugin.settings.memoriesEnabled) {
+        container.createEl('p', {
+            cls: 'quill-lorebook-panel__empty quill-lorebook-panel__empty-hint',
+            text: 'Memories are disabled. Enable them in settings under the memories section.'
+        });
+        return;
+    }
+
+    // Header — explains what the writer is looking at.
+    const header = container.createDiv({ cls: 'quill-memories-panel__header' });
+    header.createEl('h3', { text: 'Memories' });
+    header.createEl('p', {
+        cls: 'quill-memories-panel__subtitle',
+        text:
+            'Context the AI has learned about this manuscript and your preferences. ' +
+            'Click an entry to open the underlying file and edit it directly.'
+    });
+
+    // Action bar.
+    const actionBar = container.createDiv({ cls: 'quill-memories-panel__actions' });
+    const newBtn = actionBar.createEl('button', {
+        cls: 'quill-memories-panel__action-btn',
+        text: 'New memory',
+        attr: { 'aria-label': 'Open the active scope memory file with a new section template' }
+    });
+    const refreshBtn = actionBar.createEl('button', {
+        cls: 'quill-memories-panel__action-btn quill-memories-panel__action-btn--secondary',
+        text: 'Refresh',
+        attr: { 'aria-label': 'Re-read memory files from the vault' }
+    });
+
+    // Loading placeholder — replaced once the async read completes.
+    const loading = container.createEl('p', {
+        cls: 'quill-lorebook-panel__empty',
+        text: 'Loading memories…'
+    });
+
+    /** Render the cards list after the async read completes. */
+    const fillCards = async (): Promise<void> => {
+        const { active, global } = await readActiveAndGlobal(plugin);
+        if (loading.isConnected) loading.remove();
+
+        // Build the union (active first, then global), skipping empty pools.
+        const sections: { scopeLabel: string; scopeKey: string; entries: readonly MemoryEntry[] }[] = [];
+        if (active.scopeKey !== GLOBAL_MEMORY_SCOPE && active.file.entries.length > 0) {
+            sections.push({
+                scopeLabel: active.scopeKey,
+                scopeKey: active.scopeKey,
+                entries: active.file.entries
+            });
+        }
+        if (global.file.entries.length > 0) {
+            sections.push({
+                scopeLabel: 'Global',
+                scopeKey: GLOBAL_MEMORY_SCOPE,
+                entries: global.file.entries
+            });
+        }
+
+        if (sections.length === 0) {
+            container.createEl('p', {
+                cls: 'quill-lorebook-panel__empty quill-lorebook-panel__empty-hint',
+                text:
+                    'No memories yet. As the AI learns about your manuscript and preferences, ' +
+                    'it will save durable context here. You can also add memories manually — click ' +
+                    '"New memory" to open the file.'
+            });
+            return;
+        }
+
+        for (const section of sections) {
+            const sectionEl = container.createDiv({ cls: 'quill-memories-panel__section' });
+            sectionEl.createDiv({
+                cls: 'quill-memories-panel__section-label',
+                text: section.scopeKey === GLOBAL_MEMORY_SCOPE ? 'Global pool' : `Manuscript pool: ${section.scopeLabel}`
+            });
+
+            for (const entry of section.entries) {
+                renderMemoryCard(sectionEl, plugin, component, entry, section.scopeKey);
+            }
+        }
+    };
+
+    component.registerDomEvent(newBtn, 'click', () => {
+        void openMemoryFileForNewEntry(plugin);
+    });
+    component.registerDomEvent(refreshBtn, 'click', () => {
+        // Re-render by clearing and re-filling. The component owns listener
+        // cleanup, so detaching children doesn't leak handlers.
+        const existing = container.querySelectorAll('.quill-memories-panel__section, .quill-lorebook-panel__empty');
+        Array.from(existing).forEach((el) => el.remove());
+        void fillCards();
+    });
+
+    void fillCards();
+}
+
+/** Render a single memory card with click-to-open affordance. */
+function renderMemoryCard(
+    parent: HTMLElement,
+    plugin: EventideQuillPlugin,
+    component: Component,
+    entry: MemoryEntry,
+    scopeKey: string
+): void {
+    const card = parent.createDiv({ cls: 'quill-memories-panel__card', attr: { tabindex: '0' } });
+
+    const heading = card.createDiv({ cls: 'quill-memories-panel__card-heading' });
+    heading.createSpan({ cls: 'quill-memories-panel__card-title', text: entry.heading || '(untitled memory)' });
+    if (entry.id) {
+        heading.createEl('code', {
+            cls: 'quill-memories-panel__card-id',
+            text: `^${entry.id}`,
+            attr: { 'aria-label': `Block ID: ${entry.id}` }
+        });
+    }
+
+    if (entry.body) {
+        const body = card.createDiv({ cls: 'quill-memories-panel__card-body' });
+        // Render the first ~3 lines of the body so the writer gets enough
+        // context to recognize the memory without opening the file. The full
+        // body is in the markdown file on click.
+        const preview = entry.body.split('\n').slice(0, 3).join('\n').trim();
+        body.textContent = preview;
+    }
+
+    if (entry.tags.length > 0) {
+        const tagsEl = card.createDiv({ cls: 'quill-memories-panel__card-tags' });
+        for (const tag of entry.tags) {
+            tagsEl.createSpan({ cls: 'quill-memories-panel__card-tag', text: `#${tag}` });
+        }
+    }
+
+    /** Open the memory file scrolled to this entry's block ID. */
+    const openFile = (): void => {
+        void openMemoryFileAtEntry(plugin, scopeKey, entry.id);
+    };
+    component.registerDomEvent(card, 'click', openFile);
+    component.registerDomEvent(card, 'keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            openFile();
+        }
+    });
+}
+
+/** Open the active scope's memory file in the editor with a new section template. */
+async function openMemoryFileForNewEntry(plugin: EventideQuillPlugin): Promise<void> {
+    const { resolveActiveScopeKey, memoryFilePath } = await import('../core/memories/memory-scope');
+    const scopeKey = resolveActiveScopeKey(plugin);
+    const path = memoryFilePath(scopeKey, plugin.settings.memoriesFolder);
+    await ensureMemoryFileExists(plugin, scopeKey, path);
+    const file = plugin.app.vault.getAbstractFileByPath(path);
+    if (!file) {
+        // File creation failed silently in ensureMemoryFileExists; nothing more to do.
+        return;
+    }
+    await plugin.app.workspace.openLinkText(file.path, '', false);
+}
+
+/**
+ * Open a memory file at a specific block ID (Obsidian's `path#^id` syntax
+ * scrolls the editor to the section).
+ */
+async function openMemoryFileAtEntry(plugin: EventideQuillPlugin, scopeKey: string, entryId: string): Promise<void> {
+    const { memoryFilePath } = await import('../core/memories/memory-scope');
+    const path = memoryFilePath(scopeKey, plugin.settings.memoriesFolder);
+    await ensureMemoryFileExists(plugin, scopeKey, path);
+    // Obsidian's link syntax: `path/to/file.md#^block-id` opens the file
+    // scrolled to that block.
+    const link = entryId ? `${path}#^${entryId}` : path;
+    await plugin.app.workspace.openLinkText(link, '', false);
+}
+
+/**
+ * Ensure the memory file exists before opening it. Creates it with a
+ * canonical empty template if missing so the writer has something to edit
+ * rather than a blank page. Best-effort: silent fail (the vault.openLinkText
+ * call will surface its own error if the path is bad).
+ */
+async function ensureMemoryFileExists(plugin: EventideQuillPlugin, scopeKey: string, path: string): Promise<void> {
+    const existing = plugin.app.vault.getAbstractFileByPath(path);
+    if (existing) return;
+
+    // Import lazily to avoid pulling the whole memory-store graph into the
+    // lorebook-panel bundle on every render.
+    const { writeMemoryFile } = await import('../core/memories/memory-store');
+    try {
+        await writeMemoryFile(plugin, scopeKey, { title: '', intro: '', entries: [] });
+    } catch (err) {
+        console.warn(`Quill: could not create memory file "${path}"`, err);
+    }
 }

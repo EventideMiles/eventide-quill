@@ -16,6 +16,7 @@ import {
     getCoWriterCoachToOptions,
     getCoWriterOptionPrompt,
     getCoWriterVoicePrompt,
+    appendLanguageDirective,
     getLoreCoachSystemPrompt,
     getLoreCoachUserPrompt,
     getResearchSystemPrompt,
@@ -65,6 +66,7 @@ import { resolveNoteFile } from './tools/lore-edit-helpers';
 import { CACHE_HIT_MARKER } from './tools/fandom-lookup';
 import { tryNudgeTextToolLeak, createProposeEntryTool } from './tools';
 import { buildInternalToolsMessage, buildNetworkToolsMessage } from './co-writer-tool-prompts';
+import { buildMemoryMessage } from './memory-prompts';
 import { streamToolAwareRound } from './co-writer-streaming';
 import {
     sanitizeProse,
@@ -904,7 +906,13 @@ export class CoWriterSession {
         const optionsPlotMap = await buildPlotMapMessage(plugin);
         const optionsDirective = buildDirectiveMessage(plugin, proseForOptions);
 
-        const prompt = getCoWriterOptionPrompt(proseForOptions || '(empty document)', direction);
+        // Labels + descriptions render in the chat UI as options — they follow
+        // the response-language setting (the manuscript carve-out doesn't apply
+        // here since options are chat, not prose).
+        const prompt = appendLanguageDirective(
+            getCoWriterOptionPrompt(proseForOptions || '(empty document)', direction),
+            plugin.settings.aiResponseLanguage
+        );
         const messages: ChatMessage[] = [];
         if (vaultContext) {
             messages.push({ role: 'system', content: `Vault context for reference:\n${vaultContext}` });
@@ -1274,6 +1282,10 @@ export class CoWriterSession {
         if (discussInternalMsg) {
             injectedContext.push(discussInternalMsg);
         }
+        const discussMemoryMsg = await buildMemoryMessage(plugin);
+        if (discussMemoryMsg) {
+            injectedContext.push(discussMemoryMsg);
+        }
 
         // Build the user prompt. For review-discuss, skip the limited
         // "Passage up to cursor" section — the full document is already
@@ -1292,11 +1304,19 @@ export class CoWriterSession {
         if (this.discussCurrentMessages.length === 0) {
             const systemPrompt: ChatMessage =
                 this.reviewEngine !== null
-                    ? { role: 'system', content: getReviewDiscussSystemPrompt(this.reviewEngine) }
+                    ? {
+                          role: 'system',
+                          content: appendLanguageDirective(
+                              getReviewDiscussSystemPrompt(this.reviewEngine),
+                              plugin.settings.aiResponseLanguage
+                          )
+                      }
                     : {
                           role: 'system',
-                          content:
-                              'You are a thoughtful, knowledgeable editor assisting a novelist in a discussion about their work. Respond with specific, craft-focused observations. Ask clarifying questions when helpful. Keep to analysis and discussion, generating prose only when the writer explicitly asks for it.'
+                          content: appendLanguageDirective(
+                              'You are a thoughtful, knowledgeable editor assisting a novelist in a discussion about their work. Respond with specific, craft-focused observations. Ask clarifying questions when helpful. Keep to analysis and discussion, generating prose only when the writer explicitly asks for it.',
+                              plugin.settings.aiResponseLanguage
+                          )
                       };
             this.discussCurrentMessages = [systemPrompt];
         }
@@ -1708,6 +1728,10 @@ export class CoWriterSession {
         if (coachInternalMsg) {
             injectedContext.push(coachInternalMsg);
         }
+        const coachMemoryMsg = await buildMemoryMessage(plugin);
+        if (coachMemoryMsg) {
+            injectedContext.push(coachMemoryMsg);
+        }
 
         // Initialize coach session on first call
         if (!this.coachSession || (this.coachSession.phase === 'discern' && message)) {
@@ -1725,8 +1749,10 @@ export class CoWriterSession {
 
             const systemPrompt: ChatMessage = {
                 role: 'system',
-                content:
-                    'You are a thoughtful writing coach guiding a novelist through what to do next in their scene. Your job is to ASK QUESTIONS — at least 2-3 clarifying questions in every response until you have enough information to provide a plan. Lead every response with those questions rather than moving straight to analysis or discussion. Follow the phased structure: discern intent, ask questions, plan, direct. Keep your output to coaching, leaving prose writing to the writer.'
+                content: appendLanguageDirective(
+                    'You are a thoughtful writing coach guiding a novelist through what to do next in their scene. Your job is to ASK QUESTIONS — at least 2-3 clarifying questions in every response until you have enough information to provide a plan. Lead every response with those questions rather than moving straight to analysis or discussion. Follow the phased structure: discern intent, ask questions, plan, direct. Keep your output to coaching, leaving prose writing to the writer.',
+                    plugin.settings.aiResponseLanguage
+                )
             };
 
             this.discussCurrentMessages = [
@@ -2338,7 +2364,10 @@ export class CoWriterSession {
             this.currentLoreDraft = null;
 
             this.loreCoachMessages = [
-                { role: 'system', content: getLoreCoachSystemPrompt() },
+                {
+                    role: 'system',
+                    content: appendLanguageDirective(getLoreCoachSystemPrompt(), plugin.settings.aiResponseLanguage)
+                },
                 {
                     role: 'user',
                     content: prepared.content,
@@ -2369,12 +2398,15 @@ export class CoWriterSession {
         const toolDefs = registry?.toToolDefinitions();
         this.toolTokenOverhead = registry?.estimateTokens() ?? 0;
         const maxTokens = chat.provider.config.maxContextTokens;
+        // Pre-fetch the memory message once: the token-estimate closure
+        // below (sync) and the loreInjectedContext push (below) both need it.
+        const loreMemoryMsg = await buildMemoryMessage(plugin);
         const ctx: ToolContext = {
             plugin,
             // Mirror the per-round prefix actually sent to the model (system +
             // active-file awareness + budget message + network-tools hint +
-            // conversation), not just the conversation skeleton, so sizing
-            // tools see the true remaining window.
+            // memory index + conversation), not just the conversation
+            // skeleton, so sizing tools see the true remaining window.
             consumedTokens: () => {
                 const injected: ChatMessage[] = [];
                 const activeFileMsg = buildActiveFileMessage(plugin);
@@ -2383,6 +2415,7 @@ export class CoWriterSession {
                 if (budgetMsg) injected.push(budgetMsg);
                 const networkMsg = buildNetworkToolsMessage(plugin);
                 if (networkMsg) injected.push(networkMsg);
+                if (loreMemoryMsg) injected.push(loreMemoryMsg);
                 const roundBase: ChatMessage[] =
                     this.loreCoachMessages.length > 0
                         ? [this.loreCoachMessages[0]!, ...injected, ...this.loreCoachMessages.slice(1)]
@@ -2396,6 +2429,7 @@ export class CoWriterSession {
         if (loreActiveFileMsg) loreInjectedContext.push(loreActiveFileMsg);
         const loreNetworkMsg = buildNetworkToolsMessage(plugin);
         if (loreNetworkMsg) loreInjectedContext.push(loreNetworkMsg);
+        if (loreMemoryMsg) loreInjectedContext.push(loreMemoryMsg);
 
         const compactPct = Math.max(50, Math.min(95, this.settingsOrDefault(plugin).contextCompactAtPercent)) / 100;
         const conversationTokens = this.estimateRequestTokens(this.loreCoachMessages);
@@ -2475,6 +2509,7 @@ export class CoWriterSession {
                 if (activeFileMsg) injected.push(activeFileMsg);
                 if (budgetMsg) injected.push(budgetMsg);
                 if (networkMsg) injected.push(networkMsg);
+                if (loreMemoryMsg) injected.push(loreMemoryMsg);
                 const messagesForCall =
                     injected.length > 0 && this.loreCoachMessages.length > 0
                         ? [this.loreCoachMessages[0]!, ...injected, ...this.loreCoachMessages.slice(1)]
@@ -2774,18 +2809,21 @@ export class CoWriterSession {
                 }
                 const before = currentDoc.slice(Math.max(0, range.start - 2000), range.start);
                 const after = currentDoc.slice(range.end, range.end + 2000);
-                const systemPrompt = getCoWriterGenerationPrompt(
-                    this.voiceProfile ?? {
-                        sentenceLengthDistribution: 'unknown',
-                        dialogueRatio: 0.5,
-                        vocabularyRegister: 'unknown',
-                        keyPatterns: []
-                    },
-                    plugin.settings.narrativeVoicePreset,
-                    undefined,
-                    [{ source: 'inline', text: range.text }],
-                    plotMapText,
-                    plugin.settings.wikiLinkBehavior
+                const systemPrompt = appendLanguageDirective(
+                    getCoWriterGenerationPrompt(
+                        this.voiceProfile ?? {
+                            sentenceLengthDistribution: 'unknown',
+                            dialogueRatio: 0.5,
+                            vocabularyRegister: 'unknown',
+                            keyPatterns: []
+                        },
+                        plugin.settings.narrativeVoicePreset,
+                        undefined,
+                        [{ source: 'inline', text: range.text }],
+                        plotMapText,
+                        plugin.settings.wikiLinkBehavior
+                    ),
+                    plugin.settings.aiResponseLanguage
                 );
                 const userMessage = [
                     'Fulfill the inline directive at this point in the scene. Your prose will replace the directive comment and sit between the text above and the text below.',
@@ -3316,7 +3354,10 @@ export class CoWriterSession {
                     kind: 'lore',
                     goal,
                     paths: chunkPaths,
-                    systemPrompt: getLoreCoachSystemPrompt(),
+                    systemPrompt: appendLanguageDirective(
+                        getLoreCoachSystemPrompt(),
+                        plugin.settings.aiResponseLanguage
+                    ),
                     brief: `Task: ${goal}${fileList}\n\nEdit the files in this batch per the rules above. vault_lookup each file, then edit_note / insert_note / append_to_note (revise_edit if you hit an overlap). Keep each edit surgical. End with a one- or two-line summary of what you changed.`,
                     registry
                 },
@@ -3369,7 +3410,7 @@ export class CoWriterSession {
         const config: SubagentConfig = {
             kind: 'research',
             goal: question,
-            systemPrompt: getResearchSystemPrompt(),
+            systemPrompt: appendLanguageDirective(getResearchSystemPrompt(), plugin.settings.aiResponseLanguage),
             brief: `Question to investigate:\n\n${question}\n\nSearch the vault, gather evidence, and end with a cited findings report. You do not see the conversation that spawned you — work only from the question and the vault.`,
             registry: createReadOnlyToolRegistry(plugin, true)
         };
@@ -3576,18 +3617,21 @@ export class CoWriterSession {
         const plotMapText = await loadPlotMapText(plugin);
         const applySteering = inlineSteering(plugin, textBeforeCursor);
 
-        const systemPrompt = getCoWriterGenerationPrompt(
-            this.voiceProfile ?? {
-                sentenceLengthDistribution: 'unknown',
-                dialogueRatio: 0.5,
-                vocabularyRegister: 'unknown',
-                keyPatterns: []
-            },
-            plugin.settings.narrativeVoicePreset,
-            vaultContext,
-            applySteering,
-            plotMapText,
-            plugin.settings.wikiLinkBehavior
+        const systemPrompt = appendLanguageDirective(
+            getCoWriterGenerationPrompt(
+                this.voiceProfile ?? {
+                    sentenceLengthDistribution: 'unknown',
+                    dialogueRatio: 0.5,
+                    vocabularyRegister: 'unknown',
+                    keyPatterns: []
+                },
+                plugin.settings.narrativeVoicePreset,
+                vaultContext,
+                applySteering,
+                plotMapText,
+                plugin.settings.wikiLinkBehavior
+            ),
+            plugin.settings.aiResponseLanguage
         );
 
         // When the cursor sits mid-document, the continuation is INSERTED
@@ -3812,18 +3856,21 @@ export class CoWriterSession {
         const plotMapText = await loadPlotMapText(plugin);
         const directSteering = [...inlineSteering(plugin, textBeforeCursor), ...(extraSteering ?? [])];
 
-        const systemPrompt = getCoWriterGenerationPrompt(
-            this.voiceProfile ?? {
-                sentenceLengthDistribution: 'unknown',
-                dialogueRatio: 0.5,
-                vocabularyRegister: 'unknown',
-                keyPatterns: []
-            },
-            plugin.settings.narrativeVoicePreset,
-            vaultContext,
-            directSteering,
-            plotMapText,
-            plugin.settings.wikiLinkBehavior
+        const systemPrompt = appendLanguageDirective(
+            getCoWriterGenerationPrompt(
+                this.voiceProfile ?? {
+                    sentenceLengthDistribution: 'unknown',
+                    dialogueRatio: 0.5,
+                    vocabularyRegister: 'unknown',
+                    keyPatterns: []
+                },
+                plugin.settings.narrativeVoicePreset,
+                vaultContext,
+                directSteering,
+                plotMapText,
+                plugin.settings.wikiLinkBehavior
+            ),
+            plugin.settings.aiResponseLanguage
         );
 
         const proseForContext = textBeforeCursor.slice(-12000);
@@ -4275,7 +4322,7 @@ export class CoWriterSession {
 
     /**
      * Reset and seed the session for a `'review-discuss'` conversation — the
-     * entry point for v2.1.1's proactive editor chat. The system prompt and
+     * entry point for v2.2.0's proactive editor chat. The system prompt and
      * the just-completed report become the AI's opening turn: the system
      * message at index 0 of {@link discussCurrentMessages}, the report as the
      * first assistant message (id-stamped via {@link pushChatMessage} so it

@@ -172,7 +172,8 @@ export async function applyTransformation(
         const systemPrompt = getSystemPrompt('narrative', {
             vaultContext,
             narrativePreset: narrativeVoicePreset,
-            wikiLinkBehavior
+            wikiLinkBehavior,
+            responseLanguage: plugin.settings.aiResponseLanguage
         });
 
         // Budget the context window holistically.

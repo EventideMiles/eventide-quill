@@ -8,6 +8,8 @@ export interface LinterAiOptions {
     maxTokens: number;
     /** Override the provider's default chat model. */
     model?: string;
+    /** Response language directive (`aiResponseLanguage` setting). Empty = none. */
+    responseLanguage?: string;
     signal?: AbortSignal;
 }
 
@@ -66,7 +68,7 @@ export async function suggestLintFix(
 ): Promise<string | null> {
     const contextLines = extractContextLines(editorText, result);
 
-    const systemPrompt = getSystemPrompt('linter', { wikiLinkBehavior });
+    const systemPrompt = getSystemPrompt('linter', { wikiLinkBehavior, responseLanguage: options.responseLanguage });
     const userPrompt = getLinterUserPrompt(result, contextLines, customInstruction);
 
     const messages: ChatMessage[] = [

@@ -1,5 +1,55 @@
 import { describe, it, expect } from 'vitest';
-import { getAnalysisModePrompt, getReviewDiscussSystemPrompt } from '../../src/ai/prompts';
+import {
+    appendLanguageDirective,
+    getAnalysisModePrompt,
+    getReviewDiscussSystemPrompt,
+    getSystemPrompt
+} from '../../src/ai/prompts';
+
+describe('appendLanguageDirective', () => {
+    it('is a no-op when the language is empty or whitespace', () => {
+        expect(appendLanguageDirective('Base prompt.')).toBe('Base prompt.');
+        expect(appendLanguageDirective('Base prompt.', '')).toBe('Base prompt.');
+        expect(appendLanguageDirective('Base prompt.', '   ')).toBe('Base prompt.');
+        expect(appendLanguageDirective('Base prompt.', undefined)).toBe('Base prompt.');
+    });
+
+    it('appends the directive naming the language', () => {
+        const out = appendLanguageDirective('Base prompt.', 'French');
+        expect(out).toContain('Base prompt.');
+        expect(out).toContain('RESPONSE LANGUAGE');
+        expect(out).toContain('in French');
+    });
+
+    it('keeps drafted prose tied to the manuscript language', () => {
+        const out = appendLanguageDirective('Base prompt.', 'French');
+        expect(out).toMatch(/story prose/i);
+        expect(out).toMatch(/manuscript/i);
+    });
+
+    it('trims the language before interpolating', () => {
+        const out = appendLanguageDirective('P.', '  Japanese  ');
+        expect(out).toContain('in Japanese.');
+    });
+});
+
+describe('getSystemPrompt — responseLanguage option', () => {
+    it('appends the directive for every mode when set', () => {
+        for (const mode of ['narrative', 'analysis', 'critical', 'linter', 'manuscript-analysis'] as const) {
+            const withLang = getSystemPrompt(mode, { responseLanguage: 'Français' });
+            const without = getSystemPrompt(mode);
+            expect(withLang).toContain('in Français');
+            // The base prompt is unchanged apart from the appended directive.
+            expect(withLang.startsWith(without)).toBe(true);
+        }
+    });
+
+    it('leaves prompts byte-identical when unset', () => {
+        for (const mode of ['narrative', 'analysis', 'critical', 'linter', 'manuscript-analysis'] as const) {
+            expect(getSystemPrompt(mode, { responseLanguage: '' })).toBe(getSystemPrompt(mode));
+        }
+    });
+});
 
 describe('getReviewDiscussSystemPrompt', () => {
     it('includes the tool-discipline clause', () => {
