@@ -1690,6 +1690,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         s.lorebookFandomAllowAllWikis = d.lorebookFandomAllowAllWikis;
         s.lorebookFandomCacheEnabled = d.lorebookFandomCacheEnabled;
         s.lorebookWikipediaLang = d.lorebookWikipediaLang;
+        s.aiResponseLanguage = d.aiResponseLanguage;
         s.lorebookToolMaxTokens = d.lorebookToolMaxTokens;
         s.lorebookImageTools = d.lorebookImageTools;
         s.lorebookImageMaxDimension = d.lorebookImageMaxDimension;
