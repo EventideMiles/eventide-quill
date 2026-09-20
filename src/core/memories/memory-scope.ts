@@ -163,4 +163,3 @@ export function isMemoryFilePath(filePath: string, memoriesFolder: string): bool
     const normalizedFolder = normalizePath(memoriesFolder);
     return normalizedFile === normalizedFolder || normalizedFile.startsWith(`${normalizedFolder}/`);
 }
-

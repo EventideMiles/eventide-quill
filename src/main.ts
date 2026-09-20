@@ -1411,27 +1411,41 @@ export default class EventideQuillPlugin extends Plugin {
     /**
      * Persist current settings to disk, rebuild the provider map, and re-lint
      * the active document if the linter is active.
+     *
+     * Contract: saveSettings() rejects only when the settings write itself
+     * failed — post-persistence refresh work is best-effort and logged, never
+     * thrown. Callers' rollback/error handlers rely on this to treat a
+     * rejection as "disk untouched".
      */
     async saveSettings() {
         await this.saveData(this.settings);
-        this.rebuildProviders();
-        if (!this.lintActive) return;
+        // Post-save refresh work (rebuildProviders, lint re-run) must not make
+        // saveSettings() reject: callers roll back in-memory changes on
+        // rejection on the assumption that the disk write failed, which would
+        // be false — the write already succeeded. Log refresh failures instead.
+        try {
+            this.rebuildProviders();
+            if (!this.lintActive) return;
 
-        const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (!markdownView) return;
+            const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+            if (!markdownView) return;
 
-        const cm = this.getCmView(markdownView.editor);
-        if (!cm) return;
+            const cm = this.getCmView(markdownView.editor);
+            if (!cm) return;
 
-        const text = markdownView.editor.getValue();
-        const results = this.runLint(text);
-        this.currentResults = results;
+            const text = markdownView.editor.getValue();
+            const results = this.runLint(text);
+            this.currentResults = results;
 
-        cm.dispatch({
-            effects: setLintResults.of(results)
-        });
+            cm.dispatch({
+                effects: setLintResults.of(results)
+            });
 
-        this.lintPanel?.setResults(results);
+            this.lintPanel?.setResults(results);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`Settings saved, but post-save refresh failed: ${msg}`);
+        }
     }
 
     /** Rebuild the provider map from current settings. Call after loading or saving settings. */

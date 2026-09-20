@@ -1690,6 +1690,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         s.lorebookFandomAllowAllWikis = d.lorebookFandomAllowAllWikis;
         s.lorebookFandomCacheEnabled = d.lorebookFandomCacheEnabled;
         s.lorebookWikipediaLang = d.lorebookWikipediaLang;
+        s.aiResponseLanguage = d.aiResponseLanguage;
         s.lorebookToolMaxTokens = d.lorebookToolMaxTokens;
         s.lorebookImageTools = d.lorebookImageTools;
         s.lorebookImageMaxDimension = d.lorebookImageMaxDimension;
@@ -2468,15 +2469,19 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     }
 
     /**
-     * Render a full provider detail page (fields + model list + test buttons).
-     * Public so {@link ProviderSettingPage} can call it; reuses the private
-     * card renderers. Mutation handlers inside call refreshBridge(), which
-     * re-renders the open provider page in place (via the bridge machinery).
+     * Render a full provider detail page (fields + model list + test buttons +
+     * delete control). Public so {@link ProviderSettingPage} can call it; reuses
+     * the private card renderers. Mutation handlers inside call refreshBridge(),
+     * which re-renders the open provider page in place (via the bridge
+     * machinery). The delete section is the exception — confirming it re-renders
+     * the whole tab and pops back to the "AI providers" list page, because the
+     * page being viewed disappears along with its provider.
      */
     renderProviderPage(containerEl: HTMLElement, provider: ProviderConfig): void {
         this.renderProviderFields(containerEl, provider);
         this.renderModelList(containerEl, provider);
         this.renderTestButtons(containerEl, provider);
+        this.renderDeleteProviderSection(containerEl, provider);
     }
 
     /** Render a provider's editable fields (everything except the list-managed delete affordance). */
@@ -2847,6 +2852,100 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     }
                 })
             );
+    }
+
+    /**
+     * Render the explicit "Delete provider" row at the bottom of the provider
+     * detail page. The list-level delete affordance is easy to miss, so this
+     * gives every provider page a visible, warning-styled control that
+     * confirms via {@link ConfirmModal} before removing the provider.
+     */
+    private renderDeleteProviderSection(containerEl: HTMLElement, provider: ProviderConfig): void {
+        new Setting(containerEl)
+            .setName('Delete provider')
+            .setDesc(
+                'Removes this provider and its model list from settings. Default-model settings that reference it are cleared.'
+            )
+            .addButton((button) => {
+                button
+                    .setButtonText('Delete')
+                    .setIcon('trash-2')
+                    .onClick(() => this.confirmDeleteProvider(provider));
+                // Applied as a class because ButtonComponent.setWarning() is
+                // deprecated in the 1.13 typings (no-deprecated lint).
+                button.buttonEl.addClass('mod-warning');
+            });
+    }
+
+    /**
+     * Ask for confirmation, then remove the given provider from settings.
+     * The provider is matched BY ID (names may repeat). On confirm the default
+     * model keys are validated before saving, then the whole tab re-renders
+     * (unlike the in-page refreshBridge() mutation handlers) because the page
+     * being viewed disappears along with its provider — and the settings nav
+     * pops back to the "AI providers" list page, since update() alone leaves
+     * the deleted provider's detail page mounted. If saveSettings() rejects,
+     * the in-memory deletion is rolled back (provider reinserted at its
+     * original index, default keys restored) and a Notice surfaces the error —
+     * the re-render and navigation are skipped so the tab doesn't claim a
+     * deletion that never reached disk.
+     */
+    private confirmDeleteProvider(provider: ProviderConfig): void {
+        const s = this.plugin.settings;
+        const referencedByDefaults =
+            s.aiDefaultChatProvider.startsWith(`${provider.id}/`) ||
+            s.aiDefaultEmbedProvider.startsWith(`${provider.id}/`) ||
+            s.aiDefaultImageProvider.startsWith(`${provider.id}/`);
+        const isLastProvider = s.aiProviders.length === 1;
+        let message = `This permanently removes "${provider.name || 'Unnamed provider'}" and its model list from settings.`;
+        if (referencedByDefaults) {
+            message += ' Default-model settings that use this provider will be reset.';
+        }
+        if (isLastProvider) {
+            message += ' This is your only provider — all AI features will be disabled until you add another one.';
+        }
+        new ConfirmModal(
+            this.app,
+            'Delete provider?',
+            message,
+            async () => {
+                const idx = s.aiProviders.findIndex((p) => p.id === provider.id);
+                if (idx === -1) return;
+                // Snapshot before mutating: on a failed save the rollback must
+                // reinsert the provider at its original index AND restore the
+                // three default keys, since validateDefaultProviders() may have
+                // cleared them as a side effect of the (undone) deletion.
+                const prevChat = s.aiDefaultChatProvider;
+                const prevEmbed = s.aiDefaultEmbedProvider;
+                const prevImage = s.aiDefaultImageProvider;
+                s.aiProviders.splice(idx, 1);
+                this.validateDefaultProviders();
+                try {
+                    await this.plugin.saveSettings();
+                } catch (err) {
+                    // saveSettings() rejects only when the settings write
+                    // failed (post-save refresh errors are logged inside
+                    // saveSettings), so disk is untouched here — undo the
+                    // in-memory deletion rather than letting them drift.
+                    const msg = err instanceof Error ? err.message : String(err);
+                    s.aiProviders.splice(idx, 0, provider);
+                    s.aiDefaultChatProvider = prevChat;
+                    s.aiDefaultEmbedProvider = prevEmbed;
+                    s.aiDefaultImageProvider = prevImage;
+                    new Notice(`Quill: Could not save the provider deletion — it was undone. (${msg})`);
+                    return;
+                }
+                // update() re-stores the definitions so the list reflects
+                // the deletion but leaves the stale detail page mounted;
+                // openSettingsPage() then clears the page stack and lands
+                // on the providers list (no-op if the internal nav API is
+                // unavailable). Reached only after a successful save — a
+                // failure rolls back above and skips the re-render/navigation.
+                this.update();
+                this.openSettingsPage('AI providers');
+            },
+            'Delete'
+        ).open();
     }
 
     /** Render the default chat/embed/image model dropdowns. Public so {@link DefaultModelsSettingPage} can call it. */
