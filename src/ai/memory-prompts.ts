@@ -61,12 +61,12 @@ export const MEMORY_DISCIPLINE_CLAUSE = [
     '- Anything the writer is unlikely to want remembered next session.',
     '',
     'SCOPE: default `auto` is correct for most saves (active manuscript',
-    "pool, or global when no manuscript is in context). Use `global` only",
+    'pool, or global when no manuscript is in context). Use `global` only',
     'for facts that span manuscripts — series-wide tone, shared',
     'worldbuilding, cross-book preferences. When in doubt, use `auto`.',
     '',
     'DELETE only when the writer explicitly asks. Deletes are surfaced',
-    'prominently and the writer can recover the text from Obsidian\'s file',
+    "prominently and the writer can recover the text from Obsidian's file",
     'recovery.'
 ].join('\n');
 
@@ -115,11 +115,7 @@ export async function buildMemoryMessage(plugin: EventideQuillPlugin): Promise<C
  * no entries to show (e.g. when the cap is 0). Uses the writer's settings
  * for full-vs-preview injection and the entry cap.
  */
-function formatSection(
-    plugin: EventideQuillPlugin,
-    scopeKey: string,
-    entries: readonly MemoryEntry[]
-): string | null {
+function formatSection(plugin: EventideQuillPlugin, scopeKey: string, entries: readonly MemoryEntry[]): string | null {
     if (entries.length === 0) return null;
     const label = scopeKey === GLOBAL_MEMORY_SCOPE ? 'Global' : scopeKey;
     const fullInject = plugin.settings.memoriesFullInject;
@@ -157,7 +153,10 @@ function formatFull(entry: MemoryEntry): string {
     const lines: string[] = [`- **${entry.heading}** — ^${entry.id}`];
     if (entry.body) {
         // Indent the body so it reads as a sub-bullet under the heading.
-        const indented = entry.body.split('\n').map((l) => `  ${l}`.trimEnd()).join('\n');
+        const indented = entry.body
+            .split('\n')
+            .map((l) => `  ${l}`.trimEnd())
+            .join('\n');
         lines.push(`  ${indented}`.trim());
     }
     if (entry.tags.length > 0) {
