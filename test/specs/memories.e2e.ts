@@ -5,7 +5,7 @@ import { enqueueMock, clearMocks, getMockStats, sseChatBody, sseToolCallBody } f
 import { openFile, sendCoWriterMessage, waitForAssistantDone, openQuillSidebar, isMobileEmulation } from '../helpers/obsidian-helpers.js';
 
 /**
- * Memories round-trip — the v2.2.0 memory system end-to-end against real
+ * Memories round-trip — the v2.3.0 memory system end-to-end against real
  * Obsidian and the mock provider. Covers the four behaviors the unit suite
  * can't prove in composition:
  *
