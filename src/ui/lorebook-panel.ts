@@ -5,12 +5,13 @@ import type { LoreCoverage, LoreEntry, LoreEntryType, LoreRelationships } from '
 import { findLoreFolder, parseLoreType } from '../core/dashboard/lorebook-scanner';
 import { LORE_ENTRY_TYPES } from '../core/dashboard/lorebook-types';
 import { getActiveDocument, renderDocumentHeader } from './document-header';
+import { renderLoreHygieneTab } from './lore-hygiene-panel';
 import type { MemoryEntry } from '../core/memories/memory-file';
 import { GLOBAL_MEMORY_SCOPE } from '../core/memories/memory-scope';
 import { readActiveAndGlobal } from '../core/memories/memory-store';
 
 /** Lorebook sub-tab ids known to {@link renderLorebookTab}. */
-export type LorebookSubTab = 'document' | 'manuscript' | 'relationships' | 'memories';
+export type LorebookSubTab = 'document' | 'manuscript' | 'relationships' | 'memories' | 'hygiene';
 
 /**
  * Render the Lorebook tab content into `container`.
@@ -24,25 +25,34 @@ export type LorebookSubTab = 'document' | 'manuscript' | 'relationships' | 'memo
  * `currentLoreManuscriptCoverage` (manuscript text substring + entity gaps).
  * The Relationships subtab reads `currentLoreRelationships` (symmetric edges
  * from body `[[wikilinks]]`) and branches separately — its data source and
- * empty-states differ from coverage.
+ * empty-states differ from coverage. The Memories and Hygiene subtabs branch
+ * earliest: Memories reads memory files on each render, and Hygiene manages
+ * its own scan state (no plugin-level coverage data at all), so neither
+ * renders the active-document header.
  *
  * The refresh button triggers the subtab-appropriate refresh method.
  *
- * @param subtab Active Lorebook subtab — 'document', 'manuscript', or 'relationships'.
+ * @param subtab Active Lorebook subtab.
+ * @param onHygieneChanged Optional callback fired after a Hygiene scan/strip so the host can refresh its sub-tab badge.
  */
 export function renderLorebookTab(
     container: HTMLElement,
     plugin: EventideQuillPlugin,
     component: Component,
-    subtab: LorebookSubTab
+    subtab: LorebookSubTab,
+    onHygieneChanged?: () => void
 ): void {
     container.empty();
 
-    // Memories sub-tab branches early — it has its own data source (memory
-    // files, not lorebook coverage) and its own action bar (no "scan
-    // lorebook" — memory files are read on each render).
+    // Memories + Hygiene sub-tabs branch before the document header — neither
+    // is scoped to the active document (memory pools are folder-scoped; the
+    // hygiene scan is vault-wide), and each has its own data source.
     if (subtab === 'memories') {
         renderLorebookMemoriesTab(container, plugin, component);
+        return;
+    }
+    if (subtab === 'hygiene') {
+        renderLoreHygieneTab(container, plugin, component, onHygieneChanged);
         return;
     }
 
