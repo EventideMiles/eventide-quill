@@ -33,6 +33,7 @@ It runs locally by default (Ollama, or any OpenAI-compatible local server such a
 - **Co-writer Tool-calling** — the co-writer calls vault tools mid-conversation: read notes (`vault_lookup`, `grep_notes`), pull siblings and manuscript mentions, measure folder/file sizes, and propose reviewable edits (`edit_note`, `insert_note`, `append_to_note`, `revise_edit`). On by default; restrictable in settings.
 - **Network research tools** — optional `fetch_url`, Wikipedia, and Fandom lookups (Fandom gated by a configurable allowlist) for checking lore against external references.
 - **Subagents** — for big, context-heavy work, the co-writer can spawn isolated subagents that run in their own fresh context and return a summary: batch lore edits and vault Q&A + external research. Keeps the main chat lean — especially valuable on local models.
+- **Automatic context compaction** — long conversations, reviews, and subagent runs stay inside the model's context window: deterministic refinement of stale tool content first, AI summarization second, and a hard fallback that bounds the request even when summarization fails. See the wiki's [Context management](https://github.com/EventideMiles/eventide-quill/wiki/Context-management) page.
 
 **Worldbuilding**
 - **Lorebook + Lorebook Coach** — typed lore entries (characters, locations, events, items, factions, plot threads, themes) with coverage-gap detection, plus a Coach mode that drafts entries from your manuscript.
