@@ -48,8 +48,11 @@ function decomposeMessages(messages: ChatMessage[]): DecomposedMessages {
  * Partition chat turns into atomic anchor groups so a compaction boundary can never
  * separate an assistant `tool_calls` message from its `tool` results. Consecutive
  * messages sharing a {@link ChatMessage.quillAnchorId} form one group (a whole tool
- * round shares the originating display turn's id); messages without an anchor are
- * treated as their own group.
+ * round shares the originating display turn's id). Messages without an anchor —
+ * subagent histories carry none — group by wire shape: an unanchored `tool` result
+ * joins the preceding group (its parent assistant tool-call round) instead of
+ * starting a new one, so an unanchored multi-tool round stays atomic; every other
+ * unanchored message is treated as its own group.
  */
 function groupChatTurnsByAnchor(turns: ChatMessage[]): ChatMessage[][] {
     const groups: ChatMessage[][] = [];
@@ -60,6 +63,9 @@ function groupChatTurnsByAnchor(turns: ChatMessage[]): ChatMessage[][] {
             message.quillAnchorId !== undefined &&
             currentGroup[0]?.quillAnchorId === message.quillAnchorId
         ) {
+            currentGroup.push(message);
+        } else if (currentGroup && message.quillAnchorId === undefined && message.role === 'tool') {
+            // Unanchored tool result: join the preceding assistant tool-call round.
             currentGroup.push(message);
         } else {
             groups.push([message]);
@@ -155,11 +161,12 @@ export async function compactConversation(
  *
  * Invariants:
  * - Turns are dropped and kept as WHOLE anchor groups (see
- *   {@link groupChatTurnsByAnchor}), so an assistant `tool_calls` message is
- *   never separated from its `tool` results and the kept region never starts
- *   with an orphaned `tool` message or ends on an assistant with unanswered
- *   tool calls. If a sanity check finds either shape, the input is returned
- *   unchanged rather than corrupting the array.
+ *   {@link groupChatTurnsByAnchor}; an unanchored `tool` result joins its parent
+ *   assistant round rather than standing alone), so an assistant `tool_calls`
+ *   message is never separated from its `tool` results and the kept region never
+ *   starts with an orphaned `tool` message or ends on an assistant with
+ *   unanswered tool calls. If a sanity check finds either shape, the input is
+ *   returned unchanged rather than corrupting the array.
  * - With fewer than 4 chat turns the array is returned unchanged: dropping
  *   turns cannot free meaningful space when only 1-2 would remain.
  * - The input array is never modified; a new array is always returned, and

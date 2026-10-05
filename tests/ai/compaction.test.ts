@@ -322,7 +322,11 @@ describe('fallbackCompactConversation', () => {
         expect(result[5]!.content).toBe('a2');
     });
 
-    it('returns the input unchanged when the kept region would start with an orphaned tool result', () => {
+    it('groups fully-unanchored tool rounds by wire shape and shrinks the subagent history', () => {
+        // SubagentSession stamps no quillAnchorId, so every message would be its
+        // own group under anchor-only grouping and the fallback would no-op on
+        // the orphaned-tool sanity check. Unanchored tool results join their
+        // parent assistant round, so this oversized history now compacts.
         const messages: ChatMessage[] = [
             { role: 'system', content: 'System prompt' },
             { role: 'user', content: 'q1' },
@@ -336,8 +340,71 @@ describe('fallbackCompactConversation', () => {
             { role: 'user', content: 'q4' }
         ];
         const result = fallbackCompactConversation(messages);
+        // Kept groups: [a3, result 3] and [q4] — the whole last tool round plus
+        // the trailing user turn; everything older is dropped.
+        expect(result).toHaveLength(5);
+        expect(result.length).toBeLessThan(messages.length);
+        expect(result[1]).toEqual({ role: 'system', content: FALLBACK_SUMMARY_MARKER });
+        expect(result[2]!.role).toBe('assistant');
+        expect(result[2]!.toolCalls).toHaveLength(1);
+        expect(result[3]).toEqual({ role: 'tool', content: 'result 3', toolCallId: 'call-3' });
+        expect(result[4]).toEqual({ role: 'user', content: 'q4' });
+    });
+
+    it('returns the input unchanged when the kept region would start with an unmergeable tool result', () => {
+        // A tool result whose anchor matches nothing before it cannot merge into
+        // the preceding group (anchored matching is by anchor id), so it stays a
+        // lone group — and landing first in the kept region it must refuse the
+        // drop rather than start the kept history with an orphaned tool result.
+        const messages: ChatMessage[] = [
+            { role: 'system', content: 'System prompt' },
+            { role: 'user', content: 'q1', quillAnchorId: 't1' },
+            { role: 'assistant', content: 'a1', quillAnchorId: 't1' },
+            { role: 'user', content: 'q2', quillAnchorId: 't2' },
+            { role: 'assistant', content: 'a2', quillAnchorId: 't2' },
+            { role: 'tool', content: 'orphan result', quillAnchorId: 't9', toolCallId: 'call-9' },
+            { role: 'user', content: 'q4', quillAnchorId: 't4' },
+            { role: 'assistant', content: 'a4', quillAnchorId: 't4' }
+        ];
+        const result = fallbackCompactConversation(messages);
         expect(result).toEqual(messages);
         expect(result).not.toBe(messages);
+    });
+
+    it('groups an unanchored assistant tool-call round as one unit inside an anchored conversation', () => {
+        // Mixed shape: anchored groups interleaved with a subagent-style
+        // unanchored [assistant + toolCalls, tool] pair. The pair must group as
+        // one atomic unit so it can sit intact at the kept-region boundary.
+        const messages: ChatMessage[] = [
+            { role: 'system', content: 'System prompt' },
+            { role: 'user', content: 'q1', quillAnchorId: 't1' },
+            { role: 'assistant', content: 'a1', quillAnchorId: 't1' },
+            { role: 'user', content: 'q2', quillAnchorId: 't2' },
+            { role: 'assistant', content: 'a2', quillAnchorId: 't2' },
+            { role: 'user', content: 'q3', quillAnchorId: 't3' },
+            { role: 'assistant', content: 'a3', quillAnchorId: 't3' },
+            { role: 'assistant', content: 'a4', toolCalls: [{ id: 'call-4', name: 't', arguments: '{}' }] },
+            { role: 'tool', content: 'result 4', toolCallId: 'call-4' },
+            { role: 'user', content: 'q5', quillAnchorId: 't5' },
+            { role: 'assistant', content: 'a5', quillAnchorId: 't5' }
+        ];
+        const result = fallbackCompactConversation(messages);
+        // Kept groups: the unanchored tool round [a4, result 4] and [q5, a5].
+        // Had the tool result not merged with its assistant, the kept region
+        // would start with a bare tool message and the fallback would no-op.
+        expect(result).toHaveLength(6);
+        expect(result.length).toBeLessThan(messages.length);
+        expect(result[1]).toEqual({ role: 'system', content: FALLBACK_SUMMARY_MARKER });
+        expect(result[2]!.role).toBe('assistant');
+        expect(result[2]!.toolCalls).toHaveLength(1);
+        expect(result[3]).toEqual({ role: 'tool', content: 'result 4', toolCallId: 'call-4' });
+        expect(result[4]).toEqual({ role: 'user', content: 'q5', quillAnchorId: 't5' });
+        expect(result[5]).toEqual({ role: 'assistant', content: 'a5', quillAnchorId: 't5' });
+        // Older anchored rounds are gone whole — no fragments survive.
+        const anchors = result.map((message) => message.quillAnchorId);
+        expect(anchors).not.toContain('t1');
+        expect(anchors).not.toContain('t2');
+        expect(anchors).not.toContain('t3');
     });
 
     it('returns the input unchanged when the array ends on an unanswered assistant tool call', () => {
