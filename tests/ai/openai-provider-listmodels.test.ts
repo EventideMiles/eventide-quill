@@ -102,6 +102,44 @@ describe('OpenAiCompatibleProvider.listModels — reported context length', () =
         ]);
     });
 
+    it('falls through to context_length when max_context_length is zero', async () => {
+        mockModelsResponse({ data: [{ id: 'zero-max', max_context_length: 0, context_length: 8192 }] });
+
+        const models = await makeProvider().listModels();
+
+        expect(models).toEqual([{ id: 'zero-max', ownedBy: undefined, contextLength: 8192 }]);
+    });
+
+    it('falls through to context_length when max_context_length is negative', async () => {
+        mockModelsResponse({ data: [{ id: 'negative-max', max_context_length: -4096, context_length: 8192 }] });
+
+        const models = await makeProvider().listModels();
+
+        expect(models).toEqual([{ id: 'negative-max', ownedBy: undefined, contextLength: 8192 }]);
+    });
+
+    it('omits contextLength when max_context_length is NaN and context_length is fractional', async () => {
+        // NaN never survives a real JSON round-trip, but the buffered test
+        // response is passed through unparsed — mirroring the helper's tolerance
+        // for any untrusted numeric garbage. Fractional token counts are
+        // equally bogus and rejected under the same positive-integer rule.
+        mockModelsResponse({ data: [{ id: 'garbage', max_context_length: NaN, context_length: 8192.5 }] });
+
+        const models = await makeProvider().listModels();
+
+        expect(models).toEqual([{ id: 'garbage', ownedBy: undefined }]);
+        expect(Object.prototype.hasOwnProperty.call(models[0], 'contextLength')).toBe(false);
+    });
+
+    it('omits contextLength when both context fields are invalid', async () => {
+        mockModelsResponse({ data: [{ id: 'both-invalid', max_context_length: 0, context_length: -1 }] });
+
+        const models = await makeProvider().listModels();
+
+        expect(models).toEqual([{ id: 'both-invalid', ownedBy: undefined }]);
+        expect(Object.prototype.hasOwnProperty.call(models[0], 'contextLength')).toBe(false);
+    });
+
     it('returns [] on a non-200 response', async () => {
         mockModelsResponse({ data: [{ id: 'qwen', max_context_length: 4096 }] }, 500);
 

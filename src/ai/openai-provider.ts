@@ -48,16 +48,26 @@ interface OpenAiModelItem {
 }
 
 /**
+ * Check whether a server-reported context value is a usable token count: a
+ * positive integer. Rejects absent values, `NaN`, zero, negatives, fractions,
+ * and infinities alike.
+ */
+function isValidReportedContextLength(value: number | undefined): value is number {
+    return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
+
+/**
  * Pick the server-reported context length from an OpenAI-compatible
  * `/models` item, preferring LM Studio's `max_context_length` over the
  * alternative `context_length` spelling. Both fields are optional and
- * untrusted — a non-numeric value is ignored so a malformed listing
- * degrades to "no context data" (no picker hint, no warning) rather than
- * surfacing a bogus number.
+ * untrusted — only positive integers are accepted, and a rejected
+ * `max_context_length` falls through to `context_length` under the same
+ * validation, so a malformed listing degrades to "no context data" (no
+ * picker hint, no warning) rather than surfacing a bogus number.
  */
 function pickReportedContextLength(item: OpenAiModelItem): number | undefined {
-    if (typeof item.max_context_length === 'number') return item.max_context_length;
-    if (typeof item.context_length === 'number') return item.context_length;
+    if (isValidReportedContextLength(item.max_context_length)) return item.max_context_length;
+    if (isValidReportedContextLength(item.context_length)) return item.context_length;
     return undefined;
 }
 
