@@ -17,7 +17,8 @@ It runs locally by default (Ollama, or any OpenAI-compatible local server such a
 ## Features
 
 **Writing & prose**
-- **Prose Linter (Novelist Edition)** — deterministic rules with no AI cost. Craft checks catch passive voice, adverb and qualifier clutter, repeated words and sentence starts, telling-vs-showing, dialogue-tag overuse, complex words, and overlong sentences. A dedicated cluster targets AI-prose tells directly: `ai-cliches`, `ai-em-dashes`, `ai-negation`, `ai-filler-adverbs`, `ai-hedging`, and `ai-wrap-ups`, plus typo-class `gremlins`.
+- **Prose Linter (Novelist Edition)** — deterministic rules with no AI cost. Craft checks catch passive voice, adverb and qualifier clutter, repeated words and sentence starts, telling-vs-showing, dialogue-tag overuse, complex words, and overlong sentences. A dedicated cluster targets AI-prose tells directly: `ai-cliches`, `ai-em-dashes`, `ai-negation`, `ai-contrast`, `ai-meta-cues`, `ai-filler-adverbs`, `ai-hedging`, and `ai-wrap-ups`, plus typo-class `gremlins`.
+- **AI-tell awareness** — deterministic stylistic-oddity signals: the construction-tell linter rules above, an AI-tell density metric (weighted hits per 1,000 words, dialogue exempt) on the Manuscript Dashboard, and a within-manuscript sentence-opening-variety observation. Heuristic pattern counts, never authorship detection — see the wiki's [AI-tell heuristics](https://github.com/EventideMiles/eventide-quill/wiki/AI-tell-heuristics) page.
 - **Selection Transformations** — rewrite selected passages in place: improve, expand, tighten, or change tone.
 - **Writer Guidance Layers** — inline directives (`<!-- quill: -->`) and a free-form plot map steer the AI.
 - **AI Generation Style Constraints** — strict style rules (no em dashes, no cliché words, active voice, show-don't-tell, varied cadence, and more) plus 6 narrative perspective presets keep generated prose on-model.

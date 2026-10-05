@@ -125,6 +125,7 @@ export function renderDashboardTab(container: HTMLElement, plugin: EventideQuill
     renderSummary(container, metrics, plugin);
     renderWritingGoals(container, metrics, plugin, component);
     renderFlowScore(container, metrics);
+    renderAiTellDensity(container, metrics);
     renderChapterList(container, metrics, plugin, component);
     renderPacingHeatmap(container, metrics, plugin, component);
     renderReadability(container, metrics, plugin);
@@ -306,6 +307,61 @@ function renderFlowScore(container: HTMLElement, metrics: ManuscriptMetrics): vo
     grid.createDiv({ cls: 'quill-dashboard-panel__readability-score' }).setText(
         `Paragraph rhythm: \u03C3 = ${metrics.paragraphLengthStddev} words`
     );
+}
+
+/**
+ * Render the AI-tell density section: the manuscript-wide stylistic-oddity
+ * rate per 1,000 words, plus the sentence-opening-variety observation as a
+ * footnote line under the metric. Both are deterministic heuristics surfaced
+ * honestly: a pattern count, not authorship detection — the hint states this
+ * explicitly and the skeleton observation is strictly relative (lowest within
+ * THIS manuscript), never judged against absolute thresholds.
+ */
+function renderAiTellDensity(container: HTMLElement, metrics: ManuscriptMetrics): void {
+    const section = container.createDiv({ cls: 'quill-dashboard-panel__section' });
+    const headingRow = section.createDiv({ cls: 'quill-dashboard-panel__heading-row' });
+    headingRow.createDiv({ cls: 'quill-dashboard-panel__section-heading', text: 'AI-tell density' });
+    headingRow.createSpan({
+        cls: 'quill-dashboard-panel__readability-info',
+        attr: {
+            title:
+                'Counts stylistic patterns common in machine-generated prose (clichés, filler adverbs, hedging, ' +
+                'wrap-ups, meta-narrative cues, purple constructions) per 1,000 words, with dialogue excluded. ' +
+                'These heuristics flag patterns, not authorship — they cannot prove whether text is AI- or ' +
+                'human-written, and any single flag can be a deliberate stylistic choice.'
+        },
+        text: '(?)'
+    });
+
+    const grid = section.createDiv({ cls: 'quill-dashboard-panel__readability-grid' });
+    grid.createDiv({ cls: 'quill-dashboard-panel__readability-score' }).setText(
+        `AI-tell density: ${metrics.aiTellDensity.toFixed(1)} per 1,000 words`
+    );
+
+    const note = skeletonVarietyNote(metrics);
+    if (note) {
+        grid.createDiv({ cls: 'quill-dashboard-panel__readability-score' }).setText(note);
+    }
+}
+
+/**
+ * Build the sentence-opening-variety footnote: which chapter has the lowest
+ * distinct-skeleton ratio within this manuscript. Relative-only — needs at
+ * least two chapters with differing variety to say anything, so single-
+ * chapter manuscripts and ties render no line.
+ */
+function skeletonVarietyNote(metrics: ManuscriptMetrics): string | null {
+    const candidates = metrics.chapters.filter((c) => c.sentenceCount > 0);
+    if (candidates.length < 2) return null;
+
+    let lowest = candidates[0]!;
+    for (const chapter of candidates) {
+        if (chapter.sentenceSkeletonVariety < lowest.sentenceSkeletonVariety) lowest = chapter;
+    }
+    const differing = candidates.some((c) => c.sentenceSkeletonVariety !== lowest.sentenceSkeletonVariety);
+    if (!differing) return null;
+
+    return `Sentence-opening variety: lowest in "${lowest.title}" (relative measure within this manuscript)`;
 }
 
 /** Render the expandable chapter list. */

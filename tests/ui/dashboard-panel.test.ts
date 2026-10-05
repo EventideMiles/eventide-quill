@@ -30,6 +30,8 @@ function makeChapter(overrides: Partial<ChapterMetrics> = {}): ChapterMetrics {
         narrativeFlowScore: 72,
         paragraphLengthStddev: 50,
         ariScore: 7,
+        aiTellDensity: 0,
+        sentenceSkeletonVariety: 1,
         pacingFlags: [],
         sections: [],
         ...overrides
@@ -58,6 +60,7 @@ function makeMetrics(overrides: Partial<ManuscriptMetrics> = {}): ManuscriptMetr
         narrativeFlowScore: 72,
         paragraphLengthStddev: 50,
         ariScore: 7,
+        aiTellDensity: 3.2,
         chapters: [makeChapter(), makeChapter({ title: 'Chapter 2', wordCount: 5000 })],
         characters: [],
         reclassified: [],
@@ -125,6 +128,10 @@ describe('dashboard-panel — renderDashboardTab', () => {
         // Chapter list.
         expect(container.textContent).to.include('Chapter 1');
         expect(container.textContent).to.include('Chapter 2');
+
+        // AI-tell density section renders the manuscript rate.
+        expect(container.textContent).to.include('AI-tell density');
+        expect(container.textContent).to.include('3.2 per 1,000 words');
 
         component.unload();
     });

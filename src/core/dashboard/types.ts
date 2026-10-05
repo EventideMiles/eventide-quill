@@ -83,6 +83,8 @@ export interface SectionMetrics {
     paragraphLengthStddev: number;
     /** ARI grade level (0+, lower = easier). */
     ariScore: number;
+    /** AI-tell density: weighted stylistic-oddity hits per 1,000 words (dialogue excluded). A heuristic signal, not authorship detection. */
+    aiTellDensity: number;
     /** Pacing flags raised within this section. */
     pacingFlags: PacingFlag[];
 }
@@ -131,6 +133,10 @@ export interface ChapterMetrics {
     paragraphLengthStddev: number;
     /** ARI grade level (0+, lower = easier). */
     ariScore: number;
+    /** AI-tell density: weighted stylistic-oddity hits per 1,000 words (dialogue excluded). A heuristic signal, not authorship detection. */
+    aiTellDensity: number;
+    /** Distinct sentence-skeleton ratio (0-1). Relative measure only — compare within the manuscript, never against absolute thresholds. */
+    sentenceSkeletonVariety: number;
     /** Pacing flags aggregated from sections. */
     pacingFlags: PacingFlag[];
     /** Per-scene breakdown for expandable rows. */
@@ -219,6 +225,8 @@ export interface ManuscriptMetrics {
     paragraphLengthStddev: number;
     /** Manuscript-wide ARI grade level (0+, lower = easier). */
     ariScore: number;
+    /** Manuscript-wide word-weighted mean AI-tell density (weighted stylistic-oddity hits per 1,000 words). A heuristic signal, not authorship detection. */
+    aiTellDensity: number;
     /** Per-chapter metrics, in manuscript order. */
     chapters: ChapterMetrics[];
     /** Per-character appearance summaries, sorted by occurrences descending. */

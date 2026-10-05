@@ -2,6 +2,7 @@ import type { ExtractedEntity, EntityType } from '../context-engine/types';
 import { computeDialogueRatio } from '../context-engine/voice-analyzer';
 import { countSyllables, splitSentences, listSections, splitParagraphs } from '../../utils/text-analysis';
 import type { SectionRange } from '../../utils/text-analysis';
+import { computeAiTellDensity, computeSentenceSkeletonVariety } from './ai-tell-density';
 import { daleChall, reweightedFlesch, customComposite, automatedReadabilityIndex, narrativeFlow } from './readability';
 import type {
     ChapterMetrics,
@@ -249,6 +250,7 @@ function computeSectionMetrics(section: SectionRange, filePath: string): Section
     }));
     const paragraphStddev = computeParagraphLengthStddev(section.text);
     const flow = narrativeFlow(stddev, paragraphStddev, dialogueRatio, sectionFlags.length, sentenceCount);
+    const aiTell = computeAiTellDensity(section.text);
 
     return {
         title: section.title,
@@ -267,6 +269,7 @@ function computeSectionMetrics(section: SectionRange, filePath: string): Section
         narrativeFlowScore: flow.score,
         paragraphLengthStddev: paragraphStddev,
         ariScore: readability.ariScore,
+        aiTellDensity: Math.round(aiTell.hitsPerKiloWords * 10) / 10,
         pacingFlags: sectionFlags
     };
 }
@@ -390,6 +393,8 @@ export function chapterMetrics(chapter: ChapterRange): ChapterMetrics {
     const flags = pacingAnalysis(chapter.text, lineTable, chapter.filePath);
     const paragraphStddev = computeParagraphLengthStddev(chapter.text);
     const flow = narrativeFlow(stddev, paragraphStddev, dialogueRatio, flags.length, sentenceCount);
+    const aiTell = computeAiTellDensity(chapter.text);
+    const skeletonVariety = computeSentenceSkeletonVariety(chapter.text);
 
     return {
         filePath: chapter.filePath,
@@ -413,6 +418,8 @@ export function chapterMetrics(chapter: ChapterRange): ChapterMetrics {
         narrativeFlowScore: flow.score,
         paragraphLengthStddev: paragraphStddev,
         ariScore: readability.ariScore,
+        aiTellDensity: Math.round(aiTell.hitsPerKiloWords * 10) / 10,
+        sentenceSkeletonVariety: Math.round(skeletonVariety * 100) / 100,
         pacingFlags: flags,
         sections: chapter.sections.map((s) => computeSectionMetrics(s, chapter.filePath))
     };
@@ -536,6 +543,7 @@ export function manuscriptMetrics(
     let weightedComposite = 0;
     let weightedFlow = 0;
     let weightedAri = 0;
+    let weightedAiTell = 0;
     const allWordCounts: number[] = [];
     const allParagraphCounts: number[] = [];
     const allFlags: PacingFlag[] = [];
@@ -554,6 +562,7 @@ export function manuscriptMetrics(
         weightedComposite += cm.customCompositeScore * cm.wordCount;
         weightedFlow += cm.narrativeFlowScore * cm.wordCount;
         weightedAri += cm.ariScore * cm.wordCount;
+        weightedAiTell += cm.aiTellDensity * cm.wordCount;
         // Adjust flag lines from chapter-relative to file-absolute for navigation.
         for (const flag of cm.pacingFlags) {
             allFlags.push({
@@ -603,6 +612,7 @@ export function manuscriptMetrics(
         narrativeFlowScore: totalWords > 0 ? Math.round((weightedFlow / totalWords) * 10) / 10 : 0,
         paragraphLengthStddev: Math.round(paragraphLengthStddevRaw * 10) / 10,
         ariScore: totalWords > 0 ? Math.round((weightedAri / totalWords) * 10) / 10 : 0,
+        aiTellDensity: totalWords > 0 ? Math.round((weightedAiTell / totalWords) * 10) / 10 : 0,
         chapters: chapterMetricsList,
         characters,
         reclassified,

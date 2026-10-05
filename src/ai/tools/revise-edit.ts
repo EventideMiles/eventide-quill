@@ -1,6 +1,7 @@
 import type { Tool, ToolContext } from './tool';
 import { openNoteForEdit, pushLoreEditDiff, resolveNoteFile } from './lore-edit-helpers';
 import { isMemoryFilePath } from '../../core/memories/memory-scope';
+import { checkAiIsms } from '../ai-ism-detector';
 
 /**
  * Revise the CONTENT of a pending lore edit already proposed to a note (via
@@ -67,6 +68,14 @@ export const reviseEditTool: Tool = {
         if (typeof args.new_text !== 'string') {
             return 'Error: "new_text" is required and must be a string.';
         }
+
+        // AI-ism check: reject the call if the revised text contains writing
+        // tells (em dashes, cliché words, purple constructions). Same gate as
+        // edit_note / insert_note / append_to_note — revise_edit replaces the
+        // edit's full new_text, so it must pass the same bar. An empty string
+        // (pure deletion) passes trivially.
+        const aiIsmError = checkAiIsms(newText);
+        if (aiIsmError) return aiIsmError;
 
         const { plugin } = ctx;
         const file = resolveNoteFile(plugin, path);

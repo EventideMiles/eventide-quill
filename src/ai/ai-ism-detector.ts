@@ -31,7 +31,14 @@ export interface AiIsm {
 const EM_DASH_PATTERN = /\u2014|\u2013/g;
 const DOUBLE_HYPHEN_PATTERN = / -- /g;
 
-const PURPLE_PATTERNS: RegExp[] = [
+/**
+ * Shared purple-construction patterns. Exported as the single source for both
+ * the editing-tool AI-ism gate and the dashboard's AI-tell density metric —
+ * never copy these regexes elsewhere. This module is pure (imports only the
+ * linter's word-lists.json), so consumers on either side of the core/ai
+ * module split can safely depend on it.
+ */
+export const PURPLE_PATTERNS: RegExp[] = [
     /\b(hung|lingered)\s+heavy\b/gi,
     /\bshiver\s+ran\b/gi,
     /\bsomething\s+shifted\b/gi,
