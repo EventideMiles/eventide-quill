@@ -37,6 +37,28 @@ import {
 interface OpenAiModelItem {
     id: string;
     owned_by?: string;
+    /**
+     * Server-reported context window (LM Studio's `/v1/models` exposes the
+     * server's configured context as `max_context_length`). Optional and
+     * untrusted — most OpenAI-compatible servers omit it.
+     */
+    max_context_length?: number;
+    /** Alternative context-window field name used by some OpenAI-compatible servers. */
+    context_length?: number;
+}
+
+/**
+ * Pick the server-reported context length from an OpenAI-compatible
+ * `/models` item, preferring LM Studio's `max_context_length` over the
+ * alternative `context_length` spelling. Both fields are optional and
+ * untrusted — a non-numeric value is ignored so a malformed listing
+ * degrades to "no context data" (no picker hint, no warning) rather than
+ * surfacing a bogus number.
+ */
+function pickReportedContextLength(item: OpenAiModelItem): number | undefined {
+    if (typeof item.max_context_length === 'number') return item.max_context_length;
+    if (typeof item.context_length === 'number') return item.context_length;
+    return undefined;
 }
 
 /** Shape of a single item in the OpenAI embeddings response data array. */
@@ -312,10 +334,12 @@ export class OpenAiCompatibleProvider implements AiProvider {
             return [];
         }
 
-        return data.data.map((item: OpenAiModelItem) => ({
-            id: item.id,
-            ownedBy: item.owned_by
-        }));
+        return data.data.map((item: OpenAiModelItem) => {
+            const contextLength = pickReportedContextLength(item);
+            return contextLength === undefined
+                ? { id: item.id, ownedBy: item.owned_by }
+                : { id: item.id, ownedBy: item.owned_by, contextLength };
+        });
     }
 
     /** {@inheritDoc AiProvider.testConnection} */

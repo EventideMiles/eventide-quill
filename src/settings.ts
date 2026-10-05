@@ -13,6 +13,7 @@ import {
 import EventideQuillPlugin from './main';
 import { ModelCapability, ModelInfo, ModelRole, ProviderConfig, ProviderType, roleSatisfies } from './ai/provider';
 import { createProvider, generateModelId, generateProviderId } from './ai/provider-registry';
+import { contextLengthMismatchNotice, formatContextLength } from './ai/model-context';
 import { DEFAULT_IMAGE_PROXY_PROMPT } from './ai/vision';
 import { NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS } from './types';
 import { ConfirmModal } from './ui/confirm-modal';
@@ -568,7 +569,7 @@ class ModelFetchModal extends SuggestModal<ModelInfo> {
     constructor(
         app: App,
         models: ModelInfo[],
-        private onSelect: (modelId: string) => void
+        private onSelect: (model: ModelInfo) => void
     ) {
         super(app);
         this.models = models;
@@ -591,11 +592,17 @@ class ModelFetchModal extends SuggestModal<ModelInfo> {
                 attr: { style: 'color: var(--text-muted); margin-left: 8px;' }
             });
         }
+        if (model.contextLength !== undefined) {
+            el.createEl('small', {
+                text: `${formatContextLength(model.contextLength)} context tokens`,
+                attr: { style: 'color: var(--text-muted); margin-left: 8px;' }
+            });
+        }
     }
 
-    /** When user selects a model, invoke the callback. */
+    /** When user selects a model, invoke the callback with the full model info. */
     onChooseSuggestion(model: ModelInfo): void {
-        this.onSelect(model.id);
+        this.onSelect(model);
     }
 }
 
@@ -3602,8 +3609,18 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 return;
             }
 
-            new ModelFetchModal(this.app, models, (modelId) => {
-                modelConfig.model = modelId;
+            new ModelFetchModal(this.app, models, (model) => {
+                modelConfig.model = model.id;
+                // Selection-time context check: when the model reports a
+                // smaller server-side context than this provider is
+                // configured with, Quill will size requests against the too-
+                // large window and the server rejects them before compaction
+                // can help. Warn immediately so the writer can fix the
+                // provider card (or the server's -c) while it's fresh.
+                const contextWarning = contextLengthMismatchNotice(provider, model.contextLength);
+                if (contextWarning) {
+                    new Notice(contextWarning);
+                }
                 void this.plugin.saveSettings().then(() => this.refreshBridge());
             }).open();
         } catch (err: unknown) {
