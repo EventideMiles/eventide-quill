@@ -11,6 +11,9 @@
  * state, but holding it means a sidebar re-render (active-leaf-change)
  * redraws the same results instead of losing them, and
  * {@link loreHygieneFlaggedCount} can feed the sub-tab badge between renders.
+ * An in-flight STRIP is likewise module state (`stripping`): while one strip
+ * (per-file or strip-all) is running, further strip requests no-op with a
+ * Notice instead of racing the same file.
  *
  * Scope honesty: only writer-added binary attachments are scanned — images
  * that enter through the co-writer (paste, tool results) are already
@@ -60,6 +63,14 @@ interface HygieneScan {
 /** Last completed scan (module state — see the module docstring). */
 let lastScan: HygieneScan | null = null;
 
+/**
+ * True while a strip operation (per-file or strip-all) is mid-flight (module
+ * state — see the module docstring): binary writes bypass Obsidian's file
+ * recovery, so a second strip request during one in flight no-ops with a
+ * Notice rather than racing it on the same file.
+ */
+let stripping = false;
+
 /** Flagged-file count from the last scan (0 before the first scan) — drives the Hygiene sub-tab badge. */
 export function loreHygieneFlaggedCount(): number {
     if (!lastScan) return 0;
@@ -76,6 +87,15 @@ function formatBytes(bytes: number): string {
 /** Copy a Uint8Array into an exactly-sized ArrayBuffer for `adapter.writeBinary`. */
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+/** Byte-for-byte equality of two Uint8Arrays (verified-write comparison). */
+function bytesMatch(a: Uint8Array, b: Uint8Array): boolean {
+    if (a.byteLength !== b.byteLength) return false;
+    for (let i = 0; i < a.byteLength; i++) {
+        if (a[i] !== b[i]) return false;
+    }
+    return true;
 }
 
 /** Sum of removable (non-ICC) finding bytes. */
@@ -292,6 +312,21 @@ export function renderLoreHygieneTab(
         }
     }
 
+    /**
+     * Run one strip operation under the module-level in-flight guard — no-ops
+     * with a brief Notice when a strip is already running (see `stripping`).
+     */
+    function runStripExclusive(op: () => Promise<void>): void {
+        if (stripping) {
+            new Notice('A strip is already running.');
+            return;
+        }
+        stripping = true;
+        void op().finally(() => {
+            stripping = false;
+        });
+    }
+
     /** Strip one file after a ConfirmModal names it (binary writes bypass Obsidian's file recovery, so confirmation is mandatory). */
     function requestStrip(row: HygieneRow): void {
         new ConfirmModal(
@@ -299,7 +334,7 @@ export function renderLoreHygieneTab(
             'Strip metadata?',
             `Remove ${formatBytes(row.removableBytes)} of embedded metadata from "${row.file.name}"? ` +
                 "Pixels are untouched, but binary writes bypass Obsidian's file recovery — this cannot be undone.",
-            () => stripRow(row),
+            () => runStripExclusive(() => stripRow(row)),
             'Strip'
         ).open();
     }
@@ -313,26 +348,60 @@ export function renderLoreHygieneTab(
             `Strip embedded metadata from ${flagged.length} file${flagged.length === 1 ? '' : 's'}? ` +
                 `About ${formatBytes(totalBytes)} will be removed across them. Pixels are untouched, but binary ` +
                 "writes bypass Obsidian's file recovery — this cannot be undone.",
-            async () => {
-                for (const row of flagged) await stripRow(row);
-            },
+            () =>
+                runStripExclusive(async () => {
+                    for (const row of flagged) await stripRow(row);
+                }),
             'Strip all'
         ).open();
     }
 
-    /** Rewrite one attachment without its strippable metadata, then re-inspect what landed on disk and update the row. */
+    /**
+     * Rewrite one attachment without its strippable metadata, then re-inspect
+     * what landed on disk and update the row. Size is re-checked at strip time
+     * — the file may have grown past the scan cap between scan and strip — and
+     * the write is verified by re-reading before any success is reported.
+     * Always repaints, including on the skip/error paths.
+     */
     async function stripRow(row: HygieneRow): Promise<void> {
+        await stripRowCore(row);
+        renderResults();
+        onScanChanged?.();
+    }
+
+    /** The strip flow proper (repaint owned by `stripRow`): the skip paths return early, local to this flow. */
+    async function stripRowCore(row: HygieneRow): Promise<void> {
         const vault = plugin.app.vault;
         const path = normalizePath(row.file.path);
         try {
+            // TOCTOU guard: the scan-time size check can be stale by the time the writer confirms the strip.
+            const oversizeDetail = 'Grew past the scan limit since scanning — skipped rather than read.';
+            const stat = await vault.adapter.stat(path);
+            if (!stat) throw new Error('Attachment no longer exists on disk.');
+            if (stat.size > MAX_SCAN_BYTES) {
+                row.status = 'skipped';
+                row.detail = oversizeDetail;
+                return;
+            }
             const buffer = await vault.adapter.readBinary(path);
+            if (buffer.byteLength > MAX_SCAN_BYTES) {
+                // Stat can lie or race the read — never hold more than the cap in memory.
+                row.status = 'skipped';
+                row.detail = oversizeDetail;
+                return;
+            }
             const result = stripAttachmentMetadata(new Uint8Array(buffer), row.ext);
             const removedBytes = result.stripped.reduce((sum, f) => sum + f.byteLength, 0);
             if (result.stripped.length > 0) {
                 // Raw adapter write — TFile.stat.size goes stale until Obsidian re-syncs (cosmetic only).
                 await vault.adapter.writeBinary(path, toArrayBuffer(result.bytes));
             }
-            const after = inspectAttachmentMetadata(new Uint8Array(await vault.adapter.readBinary(path)), row.ext);
+            const written = new Uint8Array(await vault.adapter.readBinary(path));
+            if (result.stripped.length > 0 && !bytesMatch(written, result.bytes)) {
+                // Verified write: binary writes bypass Obsidian's file recovery, so confirm the bytes actually landed before claiming success.
+                throw new Error('Strip verification failed — the file on disk does not match the stripped bytes.');
+            }
+            const after = inspectAttachmentMetadata(written, row.ext);
             row.findings = after?.findings ?? [];
             row.removableBytes = after ? removableOf(row.findings) : 0;
             row.status = row.removableBytes > 0 ? 'flagged' : 'clean';
@@ -346,8 +415,6 @@ export function renderLoreHygieneTab(
             row.status = 'error';
             row.detail = err instanceof Error ? err.message : 'Strip failed.';
         }
-        renderResults();
-        onScanChanged?.();
     }
 
     events.registerDomEvent(scanBtn, 'click', () => void refresh());

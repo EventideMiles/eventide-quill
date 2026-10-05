@@ -12,12 +12,20 @@
  * - **JPEG** — APP1 segments carrying Exif (`Exif\0\0` header), APP1/APPn
  *   segments carrying Adobe XMP (`ns.adobe.com/xap` / `ns.adobe.com/xmp`
  *   markers in the segment head — generous, covers the APP0-less variants),
- *   APP2 segments carrying C2PA content credentials (JUMBF — detected by a
- *   byte-scan of the segment head for `jumb` / `c2pa` / `urn:iso:` markers),
- *   APP13 Photoshop/IPTC blocks, and `COM` comment segments. APP0 (JFIF),
- *   APP2 ICC profiles (reported as `'icc'`, never stripped), every coding
- *   segment (DQT/SOF/DHT/DRI…), and ALL entropy-coded data from SOS onward
- *   are preserved byte-for-byte — the scan stops at SOS and never reads the
+ *   APP11 segments carrying C2PA content credentials, APP13 Photoshop/IPTC
+ *   blocks, and `COM` comment segments. C2PA rides in APP11 (marker 0xEB) per
+ *   ISO 19566-5 Annex D.2: each segment's payload begins with the ASCII `JP`
+ *   magic + a 2-byte big-endian fragment sequence number (the final fragment
+ *   sets the 0x8000 high bit), and fragment 0's payload opens the JUMBF
+ *   superbox (`<4-byte length><"jumb">`). A contiguous APP11/JP run whose
+ *   fragment 0 carries that box signature is detected as ONE finding and
+ *   stripped whole — a fragmented store is never split. A legacy fallback
+ *   classifies an APP2 segment as C2PA only when its payload actually contains
+ *   a JUMBF box signature (text sniffing alone — `urn:iso:` and friends —
+ *   classifies nothing). APP0 (JFIF), APP2 ICC profiles (reported as `'icc'`,
+ *   never stripped), non-JP APP11 payloads, every coding segment
+ *   (DQT/SOF/DHT/DRI…), and ALL entropy-coded data from SOS onward are
+ *   preserved byte-for-byte — the scan stops at SOS and never reads the
  *   compressed scan.
  *
  * Malformed-input policy: a truncated or structurally invalid file BAILS OUT —
@@ -269,6 +277,80 @@ function walkJpegSegments(view: DataView): { segments: JpegSegment[]; tailStart:
 }
 
 /**
+ * One contiguous APP11/JP fragment run classified as C2PA: `start` is the
+ * index of fragment 0 in the walked segment list, `count` the number of
+ * fragments the single finding covers.
+ */
+interface JumbfRun {
+    start: number;
+    count: number;
+}
+
+/** True when a JUMBF box signature — a 4-byte length immediately followed by the ASCII bytes `jumb` — appears in the view range [start, end). */
+function containsJumbfBox(view: DataView, start: number, end: number): boolean {
+    const limit = Math.min(end, view.byteLength);
+    for (let i = start; i + 8 <= limit; i++) {
+        if (startsWithAscii(view, i + 4, 'jumb')) return true;
+    }
+    return false;
+}
+
+/**
+ * Parse one APP11/JP fragment header (ISO 19566-5 Annex D.2): returns the raw
+ * 2-byte sequence field when `seg` is an APP11 segment whose payload begins
+ * with the `JP` magic, else null. The final fragment of a run sets the 0x8000
+ * high bit.
+ */
+function jpFragmentSeq(view: DataView, seg: JpegSegment): number | null {
+    if (seg.marker !== 0xeb) return null;
+    if (!startsWithAscii(view, seg.dataStart, 'JP')) return null;
+    if (seg.dataStart + 4 > view.byteLength) return null;
+    return view.getUint16(seg.dataStart + 2, false);
+}
+
+/**
+ * Pre-pass over the walked segments: find contiguous APP11/JP fragment runs
+ * (fragment 0, then sequential sequence numbers, final fragment flagged
+ * 0x8000) whose fragment 0 opens with a JUMBF superbox — the C2PA
+ * content-credentials embedding. Returns one entry per MEMBER segment
+ * (index → run), so the main loop can classify the run as a single finding
+ * and drop every fragment together.
+ */
+function findJumbfRuns(view: DataView, segments: JpegSegment[]): Map<number, JumbfRun> {
+    const runs = new Map<number, JumbfRun>();
+    let i = 0;
+    while (i < segments.length) {
+        const first = segments[i];
+        if (!first) {
+            i++;
+            continue;
+        }
+        const firstSeq = jpFragmentSeq(view, first);
+        if (firstSeq === null || (firstSeq & 0x7fff) !== 0) {
+            i++;
+            continue;
+        }
+        let end = i + 1;
+        let expected = 1;
+        while (end < segments.length) {
+            const seg = segments[end];
+            const seq = seg ? jpFragmentSeq(view, seg) : null;
+            if (seq === null || (seq & 0x7fff) !== expected) break;
+            end++;
+            if ((seq & 0x8000) !== 0) break; // final-fragment flag closes the run
+            expected++;
+        }
+        const headEnd = Math.min(first.dataEnd, first.dataStart + 256);
+        if (containsJumbfBox(view, first.dataStart + 4, headEnd)) {
+            const run: JumbfRun = { start: i, count: end - i };
+            for (let k = i; k < end; k++) runs.set(k, run);
+        }
+        i = end;
+    }
+    return runs;
+}
+
+/**
  * Walk a JPEG: collect metadata findings and, when `strip` is set, the kept
  * byte ranges for rebuild. Returns null on malformed input (bail-out).
  */
@@ -278,12 +360,15 @@ function processJpeg(
 ): { findings: AttachmentFinding[]; stripped: AttachmentFinding[]; keptRanges: Array<[number, number]> } | null {
     const walk = walkJpegSegments(view);
     if (!walk) return null;
+    const c2paRuns = findJumbfRuns(view, walk.segments);
 
     const findings: AttachmentFinding[] = [];
     const stripped: AttachmentFinding[] = [];
     const keptRanges: Array<[number, number]> = [[0, 2]]; // SOI
 
-    for (const seg of walk.segments) {
+    for (let segIdx = 0; segIdx < walk.segments.length; segIdx++) {
+        const seg = walk.segments[segIdx];
+        if (!seg) continue;
         const total = seg.totalEnd - seg.totalStart;
         const headEnd = Math.min(seg.dataEnd, seg.dataStart + 256);
         let drop = false;
@@ -306,7 +391,23 @@ function processJpeg(
             };
             drop = true;
         } else if (seg.marker >= 0xe0 && seg.marker <= 0xef) {
-            if (seg.marker === 0xe1 && startsWithAscii(view, seg.dataStart, 'Exif')) {
+            const run = c2paRuns.get(segIdx);
+            if (run) {
+                if (run.start === segIdx) {
+                    // One finding covers the whole contiguous run — a fragmented store is never split.
+                    let runBytes = 0;
+                    for (let k = run.start; k < run.start + run.count; k++) {
+                        const member = walk.segments[k];
+                        if (member) runBytes += member.totalEnd - member.totalStart;
+                    }
+                    finding = {
+                        kind: 'c2pa',
+                        byteLength: runBytes,
+                        detail: `C2PA content credentials (JUMBF manifest across ${run.count} APP11 segment${run.count === 1 ? '' : 's'}).`
+                    };
+                }
+                drop = true; // continuation fragments drop with the run, without their own finding
+            } else if (seg.marker === 0xe1 && startsWithAscii(view, seg.dataStart, 'Exif\0\0')) {
                 finding = {
                     kind: 'exif',
                     byteLength: total,
@@ -322,11 +423,8 @@ function processJpeg(
             ) {
                 finding = { kind: 'xmp', byteLength: total, detail: 'Adobe XMP metadata packet.' };
                 drop = true;
-            } else if (
-                containsAscii(view, seg.dataStart, headEnd, 'jumb') ||
-                containsAscii(view, seg.dataStart, headEnd, 'c2pa') ||
-                containsAscii(view, seg.dataStart, headEnd, 'urn:iso:')
-            ) {
+            } else if (seg.marker === 0xe2 && containsJumbfBox(view, seg.dataStart, headEnd)) {
+                // Legacy fallback: JUMBF in APP2. Text sniffing alone (urn:iso: etc.) classifies nothing.
                 finding = {
                     kind: 'c2pa',
                     byteLength: total,
@@ -337,8 +435,8 @@ function processJpeg(
         }
 
         if (finding) findings.push(finding);
-        if (finding && drop) {
-            stripped.push(finding);
+        if (drop) {
+            if (finding) stripped.push(finding);
         } else if (strip) {
             keptRanges.push([seg.totalStart, seg.totalEnd]);
         }

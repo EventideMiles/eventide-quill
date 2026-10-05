@@ -30,6 +30,13 @@ export function makeMemoryVault(options: MemoryVaultOptions = {}): Vault {
         async exists(p: string): Promise<boolean> {
             return files.has(p) || binaries.has(p);
         },
+        async stat(p: string): Promise<{ type: string; ctime: number; mtime: number; size: number } | null> {
+            const bin = binaries.get(p);
+            if (bin) return { type: 'file', ctime: 0, mtime: 0, size: bin.byteLength };
+            const text = files.get(p);
+            if (text !== undefined) return { type: 'file', ctime: 0, mtime: 0, size: text.length };
+            return null;
+        },
         async mkdir(): Promise<void> {},
         async read(p: string): Promise<string> {
             return files.get(p) ?? '';

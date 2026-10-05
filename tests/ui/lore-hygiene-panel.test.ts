@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import '../helpers/ui-setup';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as obsidian from 'obsidian';
 import { Component, Modal, TFile, type Vault } from 'obsidian';
 import { renderLoreHygieneTab } from '../../src/ui/lore-hygiene-panel';
 import { inspectAttachmentMetadata } from '../../src/utils/attachment-metadata';
@@ -246,5 +247,98 @@ describe('renderLoreHygieneTab', () => {
         renderLoreHygieneTab(second, plugin, new Component());
         expect(second.textContent).to.include('attachments/scene.png');
         expect(second.textContent).to.include('Last scanned');
+    });
+
+    it('no-ops a second strip request while one is already in flight', async () => {
+        const { vault, store } = makeVault({ 'attachments/scene.png': DIRTY_PNG }, [{ path: 'attachments/scene.png' }]);
+        const container = createDiv();
+        renderLoreHygieneTab(container, makePlugin(vault), new Component());
+        await scan(container);
+
+        // The mocked obsidian module's Notice is spied (call-through), same
+        // pattern as provider-delete — lets the no-op Notice be asserted.
+        const noticeSpy = vi.spyOn(obsidian, 'Notice');
+
+        // Gate writeBinary so the first strip parks mid-flight deterministically.
+        let writeCalls = 0;
+        let release!: () => void;
+        const gated = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const adapter = vault.adapter as unknown as {
+            writeBinary: (path: string, data: ArrayBuffer) => Promise<void>;
+        };
+        const origWrite = vault.adapter.writeBinary.bind(vault.adapter);
+        adapter.writeBinary = async (path, data) => {
+            writeCalls++;
+            await gated;
+            await origWrite(path, data);
+        };
+
+        findButtonStartingWith(container, 'Strip (')!.click();
+        findButton(lastModal().contentEl, 'Strip')!.click();
+        await vi.waitFor(() => expect(writeCalls).toBe(1));
+
+        // Second request while the first is mid-write: own modal, confirm → Notice + no-op.
+        findButtonStartingWith(container, 'Strip (')!.click();
+        findButton(lastModal().contentEl, 'Strip')!.click();
+        await vi.waitFor(() => expect(noticeSpy).toHaveBeenCalledTimes(1));
+        // The Notice names the in-flight strip (same narrowing as provider-delete — the arg may be a fragment).
+        const noticeArg = noticeSpy.mock.calls[0]?.[0];
+        const noticeText = typeof noticeArg === 'string' ? noticeArg : (noticeArg?.textContent ?? '');
+        expect(noticeText).to.include('already running');
+
+        release();
+        await vi.waitFor(() => {
+            const after = store.get('attachments/scene.png');
+            expect(after && inspectAttachmentMetadata(new Uint8Array(after), 'png')!.findings).toEqual([]);
+        });
+        expect(writeCalls).toBe(1); // the second request never wrote
+
+        noticeSpy.mockRestore();
+    });
+
+    it('skips a row whose file grew past the scan cap between scan and strip', async () => {
+        const { vault, store } = makeVault({ 'attachments/scene.png': DIRTY_PNG }, [{ path: 'attachments/scene.png' }]);
+        const container = createDiv();
+        renderLoreHygieneTab(container, makePlugin(vault), new Component());
+        await scan(container);
+
+        // The file grows (or the scan-time stat went stale) before the strip.
+        vault.adapter.stat = async () => ({ type: 'file', ctime: 0, mtime: 0, size: 60 * 1024 * 1024 });
+
+        findButtonStartingWith(container, 'Strip (')!.click();
+        findButton(lastModal().contentEl, 'Strip')!.click();
+
+        await vi.waitFor(() => expect(container.textContent).to.include('Grew past the scan limit'));
+        // Nothing was read, stripped, or written — the stored bytes are untouched.
+        expect(Array.from(new Uint8Array(store.get('attachments/scene.png')!))).toEqual(Array.from(DIRTY_PNG));
+    });
+
+    it('marks the row as an error without a success notice when the verified write mismatches', async () => {
+        const { vault, store } = makeVault({ 'attachments/scene.png': DIRTY_PNG }, [{ path: 'attachments/scene.png' }]);
+        const container = createDiv();
+        renderLoreHygieneTab(container, makePlugin(vault), new Component());
+        await scan(container);
+
+        const noticeSpy = vi.spyOn(obsidian, 'Notice');
+        // Corrupt the write: land bytes that differ from what stripRow asked for.
+        const adapter = vault.adapter as unknown as {
+            writeBinary: (path: string, data: ArrayBuffer) => Promise<void>;
+        };
+        adapter.writeBinary = async (path, data) => {
+            const corrupted = new Uint8Array(data.slice(0));
+            corrupted[0] = corrupted[0]! ^ 0xff;
+            store.set(path, corrupted.buffer);
+        };
+
+        findButtonStartingWith(container, 'Strip (')!.click();
+        findButton(lastModal().contentEl, 'Strip')!.click();
+
+        await vi.waitFor(() => expect(container.textContent).to.include('verification failed'));
+        expect(container.querySelector('.quill-lore-hygiene__card--error')).not.toBeNull();
+        expect(noticeSpy).not.toHaveBeenCalled(); // no success (or any) notice on the failure path
+
+        noticeSpy.mockRestore();
     });
 });

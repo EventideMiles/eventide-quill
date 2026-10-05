@@ -124,6 +124,15 @@ const ICC_PAYLOAD = bytes('ICC_PROFILE\0', [0, 1], 'fake-profile-bytes');
 const C2PA_PAYLOAD =
     bytes('JP', [0, 0], [0, 0, 0, 32], 'jumb', 'c2pa-manifest-junk');
 
+/** Single-segment APP11/JP JUMBF store — C2PA per ISO 19566-5 Annex D.2 (JP magic + fragment 0 + JUMBF superbox). */
+const APP11_JUMB_SINGLE = jpegSegment(0xeb, bytes('JP', [0, 0], [0, 0, 0, 32], 'jumb', 'c2pa-manifest-bytes'));
+/** Three-segment fragmented APP11/JP JUMBF run: fragment 0 carries the superbox, 1–2 are raw continuations (final flagged 0x8000). */
+const APP11_JUMB_FRAGS = [
+    jpegSegment(0xeb, bytes('JP', [0, 0], [0, 0, 0, 64], 'jumb', 'c2pa-fragment-0')),
+    jpegSegment(0xeb, bytes('JP', [0, 1], 'c2pa-continuation-1')),
+    jpegSegment(0xeb, bytes('JP', [0x80, 0x02], 'c2pa-continuation-2'))
+];
+
 // ── Detection (inspectAttachmentMetadata) ────────────────────────────────────
 
 interface DetectCase {
@@ -216,11 +225,43 @@ const detectCases: DetectCase[] = [
         kinds: ['xmp']
     },
     {
-        name: 'jpeg APP2 JUMBF/C2PA',
+        name: 'jpeg APP2 legacy JUMBF/C2PA (box-signature fallback)',
         bytes: buildJpeg([JPEG_SOI, APP0_JFIF, jpegSegment(0xe2, C2PA_PAYLOAD), JPEG_SOS_TAIL]),
         ext: 'jpg',
         kinds: ['c2pa'],
         detailContains: 'C2PA'
+    },
+    {
+        name: 'jpeg APP11 JP/JUMBF single-segment C2PA',
+        bytes: buildJpeg([JPEG_SOI, APP0_JFIF, APP11_JUMB_SINGLE, JPEG_SOS_TAIL]),
+        ext: 'jpg',
+        kinds: ['c2pa'],
+        detailContains: '1 APP11 segment'
+    },
+    {
+        name: 'jpeg APP11 fragmented 3-segment C2PA run as one finding',
+        bytes: buildJpeg([JPEG_SOI, APP0_JFIF, ...APP11_JUMB_FRAGS, JPEG_SOS_TAIL]),
+        ext: 'jpg',
+        kinds: ['c2pa'],
+        detailContains: '3 APP11 segments'
+    },
+    {
+        name: 'jpeg APP11 without the JP magic is kept (unknown)',
+        bytes: buildJpeg([JPEG_SOI, APP0_JFIF, jpegSegment(0xeb, ascii('vendor-specific-app11-payload')), JPEG_SOS_TAIL]),
+        ext: 'jpg',
+        kinds: []
+    },
+    {
+        name: 'jpeg APP2 with urn:iso: text but no JUMBF box is not classified',
+        bytes: buildJpeg([JPEG_SOI, APP0_JFIF, jpegSegment(0xe2, ascii('urn:iso:std:17331:c2pa-lookalike')), JPEG_SOS_TAIL]),
+        ext: 'jpg',
+        kinds: []
+    },
+    {
+        name: 'jpeg APP1 starting with Exif but missing the NUL header is not Exif',
+        bytes: buildJpeg([JPEG_SOI, APP0_JFIF, jpegSegment(0xe1, bytes('ExifXX', 'tiff-ish-payload')), JPEG_SOS_TAIL]),
+        ext: 'jpg',
+        kinds: []
     },
     {
         name: 'jpeg APP13 Photoshop/IPTC',
@@ -340,6 +381,20 @@ describe('stripAttachmentMetadata — removes metadata and re-parses clean', () 
             clean: buildJpeg([JPEG_SOI, APP0_JFIF, JPEG_SOS_TAIL]),
             ext: 'jpg',
             strippedKinds: ['c2pa']
+        },
+        {
+            name: 'jpeg with a single APP11 jumbf segment',
+            dirty: buildJpeg([JPEG_SOI, APP0_JFIF, APP11_JUMB_SINGLE, JPEG_SOS_TAIL]),
+            clean: buildJpeg([JPEG_SOI, APP0_JFIF, JPEG_SOS_TAIL]),
+            ext: 'jpg',
+            strippedKinds: ['c2pa']
+        },
+        {
+            name: 'jpeg with a fragmented APP11 jumbf run (all fragments gone as one finding)',
+            dirty: buildJpeg([JPEG_SOI, APP0_JFIF, ...APP11_JUMB_FRAGS, DQT, SOF0, JPEG_SOS_TAIL]),
+            clean: buildJpeg([JPEG_SOI, APP0_JFIF, DQT, SOF0, JPEG_SOS_TAIL]),
+            ext: 'jpg',
+            strippedKinds: ['c2pa']
         }
     ];
 
@@ -366,6 +421,31 @@ describe('stripAttachmentMetadata — removes metadata and re-parses clean', () 
         const removed = result.stripped.reduce((sum, f) => sum + f.byteLength, 0);
         expect(dirty.length - result.bytes.length).toBe(removed);
         expect(removed).toBeGreaterThan(0);
+    });
+
+    it('reports a fragmented APP11 run as one finding whose byteLength covers every fragment', () => {
+        const jpeg = buildJpeg([JPEG_SOI, APP0_JFIF, ...APP11_JUMB_FRAGS, JPEG_SOS_TAIL]);
+        const report = inspectAttachmentMetadata(jpeg, 'jpg')!;
+        expect(report.findings).toHaveLength(1);
+        expect(report.findings[0]!.kind).toBe('c2pa');
+        expect(report.findings[0]!.detail).toContain('3 APP11 segments');
+        expect(report.findings[0]!.byteLength).toBe(
+            APP11_JUMB_FRAGS.reduce((sum, frag) => sum + frag.length, 0)
+        );
+
+        const result = stripAttachmentMetadata(jpeg, 'jpg');
+        expect(result.stripped).toHaveLength(1);
+        expect(result.bytes.length).toBe(jpeg.length - report.findings[0]!.byteLength);
+        expect(inspectAttachmentMetadata(result.bytes, 'jpg')!.findings).toEqual([]);
+    });
+
+    it('keeps a non-Exif APP1 that merely starts with "Exif" — the full Exif\\0\\0 header is required', () => {
+        const lookalike = jpegSegment(0xe1, bytes('ExifXX', 'not-really-exif'));
+        const jpeg = buildJpeg([JPEG_SOI, APP0_JFIF, lookalike, JPEG_SOS_TAIL]);
+        expect(inspectAttachmentMetadata(jpeg, 'jpg')!.findings).toEqual([]);
+        const result = stripAttachmentMetadata(jpeg, 'jpg');
+        expect(result.stripped).toEqual([]);
+        expect(Array.from(result.bytes)).toEqual(Array.from(jpeg));
     });
 
     it('keeps ICC profiles byte-for-byte while stripping neighbours', () => {

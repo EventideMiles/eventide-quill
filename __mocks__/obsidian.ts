@@ -96,6 +96,11 @@ export class Vault {
         async exists(_path: string): Promise<boolean> {
             return false;
         },
+        /** Stat the file (null unless a binary was created/written; reports its byte length). */
+        stat: async (path: string): Promise<{ type: string; ctime: number; mtime: number; size: number } | null> => {
+            const buf = this.binaries.get(normalizePath(path));
+            return buf ? { type: 'file', ctime: 0, mtime: 0, size: buf.byteLength } : null;
+        },
         /** Read the file (always empty string). */
         async read(_path: string): Promise<string> {
             return '';
