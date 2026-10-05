@@ -238,7 +238,12 @@ export function serializeMemoryFile(file: MemoryFile, scopeLabel?: string): stri
 
     // Collapse 3+ consecutive newlines to 2 (sections separated by one blank
     // line). Trim leading/trailing whitespace and ensure a single trailing newline.
-    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+    return (
+        lines
+            .join('\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim() + '\n'
+    );
 }
 
 /**

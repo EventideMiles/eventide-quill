@@ -709,7 +709,8 @@ function renderLorebookMemoriesTab(container: HTMLElement, plugin: EventideQuill
             const sectionEl = container.createDiv({ cls: 'quill-memories-panel__section' });
             sectionEl.createDiv({
                 cls: 'quill-memories-panel__section-label',
-                text: section.scopeKey === GLOBAL_MEMORY_SCOPE ? 'Global pool' : `Manuscript pool: ${section.scopeLabel}`
+                text:
+                    section.scopeKey === GLOBAL_MEMORY_SCOPE ? 'Global pool' : `Manuscript pool: ${section.scopeLabel}`
             });
 
             for (const entry of section.entries) {

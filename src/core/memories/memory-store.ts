@@ -183,7 +183,10 @@ async function writeMemoryFileRaw(
  * when the writer isn't on a manuscript file — a graceful degradation
  * the model rarely needs to know about).
  */
-export function resolveScopeArg(plugin: EventideQuillPlugin, scope: string): {
+export function resolveScopeArg(
+    plugin: EventideQuillPlugin,
+    scope: string
+): {
     keys: string[];
     label: string;
 } {
@@ -229,11 +232,7 @@ export async function findEntryAcrossScopes(
  * the ID isn't found in the scope's file. The caller is responsible for
  * locating the correct scope first (typically via {@link findEntryAcrossScopes}).
  */
-export async function removeMemoryEntry(
-    plugin: EventideQuillPlugin,
-    scopeKey: string,
-    id: string
-): Promise<boolean> {
+export async function removeMemoryEntry(plugin: EventideQuillPlugin, scopeKey: string, id: string): Promise<boolean> {
     const result = await readMemoryFile(plugin, scopeKey);
     const idx = result.file.entries.findIndex((e) => e.id === id);
     if (idx < 0) return false;

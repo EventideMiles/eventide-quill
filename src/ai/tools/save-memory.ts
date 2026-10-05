@@ -45,7 +45,7 @@ import { confirmMemoryAction } from '../../core/memories/memory-confirm';
 export const saveMemoryTool: Tool = {
     id: 'save_memory',
     description:
-        'Persist a fact you have learned about this story or the writer\'s ' +
+        "Persist a fact you have learned about this story or the writer's " +
         'preferences — a durable piece of context future sessions will ' +
         'benefit from. The memory is saved to a markdown file in the vault ' +
         'the writer can read and edit. See the "Memory discipline" section ' +
@@ -80,7 +80,7 @@ export const saveMemoryTool: Tool = {
                 enum: ['auto', 'manuscript', 'global'],
                 description:
                     'Where to save. `auto` (default) picks the active ' +
-                    'manuscript\'s pool when there is one, else global. ' +
+                    "manuscript's pool when there is one, else global. " +
                     '`manuscript` is the same as `auto`. `global` is for ' +
                     'cross-manuscript facts (series-wide tone, shared ' +
                     'worldbuilding) that should apply to every story in ' +
@@ -128,9 +128,7 @@ export const saveMemoryTool: Tool = {
         // Update-or-append: match an existing entry by heading (case-insensitive
         // trim-equal). On match, replace body and re-derive tags. On miss, append.
         const existingIdx = headingRaw
-            ? result.file.entries.findIndex(
-                  (e) => e.heading.trim().toLowerCase() === headingRaw.toLowerCase()
-              )
+            ? result.file.entries.findIndex((e) => e.heading.trim().toLowerCase() === headingRaw.toLowerCase())
             : -1;
 
         let mintedId: string;
@@ -139,9 +137,8 @@ export const saveMemoryTool: Tool = {
 
         // Build the body with explicit tags appended (so the writer can see
         // and edit them in the file even if they weren't inline in content).
-        const bodyWithTags = explicitTags.length > 0
-            ? `${content}\n\n${explicitTags.map((t) => `#${t}`).join(' ')}`
-            : content;
+        const bodyWithTags =
+            explicitTags.length > 0 ? `${content}\n\n${explicitTags.map((t) => `#${t}`).join(' ')}` : content;
 
         if (existingIdx >= 0) {
             const existing = result.file.entries[existingIdx]!;
@@ -167,12 +164,7 @@ export const saveMemoryTool: Tool = {
         if (!plugin.settings.memoriesAutoSave) {
             const bodyPreview = content.length > 400 ? `${content.slice(0, 400).trimEnd()}…` : content;
             const scopeDesc = scopeKey === GLOBAL_MEMORY_SCOPE ? 'global pool' : `'${label}' pool`;
-            const messageLines = [
-                `Heading: ${savedHeading}`,
-                `Scope: ${scopeDesc}`,
-                '',
-                bodyPreview
-            ];
+            const messageLines = [`Heading: ${savedHeading}`, `Scope: ${scopeDesc}`, '', bodyPreview];
             const confirmed = await confirmMemoryAction(
                 plugin.app,
                 'Save this memory?',

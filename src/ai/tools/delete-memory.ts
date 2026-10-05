@@ -30,7 +30,7 @@ export const deleteMemoryTool: Tool = {
         'confirmation message from `save_memory`. ONLY call this when the ' +
         'writer explicitly asks to forget a memory — never delete ' +
         'speculatively. Deletes are surfaced prominently so the writer ' +
-        'notices and can recover via Obsidian\'s file recovery if needed.',
+        "notices and can recover via Obsidian's file recovery if needed.",
     parameters: {
         type: 'object',
         properties: {
@@ -72,15 +72,13 @@ export const deleteMemoryTool: Tool = {
         // destructive ops are too risky to auto-apply). The model's tool call
         // awaits the writer's choice.
         const bodyPreview =
-            found.entry.body.length > 200
-                ? `${found.entry.body.slice(0, 200).trimEnd()}…`
-                : found.entry.body;
+            found.entry.body.length > 200 ? `${found.entry.body.slice(0, 200).trimEnd()}…` : found.entry.body;
         const messageLines = [
             `"${found.entry.heading}" (id: ${found.entry.id})`,
             '',
             bodyPreview || '(no body)',
             '',
-            'The deleted text can be recovered from Obsidian\'s file recovery if needed.'
+            "The deleted text can be recovered from Obsidian's file recovery if needed."
         ];
         const confirmed = await confirmMemoryAction(
             plugin.app,
@@ -106,8 +104,7 @@ export const deleteMemoryTool: Tool = {
         new Notice(`Quill: deleted memory — "${found.entry.heading}"`);
 
         return (
-            `Deleted memory "${found.entry.heading}" (id: ${found.entry.id}). ` +
-            `The writer approved the deletion.`
+            `Deleted memory "${found.entry.heading}" (id: ${found.entry.id}). ` + `The writer approved the deletion.`
         );
     }
 };

@@ -72,7 +72,9 @@ export const recallMemoryTool: Tool = {
 
         const query = typeof args.query === 'string' ? args.query.trim().toLowerCase() : '';
         const tagsFilter = Array.isArray(args.tags)
-            ? (args.tags.filter((t) => typeof t === 'string' && t.trim()) as string[]).map((t) => t.trim().toLowerCase())
+            ? (args.tags.filter((t) => typeof t === 'string' && t.trim()) as string[]).map((t) =>
+                  t.trim().toLowerCase()
+              )
             : [];
         const scopeArg = typeof args.scope === 'string' ? args.scope : 'auto';
         const { keys, label } = resolveScopeArg(plugin, scopeArg);
@@ -90,7 +92,12 @@ export const recallMemoryTool: Tool = {
         }
 
         if (allMatches.length === 0) {
-            const where = label === 'global' ? 'global pool' : label === 'active + global' ? 'active + global pools' : `'${label}' pool`;
+            const where =
+                label === 'global'
+                    ? 'global pool'
+                    : label === 'active + global'
+                      ? 'active + global pools'
+                      : `'${label}' pool`;
             return `No memories match in the ${where}.`;
         }
 
