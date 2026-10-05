@@ -13,6 +13,7 @@ import {
 import EventideQuillPlugin from './main';
 import { ModelCapability, ModelInfo, ModelRole, ProviderConfig, ProviderType, roleSatisfies } from './ai/provider';
 import { createProvider, generateModelId, generateProviderId } from './ai/provider-registry';
+import { contextLengthMismatchNotice, formatContextLength } from './ai/model-context';
 import { DEFAULT_IMAGE_PROXY_PROMPT } from './ai/vision';
 import { NarrativeVoicePreset, NARRATIVE_VOICE_PRESETS } from './types';
 import { ConfirmModal } from './ui/confirm-modal';
@@ -136,7 +137,7 @@ export interface EventideQuillSettings {
      * markers (keeping `quillAnchorId` so rewind still works), and a free
      * refinement pass runs before the AI compaction fallback when a
      * conversation approaches the threshold. Off = pure AI compaction only
-     * (the pre-2.2.0 behavior). See `src/ai/context-refinement.ts`.
+     * (the pre-2.3.0 behavior). See `src/ai/context-refinement.ts`.
      */
     contextRefinementEnabled: boolean;
     contextIncludeVaultContext: boolean;
@@ -278,14 +279,14 @@ export interface EventideQuillSettings {
      * returns a length-aware message routing the model to `edit_note` /
      * `insert_note` / `append_to_note` instead. Prevents duplicate notes that
      * strand [[wikilinks]] pointing at the original. Off = unconditional
-     * create (the pre-2.2.0 behavior) — escape hatch.
+     * create (the pre-2.3.0 behavior) — escape hatch.
      */
     lorePreferEditOverCreate: boolean;
     /**
      * When on, follow-up discussion of a review report runs through the
      * co-writer session machinery with editing tools enabled, so the editor
      * can propose specific, reviewable inline-diff edits (not just advisory
-     * prose). Off preserves the pre-2.2.0 text-only chat behavior. Default:
+     * prose). Off preserves the pre-2.3.0 text-only chat behavior. Default:
      * on.
      */
     reviewSuggestedEditsEnabled: boolean;
@@ -568,7 +569,7 @@ class ModelFetchModal extends SuggestModal<ModelInfo> {
     constructor(
         app: App,
         models: ModelInfo[],
-        private onSelect: (modelId: string) => void
+        private onSelect: (model: ModelInfo) => void
     ) {
         super(app);
         this.models = models;
@@ -591,11 +592,17 @@ class ModelFetchModal extends SuggestModal<ModelInfo> {
                 attr: { style: 'color: var(--text-muted); margin-left: 8px;' }
             });
         }
+        if (model.contextLength !== undefined) {
+            el.createEl('small', {
+                text: `${formatContextLength(model.contextLength)} context tokens`,
+                attr: { style: 'color: var(--text-muted); margin-left: 8px;' }
+            });
+        }
     }
 
-    /** When user selects a model, invoke the callback. */
+    /** When user selects a model, invoke the callback with the full model info. */
     onChooseSuggestion(model: ModelInfo): void {
-        this.onSelect(model.id);
+        this.onSelect(model);
     }
 }
 
@@ -854,7 +861,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         const scroll = containerEl.createDiv({ cls: 'quill-settings__scroll-area' });
         render(scroll);
         // Wrap runs of settings under each heading into bordered sections,
-        // matching the pre-2.2.0 grouped look. Each tab renders into a single
+        // matching the pre-2.3.0 grouped look. Each tab renders into a single
         // `.quill-settings-content-*` div created by its render method.
         const content = scroll.querySelector<HTMLElement>('[class*="quill-settings-content-"]');
         if (content) this.groupSettingsByHeading(content);
@@ -864,7 +871,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     /**
      * Re-render the currently-open bridge page in place after a mutation
      * (add/remove provider, slash command, folder override, etc.). Replaces the
-     * pre-2.2.0 `this.refreshBridge()` full re-render. Falls back to `update()` when
+     * pre-2.3.0 `this.refreshBridge()` full re-render. Falls back to `update()` when
      * no bridge page is active (e.g. at the root definition list). As tabs
      * convert to declarative controls (Phases 2–6), their mutation handlers
      * switch to `this.update()` / `this.refreshDomState()` and this method is
@@ -1656,7 +1663,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         ];
     }
 
-    /** Restore-defaults action for the General page (resets across all tabs, matching pre-2.2.0 behavior). */
+    /** Restore-defaults action for the General page (resets across all tabs, matching pre-2.3.0 behavior). */
     private async restoreGeneralDefaults(): Promise<void> {
         const s = this.plugin.settings;
         const d = DEFAULT_SETTINGS;
@@ -3297,7 +3304,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     },
                     {
                         name: 'Proactive editor chat',
-                        desc: 'After a report finishes, the follow-up discussion runs through the co-writer session with editing tools enabled, so the editor can propose specific, reviewable inline-diff edits (not just advisory prose). Every proposed edit still requires your approval before it reaches the vault. Turn off to keep the pre-2.2.0 text-only chat behavior. Default: on.',
+                        desc: 'After a report finishes, the follow-up discussion runs through the co-writer session with editing tools enabled, so the editor can propose specific, reviewable inline-diff edits (not just advisory prose). Every proposed edit still requires your approval before it reaches the vault. Turn off to keep the pre-2.3.0 text-only chat behavior. Default: on.',
                         control: { type: 'toggle', key: 'reviewSuggestedEditsEnabled' }
                     },
                     {
@@ -3701,8 +3708,18 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 return;
             }
 
-            new ModelFetchModal(this.app, models, (modelId) => {
-                modelConfig.model = modelId;
+            new ModelFetchModal(this.app, models, (model) => {
+                modelConfig.model = model.id;
+                // Selection-time context check: when the model reports a
+                // smaller server-side context than this provider is
+                // configured with, Quill will size requests against the too-
+                // large window and the server rejects them before compaction
+                // can help. Warn immediately so the writer can fix the
+                // provider card (or the server's -c) while it's fresh.
+                const contextWarning = contextLengthMismatchNotice(provider, model.contextLength);
+                if (contextWarning) {
+                    new Notice(contextWarning);
+                }
                 void this.plugin.saveSettings().then(() => this.refreshBridge());
             }).open();
         } catch (err: unknown) {
