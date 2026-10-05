@@ -546,6 +546,12 @@ The `obsidianmd/settings-tab/prefer-setting-definitions` lint rule is active (th
 - The version bump happens at release time via `npm run set-version -- <version>` (see "Version management"); it is not bumped per-commit during development.
 - Releases are cut by pushing a tag; `.github/workflows/release.yml` builds and creates a draft GitHub release attaching `main.js`, `manifest.json`, and `styles.css`.
 
+### Documentation — the GitHub wiki
+
+User-facing documentation lives on the project wiki at https://github.com/EventideMiles/eventide-quill/wiki. `Home.md` is the landing page and index; each topic page (e.g. `Context-management.md`) is the full explainer for one feature area.
+
+**Every new user-facing feature must be documented on the wiki in the same change that ships it** (new page under the appropriate topic, or an update to an existing page, plus a `Home.md` index entry if a new page was created). The README stays a concise feature overview with pointer links; the wiki holds the full user-facing explainers. The rule applies at PR time — treat a feature as undocumented if the PR that ships it doesn't ship (or link) its wiki documentation.
+
 ## Security & compliance
 
 - No `innerHTML`. Use `createEl()` + `textContent`. (Currently zero uses in `src/`.)
@@ -653,6 +659,7 @@ Releases are cut by pushing an annotated tag matching the new version. The exist
 AGENTS.md is the entry brief for any agent (human or AI) working in this repo, and it drifts fast. When you land a change that does any of the following, update this file in the same PR:
 
 - **Adds or removes a source file** → update the "Source layout" tree (and the line-count callouts for the monolithic files: `main.ts`, `settings.ts`, `co-writer.ts`, `co-writer-panel.ts`, `quill-sidebar.ts`).
+- **Adds a user-facing feature** → document it on the wiki in the same PR (a new topic page or an update to an existing one, plus a `Home.md` index entry for a new page) — see "Documentation" under "Branch strategy".
 - **Adds a new subsystem** (e.g., `tools/`, `dashboard/`, vision) → add a short architecture section describing the contracts and where they live.
 - **Adds, removes, or renames a setting** → reflect it under "Key feature areas" or the relevant subsystem section; `src/settings.ts` is the source of truth, but AGENTS.md should mention major settings surfaces and their defaults.
 - **Changes the enforced tooling** (new ESLint/stylelint rule, new script, new typed `Error` class, a new global in `global.d.ts`) → update the relevant tables (Coding rules, Error handling, `__DEV__`).
