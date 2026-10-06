@@ -168,3 +168,81 @@ describe('dashboard-panel — renderDashboardTab', () => {
         component.unload();
     });
 });
+
+/** Locate the sentence-opening-variety footnote line, if rendered. */
+function findSkeletonVarietyNote(container: HTMLElement): string | null {
+    const lines = Array.from(container.querySelectorAll('.quill-dashboard-panel__readability-score')).map(
+        (el) => el.textContent ?? ''
+    );
+    return lines.find((t) => t.includes('Sentence-opening variety:')) ?? null;
+}
+
+describe('dashboard-panel — sentence-opening-variety note', () => {
+    it('names the genuine low-variety chapter, not a one-sentence chapter whose variety is meaningless 0', () => {
+        const metrics = makeMetrics({
+            chapterCount: 3,
+            chapters: [
+                // One-sentence chapter: computeSentenceSkeletonVariety returns a meaningless 0
+                // (no normalization base for log(1)) — must never be ranked as "lowest".
+                makeChapter({
+                    title: 'Chapter Fragment',
+                    wordCount: 40,
+                    sentenceCount: 1,
+                    sentenceSkeletonVariety: 0
+                }),
+                makeChapter({ title: 'Chapter Low', sentenceCount: 200, sentenceSkeletonVariety: 0.2 }),
+                makeChapter({ title: 'Chapter Varied', wordCount: 5000, sentenceCount: 200, sentenceSkeletonVariety: 0.8 })
+            ]
+        });
+
+        const container = createDiv();
+        const component = new Component();
+        renderDashboardTab(container, makePlugin(metrics), component);
+
+        const note = findSkeletonVarietyNote(container);
+        expect(note).to.not.be.null;
+        expect(note).to.include('Chapter Low');
+        expect(note).to.not.include('Chapter Fragment');
+
+        component.unload();
+    });
+
+    it('renders no note when every chapter is single-sentence (no candidates)', () => {
+        const metrics = makeMetrics({
+            chapterCount: 2,
+            chapters: [
+                makeChapter({ title: 'Chapter Fragment', wordCount: 40, sentenceCount: 1, sentenceSkeletonVariety: 0 }),
+                makeChapter({
+                    title: 'Chapter Second Fragment',
+                    filePath: 'manuscript/ch2.md',
+                    wordCount: 40,
+                    sentenceCount: 1,
+                    sentenceSkeletonVariety: 0
+                })
+            ]
+        });
+
+        const container = createDiv();
+        const component = new Component();
+        renderDashboardTab(container, makePlugin(metrics), component);
+
+        expect(findSkeletonVarietyNote(container)).to.be.null;
+
+        component.unload();
+    });
+
+    it('renders no note when the only chapter is single-sentence', () => {
+        const metrics = makeMetrics({
+            chapterCount: 1,
+            chapters: [makeChapter({ title: 'Chapter Fragment', wordCount: 40, sentenceCount: 1, sentenceSkeletonVariety: 0 })]
+        });
+
+        const container = createDiv();
+        const component = new Component();
+        renderDashboardTab(container, makePlugin(metrics), component);
+
+        expect(findSkeletonVarietyNote(container)).to.be.null;
+
+        component.unload();
+    });
+});

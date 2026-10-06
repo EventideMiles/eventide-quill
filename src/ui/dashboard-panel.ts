@@ -352,7 +352,7 @@ function renderAiTellDensity(container: HTMLElement, metrics: ManuscriptMetrics)
  * line.
  */
 function skeletonVarietyNote(metrics: ManuscriptMetrics): string | null {
-    const candidates = metrics.chapters.filter((c) => c.sentenceCount > 0);
+    const candidates = metrics.chapters.filter((c) => c.sentenceCount > 1);
     if (candidates.length < 2) return null;
 
     let lowest = candidates[0]!;
