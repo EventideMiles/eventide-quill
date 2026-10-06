@@ -11,6 +11,7 @@ import { ReviewPanel } from './review-panel';
 import { CoWriterPanel } from './co-writer-panel';
 import { renderDashboardTab, renderDashboardSettingsTab } from './dashboard-panel';
 import { renderLorebookTab } from './lorebook-panel';
+import { loreHygieneFlaggedCount } from './lore-hygiene-panel';
 import type { InputMode, LoreEditCardView, LoreImageCardView } from './co-writer-panel';
 import type { CoWriterChatMessage, CoWriterOption, DraftState, CoachPhase, LoreCoachPhase } from '../ai/co-writer';
 import type { SubagentView } from '../ai/subagent-session';
@@ -40,7 +41,9 @@ export class QuillSidebarView extends ItemView {
     private activeTopTab: TopTab = 'linter';
     private activeLinterSubTab: LinterSubTab = 'results';
     private dashboardSubTab: 'overview' | 'pending' | 'settings' = 'overview';
-    private lorebookSubTab: 'document' | 'manuscript' | 'relationships' | 'memories' = 'document';
+    private lorebookSubTab: 'document' | 'manuscript' | 'relationships' | 'memories' | 'hygiene' = 'document';
+    /** Cached Hygiene sub-tab badge element (live-updated after scans/strips without a full re-render). */
+    private loreHygieneBadgeEl: HTMLElement | null = null;
     private container!: HTMLElement;
     private tabBar!: HTMLElement;
     private content!: HTMLElement;
@@ -425,7 +428,9 @@ export class QuillSidebarView extends ItemView {
             const loreScroll = this.content.createDiv({
                 cls: `quill-lorebook-panel__scroll quill-lorebook-panel__scroll--${this.lorebookSubTab}`
             });
-            renderLorebookTab(loreScroll, this.plugin, this.renderEvents, this.lorebookSubTab);
+            renderLorebookTab(loreScroll, this.plugin, this.renderEvents, this.lorebookSubTab, () =>
+                this.updateLoreHygieneBadge()
+            );
         } else {
             this.renderHeader();
             this.renderReviewTab();
@@ -534,15 +539,17 @@ export class QuillSidebarView extends ItemView {
         }
     }
 
-    /** Render the Lorebook sub-tab bar (Document / Manuscript / Relationships / Memories). */
+    /** Render the Lorebook sub-tab bar (Document / Manuscript / Relationships / Memories / Hygiene) and cache the Hygiene badge element. */
     private renderLorebookSubTabBar() {
         const subTabBar = this.content.createDiv({ cls: 'quill-sidebar__subtab-bar' });
+        this.loreHygieneBadgeEl = null;
 
-        const tabs: { id: 'document' | 'manuscript' | 'relationships' | 'memories'; label: string }[] = [
+        const tabs: { id: 'document' | 'manuscript' | 'relationships' | 'memories' | 'hygiene'; label: string }[] = [
             { id: 'document', label: 'Document' },
             { id: 'manuscript', label: 'Manuscript' },
             { id: 'relationships', label: 'Relationships' },
-            { id: 'memories', label: 'Memories' }
+            { id: 'memories', label: 'Memories' },
+            { id: 'hygiene', label: 'Hygiene' }
         ];
 
         for (const tab of tabs) {
@@ -550,6 +557,9 @@ export class QuillSidebarView extends ItemView {
                 cls: `quill-sidebar__subtab${this.lorebookSubTab === tab.id ? ' quill-sidebar__subtab--active' : ''}`,
                 text: tab.label
             });
+            if (tab.id === 'hygiene') {
+                this.loreHygieneBadgeEl = btn.createSpan({ cls: 'quill-sidebar__subtab-badge' });
+            }
             this.renderEvents!.registerDomEvent(btn, 'click', () => {
                 this.lorebookSubTab = tab.id;
                 this.render();
@@ -557,14 +567,27 @@ export class QuillSidebarView extends ItemView {
                     void this.plugin.refreshLorebookManuscriptCoverage(true);
                 } else if (tab.id === 'relationships') {
                     this.plugin.refreshLorebookRelationships();
-                } else if (tab.id === 'memories') {
-                    // Memories sub-tab reads on each render — the unconditional
-                    // this.render() above already covers it; no plugin-level
+                } else if (tab.id === 'memories' || tab.id === 'hygiene') {
+                    // Memories + Hygiene read on each render — the unconditional
+                    // this.render() above already covers them; no plugin-level
                     // cache to refresh.
                 } else {
                     void this.plugin.refreshLorebookDocumentCoverage();
                 }
             });
+        }
+        this.updateLoreHygieneBadge();
+    }
+
+    /** Update the cached Hygiene sub-tab badge from the last scan (no full re-render). */
+    private updateLoreHygieneBadge(): void {
+        if (!this.loreHygieneBadgeEl) return;
+        const count = loreHygieneFlaggedCount();
+        if (count > 0) {
+            this.loreHygieneBadgeEl.setText(String(count));
+            this.loreHygieneBadgeEl.show();
+        } else {
+            this.loreHygieneBadgeEl.hide();
         }
     }
 

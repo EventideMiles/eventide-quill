@@ -160,8 +160,8 @@ export function scanLorebook(
 
 // ── Gallery-section image extraction ────────────────────────────────────────
 
-/** Image file extensions the scanner recognizes in `![[...]]` embeds. */
-const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'];
+/** Image file extensions the scanner recognizes in `![[...]]` embeds. Also the inventory filter for the Lorebook Hygiene sub-tab (single source — do not duplicate). */
+export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'];
 
 /**
  * Strip image-gallery sections from a lore entry body, replacing each with

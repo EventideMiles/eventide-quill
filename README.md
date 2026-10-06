@@ -41,6 +41,7 @@ It runs locally by default (Ollama, or any OpenAI-compatible local server such a
 
 **Vision**
 - **Image support** — reference images (via `fetch_image_url` and Fandom image lookups) reach a vision-capable chat model directly, or — when the chat model is text-only — a separate image model describes them and splices the caption in, so a small local text model can pair with a cloud vision model.
+- **Attachment metadata hygiene** — scan vault image attachments for embedded Exif (including GPS), XMP, IPTC, C2PA content credentials, and PNG text chunks, then strip them losslessly on explicit confirmation — pixels untouched, color profiles preserved. On demand from the Lorebook tab's Hygiene view. See the wiki's [Attachment metadata](https://github.com/EventideMiles/eventide-quill/wiki/Attachment-metadata) page.
 
 ## Quick start
 

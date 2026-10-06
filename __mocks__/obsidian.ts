@@ -82,10 +82,24 @@ export class TFolder {
 
 /** Stub Vault — returns empty shapes for every file operation. */
 export class Vault {
+    /**
+     * In-memory binary store backing `createBinary` + the adapter's
+     * `readBinary`/`writeBinary`. Empty unless a test calls `createBinary`,
+     * so the historical always-empty behavior of `getFiles()` is unchanged
+     * for suites that never touch binaries.
+     */
+    private binaries = new Map<string, ArrayBuffer>();
+    private binaryFiles: TFile[] = [];
+
     adapter = {
         /** True if the path exists (always false). */
         async exists(_path: string): Promise<boolean> {
             return false;
+        },
+        /** Stat the file (null unless a binary was created/written; reports its byte length). */
+        stat: async (path: string): Promise<{ type: string; ctime: number; mtime: number; size: number } | null> => {
+            const buf = this.binaries.get(normalizePath(path));
+            return buf ? { type: 'file', ctime: 0, mtime: 0, size: buf.byteLength } : null;
         },
         /** Read the file (always empty string). */
         async read(_path: string): Promise<string> {
@@ -100,15 +114,38 @@ export class Vault {
         /** List the directory (always empty). */
         async list(_path: string): Promise<{ files: string[]; folders: string[] }> {
             return { files: [], folders: [] };
+        },
+        /** Read a binary written via `createBinary`/`writeBinary` (rejects when absent). */
+        readBinary: async (path: string): Promise<ArrayBuffer> => {
+            const buf = this.binaries.get(normalizePath(path));
+            if (!buf) throw new Error(`file not found: ${path}`);
+            return buf.slice(0);
+        },
+        /** Store a binary in-memory (Map-backed). */
+        writeBinary: async (path: string, data: ArrayBuffer): Promise<void> => {
+            this.binaries.set(normalizePath(path), data.slice(0));
         }
     };
-    /** All files in the vault (always empty). */
+    /** All files in the vault (empty unless binaries were created). */
     getFiles(): TFile[] {
-        return [];
+        return [...this.binaryFiles];
     }
     /** Markdown files in the vault (always empty). */
     getMarkdownFiles(): TFile[] {
         return [];
+    }
+    /** Create a binary file in-memory and register it so `getFiles()` sees it. */
+    async createBinary(path: string, data: ArrayBuffer): Promise<TFile> {
+        const normalized = normalizePath(path);
+        this.binaries.set(normalized, data.slice(0));
+        const file = new TFile();
+        file.path = normalized;
+        file.name = normalized.split('/').pop() ?? normalized;
+        file.basename = file.name.replace(/\.[^.]+$/, '');
+        file.extension = file.name.includes('.') ? file.name.split('.').pop()! : '';
+        file.stat = { mtime: Date.now(), ctime: Date.now(), size: data.byteLength };
+        this.binaryFiles.push(file);
+        return file;
     }
 }
 

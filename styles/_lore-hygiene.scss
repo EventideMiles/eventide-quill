@@ -1,0 +1,108 @@
+// Lorebook Hygiene sub-tab — attachment metadata scan + strip.
+//
+// Block: quill-lore-hygiene. Rendered by src/ui/lore-hygiene-panel.ts inside
+// the Lorebook tab's Hygiene sub-tab (scroll container is the shared
+// quill-lorebook-panel__scroll). Lives in its own partial because it is a
+// distinct BEM block rather than lorebook-panel coverage UI.
+
+@use 'base' as *;
+
+.quill-lore-hygiene {
+    // Scope copy (pre-scan) / last-scan summary line (post-scan).
+    &__hint {
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+        margin: 0 0 $space-md;
+    }
+
+    &__toolbar {
+        display: flex;
+        align-items: center;
+        gap: $space-md;
+        margin-bottom: $space-lg;
+    }
+
+    // One attachment card (flagged, errored, or skipped).
+    &__card {
+        padding: $space-md;
+        margin-bottom: $space-md;
+        border: 1px solid var(--background-modifier-border);
+        border-radius: $radius-md;
+
+        // Errored / skipped rows read as muted side notes, not failures of the panel.
+        &--error,
+        &--skipped {
+            opacity: 0.75;
+        }
+    }
+
+    &__card-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: $space-md;
+        margin-bottom: $space-sm;
+    }
+
+    &__name {
+        font-weight: 600;
+        overflow-wrap: anywhere;
+    }
+
+    &__size {
+        flex-shrink: 0;
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+    }
+
+    &__note {
+        margin: $space-xs 0 0;
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+    }
+
+    // Finding chips row.
+    &__chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: $space-sm;
+        margin-bottom: $space-sm;
+    }
+
+    &__chip {
+        display: inline-block;
+        padding: 2px $space-sm;
+        border-radius: $radius-pill;
+        background: var(--background-modifier-hover);
+        font-size: var(--font-ui-smallest);
+        overflow-wrap: anywhere;
+
+        // C2PA content credentials are called out distinctly — provenance
+        // metadata is rarer and more interesting than camera Exif.
+        &--c2pa {
+            background: var(--background-modifier-active-hover);
+            font-weight: 600;
+        }
+    }
+
+    &__actions {
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    // Bulk strip button sits above the flagged cards.
+    &__strip-all {
+        margin-bottom: $space-md;
+    }
+
+    // Collapsed clean-attachment count line.
+    &__clean-count {
+        margin: $space-md 0 0;
+        font-size: var(--font-ui-small);
+        color: var(--text-muted);
+    }
+
+    &__empty {
+        color: var(--text-muted);
+    }
+}
