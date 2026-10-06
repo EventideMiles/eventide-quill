@@ -373,4 +373,47 @@ describe('wordListPattern', () => {
         const hits = 'purple (very) prose and tapestry'.match(re);
         expect(hits).toEqual(['purple (very) prose', 'tapestry']);
     });
+
+    it('never matches when the list is empty (empty-list contract)', () => {
+        const re = wordListPattern([]);
+        expect(re.flags).toBe('gi');
+        expect(re.test('')).toBe(false);
+        expect(re.test('Wait... she said, "fine!"  --  okay.')).toBe(false);
+        expect(re.exec('anything at all')).toBeNull();
+    });
+
+    it('never matches when every entry is empty or whitespace-only', () => {
+        const re = wordListPattern(['', '   ']);
+        expect(re.flags).toBe('gi');
+        expect(re.test('')).toBe(false);
+        expect(re.test('prose with... punctuation.')).toBe(false);
+        expect(re.exec('Wait... she said.')).toBeNull();
+    });
+
+    it('ignores empty entries mixed with real ones (no zero-width alternative)', () => {
+        const re = wordListPattern(['a', '']);
+        expect(re.source).not.toContain('()');
+        expect('a bad idea'.match(re)).toEqual(['a']);
+        // Every match must consume text — no spurious zero-width hits in the
+        // punctuation runs or at the string edges.
+        const hits = [...'a cat, a nap... a!'.matchAll(re)];
+        expect(hits).toHaveLength(3);
+        expect(hits.every((m) => m[0] === 'a')).toBe(true);
+    });
+
+    it('preserves non-empty behavior alongside a whitespace-only entry filter', () => {
+        const re = wordListPattern(['', '  ', 'ultimately,']);
+        expect('it ended ultimately,'.match(re)).toEqual(['ultimately,']);
+        expect('ultimately,roughly speaking'.match(re)).toBeNull();
+    });
+
+    it('keeps the custom-flags path never-matching for an empty list', () => {
+        // The `.source`-extending consumers (rules.ts ABBREVIATIONS /
+        // PRECEDING_DIALOGUE_TAG, ai-tell-density SKELETON_ABBREVIATIONS)
+        // build with flags '' — the never-matching body must compose safely
+        // with their suffixes instead of degenerating.
+        const re = wordListPattern([], '');
+        expect(re.source).toBe('(?!)');
+        expect(new RegExp(re.source + '\\s+$', 'i').test('trailing ws   ')).toBe(false);
+    });
 });

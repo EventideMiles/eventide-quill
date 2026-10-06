@@ -471,6 +471,16 @@ export function escapeRegExp(phrase: string): string {
  * The default `gi` flags match the linter/detector convention: global scan,
  * case-insensitive.
  *
+ * Empty-list contract: empty and whitespace-only entries are filtered out
+ * before the alternation is assembled, and a list with no usable entries
+ * returns a never-matching RegExp (`(?!)` — a negative lookahead for the
+ * empty pattern, which always matches, so the lookahead always fails) carrying
+ * the requested flags. Without this an empty list would degenerate to a
+ * zero-width pattern like `(?<!\w)()(?!\w)` that matches (without consuming
+ * text) at every non-word-bounded position — spurious hits for `matchAll` /
+ * `replace` consumers and a non-terminating loop for the naive `while
+ * ((match = re.exec(text)) !== null)` style every linter rule uses.
+ *
  * The boundaries are `(?<!\w)` / `(?!\w)` rather than `\b`: `\b` after (or
  * before) a non-word character can never fire, which made entries that END in
  * punctuation (e.g. the wrap-up list's "ultimately,") silently unmatchable.
@@ -480,5 +490,7 @@ export function escapeRegExp(phrase: string): string {
  * follows the punctuation ("ultimately,roughly" does not match).
  */
 export function wordListPattern(phrases: readonly string[], flags = 'gi'): RegExp {
-    return new RegExp(`(?<!\\w)(${phrases.map(escapeRegExp).join('|')})(?!\\w)`, flags);
+    const entries = phrases.filter((phrase) => phrase.trim().length > 0);
+    if (entries.length === 0) return new RegExp('(?!)', flags);
+    return new RegExp(`(?<!\\w)(${entries.map(escapeRegExp).join('|')})(?!\\w)`, flags);
 }
