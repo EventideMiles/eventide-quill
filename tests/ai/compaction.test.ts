@@ -252,6 +252,25 @@ describe('compactConversation', () => {
         });
     });
 
+    it('rejects with AbortError when the signal aborted but the provider threw a generic error', async () => {
+        // A cancel can surface as a NON-abort rejection (the provider's
+        // transport fails while the request is being torn down). The catch
+        // path must re-check the signal before falling back — the compacted
+        // array must never be applied on a cancelled turn.
+        const controller = new AbortController();
+        controller.abort();
+        const provider = makeThrowingProvider(new Error('socket hung up'));
+        const messages = makeMessages([
+            { role: 'user', content: 'q1' },
+            { role: 'assistant', content: 'a1' },
+            { role: 'user', content: 'q2' },
+            { role: 'assistant', content: 'a2' }
+        ]);
+        await expect(compactConversation(provider, messages, 3, { signal: controller.signal })).rejects.toMatchObject({
+            name: 'AbortError'
+        });
+    });
+
     it('rejects when the signal aborts MID-summarize (a graceful stream end must not pass as a summary)', async () => {
         // The streaming layers end their generators gracefully on abort, so the
         // summarize RESOLVES with whatever truncated text streamed before the
