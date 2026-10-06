@@ -519,10 +519,16 @@ describe('attachment metadata — malformed input bails out without throwing', (
         });
     }
 
-    it('ignores garbage signature bytes — the png signature is never verified, just kept verbatim', () => {
-        // A bad signature + well-formed chunks walks clean (the walk starts at
-        // offset 8), so this is a no-findings pass, not the bail-out path.
-        const png = concat([new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]), ihdrChunk(), iendChunk()]);
+    it('bails on a garbage PNG signature — the file is never walked, let alone rebuilt', () => {
+        // A non-PNG named .png whose bytes merely tile into well-formed chunk
+        // framing (here: even carrying strippable metadata) must hit the
+        // signature gate: no findings are reported and stripping is a
+        // byte-identical no-op — a mislabeled file is never rewritten.
+        const png = concat([
+            new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]),
+            pngChunk('tEXt', ascii('Comment\0stale metadata')),
+            iendChunk()
+        ]);
         expect(() => inspectAttachmentMetadata(png, 'png')).not.toThrow();
         expect(inspectAttachmentMetadata(png, 'png')!.findings).toEqual([]);
 
@@ -530,6 +536,14 @@ describe('attachment metadata — malformed input bails out without throwing', (
         const result = stripAttachmentMetadata(png, 'png');
         expect(result.stripped).toEqual([]);
         expect(result.bytes).not.toBe(png);
+        expect(Array.from(result.bytes)).toEqual(Array.from(png));
+    });
+
+    it('bails when the PNG signature is truncated (fewer than 8 bytes of file)', () => {
+        const png = concat([PNG_SIGNATURE, ihdrChunk()]).slice(0, 6);
+        expect(inspectAttachmentMetadata(png, 'png')!.findings).toEqual([]);
+        const result = stripAttachmentMetadata(png, 'png');
+        expect(result.stripped).toEqual([]);
         expect(Array.from(result.bytes)).toEqual(Array.from(png));
     });
 
