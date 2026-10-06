@@ -318,4 +318,86 @@ describe('refineForBudget', () => {
         expect(refineForBudget(thinkingDraft, realEstimate, 50)).toBe(false);
         expect(thinkingDraft.every((m) => !m.quillRefined)).toBe(true);
     });
+
+    it('reaches a SECOND draft in the same turn after the first was already refined', () => {
+        // Regression guard for the per-turn quillRefined flag: one assistant
+        // turn carries TWO propose_entry calls. Refining draft A (via the
+        // outcome path) must not strand draft B behind the turn-level skip —
+        // the budget-driven drafts pass must still reach it.
+        const msgs: ChatMessage[] = twoDraftTurn();
+        expect(refineProposeEntryOutcome(msgs, 'Draft A', 'accepted', 'Lore/A.md')).toBe(true);
+
+        // A compressed; B untouched; the turn is NOT yet flagged refined.
+        const argsA = JSON.parse(msgs[0]!.toolCalls![0]!.arguments) as { content?: string };
+        const argsB = JSON.parse(msgs[0]!.toolCalls![1]!.arguments) as { content?: string };
+        expect(argsA.content).toContain('refined out');
+        expect(argsB.content).toBe(BIG);
+        expect(msgs[0]!.quillRefined).toBeUndefined();
+
+        // The budget pass still reaches B (A's marker is short, so B's bulk
+        // dominates the estimate; a low target forces B's candidate to apply).
+        expect(refineForBudget(msgs, realEstimate, 50)).toBe(true);
+        const argsBAfter = JSON.parse(msgs[0]!.toolCalls![1]!.arguments) as { content?: string };
+        expect(argsBAfter.content).toContain('refined out');
+        // Every refinable call in the turn is done → the turn flag may land.
+        expect(msgs[0]!.quillRefined).toBe(true);
+    });
+});
+
+/* ---------- two drafts in one assistant turn (per-call refinement) ---------- */
+
+/** Build an assistant turn carrying TWO propose_entry calls, each with its own tool result. */
+function twoDraftTurn(): ChatMessage[] {
+    /** Serialize one draft's propose_entry arguments under the given entry name. */
+    const mkArgs = (name: string): string => JSON.stringify({ name, content: BIG });
+    const assistant: ChatMessage = {
+        role: 'assistant',
+        content: '',
+        toolCalls: [
+            { id: 'call_a', name: 'propose_entry', arguments: mkArgs('Draft A') },
+            { id: 'call_b', name: 'propose_entry', arguments: mkArgs('Draft B') }
+        ]
+    };
+    return [
+        assistant,
+        {
+            role: 'tool',
+            content: 'Draft received: "Draft A". The writer will review it.',
+            toolCallId: 'call_a',
+            name: 'propose_entry'
+        },
+        {
+            role: 'tool',
+            content: 'Draft received: "Draft B". The writer will review it.',
+            toolCallId: 'call_b',
+            name: 'propose_entry'
+        }
+    ];
+}
+
+describe('refineProposeEntryOutcome — two drafts in one turn', () => {
+    it('flags the turn as refined only after BOTH sibling drafts are resolved', () => {
+        const msgs: ChatMessage[] = twoDraftTurn();
+        expect(refineProposeEntryOutcome(msgs, 'Draft A', 'accepted', 'Lore/A.md')).toBe(true);
+        expect(msgs[0]!.quillRefined).toBeUndefined(); // B still pending
+        expect(refineProposeEntryOutcome(msgs, 'Draft B', 'discarded')).toBe(true);
+        expect(msgs[0]!.quillRefined).toBe(true);
+
+        const resultA = msgs[1]!;
+        const resultB = msgs[2]!;
+        expect(resultA.content).toContain('ACCEPTED');
+        expect(resultB.content).toContain('DISCARDED');
+    });
+
+    it('stays idempotent per call — re-refining draft A in a partially refined turn is a no-op', () => {
+        const msgs: ChatMessage[] = twoDraftTurn();
+        refineProposeEntryOutcome(msgs, 'Draft A', 'accepted', 'Lore/A.md');
+        const argsAfterFirst = msgs[0]!.toolCalls![0]!.arguments;
+        const resultAfterFirst = msgs[1]!.content;
+        // A's call is already markered: skipped per CALL even though the turn
+        // is unflagged, so the ACCEPTED result marker is not clobbered.
+        expect(refineProposeEntryOutcome(msgs, 'Draft A', 'discarded')).toBe(false);
+        expect(msgs[0]!.toolCalls![0]!.arguments).toBe(argsAfterFirst);
+        expect(msgs[1]!.content).toBe(resultAfterFirst);
+    });
 });
