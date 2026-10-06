@@ -101,8 +101,11 @@ function isAbortError(err: unknown): boolean {
  * When summarization fails (provider error) or returns an empty summary, a
  * deterministic fallback applies instead: the oldest turns are dropped outright
  * (whole anchor groups, never splitting a tool round) and a fixed marker message
- * replaces the summary — see {@link fallbackCompactConversation}. Abort errors
- * always propagate to the caller. Returns `null` when there is nothing to
+ * replaces the summary — see {@link fallbackCompactConversation}. A cancelled
+ * turn NEVER falls back and NEVER succeeds: an AbortError-shaped rejection
+ * propagates as-is, and any other failure (or a truncated/empty resolve) while
+ * the signal is set propagates as an `AbortError` instead — the caller applies
+ * compaction only to live turns. Returns `null` when there is nothing to
  * compact meaningfully, or when even the fallback cannot shrink the array.
  *
  * @param provider      The AI provider for summarization.
@@ -140,8 +143,22 @@ export async function compactConversation(
         summary = await summarizeConversation(provider, toSummarize, sentenceCount, options);
     } catch (err) {
         if (isAbortError(err)) throw err;
+        // The cancel can also surface as a non-abort rejection (the provider's
+        // transport fails while the request is being torn down, for example).
+        // A set signal means the turn is dead either way — propagate as an
+        // abort; the deterministic fallback must never apply to it.
+        if (options?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
         console.warn('Quill: Compaction summarization failed; applying deterministic fallback.', err);
         return buildFallbackResult(messages);
+    }
+    // The streaming layers end their generators GRACEFULLY on abort (the SSE/
+    // NDJSON parsers close without throwing, and on mobile the buffered
+    // requestUrl path simply resolves early), so a cancelled summarize can
+    // RESOLVE with whatever truncated text arrived before the cancel. Accepting
+    // it would permanently fold history into a truncated summary, so a set
+    // signal must propagate as an abort — never fall back, never succeed.
+    if (options?.signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
     }
     if (!summary) return buildFallbackResult(messages);
 

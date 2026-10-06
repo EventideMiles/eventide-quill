@@ -28,13 +28,16 @@
  *   preserved byte-for-byte — the scan stops at SOS and never reads the
  *   compressed scan.
  *
- * Malformed-input policy: a truncated or structurally invalid file BAILS OUT —
- * inspection reports no findings and stripping returns the original bytes
- * unchanged (as a copy). A half-understood file is never rewritten: if the
- * chunk/segment walk cannot complete cleanly to the end marker, we refuse to
- * touch the file rather than risk emitting a corrupt image. Chunk CRCs and
- * segment contents are preserved verbatim (never revalidated, never
- * recomputed), so a kept region is bit-identical to the input.
+ * Malformed-input policy: a truncated, structurally invalid, or non-PNG file
+ * BAILS OUT — inspection reports no findings and stripping returns the original
+ * bytes unchanged (as a copy). Every `.png` must begin with the exact 8-byte
+ * PNG signature before its chunks are walked: a mislabeled file whose bytes
+ * merely tile into chunk-like framing is refused rather than rebuilt. A
+ * half-understood file is never rewritten: if the chunk/segment walk cannot
+ * complete cleanly to the end marker, we refuse to touch the file rather than
+ * risk emitting a corrupt image. Chunk CRCs and segment contents are preserved
+ * verbatim (never revalidated, never recomputed), so a kept region is
+ * bit-identical to the input.
  */
 
 /** Kinds of embedded metadata the scanner recognizes. */
@@ -134,13 +137,22 @@ interface PngChunk {
     dataEnd: number;
 }
 
+/** The exact 8-byte PNG signature every PNG file must open with (PNG spec §5.2). */
+const PNG_SIGNATURE: readonly number[] = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
 /**
- * Walk PNG chunks from offset 8. The 8 signature bytes are skipped
- * unconditionally — never verified — and are always kept verbatim downstream.
- * Returns null when the file is truncated or has no IEND terminator — the
- * malformed-input bail-out, not an exception.
+ * Walk PNG chunks from offset 8 — but only after verifying the file opens
+ * with the exact 8-byte PNG signature. A mismatching signature (a non-PNG
+ * renamed to `.png` whose bytes merely tile into chunk-like framing) is the
+ * same malformed-input bail-out as truncation: return null and the caller
+ * reports no findings / never rewrites the bytes. Returns null too when the
+ * walk runs off the end without an IEND terminator.
  */
 function walkPngChunks(view: DataView): PngChunk[] | null {
+    if (view.byteLength < PNG_SIGNATURE.length) return null;
+    for (let i = 0; i < PNG_SIGNATURE.length; i++) {
+        if (view.getUint8(i) !== PNG_SIGNATURE[i]) return null;
+    }
     const chunks: PngChunk[] = [];
     let pos = 8;
     while (pos + 8 <= view.byteLength) {

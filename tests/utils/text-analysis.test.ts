@@ -8,7 +8,9 @@ import {
     splitSentences,
     splitParagraphs,
     extractScene,
-    listSections
+    listSections,
+    escapeRegExp,
+    wordListPattern
 } from '../../src/utils/text-analysis';
 
 const ABBREV = /\b(Mr|Mrs|Ms|Dr|etc|vs|Jr|Sr)\.$/i;
@@ -321,5 +323,97 @@ describe('listSections', () => {
     it('skips empty sections', () => {
         const sections = listSections('### One\nBody\n### Two\n\n### Three\nEnd');
         expect(sections.filter((s) => s.text.trim() === '')).toHaveLength(0);
+    });
+});
+
+describe('escapeRegExp', () => {
+    it('escapes every regex metacharacter', () => {
+        expect(escapeRegExp('a.b(c)d[e]f{g}h*i+j?k$l^m|n\\o')).toBe(
+            'a\\.b\\(c\\)d\\[e\\]f\\{g\\}h\\*i\\+j\\?k\\$l\\^m\\|n\\\\o'
+        );
+    });
+
+    it('leaves plain phrases unchanged', () => {
+        expect(escapeRegExp('hung heavy')).toBe('hung heavy');
+    });
+});
+
+describe('wordListPattern', () => {
+    it('matches a metachar-bearing list entry LITERALLY (the escaping contract)', () => {
+        // A hypothetical word-list entry containing `(` must match as text —
+        // not be interpreted as a group (which would throw or change meaning).
+        const re = wordListPattern(['wait (for it) now', 'plain phrase']);
+        expect('she said wait (for it) now and left'.match(re)).toEqual(['wait (for it) now']);
+        expect('a plain phrase here'.match(re)).toEqual(['plain phrase']);
+    });
+
+    it('builds a case-insensitive edge-bounded alternation by default', () => {
+        const re = wordListPattern(['Delve']);
+        expect('we delve deeper'.match(re)).toEqual(['delve']);
+        expect('delving deeper'.match(re)).toBeNull(); // edge guard: no suffix match
+        expect('the antidelve crowd'.match(re)).toBeNull(); // edge guard: no prefix match
+    });
+
+    it('matches a punctuation-ending entry before a space and at end-of-text', () => {
+        // \b could never fire after a trailing non-word char, which made
+        // entries like the wrap-up list's "ultimately," silently unmatchable.
+        // The edge-aware boundaries match it like any word-edged entry.
+        const re = wordListPattern(['ultimately,']);
+        expect('she paused ultimately, and left'.match(re)).toEqual(['ultimately,']);
+        expect('it ended ultimately,'.match(re)).toEqual(['ultimately,']);
+    });
+
+    it('does not match a punctuation-ending entry when a word character follows', () => {
+        const re = wordListPattern(['ultimately,']);
+        expect('ultimately,roughly speaking'.match(re)).toBeNull();
+    });
+
+    it('keeps every entry matchable regardless of order', () => {
+        const re = wordListPattern(['tapestry', 'purple (very) prose']);
+        const hits = 'purple (very) prose and tapestry'.match(re);
+        expect(hits).toEqual(['purple (very) prose', 'tapestry']);
+    });
+
+    it('never matches when the list is empty (empty-list contract)', () => {
+        const re = wordListPattern([]);
+        expect(re.flags).toBe('gi');
+        expect(re.test('')).toBe(false);
+        expect(re.test('Wait... she said, "fine!"  --  okay.')).toBe(false);
+        expect(re.exec('anything at all')).toBeNull();
+    });
+
+    it('never matches when every entry is empty or whitespace-only', () => {
+        const re = wordListPattern(['', '   ']);
+        expect(re.flags).toBe('gi');
+        expect(re.test('')).toBe(false);
+        expect(re.test('prose with... punctuation.')).toBe(false);
+        expect(re.exec('Wait... she said.')).toBeNull();
+    });
+
+    it('ignores empty entries mixed with real ones (no zero-width alternative)', () => {
+        const re = wordListPattern(['a', '']);
+        expect(re.source).not.toContain('()');
+        expect('a bad idea'.match(re)).toEqual(['a']);
+        // Every match must consume text — no spurious zero-width hits in the
+        // punctuation runs or at the string edges.
+        const hits = [...'a cat, a nap... a!'.matchAll(re)];
+        expect(hits).toHaveLength(3);
+        expect(hits.every((m) => m[0] === 'a')).toBe(true);
+    });
+
+    it('preserves non-empty behavior alongside a whitespace-only entry filter', () => {
+        const re = wordListPattern(['', '  ', 'ultimately,']);
+        expect('it ended ultimately,'.match(re)).toEqual(['ultimately,']);
+        expect('ultimately,roughly speaking'.match(re)).toBeNull();
+    });
+
+    it('keeps the custom-flags path never-matching for an empty list', () => {
+        // The `.source`-extending consumers (rules.ts ABBREVIATIONS /
+        // PRECEDING_DIALOGUE_TAG, ai-tell-density SKELETON_ABBREVIATIONS)
+        // build with flags '' — the never-matching body must compose safely
+        // with their suffixes instead of degenerating.
+        const re = wordListPattern([], '');
+        expect(re.source).toBe('(?!)');
+        expect(new RegExp(re.source + '\\s+$', 'i').test('trailing ws   ')).toBe(false);
     });
 });

@@ -320,6 +320,9 @@ export function renderLoreHygieneTab(
      * no-ops with a brief Notice when another scan or strip is already running
      * (see `operationInFlight`). The guard is released in `finally` only on the
      * set path, so the early-return no-op never releases a lock it didn't take.
+     * Rejections are caught here — `refresh` is try/finally only (a scan
+     * failure must still repaint + re-enable the button), so without this
+     * catch a failed scan would escape as an unhandledrejection.
      */
     function runExclusive(op: () => Promise<void>): void {
         if (operationInFlight) {
@@ -327,9 +330,11 @@ export function renderLoreHygieneTab(
             return;
         }
         operationInFlight = true;
-        void op().finally(() => {
-            operationInFlight = false;
-        });
+        void op()
+            .catch((err: unknown) => console.warn('Quill: Hygiene scan/strip operation failed.', err))
+            .finally(() => {
+                operationInFlight = false;
+            });
     }
 
     /** Strip one file after a ConfirmModal names it (binary writes bypass Obsidian's file recovery, so confirmation is mandatory). */

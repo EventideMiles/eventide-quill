@@ -1530,6 +1530,11 @@ export function getReviewDiscussSystemPrompt(
             '  when the discussion surfaces a character, place, or world detail',
             '  that does not yet have its own entry.',
             '',
+            // Registry fact: propose_entry IS available on this branch. co-writer.ts
+            // registers it (plus attach_lore_image, gated by loreEntryImageAttachments)
+            // whenever reviewEngine !== null — and Path B sets reviewEngine to
+            // 'generic' on picker entry (quill-sidebar.ts), so both review-discuss
+            // paths run with it. Verify at the registration site before changing.
             '## Scope discipline (critical)',
             '',
             'Match your edit scope to what the writer asked for.',
@@ -1651,6 +1656,12 @@ export function getReviewDiscussSystemPrompt(
         '',
         'DELETING a paragraph entirely:',
         '- Use `delete_paragraph` with paragraph_start or old_text.',
+        '',
+        'CREATING a new lore entry (character, location, plot thread):',
+        '- Use `propose_entry` to draft a new note. The draft appears as a',
+        '  review card the writer can save to the vault or discard. Use this',
+        '  when the discussion surfaces a character, place, or world detail',
+        '  that does not yet have its own entry.',
         '',
         '## Scope discipline (critical)',
         '',

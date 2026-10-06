@@ -39,6 +39,16 @@ describe('checkLongSentences', () => {
         expect(checkLongSentences(text, 5)).toHaveLength(1);
         expect(checkLongSentences(text, 10)).toEqual([]);
     });
+
+    it('does not split on an abbreviation period (pins the ABBREVIATIONS anchoring)', () => {
+        // "Mr." must not terminate the sentence: if it did, the remainder
+        // would be 20 words and nothing would flag at maxWords 20.
+        const text =
+            'Mr. Whitfield traveled down the long winding road toward the northern mountains where the old watchtower still stood against the sky.';
+        const results = checkLongSentences(text, 20);
+        expect(results).toHaveLength(1);
+        expect(results[0]!.rule).toBe('long-sentences');
+    });
 });
 
 describe('checkPassiveVoice', () => {
@@ -75,6 +85,13 @@ describe('checkAdverbs', () => {
     it('does not flag adverbs inside dialogue quotes', () => {
         const results = checkAdverbs('"He walked slowly," she said.');
         expect(results).toEqual([]);
+    });
+
+    it('does not flag an adverb directly after a dialogue tag (pins PRECEDING_DIALOGUE_TAG anchoring)', () => {
+        // "whispered " ends the 16-char look-behind slice, so the
+        // `\\b(tag)\\s+$` pattern must match with its trailing-whitespace
+        // anchor intact — the adverb is part of the dialogue beat.
+        expect(checkAdverbs('He whispered suddenly and the room went quiet.')).toEqual([]);
     });
 });
 
@@ -331,8 +348,11 @@ describe('checkAiHedging', () => {
 
 describe('checkAiWrapUps', () => {
     it('flags concluding phrases', () => {
+        // Behavior delta (intentional): wordListPattern's boundaries are now
+        // edge-aware, so the punctuation-ending entry "ultimately," flags
+        // alongside "in conclusion" — \b silently skipped it before.
         const results = checkAiWrapUps('Ultimately, the hero prevailed. In conclusion, it was a good day.');
-        expect(results.length).toBeGreaterThanOrEqual(1);
+        expect(results.length).toBe(2);
         expect(results[0]!.rule).toBe('ai-wrap-ups');
     });
 });

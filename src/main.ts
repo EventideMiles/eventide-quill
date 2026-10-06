@@ -11,7 +11,7 @@ import {
     WorkspaceLeaf
 } from 'obsidian';
 import { EditorView } from '@codemirror/view';
-import { DEFAULT_SETTINGS, EventideQuillSettings, EventideQuillSettingTab } from './settings';
+import { DEFAULT_SETTINGS, EventideQuillSettings, EventideQuillSettingTab, WIKI_HOME_URL } from './settings';
 import { lint } from './core/linter/linter';
 import { getLintExtension, setLintResults, toggleLintActive } from './core/linter/decorations';
 import { QUILL_VIEW_TYPE, QuillSidebarView } from './ui/quill-sidebar';
@@ -1191,6 +1191,14 @@ export default class EventideQuillPlugin extends Plugin {
             name: 'Quill: Build embeddings for all folders',
             callback: () => {
                 void this.warmAllEmbeddingCaches();
+            }
+        });
+
+        this.addCommand({
+            id: 'quill-open-documentation',
+            name: 'Quill: Open documentation',
+            callback: () => {
+                window.open(WIKI_HOME_URL, '_blank');
             }
         });
 

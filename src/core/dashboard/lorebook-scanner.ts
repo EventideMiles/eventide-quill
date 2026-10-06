@@ -1,5 +1,6 @@
 import { App, TFile, normalizePath } from 'obsidian';
 import type { ExtractedEntity } from '../context-engine/types';
+import { escapeRegExp } from '../../utils/text-analysis';
 import {
     LoreEntry,
     LoreEntryImage,
@@ -425,11 +426,6 @@ function extractEntryImages(
 }
 
 // ── Substring matching ──────────────────────────────────────────────────────
-
-/** Escape regex metacharacters in a user-provided name string. */
-function escapeRegExp(s: string): string {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 /**
  * True if any of the given names appear in `text` as a whole-word match

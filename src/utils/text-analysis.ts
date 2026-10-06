@@ -452,3 +452,45 @@ export function splitParagraphs(text: string): string[] {
     flush();
     return paragraphs;
 }
+
+/**
+ * Escape regular-expression metacharacters in `phrase` so it can be embedded
+ * in a pattern as a LITERAL match. Word-list data assets are writer-extensible
+ * prose, not pattern fragments — an entry like "not only... but (also)" would
+ * otherwise change the alternation's meaning or throw at construction time.
+ */
+export function escapeRegExp(phrase: string): string {
+    return phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Build an edge-aware word-boundary alternation RegExp from a list of literal
+ * phrases, escaping each entry first (see {@link escapeRegExp}). Single source
+ * for every pattern assembled from the linter's word lists (`aiClichePhrases`,
+ * `aiMetaCues`, `aiHedging`, …) so no call site can forget the escaping.
+ * The default `gi` flags match the linter/detector convention: global scan,
+ * case-insensitive.
+ *
+ * Empty-list contract: empty and whitespace-only entries are filtered out
+ * before the alternation is assembled, and a list with no usable entries
+ * returns a never-matching RegExp (`(?!)` — a negative lookahead for the
+ * empty pattern, which always matches, so the lookahead always fails) carrying
+ * the requested flags. Without this an empty list would degenerate to a
+ * zero-width pattern like `(?<!\w)()(?!\w)` that matches (without consuming
+ * text) at every non-word-bounded position — spurious hits for `matchAll` /
+ * `replace` consumers and a non-terminating loop for the naive `while
+ * ((match = re.exec(text)) !== null)` style every linter rule uses.
+ *
+ * The boundaries are `(?<!\w)` / `(?!\w)` rather than `\b`: `\b` after (or
+ * before) a non-word character can never fire, which made entries that END in
+ * punctuation (e.g. the wrap-up list's "ultimately,") silently unmatchable.
+ * Plain word-edged entries behave exactly as `\b` did — no match when glued
+ * to a word character on either edge. A punctuation-ending entry matches
+ * before whitespace or end-of-text but still not when a word character
+ * follows the punctuation ("ultimately,roughly" does not match).
+ */
+export function wordListPattern(phrases: readonly string[], flags = 'gi'): RegExp {
+    const entries = phrases.filter((phrase) => phrase.trim().length > 0);
+    if (entries.length === 0) return new RegExp('(?!)', flags);
+    return new RegExp(`(?<!\\w)(${entries.map(escapeRegExp).join('|')})(?!\\w)`, flags);
+}

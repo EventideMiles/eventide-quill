@@ -318,4 +318,197 @@ describe('refineForBudget', () => {
         expect(refineForBudget(thinkingDraft, realEstimate, 50)).toBe(false);
         expect(thinkingDraft.every((m) => !m.quillRefined)).toBe(true);
     });
+
+    it('reaches a SECOND draft in the same turn after the first was already refined', () => {
+        // Regression guard for the per-turn quillRefined flag: one assistant
+        // turn carries TWO propose_entry calls. Refining draft A (via the
+        // outcome path) must not strand draft B behind the turn-level skip —
+        // the budget-driven drafts pass must still reach it.
+        const msgs: ChatMessage[] = twoDraftTurn();
+        expect(refineProposeEntryOutcome(msgs, 'Draft A', 'accepted', 'Lore/A.md')).toBe(true);
+
+        // A compressed; B untouched; the turn is NOT yet flagged refined.
+        const argsA = JSON.parse(msgs[0]!.toolCalls![0]!.arguments) as { content?: string };
+        const argsB = JSON.parse(msgs[0]!.toolCalls![1]!.arguments) as { content?: string };
+        expect(argsA.content).toContain('refined out');
+        expect(argsB.content).toBe(BIG);
+        expect(msgs[0]!.quillRefined).toBeUndefined();
+
+        // The budget pass still reaches B (A's marker is short, so B's bulk
+        // dominates the estimate; a low target forces B's candidate to apply).
+        expect(refineForBudget(msgs, realEstimate, 50)).toBe(true);
+        const argsBAfter = JSON.parse(msgs[0]!.toolCalls![1]!.arguments) as { content?: string };
+        expect(argsBAfter.content).toContain('refined out');
+        // Every refinable call in the turn is done → the turn flag may land.
+        expect(msgs[0]!.quillRefined).toBe(true);
+    });
+});
+
+/* ---------- two drafts in one assistant turn (per-call refinement) ---------- */
+
+/** Build an assistant turn carrying TWO propose_entry calls, each with its own tool result. */
+function twoDraftTurn(): ChatMessage[] {
+    /** Serialize one draft's propose_entry arguments under the given entry name. */
+    const mkArgs = (name: string): string => JSON.stringify({ name, content: BIG });
+    const assistant: ChatMessage = {
+        role: 'assistant',
+        content: '',
+        toolCalls: [
+            { id: 'call_a', name: 'propose_entry', arguments: mkArgs('Draft A') },
+            { id: 'call_b', name: 'propose_entry', arguments: mkArgs('Draft B') }
+        ]
+    };
+    return [
+        assistant,
+        {
+            role: 'tool',
+            content: 'Draft received: "Draft A". The writer will review it.',
+            toolCallId: 'call_a',
+            name: 'propose_entry'
+        },
+        {
+            role: 'tool',
+            content: 'Draft received: "Draft B". The writer will review it.',
+            toolCallId: 'call_b',
+            name: 'propose_entry'
+        }
+    ];
+}
+
+describe('refineProposeEntryOutcome — two drafts in one turn', () => {
+    it('flags the turn as refined only after BOTH sibling drafts are resolved', () => {
+        const msgs: ChatMessage[] = twoDraftTurn();
+        expect(refineProposeEntryOutcome(msgs, 'Draft A', 'accepted', 'Lore/A.md')).toBe(true);
+        expect(msgs[0]!.quillRefined).toBeUndefined(); // B still pending
+        expect(refineProposeEntryOutcome(msgs, 'Draft B', 'discarded')).toBe(true);
+        expect(msgs[0]!.quillRefined).toBe(true);
+
+        const resultA = msgs[1]!;
+        const resultB = msgs[2]!;
+        expect(resultA.content).toContain('ACCEPTED');
+        expect(resultB.content).toContain('DISCARDED');
+    });
+
+    it('stays idempotent per call — re-refining draft A in a partially refined turn is a no-op', () => {
+        const msgs: ChatMessage[] = twoDraftTurn();
+        refineProposeEntryOutcome(msgs, 'Draft A', 'accepted', 'Lore/A.md');
+        const argsAfterFirst = msgs[0]!.toolCalls![0]!.arguments;
+        const resultAfterFirst = msgs[1]!.content;
+        // A's call is already markered: skipped per CALL even though the turn
+        // is unflagged, so the ACCEPTED result marker is not clobbered.
+        expect(refineProposeEntryOutcome(msgs, 'Draft A', 'discarded')).toBe(false);
+        expect(msgs[0]!.toolCalls![0]!.arguments).toBe(argsAfterFirst);
+        expect(msgs[1]!.content).toBe(resultAfterFirst);
+    });
+});
+
+/* ---------- budget-refined drafts (second pass) ---------- */
+
+describe('refineProposeEntryOutcome — budget-refined draft', () => {
+    /**
+     * Build a propose_entry turn, then run refineForBudget over it so the
+     * draft's content arg and tool result land in the compressed state a real
+     * budget pass leaves behind (marker in args, "review status is unchanged"
+     * in the result, turn flagged refined).
+     */
+    function budgetRefinedTurn(name: string): ChatMessage[] {
+        const msgs: ChatMessage[] = proposeTurn({ name, content: BIG, id: 'call_b1', anchor: 'msg_9' });
+        expect(refineForBudget(msgs, realEstimate, 50)).toBe(true);
+        const args = JSON.parse(msgs[0]!.toolCalls![0]!.arguments) as { content?: string };
+        expect(args.content).toContain('refined out');
+        expect(msgs[1]!.content).toContain('review status is unchanged');
+        return msgs;
+    }
+
+    it('writes the ACCEPTED outcome marker into the tool result while the args stay compressed', () => {
+        const msgs = budgetRefinedTurn('Sarah Connor');
+        expect(refineProposeEntryOutcome(msgs, 'Sarah Connor', 'accepted', 'Lore/Sarah Connor.md')).toBe(true);
+
+        // The durable move-on signal landed in the tool result...
+        const result = msgs[1]!;
+        expect(result.content).toContain('ACCEPTED');
+        expect(result.content).toContain('saved it to Lore/Sarah Connor.md');
+        expect(result.content).toContain('COMPLETE');
+        expect(result.content).not.toContain('review status is unchanged');
+        // ...while the compressed args were left alone (no double compression).
+        const args = JSON.parse(msgs[0]!.toolCalls![0]!.arguments) as { content?: string };
+        expect(args.content).toContain('refined out');
+        expect(args.content).not.toContain('ACCEPTED');
+        // Invariants: no messages added/removed, anchors intact.
+        expect(msgs).toHaveLength(2);
+        expect(msgs[0]!.quillAnchorId).toBe('msg_9');
+        expect(msgs[1]!.quillAnchorId).toBe('msg_9');
+    });
+
+    it('writes the DISCARDED marker for a budget-refined draft', () => {
+        const msgs = budgetRefinedTurn('Draft B');
+        expect(refineProposeEntryOutcome(msgs, 'Draft B', 'discarded')).toBe(true);
+        expect(msgs[1]!.content).toContain('DISCARDED');
+        expect(msgs[1]!.content).toContain('Do not re-propose');
+        expect(msgs[1]!.content).not.toContain('review status is unchanged');
+        expect(msgs[1]!.content).not.toContain('ACCEPTED');
+    });
+
+    it('is idempotent — a second call is a no-op and does not duplicate the marker', () => {
+        const msgs = budgetRefinedTurn('Sarah Connor');
+        expect(refineProposeEntryOutcome(msgs, 'Sarah Connor', 'accepted', 'Lore/Sarah Connor.md')).toBe(true);
+        const resultAfterFirst = msgs[1]!.content;
+        const argsAfterFirst = msgs[0]!.toolCalls![0]!.arguments;
+        expect(refineProposeEntryOutcome(msgs, 'Sarah Connor', 'accepted', 'Lore/Sarah Connor.md')).toBe(false);
+        expect(msgs[1]!.content).toBe(resultAfterFirst);
+        expect(msgs[0]!.toolCalls![0]!.arguments).toBe(argsAfterFirst);
+        expect(resultAfterFirst.split('The writer ACCEPTED')).toHaveLength(2);
+    });
+
+    it('still writes the outcome marker when the result merely CONTAINS the outcome phrase (no false skip)', () => {
+        // A result whose text carries "The writer ACCEPTED" inside other
+        // content (e.g. echoing a draft about a character accepting
+        // something) is NOT the engine's marker — the pass must not treat it
+        // as already-refined, or the real move-on signal never lands.
+        const msgs = budgetRefinedTurn('Sarah Connor');
+        msgs[1]!.content =
+            'Draft received: "Sarah Connor" (character). ' +
+            'The writer ACCEPTED a similar proposal last session — check before re-drafting.';
+        expect(refineProposeEntryOutcome(msgs, 'Sarah Connor', 'accepted', 'Lore/Sarah Connor.md')).toBe(true);
+        expect(msgs[1]!.content).toContain('COMPLETE');
+        expect(msgs[1]!.content).toContain('saved it to Lore/Sarah Connor.md');
+        expect(msgs[1]!.content).not.toContain('review status is unchanged');
+    });
+
+    it('treats a result carrying the exact outcome-marker shape as an idempotent no-op', () => {
+        // Pins the marker shape the second pass matches: anchored prefix,
+        // entry/type/token fields, the "keep it lean" tail, and the outcome
+        // word — the idempotency contract the regex encodes.
+        const msgs = budgetRefinedTurn('Sarah Connor');
+        expect(refineProposeEntryOutcome(msgs, 'Sarah Connor', 'accepted', 'Lore/Sarah Connor.md')).toBe(true);
+        const marked = msgs[1]!.content;
+        expect(marked).toMatch(
+            /^\[Entry "Sarah Connor" \(untyped\): ~\d+ tokens of draft content were refined out of context to keep it lean\. The writer ACCEPTED/
+        );
+        expect(refineProposeEntryOutcome(msgs, 'Sarah Connor', 'accepted', 'Lore/Sarah Connor.md')).toBe(false);
+        expect(msgs[1]!.content).toBe(marked);
+    });
+
+    it('does not touch other drafts in the same turn (name filter still applies)', () => {
+        // Two budget-refined drafts; resolving one must leave the sibling's
+        // "review status is unchanged" result untouched.
+        const assistant: ChatMessage = {
+            role: 'assistant',
+            content: '',
+            toolCalls: [
+                { id: 'call_x', name: 'propose_entry', arguments: JSON.stringify({ name: 'Draft X', content: BIG }) },
+                { id: 'call_y', name: 'propose_entry', arguments: JSON.stringify({ name: 'Draft Y', content: BIG }) }
+            ]
+        };
+        const msgs: ChatMessage[] = [
+            assistant,
+            { role: 'tool', content: 'Draft received: "Draft X".', toolCallId: 'call_x', name: 'propose_entry' },
+            { role: 'tool', content: 'Draft received: "Draft Y".', toolCallId: 'call_y', name: 'propose_entry' }
+        ];
+        expect(refineForBudget(msgs, realEstimate, 50)).toBe(true);
+        expect(refineProposeEntryOutcome(msgs, 'Draft X', 'accepted', 'Lore/X.md')).toBe(true);
+        expect(msgs[1]!.content).toContain('ACCEPTED');
+        expect(msgs[2]!.content).toContain('review status is unchanged');
+        expect(msgs[2]!.content).not.toContain('ACCEPTED');
+    });
 });

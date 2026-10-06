@@ -87,6 +87,18 @@ describe('getReviewDiscussSystemPrompt', () => {
         }
     });
 
+    it('advertises propose_entry on every review-discuss branch', () => {
+        // propose_entry is registered for ALL review-discuss paths: co-writer.ts
+        // adds it (plus attach_lore_image, gated by loreEntryImageAttachments)
+        // whenever reviewEngine !== null — which includes 'generic', because
+        // Path B sets reviewEngine = 'generic' on picker entry (quill-sidebar.ts).
+        // Re-derive this from the registration site (co-writer.ts ~1331), not
+        // from this comment, before changing either side.
+        for (const engine of ['editorial', 'critical', 'manuscript', 'generic'] as const) {
+            expect(getReviewDiscussSystemPrompt(engine)).toContain('propose_entry');
+        }
+    });
+
     it('varies the engine label in the opening line', () => {
         const editorial = getReviewDiscussSystemPrompt('editorial');
         const critical = getReviewDiscussSystemPrompt('critical');

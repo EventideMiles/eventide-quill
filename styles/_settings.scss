@@ -353,6 +353,18 @@ div[class*='quill-settings-content-'].is-hidden {
         margin-top: $space-sm;
     }
 
+    &__welcome-doc-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: $space-xs $space-md;
+        margin-bottom: $space-sm;
+    }
+
+    &__welcome-doc-note {
+        font-size: var(--font-ui-smaller);
+        color: var(--text-muted);
+    }
+
     // --- Footer (reserved for future donation / support links) ---
     // Fixed at the bottom via the flex layout — does not scroll with content.
     // Intentionally collapsed to 0 height while empty so it doesn't waste

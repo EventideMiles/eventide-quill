@@ -30,8 +30,11 @@ import type { ChatMessage, ToolCallRequest } from './provider';
  *     rewind keeps working. Unlike compaction (which folds turns into a
  *     summary and drops anchors), refinement is non-destructive to the
  *     display↔API coupling.
- *   - Idempotent via the `quillRefined` flag — repeated passes (event + budget)
- *     skip already-compressed messages.
+ *   - Idempotent at two levels: per TURN via the `quillRefined` flag (a fully
+ *     refined turn is skipped wholesale by later passes) and per CALL via the
+ *     refined-draft marker in a `propose_entry` call's `content` argument —
+ *     so when one assistant turn carries several drafts, refining the first
+ *     never strands its siblings.
  *
  * Only the API arrays are touched; the display `chatHistory` keeps full drafts
  * and diffs, so the writer's view is unchanged.
@@ -44,6 +47,31 @@ export type EditOutcome = 'approved' | 'rejected';
 
 /** Payload below this many characters is not worth refining. */
 const MIN_REFINABLE_CHARS = 300;
+
+/**
+ * Prefix shared by every marker written into a refined `propose_entry`
+ * `content` argument (the outcome path and the budget path both start their
+ * markers with it). Matching by prefix — not by exact marker text — makes
+ * refinement idempotent per TOOL CALL: a draft already compressed to a marker
+ * is skipped even while its sibling drafts in the same assistant turn are
+ * still pending refinement.
+ */
+const REFINED_DRAFT_ARG_PREFIX = '[Draft content (~';
+
+/**
+ * Exact shape of the outcome marker this engine writes into a `propose_entry`
+ * tool result — `[Entry "<name>" (<type>): ~<N> tokens of draft content were
+ * refined out of context to keep it lean. The writer ACCEPTED|DISCARDED …]` —
+ * anchored to the start of the content, which both outcome paths REPLACE
+ * wholesale. Matching the full marker shape (not a loose "The writer
+ * ACCEPTED" substring) keeps content that merely contains that phrase — e.g.
+ * model-drafted prose about a character accepting something — from tripping
+ * the idempotency skip. The budget marker's differing tail ("refined out to
+ * free context budget") deliberately does NOT match, so a budget-refined
+ * result still receives its real outcome marker.
+ */
+const OUTCOME_MARKER_RE =
+    /^\[Entry ".*" \([^)]*\): ~\d+ tokens of draft content were refined out of context to keep it lean\. The writer (?:ACCEPTED|DISCARDED)\b/;
 
 /**
  * Parse a tool call's `arguments` (a JSON string per OpenAI's convention) into
@@ -80,10 +108,36 @@ function entryTypeLabel(args: Record<string, unknown>): string {
     return t.length > 0 ? t : 'untyped';
 }
 
+/** True when `args` belongs to a `propose_entry` draft already refined to a marker (see {@link REFINED_DRAFT_ARG_PREFIX}). */
+function isRefinedDraftArgs(args: Record<string, unknown>): boolean {
+    return typeof args.content === 'string' && args.content.startsWith(REFINED_DRAFT_ARG_PREFIX);
+}
+
+/**
+ * True when the assistant turn still carries at least one `propose_entry`
+ * call that has NOT been refined to a marker. Unparseable calls are
+ * unreachable by refinement and never block flagging. Drives when the
+ * turn-level `quillRefined` skip flag may be set: it must only land once
+ * every refinable draft in the turn is done, or a sibling draft would be
+ * stranded behind `findToolCallSites`' turn-level skip.
+ */
+function turnHasUnrefinedDraftCalls(assistant: ChatMessage): boolean {
+    if (!assistant.toolCalls) return false;
+    for (const call of assistant.toolCalls) {
+        if (call.name !== 'propose_entry') continue;
+        const args = parseToolArgs(call.arguments);
+        if (args === null) continue;
+        if (!isRefinedDraftArgs(args)) return true;
+    }
+    return false;
+}
+
 /**
  * Locate every assistant tool call in `messages` whose serialized tool is
  * `toolName`, whose args satisfy `matchArgs`, and whose turn is eligible for
- * refinement (not already refined, no Anthropic thinking blocks). Returns the
+ * refinement (not already fully refined, no Anthropic thinking blocks). A call
+ * whose `content` argument already carries the refined-draft marker is skipped
+ * per CALL, keeping sibling drafts in the same turn refinable. Returns the
  * message index + the call index + parsed args for each.
  */
 interface ToolCallSite {
@@ -112,6 +166,9 @@ function findToolCallSites(
             if (call.name !== toolName) continue;
             const args = parseToolArgs(call.arguments);
             if (args === null) continue;
+            // Per-call idempotency: a draft already refined to a marker is
+            // skipped even when the turn as a whole is not yet flagged.
+            if (isRefinedDraftArgs(args)) continue;
             if (matchArgs(args, call)) {
                 sites.push({ messageIndex: i, callIndex: c, call, args });
             }
@@ -135,8 +192,18 @@ function findToolResult(messages: ChatMessage[], toolCallId: string): ChatMessag
  * the verbatim entry markdown leaves the model's context and a compact outcome
  * marker takes its place. Compresses BOTH the bulky `content` argument (the
  * regurgitation source) and the tool result (rewritten to the durable move-on
- * signal). Idempotent — turns already refined are skipped. Returns whether any
- * message was changed (so the caller can refresh the token estimate / persist).
+ * signal). Idempotent — already-refined calls are skipped per call, so a
+ * second draft in the same turn stays refinable after the first resolves.
+ *
+ * A second pass covers drafts whose args a budget pass already compressed:
+ * those are invisible to the normal per-call filter, so without it the tool
+ * result would keep saying "review status is unchanged" forever after the
+ * writer resolves the draft. The second pass rewrites ONLY the tool result
+ * (the args stay compressed) and skips results that already carry an outcome
+ * marker, so repeated calls are no-ops.
+ *
+ * Returns whether any message was changed (so the caller can refresh the token
+ * estimate / persist).
  *
  * @param messages   The API array to refine in place.
  * @param name       Display name of the draft (matches `propose_entry`'s `name` arg).
@@ -152,6 +219,13 @@ export function refineProposeEntryOutcome(
 ): boolean {
     const needle = name.trim().toLowerCase();
     if (needle.length === 0) return false;
+
+    const outcomeLine =
+        outcome === 'accepted'
+            ? `The writer ACCEPTED the draft${savedPath ? ` and saved it to ${savedPath}` : ''}. ` +
+              `This entry is COMPLETE — do not re-propose, re-draft, or re-output its content. ` +
+              `Re-run vault_lookup on "${name.trim()}" if you need its current text.`
+            : `The writer DISCARDED the draft. Do not re-propose it unless the writer explicitly asks.`;
 
     const sites = findToolCallSites(messages, 'propose_entry', (args) => {
         const n = typeof args.name === 'string' ? args.name.trim().toLowerCase() : '';
@@ -175,21 +249,60 @@ export function refineProposeEntryOutcome(
 
         const result = findToolResult(messages, site.call.id);
         if (result) {
-            const outcomeLine =
-                outcome === 'accepted'
-                    ? `The writer ACCEPTED the draft${savedPath ? ` and saved it to ${savedPath}` : ''}. ` +
-                      `This entry is COMPLETE — do not re-propose, re-draft, or re-output its content. ` +
-                      `Re-run vault_lookup on "${name.trim()}" if you need its current text.`
-                    : `The writer DISCARDED the draft. Do not re-propose it unless the writer explicitly asks.`;
             result.content =
                 `[Entry "${name.trim()}" (${typeLabel}): ~${refinedTokens} tokens of draft content ` +
                 `were refined out of context to keep it lean. ${outcomeLine}]`;
             result.quillRefined = true;
         }
 
-        assistant.quillRefined = true;
+        // Flag the turn only when no sibling draft call in it is still pending —
+        // an unconditional per-turn flag would strand the rest behind the
+        // turn-level skip in `findToolCallSites`. Left unset (not `false`)
+        // while drafts remain, matching the flag's optional-boolean convention.
+        if (!turnHasUnrefinedDraftCalls(assistant)) assistant.quillRefined = true;
         changed = true;
     }
+
+    // Second pass — budget-refined drafts. findToolCallSites skips calls whose
+    // args already carry the refined-draft marker (per-call idempotency) and
+    // turns already flagged `quillRefined`, which is exactly the state a
+    // `refineForBudget` pass leaves a compressed draft in. Re-scan for those
+    // calls by hand and rewrite ONLY the tool result — the args are already
+    // compressed and must stay that way. Results still showing the budget
+    // marker's "review status is unchanged" line get the durable outcome
+    // marker; results already carrying the engine's outcome marker (matched
+    // by its exact shape, see {@link OUTCOME_MARKER_RE}) are skipped, making
+    // repeated calls no-ops.
+    for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i]!;
+        if (msg.role !== 'assistant') continue;
+        // Anthropic thinking blocks are signed and must replay verbatim — skip
+        // any turn that carries them (same invariant as findToolCallSites).
+        if (msg.thinkingBlocks && msg.thinkingBlocks.length > 0) continue;
+        if (!msg.toolCalls) continue;
+        for (const call of msg.toolCalls) {
+            if (call.name !== 'propose_entry') continue;
+            const args = parseToolArgs(call.arguments);
+            if (args === null || !isRefinedDraftArgs(args)) continue;
+            const n = typeof args.name === 'string' ? args.name.trim().toLowerCase() : '';
+            if (n !== needle) continue;
+            const result = findToolResult(messages, call.id);
+            if (!result || typeof result.content !== 'string') continue;
+            if (OUTCOME_MARKER_RE.test(result.content)) continue;
+            const typeLabel = entryTypeLabel(args);
+            // The compressed arg preserves the original token estimate in its
+            // marker ("[Draft content (~N tokens) …]") — reuse it so the
+            // rewritten result keeps a faithful size hint.
+            const contentArg = typeof args.content === 'string' ? args.content : '';
+            const refinedTokens = /~(\d+) tokens/.exec(contentArg)?.[1] ?? '0';
+            result.content =
+                `[Entry "${name.trim()}" (${typeLabel}): ~${refinedTokens} tokens of draft content ` +
+                `were refined out of context to keep it lean. ${outcomeLine}]`;
+            result.quillRefined = true;
+            changed = true;
+        }
+    }
+
     return changed;
 }
 
@@ -354,7 +467,9 @@ export function refineForBudget(
                         `Re-run vault_lookup on "${nameRaw}" if you need the entry text.]`;
                     result.quillRefined = true;
                 }
-                assistant.quillRefined = true;
+                // Same per-turn rule as the outcome path: only flag when every
+                // refinable sibling draft in the turn is already markered.
+                if (!turnHasUnrefinedDraftCalls(assistant)) assistant.quillRefined = true;
             }
         });
     }

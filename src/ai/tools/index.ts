@@ -65,7 +65,7 @@ export type { TextToolLeak, NudgeTextToolLeakOptions, NudgeTextToolLeakResult } 
 
 /**
  * Options for {@link createInternalToolRegistry}. Each flag defaults to true,
- * preserving the full twelve-tool set for callers that omit the options
+ * preserving the full fourteen-tool set for callers that omit the options
  * (read-only registry, lore-batch subagent, discuss/coach via the default
  * path). The lorebook coach passes a reduced set — see
  * {@link createLoreCoachToolRegistry}.
@@ -80,10 +80,11 @@ export interface InternalToolOptions {
 }
 
 /**
- * Build a registry containing the twelve internal-only tools:
+ * Build a registry containing the fourteen internal-only tools:
  * `manuscript_mentions`, `lore_siblings`, `vault_lookup`, `grep_notes`,
- * `measure_folder`, `calculate_file_sizes`, `edit_note`, `insert_note`,
- * `append_to_note`, `revise_edit`, `refresh_dashboard`, `get_lore_image`.
+ * `measure_folder`, `calculate_file_sizes`, `edit_note`, `delete_paragraph`,
+ * `add_world_rule`, `insert_note`, `append_to_note`, `revise_edit`,
+ * `refresh_dashboard`, `get_lore_image`.
  *
  * Pass {@link InternalToolOptions} to drop tools a mode never advertises (the
  * lorebook coach drops `manuscript_mentions` / `grep_notes` / `refresh_dashboard`

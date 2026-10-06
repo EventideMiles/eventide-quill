@@ -8,8 +8,9 @@ import { resolve } from 'node:path';
  * tree-shaken variants.
  *
  * Tests live under `tests/` at the repo root (NOT `src/__tests__/`) so the
- * jscpd duplication gate — which scans `src/` only — keeps its 2.34% baseline
- * pristine. The `tests/` tree is type-checked via `tsconfig.json` `include`.
+ * jscpd duplication gate — which scans `src/` only — keeps its recorded
+ * baseline pristine (threshold in `.jscpd.json`). The `tests/` tree is
+ * type-checked via `tsconfig.json` `include`.
  *
  * The `obsidian` package is a runtime-only Obsidian API that has no Node
  * entry point — it resolves only inside the Obsidian app. Tests alias it to

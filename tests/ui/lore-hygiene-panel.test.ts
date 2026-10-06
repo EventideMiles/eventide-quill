@@ -402,4 +402,32 @@ describe('renderLoreHygieneTab', () => {
 
         noticeSpy.mockRestore();
     });
+
+    it('survives a scan that REJECTS — the failure is caught and logged, never unhandled', async () => {
+        // `refresh` is try/finally only, so without the catch inside
+        // `runExclusive` a failing scan escapes as an unhandledrejection
+        // (which Vitest surfaces as a test failure). The panel must repaint
+        // and release the in-flight guard instead.
+        const { vault } = makeVault({}, []);
+        (vault as unknown as { getFiles: () => never[] }).getFiles = () => {
+            throw new Error('vault index exploded');
+        };
+        const container = createDiv();
+        const onChanged = vi.fn();
+        renderLoreHygieneTab(container, makePlugin(vault), new Component(), onChanged);
+
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        findButton(container, 'Scan attachments')!.click();
+
+        // The finally block restored the button (guard released + repaint ran)…
+        await vi.waitFor(() => expect(findButton(container, 'Rescan attachments')?.disabled).toBe(false));
+        // …the rejection was routed to the catch, not left unhandled…
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Hygiene'), expect.any(Error));
+        // …and the panel survived the failed scan (the finally block completed:
+        // `onScanChanged` fires after renderResults in the same finally, so it
+        // only lands when the repaint did not throw).
+        expect(onChanged).toHaveBeenCalled();
+
+        warnSpy.mockRestore();
+    });
 });
