@@ -118,7 +118,7 @@ export function computeAiTellDensity(text: string): AiTellDensity {
 }
 
 // ----------------------------------------------------------------
-// Sentence-skeleton variety (relative-only observation)
+// Sentence-skeleton variety (length-normalized, relative-only)
 // ----------------------------------------------------------------
 
 /**
@@ -159,6 +159,24 @@ const SKELETON_DETERMINERS = new Set([
     'your'
 ]);
 
+/**
+ * Exhaustive enumeration of the opener classes `skeletonFirstWordClass` can
+ * return, and of the length buckets `skeletonLengthBucket` can return. The
+ * skeleton space size is DERIVED from these arrays (not hand-counted), so the
+ * enumerations and the constant cannot drift apart.
+ */
+const SKELETON_FIRST_WORD_CLASSES = ['pronoun', 'determiner', 'ly-adverb', 'verb-participle', 'other'] as const;
+const SKELETON_LENGTH_BUCKETS = ['short', 'medium', 'long'] as const;
+
+/**
+ * Distinct (opener class, length bucket) skeletons the classifier can emit:
+ * the product of the two exhaustive enumerations above. This is the
+ * normalization base for the skeleton entropy — see
+ * `computeSentenceSkeletonVariety`. Exported so tests can pin it to the
+ * enumerations.
+ */
+export const SKELETON_SPACE_SIZE = SKELETON_FIRST_WORD_CLASSES.length * SKELETON_LENGTH_BUCKETS.length;
+
 /** Abbreviation list for sentence splitting, matching the linter rules. */
 const SKELETON_ABBREVIATIONS = new RegExp(`\\b(${wordLists.abbreviations.join('|')})\\.$`, 'i');
 
@@ -167,7 +185,7 @@ const SKELETON_SHORT_WORDS = 8;
 const SKELETON_LONG_WORDS = 25;
 
 /** Classify a sentence's first word into a coarse opener class. */
-function skeletonFirstWordClass(firstWord: string): string {
+function skeletonFirstWordClass(firstWord: string): (typeof SKELETON_FIRST_WORD_CLASSES)[number] {
     const lower = firstWord.toLowerCase();
     if (SKELETON_PRONOUNS.has(lower)) return 'pronoun';
     if (SKELETON_DETERMINERS.has(lower)) return 'determiner';
@@ -177,30 +195,47 @@ function skeletonFirstWordClass(firstWord: string): string {
 }
 
 /** Bucket a sentence's word count as short / medium / long. */
-function skeletonLengthBucket(wordCount: number): string {
+function skeletonLengthBucket(wordCount: number): (typeof SKELETON_LENGTH_BUCKETS)[number] {
     if (wordCount < SKELETON_SHORT_WORDS) return 'short';
     if (wordCount <= SKELETON_LONG_WORDS) return 'medium';
     return 'long';
 }
 
 /**
- * Compute the distinct-skeleton ratio of `text` (0-1): the share of sentences
- * with a unique (first-word class, length bucket) pair. A RELATIVE measure
- * only — callers must compare chapters within the same manuscript and may not
- * attach absolute "AI-like" or "human-like" thresholds to the value.
- * Returns 0 for empty text.
+ * Compute the sentence-skeleton variety of `text` (0-1): the Shannon entropy
+ * of the (opener class, length bucket) distribution, normalized by log(K)
+ * where K = min(SKELETON_SPACE_SIZE, sentence count) is the number of
+ * observable skeletons. Uniform use of every available skeleton scores 1.0
+ * at any chapter length; hammering one skeleton scores near 0. The
+ * normalization makes the value INDEPENDENT of sentence count — the earlier
+ * distinct-skeleton ratio had ceiling min(SKELETON_SPACE_SIZE, N) / N and so
+ * mechanically depressed long chapters regardless of prose variety. A
+ * RELATIVE measure only — callers must compare chapters within the same
+ * manuscript and may not attach absolute "AI-like" or "human-like"
+ * thresholds to the value. Returns 0 for empty text and for single-sentence
+ * text (one skeleton carries no variety information, and log(1) gives no
+ * normalization base).
  */
 export function computeSentenceSkeletonVariety(text: string): number {
     const sentences = splitSentences(text, SKELETON_ABBREVIATIONS);
-    if (sentences.length === 0) return 0;
+    const sentenceCount = sentences.length;
+    if (sentenceCount < 2) return 0;
 
-    const skeletons = new Set<string>();
+    const counts = new Map<string, number>();
     for (const sentence of sentences) {
         const firstWord = sentence.text.match(/[A-Za-z]+/);
         const firstClass = firstWord ? skeletonFirstWordClass(firstWord[0]) : 'other';
         const words = sentence.text.split(/\s+/).filter(Boolean).length;
-        skeletons.add(`${firstClass}:${skeletonLengthBucket(words)}`);
+        const key = `${firstClass}:${skeletonLengthBucket(words)}`;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
     }
 
-    return round2(skeletons.size / sentences.length);
+    const observable = Math.min(SKELETON_SPACE_SIZE, sentenceCount);
+    let entropy = 0;
+    for (const count of counts.values()) {
+        const p = count / sentenceCount;
+        entropy -= p * Math.log(p);
+    }
+
+    return round2(entropy / Math.log(observable));
 }

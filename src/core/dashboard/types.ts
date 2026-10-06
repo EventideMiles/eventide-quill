@@ -135,7 +135,7 @@ export interface ChapterMetrics {
     ariScore: number;
     /** AI-tell density: weighted stylistic-oddity hits per 1,000 words (dialogue excluded). A heuristic signal, not authorship detection. */
     aiTellDensity: number;
-    /** Distinct sentence-skeleton ratio (0-1). Relative measure only — compare within the manuscript, never against absolute thresholds. */
+    /** Sentence-skeleton variety: length-normalized Shannon entropy of the sentence-opening distribution (0-1, independent of sentence count). Relative measure only — compare within the manuscript, never against absolute thresholds. */
     sentenceSkeletonVariety: number;
     /** Pacing flags aggregated from sections. */
     pacingFlags: PacingFlag[];

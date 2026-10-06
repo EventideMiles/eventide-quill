@@ -80,13 +80,46 @@ export function posAtOffset(text: string, offset: number): Position {
     };
 }
 
-/** Return true if the character at `offset` lies between double quotes. */
+/**
+ * Return true if the character at `offset` lies between dialogue quotes.
+ *
+ * Recognized quote characters: ASCII `"` plus typographic doubles `“`/`”` and
+ * typographic singles `‘`/`’` (writers using a smart-quote keyboard layout
+ * were previously given no dialogue exemption at all). ASCII `'` is
+ * deliberately NOT recognized — a straight apostrophe is indistinguishable
+ * from a straight single-quote delimiter and appears constantly as a
+ * contraction, so honoring it would corrupt the quote state of ordinary
+ * narration.
+ *
+ * Typographic quotes are directional, so they set state rather than toggle:
+ * `“`/`‘` open, `”` closes. The ambiguous `’` (dialogue closer OR
+ * contraction/possessive apostrophe — "don’t", "hero’s", "’em") is treated
+ * as an apostrophe — and left state-neutral — when followed by a word
+ * character, and as a closer otherwise. Tradeoff: single quotes nested
+ * inside double quotes are ignored rather than tracked, which errs toward
+ * MORE exemption — dialogue keeps its exemption and narration is only
+ * misread as dialogue in rarer constructions than the reverse would be.
+ */
 export function isInsideQuotes(text: string, offset: number): boolean {
-    let inQuotes = false;
+    let inDouble = false;
+    let inSingle = false;
     for (let i = 0; i < offset; i++) {
-        if (text[i] === '"') inQuotes = !inQuotes;
+        const ch = text[i];
+        if (ch === '"') {
+            inDouble = !inDouble;
+        } else if (ch === '“') {
+            inDouble = true;
+        } else if (ch === '”') {
+            inDouble = false;
+        } else if (ch === '‘') {
+            if (!inDouble) inSingle = true;
+        } else if (ch === '’') {
+            const next = text[i + 1];
+            if (next && /\w/.test(next)) continue; // contraction/possessive apostrophe, not a closer
+            inSingle = false;
+        }
     }
-    return inQuotes;
+    return inDouble || inSingle;
 }
 
 /** Return true if a dialogue tag immediately precedes the character at `offset`. */

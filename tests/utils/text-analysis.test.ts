@@ -107,6 +107,46 @@ describe('isInsideQuotes', () => {
         expect(isInsideQuotes('a"b"c', 2)).toBe(true);
         expect(isInsideQuotes('a"b"c', 4)).toBe(false);
     });
+
+    it('returns true inside typographic double quotes', () => {
+        const text = 'say “hello there” now';
+        expect(isInsideQuotes(text, 8)).toBe(true);
+        expect(isInsideQuotes(text, 19)).toBe(false);
+    });
+
+    it('returns true inside typographic single quotes', () => {
+        const text = 'say ‘hello there’ now';
+        expect(isInsideQuotes(text, 8)).toBe(true);
+        expect(isInsideQuotes(text, 19)).toBe(false);
+    });
+
+    it('keeps double-quote state through a contraction inside curly dialogue', () => {
+        const text = '“I don’t know,” she said';
+        // The ’ in "don’t" is an apostrophe (followed by a word char), so it
+        // must not close the dialogue; the ” after the comma does.
+        expect(isInsideQuotes(text, 9)).toBe(true);
+        expect(isInsideQuotes(text, 16)).toBe(false);
+    });
+
+    it('treats a contraction apostrophe as neither opener nor closer', () => {
+        // ’ followed by a word char: "don’t", "hero’s" — narration state
+        // must stay unchanged (outside quotes).
+        expect(isInsideQuotes('he said don’t twice', 14)).toBe(false);
+        expect(isInsideQuotes('the hero’s cloak', 12)).toBe(false);
+    });
+
+    it('closes typographic single quotes on a non-contraction ’', () => {
+        const text = '‘stop now’ he said';
+        expect(isInsideQuotes(text, 5)).toBe(true);
+        expect(isInsideQuotes(text, 10)).toBe(false);
+    });
+
+    it('ignores single quotes nested inside double quotes (errs toward exemption)', () => {
+        const text = '“He said ‘stop’ and left” afterward';
+        // The inner ‘…’ must not close the outer double-quoted dialogue.
+        expect(isInsideQuotes(text, 18)).toBe(true);
+        expect(isInsideQuotes(text, 29)).toBe(false);
+    });
 });
 
 describe('countSyllables', () => {

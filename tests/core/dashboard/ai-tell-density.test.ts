@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
     computeAiTellDensity,
     computeSentenceSkeletonVariety,
-    ORDINARY_WORD_WEIGHT
+    ORDINARY_WORD_WEIGHT,
+    SKELETON_SPACE_SIZE
 } from '../../../src/core/dashboard/ai-tell-density';
 import wordLists from '../../../src/core/linter/word-lists.json';
 
@@ -55,8 +56,28 @@ describe('computeAiTellDensity — dialogue exemption', () => {
         expect(byCategory.every((c) => c.count === 0)).toBe(true);
     });
 
+    it('excludes hits inside typographic (curly) double quotes', () => {
+        const text = '“The tapestry hung heavy and perhaps quietly,” he said.';
+        const { hitsPerKiloWords, byCategory } = computeAiTellDensity(text);
+        expect(hitsPerKiloWords).toBe(0);
+        expect(byCategory.every((c) => c.count === 0)).toBe(true);
+    });
+
+    it('excludes hits inside typographic (curly) single quotes', () => {
+        const text = '‘The tapestry hung heavy and perhaps quietly,’ she said.';
+        const { hitsPerKiloWords, byCategory } = computeAiTellDensity(text);
+        expect(hitsPerKiloWords).toBe(0);
+        expect(byCategory.every((c) => c.count === 0)).toBe(true);
+    });
+
     it('still counts hits outside the quotes of the same passage', () => {
         const text = '"Give me a moment," he said, and the silence settled over the room.';
+        const { byCategory } = computeAiTellDensity(text);
+        expect(byCategory.find((c) => c.category === 'ai-meta-cues')?.count).toBe(1);
+    });
+
+    it('counts narration hits after typographic dialogue closes', () => {
+        const text = '“Give me a moment,” he said, and the silence settled over the room.';
         const { byCategory } = computeAiTellDensity(text);
         expect(byCategory.find((c) => c.category === 'ai-meta-cues')?.count).toBe(1);
     });
@@ -115,9 +136,10 @@ describe('computeAiTellDensity — single source of truth', () => {
 });
 
 describe('computeSentenceSkeletonVariety', () => {
-    it('returns a low ratio when every sentence shares one skeleton', () => {
-        // All four sentences are pronoun-opening and short.
-        expect(computeSentenceSkeletonVariety('She ran. She fell. She got up. She screamed.')).toBe(0.25);
+    it('returns 0 when every sentence shares one skeleton', () => {
+        // All four sentences are pronoun-opening and short: one skeleton used
+        // out of the whole observable space carries no variety information.
+        expect(computeSentenceSkeletonVariety('She ran. She fell. She got up. She screamed.')).toBe(0);
     });
 
     it('returns 1 when every sentence has a distinct skeleton', () => {
@@ -129,11 +151,105 @@ describe('computeSentenceSkeletonVariety', () => {
         expect(computeSentenceSkeletonVariety('')).toBe(0);
     });
 
+    it('returns 0 for a single sentence (no variety signal, no log(1) base)', () => {
+        expect(computeSentenceSkeletonVariety('She ran fast and far.')).toBe(0);
+    });
+
     it('stays within 0-1 for ordinary prose', () => {
         const variety = computeSentenceSkeletonVariety(
             'The morning was cold. A bird called from the fence post. He pulled his coat tighter and kept walking.'
         );
         expect(variety).toBeGreaterThan(0);
         expect(variety).toBeLessThanOrEqual(1);
+    });
+});
+
+describe('computeSentenceSkeletonVariety — normalized entropy semantics', () => {
+    /** One opener word per skeleton first-word class. */
+    const CLASS_OPENERS: Record<string, string> = {
+        pronoun: 'She',
+        determiner: 'The',
+        'ly-adverb': 'Quietly,',
+        'verb-participle': 'Running,',
+        other: 'Water'
+    };
+    const CLASSES = Object.keys(CLASS_OPENERS);
+    const BUCKETS = ['short', 'medium', 'long'] as const;
+
+    /** Build one sentence with the given opener class and length bucket. */
+    function skeletonSentence(firstClass: string, bucket: (typeof BUCKETS)[number]): string {
+        const targetWords = bucket === 'short' ? 4 : bucket === 'medium' ? 12 : 30;
+        const words = [CLASS_OPENERS[firstClass]!];
+        for (let i = 1; i < targetWords; i++) words.push(`w${firstClass}${bucket}n${i}`);
+        return `${words.join(' ')}.`;
+    }
+
+    /** Every (class, bucket) combination exactly once — one sentence per skeleton key. */
+    function allSkeletonsOnce(): string[] {
+        const sentences: string[] = [];
+        for (const cls of CLASSES) {
+            for (const bucket of BUCKETS) sentences.push(skeletonSentence(cls, bucket));
+        }
+        return sentences;
+    }
+
+    it('pins SKELETON_SPACE_SIZE to the enumerated 5 opener classes × 3 length buckets', () => {
+        expect(SKELETON_SPACE_SIZE).toBe(15);
+    });
+
+    it('treats every class × bucket combination as a distinct skeleton (max key count)', () => {
+        // One sentence per combination: all SKELETON_SPACE_SIZE keys present
+        // and uniform. If any two combinations collided into one key, the
+        // entropy would fall strictly below 1.
+        expect(computeSentenceSkeletonVariety(allSkeletonsOnce().join(' '))).toBe(1);
+    });
+
+    it('is length-independent: identical distributions at 15 vs 200 sentences score ≈ equal', () => {
+        const base = allSkeletonsOnce();
+        const shortChapter = base.join(' ');
+        // 13 full cycles (195 sentences) + the first 5 again = 200 sentences;
+        // every key hit 13 times, five keys 14 — near-uniform sampling.
+        const longChapter = Array.from({ length: 13 }, () => base)
+            .flat()
+            .concat(base.slice(0, 5))
+            .join(' ');
+
+        const shortScore = computeSentenceSkeletonVariety(shortChapter);
+        const longScore = computeSentenceSkeletonVariety(longChapter);
+        expect(Math.abs(longScore - shortScore)).toBeLessThanOrEqual(0.02);
+        expect(shortScore).toBeGreaterThan(0.95);
+        expect(longScore).toBeGreaterThan(0.95);
+    });
+
+    it('scores ≈ 1.0 for a long chapter uniform over all skeletons', () => {
+        const base = allSkeletonsOnce();
+        const text = Array.from({ length: 13 }, () => base)
+            .flat()
+            .concat(base.slice(0, 5))
+            .join(' ');
+        expect(computeSentenceSkeletonVariety(text)).toBeGreaterThanOrEqual(0.98);
+    });
+
+    it('scores well below 1.0 for a long chapter hammering two skeletons', () => {
+        // 200 sentences alternating two keys: H = log 2, K = 15 → ≈ 0.26.
+        const text = Array.from({ length: 100 }, () => 'She ran fast. Water pooled.').join(' ');
+        expect(computeSentenceSkeletonVariety(text)).toBeLessThan(0.5);
+    });
+
+    it('no longer caps long chapters: a 200-sentence high-variety chapter outscores low-variety ones at any length', () => {
+        const base = allSkeletonsOnce();
+        const longHighVariety = Array.from({ length: 13 }, () => base)
+            .flat()
+            .concat(base.slice(0, 5))
+            .join(' ');
+        const longLowVariety = Array.from({ length: 100 }, () => 'She ran fast. Water pooled.').join(' ');
+        // The old ratio inverted exactly this comparison: its ceiling
+        // min(15, N)/N made the LONG high-variety chapter (0.075) score below
+        // the SHORT low-variety chapter (2/10 = 0.2).
+        const shortLowVariety = Array.from({ length: 5 }, () => 'She ran fast. Water pooled.').join(' ');
+
+        const high = computeSentenceSkeletonVariety(longHighVariety);
+        expect(high).toBeGreaterThan(computeSentenceSkeletonVariety(longLowVariety));
+        expect(high).toBeGreaterThan(computeSentenceSkeletonVariety(shortLowVariety));
     });
 });

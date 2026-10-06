@@ -241,7 +241,14 @@ describe('checkAiContrast', () => {
             text: 'It was not so much as a whisper.',
             expected: 0
         },
-        { name: 'dialogue exempt', text: '"It was less a homecoming than a surrender," she said.', expected: 0 }
+        { name: 'dialogue exempt', text: '"It was less a homecoming than a surrender," she said.', expected: 0 },
+        { name: 'curly-quote dialogue exempt', text: '“It was less a homecoming than a surrender,” she said.', expected: 0 },
+        { name: 'curly-single-quote dialogue exempt', text: '‘Not so much anger as exhaustion,’ she said.', expected: 0 },
+        {
+            name: 'narration after curly dialogue still flagged',
+            text: '“Less a plan than a hope,” she said. It was not so much bold as reckless.',
+            expected: 1
+        }
     ])('ai-contrast: $name', ({ text, expected }) => {
         const results = checkAiContrast(text);
         expect(results).toHaveLength(expected);
@@ -275,7 +282,14 @@ describe('checkAiMetaCues', () => {
             text: 'The moment passed quietly; silence filled the room.',
             expected: 0
         },
-        { name: 'dialogue exempt', text: '"In that moment I understood everything," she said.', expected: 0 }
+        { name: 'dialogue exempt', text: '"In that moment I understood everything," she said.', expected: 0 },
+        { name: 'curly-quote dialogue exempt', text: '“In that moment I understood everything,” she said.', expected: 0 },
+        { name: 'curly-single-quote dialogue exempt', text: '‘She realized the window stood open,’ he said.', expected: 0 },
+        {
+            name: 'narration after curly dialogue still flagged',
+            text: '“In that moment I understood everything,” she said, and in that moment the door swung open.',
+            expected: 1
+        }
     ])('ai-meta-cues: $name', ({ text, expected }) => {
         const results = checkAiMetaCues(text);
         expect(results).toHaveLength(expected);
@@ -299,6 +313,11 @@ describe('checkAiFillerAdverbs', () => {
         const results = checkAiFillerAdverbs('She quietly closed the door and deliberately turned away.');
         expect(results.length).toBeGreaterThanOrEqual(1);
         expect(results[0]!.rule).toBe('ai-filler-adverbs');
+    });
+
+    it('does not flag filler adverbs inside typographic dialogue quotes', () => {
+        expect(checkAiFillerAdverbs('“She quietly closed the door,” he said.')).toEqual([]);
+        expect(checkAiFillerAdverbs('‘He gently set the cup down,’ she said.')).toEqual([]);
     });
 });
 

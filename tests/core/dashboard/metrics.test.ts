@@ -163,8 +163,11 @@ describe('ai-tell density + sentence-skeleton variety wiring', () => {
     }
 
     it('chapterMetrics reports aiTellDensity and sentenceSkeletonVariety', () => {
-        // 100 words, one tell hit → 10 per 1,000 words.
-        const text = `${filler(99)} tapestry.`;
+        // 100 words across two sentences of different length buckets (long +
+        // short), one tell hit → 10 per 1,000 words. Two sentences with
+        // distinct skeletons keep the variety score above 0 (a single
+        // sentence carries no variety signal by definition).
+        const text = `${filler(94)} tapestry. ${filler(5)}`;
         const chapters = listChaptersInFile(text, 'test.md', 'test', false);
         const metrics = chapterMetrics(chapters[0]!);
         expect(metrics.aiTellDensity).toBe(10);

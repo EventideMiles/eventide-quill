@@ -346,9 +346,10 @@ function renderAiTellDensity(container: HTMLElement, metrics: ManuscriptMetrics)
 
 /**
  * Build the sentence-opening-variety footnote: which chapter has the lowest
- * distinct-skeleton ratio within this manuscript. Relative-only — needs at
- * least two chapters with differing variety to say anything, so single-
- * chapter manuscripts and ties render no line.
+ * sentence-opening variety (a length-normalized skeleton entropy, 0-1) within
+ * this manuscript. Relative-only — needs at least two chapters with differing
+ * variety to say anything, so single-chapter manuscripts and ties render no
+ * line.
  */
 function skeletonVarietyNote(metrics: ManuscriptMetrics): string | null {
     const candidates = metrics.chapters.filter((c) => c.sentenceCount > 0);
