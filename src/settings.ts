@@ -199,9 +199,20 @@ export interface EventideQuillSettings {
     lorebookFolderTypes: Record<string, LoreEntryType>;
     coWriterLoreContext: boolean;
     reviewLoreContext: boolean;
-    /** Whether the co-writer may use AI tool-calling. Default: on. */
+    /**
+     * Master gate for all 14 internal vault tools: manuscript_mentions,
+     * lore_siblings, vault_lookup, grep_notes, measure_folder,
+     * calculate_file_sizes, edit_note, delete_paragraph, add_world_rule,
+     * insert_note, append_to_note, revise_edit, refresh_dashboard,
+     * get_lore_image. Default: on.
+     */
     coWriterToolsEnabled: boolean;
-    /** Master gate for network tools (fetch_url, fandom_lookup, wikipedia_lookup). Default: on. */
+    /**
+     * Master gate for network research tools (fetch_url, fandom_lookup,
+     * fandom_page, wikipedia_lookup, wikipedia_page). Cached Fandom pages
+     * still answer with this off (consent is at sync time); `fandom_image` /
+     * `wikipedia_image` additionally need `lorebookImageTools`. Default: on.
+     */
     lorebookNetworkTools: boolean;
     /** Fandom wiki subdomains the model may query (e.g., ['starwars', 'memory-alpha']). */
     lorebookFandomWikis: string[];
@@ -1380,7 +1391,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
         new Setting(content)
             .setName('Co-writer tools')
-            .setDesc('Master switch for all co-writer tool-calling. Turning it off disables every tool above.')
+            .setDesc(
+                'Master switch for all 14 internal vault tools: manuscript_mentions, lore_siblings, vault_lookup, ' +
+                    'grep_notes, measure_folder, calculate_file_sizes, edit_note, delete_paragraph, add_world_rule, ' +
+                    'insert_note, append_to_note, revise_edit, refresh_dashboard, get_lore_image. ' +
+                    'Turning it off disables every tool.'
+            )
             .addToggle((toggle) =>
                 toggle.setValue(this.plugin.settings.coWriterToolsEnabled).onChange(async (value) => {
                     this.plugin.settings.coWriterToolsEnabled = value;
@@ -1391,7 +1407,11 @@ export class EventideQuillSettingTab extends PluginSettingTab {
 
         new Setting(content)
             .setName('Network research tools')
-            .setDesc('Sends requests to external websites when the co-writer researches references.')
+            .setDesc(
+                'Sends requests to external websites when the co-writer researches references — gates fetch_url, ' +
+                    'fandom_lookup, fandom_page, wikipedia_lookup, and wikipedia_page. Cached Fandom pages still ' +
+                    'answer with this off.'
+            )
             .addToggle((toggle) =>
                 toggle.setValue(this.plugin.settings.lorebookNetworkTools).onChange(async (value) => {
                     this.plugin.settings.lorebookNetworkTools = value;
@@ -1753,12 +1773,12 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     },
                     {
                         name: 'Co-writer tool use',
-                        desc: 'Let the co-writer (discuss, coach, and lorebook modes) call tools (manuscript mentions, lore siblings, vault lookup) via the model’s native tool-calling API so it can look up details mid-conversation. Turn off if your model doesn’t support tool calling or to avoid the extra turn consumption. Default: on.',
+                        desc: 'Let the co-writer (discuss, coach, and lorebook modes) call the 14 internal vault tools (manuscript_mentions, lore_siblings, vault_lookup, grep_notes, measure_folder, calculate_file_sizes, edit_note, delete_paragraph, add_world_rule, insert_note, append_to_note, revise_edit, refresh_dashboard, get_lore_image) via the model’s native tool-calling API so it can look up details mid-conversation. Turn off if your model doesn’t support tool calling or to avoid the extra turn consumption. Default: on.',
                         control: { type: 'toggle', key: 'coWriterToolsEnabled' }
                     },
                     {
                         name: 'Network tools',
-                        desc: 'Allow the co-writer to call network tools (fetch_url, fandom_lookup, wikipedia_lookup). These send requests to external sites — disable only if you want to restrict the AI from researching canon, references, or web pages. Default: on.',
+                        desc: 'Allow the co-writer to call network tools (fetch_url, fandom_lookup, fandom_page, wikipedia_lookup, wikipedia_page). These send requests to external sites — disable only if you want to restrict the AI from researching canon, references, or web pages. Fandom pages already in the local cache still answer with this off. Default: on.',
                         control: { type: 'toggle', key: 'lorebookNetworkTools' }
                     },
                     {

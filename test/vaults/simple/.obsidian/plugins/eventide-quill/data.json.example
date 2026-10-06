@@ -93,6 +93,8 @@
     "dashboardAutoSnapshotOnSave": false,
     "dashboardMaxSnapshots": 100,
     "readabilityFormula": "reweighted-flesch",
+    "writingDailyGoal": 500,
+    "writingSessionIdleMinutes": 20,
     "slashCommands": [],
     "lorebookFolders": ["lore/characters", "lore/locations", "lore/plot"],
     "lorebookFolderTypes": {
@@ -132,5 +134,6 @@
     "memoriesFullInject": false,
     "memoriesMaxIndexEntries": 20,
     "memoriesRecallMaxEntries": 10,
-    "memoriesMaxPerFile": 100
+    "memoriesMaxPerFile": 100,
+    "memoriesAdvisoryShown": false
 }
