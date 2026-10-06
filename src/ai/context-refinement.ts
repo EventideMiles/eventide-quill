@@ -59,6 +59,21 @@ const MIN_REFINABLE_CHARS = 300;
 const REFINED_DRAFT_ARG_PREFIX = '[Draft content (~';
 
 /**
+ * Exact shape of the outcome marker this engine writes into a `propose_entry`
+ * tool result — `[Entry "<name>" (<type>): ~<N> tokens of draft content were
+ * refined out of context to keep it lean. The writer ACCEPTED|DISCARDED …]` —
+ * anchored to the start of the content, which both outcome paths REPLACE
+ * wholesale. Matching the full marker shape (not a loose "The writer
+ * ACCEPTED" substring) keeps content that merely contains that phrase — e.g.
+ * model-drafted prose about a character accepting something — from tripping
+ * the idempotency skip. The budget marker's differing tail ("refined out to
+ * free context budget") deliberately does NOT match, so a budget-refined
+ * result still receives its real outcome marker.
+ */
+const OUTCOME_MARKER_RE =
+    /^\[Entry ".*" \([^)]*\): ~\d+ tokens of draft content were refined out of context to keep it lean\. The writer (?:ACCEPTED|DISCARDED)\b/;
+
+/**
  * Parse a tool call's `arguments` (a JSON string per OpenAI's convention) into
  * an object. Returns `null` for absent/empty/malformed arguments so callers can
  * skip the call rather than guess.
@@ -255,7 +270,8 @@ export function refineProposeEntryOutcome(
     // calls by hand and rewrite ONLY the tool result — the args are already
     // compressed and must stay that way. Results still showing the budget
     // marker's "review status is unchanged" line get the durable outcome
-    // marker; results already carrying the outcome phrase are skipped, making
+    // marker; results already carrying the engine's outcome marker (matched
+    // by its exact shape, see {@link OUTCOME_MARKER_RE}) are skipped, making
     // repeated calls no-ops.
     for (let i = 0; i < messages.length; i++) {
         const msg = messages[i]!;
@@ -272,9 +288,7 @@ export function refineProposeEntryOutcome(
             if (n !== needle) continue;
             const result = findToolResult(messages, call.id);
             if (!result || typeof result.content !== 'string') continue;
-            if (result.content.includes('The writer ACCEPTED') || result.content.includes('The writer DISCARDED')) {
-                continue;
-            }
+            if (OUTCOME_MARKER_RE.test(result.content)) continue;
             const typeLabel = entryTypeLabel(args);
             // The compressed arg preserves the original token estimate in its
             // marker ("[Draft content (~N tokens) …]") — reuse it so the

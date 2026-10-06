@@ -348,8 +348,11 @@ describe('checkAiHedging', () => {
 
 describe('checkAiWrapUps', () => {
     it('flags concluding phrases', () => {
+        // Behavior delta (intentional): wordListPattern's boundaries are now
+        // edge-aware, so the punctuation-ending entry "ultimately," flags
+        // alongside "in conclusion" — \b silently skipped it before.
         const results = checkAiWrapUps('Ultimately, the hero prevailed. In conclusion, it was a good day.');
-        expect(results.length).toBeGreaterThanOrEqual(1);
+        expect(results.length).toBe(2);
         expect(results[0]!.rule).toBe('ai-wrap-ups');
     });
 });

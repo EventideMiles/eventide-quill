@@ -342,18 +342,30 @@ describe('wordListPattern', () => {
     it('matches a metachar-bearing list entry LITERALLY (the escaping contract)', () => {
         // A hypothetical word-list entry containing `(` must match as text —
         // not be interpreted as a group (which would throw or change meaning).
-        // The entry keeps word characters at both ends so the shared
-        // word-boundary wrap (pre-existing semantics at every call site)
-        // still applies.
         const re = wordListPattern(['wait (for it) now', 'plain phrase']);
         expect('she said wait (for it) now and left'.match(re)).toEqual(['wait (for it) now']);
         expect('a plain phrase here'.match(re)).toEqual(['plain phrase']);
     });
 
-    it('builds a case-insensitive word-bounded alternation by default', () => {
+    it('builds a case-insensitive edge-bounded alternation by default', () => {
         const re = wordListPattern(['Delve']);
         expect('we delve deeper'.match(re)).toEqual(['delve']);
-        expect('delving deeper'.match(re)).toBeNull(); // \b guard: no suffix match
+        expect('delving deeper'.match(re)).toBeNull(); // edge guard: no suffix match
+        expect('the antidelve crowd'.match(re)).toBeNull(); // edge guard: no prefix match
+    });
+
+    it('matches a punctuation-ending entry before a space and at end-of-text', () => {
+        // \b could never fire after a trailing non-word char, which made
+        // entries like the wrap-up list's "ultimately," silently unmatchable.
+        // The edge-aware boundaries match it like any word-edged entry.
+        const re = wordListPattern(['ultimately,']);
+        expect('she paused ultimately, and left'.match(re)).toEqual(['ultimately,']);
+        expect('it ended ultimately,'.match(re)).toEqual(['ultimately,']);
+    });
+
+    it('does not match a punctuation-ending entry when a word character follows', () => {
+        const re = wordListPattern(['ultimately,']);
+        expect('ultimately,roughly speaking'.match(re)).toBeNull();
     });
 
     it('keeps every entry matchable regardless of order', () => {

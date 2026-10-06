@@ -460,6 +460,35 @@ describe('refineProposeEntryOutcome — budget-refined draft', () => {
         expect(resultAfterFirst.split('The writer ACCEPTED')).toHaveLength(2);
     });
 
+    it('still writes the outcome marker when the result merely CONTAINS the outcome phrase (no false skip)', () => {
+        // A result whose text carries "The writer ACCEPTED" inside other
+        // content (e.g. echoing a draft about a character accepting
+        // something) is NOT the engine's marker — the pass must not treat it
+        // as already-refined, or the real move-on signal never lands.
+        const msgs = budgetRefinedTurn('Sarah Connor');
+        msgs[1]!.content =
+            'Draft received: "Sarah Connor" (character). ' +
+            'The writer ACCEPTED a similar proposal last session — check before re-drafting.';
+        expect(refineProposeEntryOutcome(msgs, 'Sarah Connor', 'accepted', 'Lore/Sarah Connor.md')).toBe(true);
+        expect(msgs[1]!.content).toContain('COMPLETE');
+        expect(msgs[1]!.content).toContain('saved it to Lore/Sarah Connor.md');
+        expect(msgs[1]!.content).not.toContain('review status is unchanged');
+    });
+
+    it('treats a result carrying the exact outcome-marker shape as an idempotent no-op', () => {
+        // Pins the marker shape the second pass matches: anchored prefix,
+        // entry/type/token fields, the "keep it lean" tail, and the outcome
+        // word — the idempotency contract the regex encodes.
+        const msgs = budgetRefinedTurn('Sarah Connor');
+        expect(refineProposeEntryOutcome(msgs, 'Sarah Connor', 'accepted', 'Lore/Sarah Connor.md')).toBe(true);
+        const marked = msgs[1]!.content;
+        expect(marked).toMatch(
+            /^\[Entry "Sarah Connor" \(untyped\): ~\d+ tokens of draft content were refined out of context to keep it lean\. The writer ACCEPTED/
+        );
+        expect(refineProposeEntryOutcome(msgs, 'Sarah Connor', 'accepted', 'Lore/Sarah Connor.md')).toBe(false);
+        expect(msgs[1]!.content).toBe(marked);
+    });
+
     it('does not touch other drafts in the same turn (name filter still applies)', () => {
         // Two budget-refined drafts; resolving one must leave the sibling's
         // "review status is unchanged" result untouched.

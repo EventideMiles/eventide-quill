@@ -1282,7 +1282,23 @@ export class CoWriterSession {
         if (discussInternalMsg) {
             injectedContext.push(discussInternalMsg);
         }
+        // Capture the live signal BEFORE the memory-index await below (same
+        // race as the lorebook coach): if Stop fires while buildMemoryMessage
+        // is pending, cancelGeneration nulls this.abortController, so a field
+        // read at the compaction call would be undefined — an un-signaled
+        // compaction that replaces history on a cancelled turn.
+        const signal = this.abortController?.signal;
         const discussMemoryMsg = await buildMemoryMessage(plugin);
+        // Guard against an abort race: Stop during the memory await above (or
+        // during the earlier turn-prep awaits) aborts the captured signal —
+        // bail before compaction can run (same cleanup as the post-image
+        // guard below).
+        if (!signal || signal.aborted) {
+            this.unlockEditor();
+            this.optionsLoading = false;
+            this.onOptionsLoading?.(false);
+            return;
+        }
         if (discussMemoryMsg) {
             injectedContext.push(discussMemoryMsg);
         }
@@ -1393,8 +1409,11 @@ export class CoWriterSession {
         if (needsCompaction) {
             const sentenceCount = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
             try {
+                // Captured signal (above), not a field read: the controller
+                // this turn started with is the one whose abort must cancel
+                // the compaction.
                 const result = await compactConversation(chat.provider, this.discussCurrentMessages, sentenceCount, {
-                    signal: this.abortController?.signal
+                    signal
                 });
                 if (result) {
                     this.discussCurrentMessages = result.messages;
@@ -2398,9 +2417,24 @@ export class CoWriterSession {
         const toolDefs = registry?.toToolDefinitions();
         this.toolTokenOverhead = registry?.estimateTokens() ?? 0;
         const maxTokens = chat.provider.config.maxContextTokens;
+        // Capture the live signal BEFORE the memory-index await below: if Stop
+        // fires while buildMemoryMessage is pending, cancelGeneration nulls
+        // this.abortController, so a field read at the compaction call would
+        // be undefined — an un-signaled compaction that replaces history on a
+        // cancelled turn (the post-compaction guard below would bail, but only
+        // after the history was already replaced).
+        const signal = this.abortController?.signal;
         // Pre-fetch the memory message once: the token-estimate closure
         // below (sync) and the loreInjectedContext push (below) both need it.
         const loreMemoryMsg = await buildMemoryMessage(plugin);
+        // Guard against an abort race: Stop during the memory await above
+        // aborts the captured signal — bail before compaction can run (same
+        // cleanup as the pre-loop guard above).
+        if (!signal || signal.aborted) {
+            this.optionsLoading = false;
+            this.onOptionsLoading?.(false);
+            return;
+        }
         const ctx: ToolContext = {
             plugin,
             // Mirror the per-round prefix actually sent to the model (system +
@@ -2454,8 +2488,11 @@ export class CoWriterSession {
         if (needsCompaction) {
             const sentenceCount = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
             try {
+                // Captured signal (above), not a field read: the controller
+                // this turn started with is the one whose abort must cancel
+                // the compaction.
                 const result = await compactConversation(chat.provider, this.loreCoachMessages, sentenceCount, {
-                    signal: this.abortController?.signal
+                    signal
                 });
                 if (result) {
                     this.loreCoachMessages = result.messages;

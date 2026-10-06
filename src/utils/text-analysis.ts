@@ -464,13 +464,21 @@ export function escapeRegExp(phrase: string): string {
 }
 
 /**
- * Build a word-boundary alternation RegExp from a list of literal phrases,
- * escaping each entry first (see {@link escapeRegExp}). Single source for
- * every pattern assembled from the linter's word lists (`aiClichePhrases`,
+ * Build an edge-aware word-boundary alternation RegExp from a list of literal
+ * phrases, escaping each entry first (see {@link escapeRegExp}). Single source
+ * for every pattern assembled from the linter's word lists (`aiClichePhrases`,
  * `aiMetaCues`, `aiHedging`, …) so no call site can forget the escaping.
  * The default `gi` flags match the linter/detector convention: global scan,
  * case-insensitive.
+ *
+ * The boundaries are `(?<!\w)` / `(?!\w)` rather than `\b`: `\b` after (or
+ * before) a non-word character can never fire, which made entries that END in
+ * punctuation (e.g. the wrap-up list's "ultimately,") silently unmatchable.
+ * Plain word-edged entries behave exactly as `\b` did — no match when glued
+ * to a word character on either edge. A punctuation-ending entry matches
+ * before whitespace or end-of-text but still not when a word character
+ * follows the punctuation ("ultimately,roughly" does not match).
  */
 export function wordListPattern(phrases: readonly string[], flags = 'gi'): RegExp {
-    return new RegExp(`\\b(${phrases.map(escapeRegExp).join('|')})\\b`, flags);
+    return new RegExp(`(?<!\\w)(${phrases.map(escapeRegExp).join('|')})(?!\\w)`, flags);
 }
