@@ -52,6 +52,38 @@ function makeThrowingProvider(error: unknown): AiProvider {
     };
 }
 
+/**
+ * Build a mock provider that mimics the streaming layers' abort shape: it
+ * yields partial text, aborts the CALLER'S CONTROLLER mid-stream, then ends the
+ * generator gracefully (SSE/NDJSON parsers close without throwing on abort,
+ * and the mobile buffered path resolves early) — so the consumer sees a
+ * RESOLVED truncated summary, not a rejection.
+ */
+function makeAbortMidStreamProvider(controller: AbortController): AiProvider {
+    return {
+        id: 'test',
+        name: 'Test Provider',
+        config: {} as AiProvider['config'],
+        async *chatCompletion() {
+            yield { text: 'partial truncat', done: false };
+            controller.abort();
+            yield { text: 'ed tail', done: true };
+        },
+        async embed() {
+            return { embeddings: [], model: 'test' };
+        },
+        async listModels() {
+            return [];
+        },
+        async testConnection() {
+            return { ok: true };
+        },
+        async testEmbeddings() {
+            return { ok: true };
+        }
+    };
+}
+
 /** Build a message array with a leading system prompt plus the given turns. */
 function makeMessages(turns: Array<{ role: 'user' | 'assistant'; content: string }>): ChatMessage[] {
     return [{ role: 'system', content: 'System prompt' }, ...turns];
@@ -218,6 +250,53 @@ describe('compactConversation', () => {
         await expect(compactConversation(provider, messages, 3)).rejects.toMatchObject({
             name: 'AbortError'
         });
+    });
+
+    it('rejects when the signal aborts MID-summarize (a graceful stream end must not pass as a summary)', async () => {
+        // The streaming layers end their generators gracefully on abort, so the
+        // summarize RESOLVES with whatever truncated text streamed before the
+        // cancel. The aborted-signal check must turn that into a rejection —
+        // never a CompactResult folding history into a truncated summary.
+        const controller = new AbortController();
+        const provider = makeAbortMidStreamProvider(controller);
+        const messages = makeMessages([
+            { role: 'user', content: 'q1' },
+            { role: 'assistant', content: 'a1' },
+            { role: 'user', content: 'q2' },
+            { role: 'assistant', content: 'a2' }
+        ]);
+        await expect(compactConversation(provider, messages, 3, { signal: controller.signal })).rejects.toMatchObject({
+            name: 'AbortError'
+        });
+    });
+
+    it('rejects when the signal is already aborted before the call', async () => {
+        const provider = makeMockProvider('summary');
+        const controller = new AbortController();
+        controller.abort();
+        const messages = makeMessages([
+            { role: 'user', content: 'q1' },
+            { role: 'assistant', content: 'a1' },
+            { role: 'user', content: 'q2' },
+            { role: 'assistant', content: 'a2' }
+        ]);
+        await expect(compactConversation(provider, messages, 3, { signal: controller.signal })).rejects.toMatchObject({
+            name: 'AbortError'
+        });
+    });
+
+    it('succeeds normally when a live (non-aborted) signal is supplied', async () => {
+        const provider = makeMockProvider('Clean summary');
+        const controller = new AbortController();
+        const messages = makeMessages([
+            { role: 'user', content: 'q1' },
+            { role: 'assistant', content: 'a1' },
+            { role: 'user', content: 'q2' },
+            { role: 'assistant', content: 'a2' }
+        ]);
+        const result = await compactConversation(provider, messages, 3, { signal: controller.signal });
+        expect(result).not.toBeNull();
+        expect(result!.summary).toBe('Clean summary');
     });
 
     it('keeps tool rounds atomic when dropping old turns', async () => {

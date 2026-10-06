@@ -143,6 +143,15 @@ export async function compactConversation(
         console.warn('Quill: Compaction summarization failed; applying deterministic fallback.', err);
         return buildFallbackResult(messages);
     }
+    // The streaming layers end their generators GRACEFULLY on abort (the SSE/
+    // NDJSON parsers close without throwing, and on mobile the buffered
+    // requestUrl path simply resolves early), so a cancelled summarize can
+    // RESOLVE with whatever truncated text arrived before the cancel. Accepting
+    // it would permanently fold history into a truncated summary, so a set
+    // signal must propagate as an abort — never fall back, never succeed.
+    if (options?.signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+    }
     if (!summary) return buildFallbackResult(messages);
 
     return {
