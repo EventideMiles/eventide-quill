@@ -87,15 +87,16 @@ describe('getReviewDiscussSystemPrompt', () => {
         }
     });
 
-    it('advertises propose_entry only on the engine branches that run with it registered', () => {
-        // Path A (editorial/critical/manuscript) adds propose_entry to the tool
-        // registry (reviewEngine !== null in co-writer.ts) — the prompt may
-        // advertise it. Path B (generic) never registers it: the prompt must
-        // NOT mention it, or the model calls a tool that isn't there.
-        for (const engine of ['editorial', 'critical', 'manuscript'] as const) {
+    it('advertises propose_entry on every review-discuss branch', () => {
+        // propose_entry is registered for ALL review-discuss paths: co-writer.ts
+        // adds it (plus attach_lore_image, gated by loreEntryImageAttachments)
+        // whenever reviewEngine !== null — which includes 'generic', because
+        // Path B sets reviewEngine = 'generic' on picker entry (quill-sidebar.ts).
+        // Re-derive this from the registration site (co-writer.ts ~1331), not
+        // from this comment, before changing either side.
+        for (const engine of ['editorial', 'critical', 'manuscript', 'generic'] as const) {
             expect(getReviewDiscussSystemPrompt(engine)).toContain('propose_entry');
         }
-        expect(getReviewDiscussSystemPrompt('generic')).not.toContain('propose_entry');
     });
 
     it('varies the engine label in the opening line', () => {
