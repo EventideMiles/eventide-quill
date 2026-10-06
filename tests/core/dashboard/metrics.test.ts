@@ -5,7 +5,8 @@ import {
     pacingAnalysis,
     listChaptersInFile,
     chapterMetrics,
-    characterAppearances
+    characterAppearances,
+    manuscriptMetrics
 } from '../../../src/core/dashboard/metrics';
 import type { ExtractedEntity } from '../../../src/core/context-engine/types';
 
@@ -152,6 +153,59 @@ describe('chapterMetrics', () => {
         const chapters = listChaptersInFile(text, 'test.md', 'test', false);
         const metrics = chapterMetrics(chapters[0]!);
         expect(metrics.sections.length).toBeGreaterThanOrEqual(2);
+    });
+});
+
+describe('ai-tell density + sentence-skeleton variety wiring', () => {
+    /** N unique filler words that collide with no tell list. */
+    function filler(n: number): string {
+        return Array.from({ length: n }, (_, i) => `w${i}`).join(' ');
+    }
+
+    it('chapterMetrics reports aiTellDensity and sentenceSkeletonVariety', () => {
+        // 100 words across two sentences of different length buckets (long +
+        // short), one tell hit → 10 per 1,000 words. Two sentences with
+        // distinct skeletons keep the variety score above 0 (a single
+        // sentence carries no variety signal by definition).
+        const text = `${filler(94)} tapestry. ${filler(5)}`;
+        const chapters = listChaptersInFile(text, 'test.md', 'test', false);
+        const metrics = chapterMetrics(chapters[0]!);
+        expect(metrics.aiTellDensity).toBe(10);
+        expect(metrics.sentenceSkeletonVariety).toBeGreaterThan(0);
+        expect(metrics.sentenceSkeletonVariety).toBeLessThanOrEqual(1);
+        // The per-section breakdown carries the same field.
+        for (const section of metrics.sections) {
+            expect(section.aiTellDensity).toBeGreaterThanOrEqual(0);
+        }
+    });
+
+    it('manuscriptMetrics aggregates density as a word-weighted mean, not a rate average', () => {
+        // Chapter 1: 100 words with 1 hit → 10/1k. Chapter 2: 100 clean words → 0.
+        // Word-weighted mean = (10*100 + 0*100) / 200 = 5 (a plain rate average would also be 5 here,
+        // so weight the chapters unevenly instead: 100 words vs 300 words → (10*100 + 0*300) / 400 = 2.5).
+        const ch1 = listChaptersInFile(`${filler(99)} tapestry.`, 'ch1.md', 'ch1', false);
+        const ch2 = listChaptersInFile(filler(300), 'ch2.md', 'ch2', false);
+        const metrics = manuscriptMetrics([...ch1, ...ch2], []);
+        expect(metrics.aiTellDensity).toBe(2.5);
+    });
+
+    it('manuscriptMetrics reports 0 density for empty input without NaN', () => {
+        const metrics = manuscriptMetrics([], []);
+        expect(metrics.aiTellDensity).toBe(0);
+        expect(Number.isFinite(metrics.aiTellDensity)).toBe(true);
+    });
+
+    it('sentenceSkeletonVariety distinguishes uniform from varied openings', () => {
+        const uniform = listChaptersInFile('She ran. She fell. She got up. She screamed.', 'a.md', 'a', false);
+        const varied = listChaptersInFile(
+            'She ran. The dog barked. Quietly, he listened. Running hard, they escaped. Something moved.',
+            'b.md',
+            'b',
+            false
+        );
+        const uniformVariety = chapterMetrics(uniform[0]!).sentenceSkeletonVariety;
+        const variedVariety = chapterMetrics(varied[0]!).sentenceSkeletonVariety;
+        expect(variedVariety).toBeGreaterThan(uniformVariety);
     });
 });
 

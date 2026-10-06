@@ -101,6 +101,18 @@ export const RULE_INFO: Record<string, RuleInfo> = {
         description: 'Flags "it\'s not X, it\'s Y" and "not because X but because Y" constructions.',
         example: 'State what things are directly instead of describing what they are not.'
     },
+    'ai-contrast': {
+        name: 'Contrast patterns',
+        description:
+            'Flags "less X than Y", "not so much X as Y", and "X — no, Y" contrast frames, which machine-generated prose leans on. Any single instance can be a deliberate stylistic choice.',
+        example: 'State the contrast plainly, or keep the frame only where it fits your voice.'
+    },
+    'ai-meta-cues': {
+        name: 'Meta-narrative cues',
+        description:
+            'Flags stock interiority phrases ("in that moment", "she realized", "a beat of silence") common in machine-generated prose. Density is the signal — single instances are often legitimate.',
+        example: 'Ground the realization in concrete physical detail, or cut the stock framing.'
+    },
     'ai-filler-adverbs': {
         name: 'Filler adverbs',
         description: 'Flags strategy adverbs common in AI prose (quietly, deliberately, gently, slowly, etc.).',

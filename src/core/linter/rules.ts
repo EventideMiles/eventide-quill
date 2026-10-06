@@ -420,6 +420,81 @@ export function checkAiNegation(text: string): LintResult[] {
     return results;
 }
 
+const CONTRAST_LESS_THAN_PATTERN = /\bless\s+[^,.;!?]{1,40}?\s+than\b/gi;
+const CONTRAST_NOT_SO_MUCH_PATTERN = /\bnot\s+so\s+much\s+[^,.;!?]{1,60}?\s+as\b/gi;
+const CONTRAST_SELF_CORRECTION_PATTERN = /\u2014\s*no\s*,/gi;
+
+/**
+ * Flag contrast-frame constructions the negation rule does not cover:
+ * "less X than Y", "not so much X as Y", and the em-dash self-correction
+ * "X — no, Y". These frames occur disproportionately in machine-generated
+ * prose; any single instance can still be a deliberate stylistic choice, so
+ * the rule is informational and dialogue is exempt.
+ */
+export function checkAiContrast(text: string): LintResult[] {
+    const results: LintResult[] = [];
+
+    /** Run one contrast pattern, exempting dialogue hits. */
+    const scan = (pattern: RegExp, message: string): void => {
+        let match: RegExpExecArray | null;
+        while ((match = pattern.exec(text)) !== null) {
+            if (isInsideQuotes(text, match.index)) continue;
+            const pos = posAtOffset(text, match.index);
+            results.push({
+                line: pos.line,
+                column: pos.column,
+                length: match[0].length,
+                message,
+                severity: 'info',
+                rule: 'ai-contrast'
+            });
+        }
+    };
+
+    scan(
+        CONTRAST_LESS_THAN_PATTERN,
+        'Contrast frame: "less X than Y." Common in machine-generated prose — state the contrast directly.'
+    );
+    scan(
+        CONTRAST_NOT_SO_MUCH_PATTERN,
+        'Contrast frame: "not so much X as Y." Common in machine-generated prose — state what things are directly.'
+    );
+    scan(
+        CONTRAST_SELF_CORRECTION_PATTERN,
+        'Contrast frame: "X — no, Y." Common in machine-generated prose — may be a deliberate choice.'
+    );
+
+    return results;
+}
+
+const AI_META_CUE_PATTERN = new RegExp(`\\b(${wordLists.aiMetaCues.join('|')})\\b`, 'gi');
+
+/**
+ * Flag meta-narrative interiority stock phrases ("in that moment", "she
+ * realized", "a beat of silence") common in machine-generated prose. The
+ * signal is density, not any single hit — one instance is often legitimate,
+ * so the rule is informational and dialogue is exempt.
+ */
+export function checkAiMetaCues(text: string): LintResult[] {
+    const results: LintResult[] = [];
+    let match: RegExpExecArray | null;
+
+    while ((match = AI_META_CUE_PATTERN.exec(text)) !== null) {
+        if (isInsideQuotes(text, match.index)) continue;
+        const pos = posAtOffset(text, match.index);
+        results.push({
+            line: pos.line,
+            column: pos.column,
+            length: match[0].length,
+            message: `Meta-narrative cue: "${match[0]}." Common in machine-generated prose — may be a deliberate choice.`,
+            severity: 'info',
+            rule: 'ai-meta-cues'
+        });
+    }
+
+    return results;
+}
+
 /** Flag filler adverbs common in AI prose (quietly, gently, slowly, etc.). */
 export function checkAiFillerAdverbs(text: string): LintResult[] {
     const results: LintResult[] = [];

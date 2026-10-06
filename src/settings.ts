@@ -69,6 +69,8 @@ export interface EventideQuillSettings {
     enableAiCliches: boolean;
     enableAiEmDashes: boolean;
     enableAiNegation: boolean;
+    enableAiContrast: boolean;
+    enableAiMetaCues: boolean;
     enableAiFillerAdverbs: boolean;
     enableAiHedging: boolean;
     enableAiWrapUps: boolean;
@@ -388,6 +390,8 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
     enableAiCliches: true,
     enableAiEmDashes: true,
     enableAiNegation: true,
+    enableAiContrast: true,
+    enableAiMetaCues: true,
     enableAiFillerAdverbs: true,
     enableAiHedging: true,
     enableAiWrapUps: true,
@@ -2226,6 +2230,16 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                         control: { type: 'toggle', key: 'enableAiNegation' }
                     },
                     {
+                        name: 'Contrast patterns',
+                        desc: 'Flag contrast-frame constructions common in machine-generated prose ("less X than Y", "not so much X as Y", "X — no, Y"). Any single instance may be a deliberate choice.',
+                        control: { type: 'toggle', key: 'enableAiContrast' }
+                    },
+                    {
+                        name: 'Meta-narrative cues',
+                        desc: 'Flag stock interiority phrases common in machine-generated prose ("in that moment", "she realized", "a beat of silence"). Density matters more than single instances, which are often legitimate.',
+                        control: { type: 'toggle', key: 'enableAiMetaCues' }
+                    },
+                    {
                         name: 'Filler adverbs',
                         desc: 'Flag strategy adverbs common in AI prose (quietly, deliberately, gently, etc.).',
                         control: { type: 'toggle', key: 'enableAiFillerAdverbs' }
@@ -2293,6 +2307,8 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         s.enableAiCliches = d.enableAiCliches;
         s.enableAiEmDashes = d.enableAiEmDashes;
         s.enableAiNegation = d.enableAiNegation;
+        s.enableAiContrast = d.enableAiContrast;
+        s.enableAiMetaCues = d.enableAiMetaCues;
         s.enableAiFillerAdverbs = d.enableAiFillerAdverbs;
         s.enableAiHedging = d.enableAiHedging;
         s.enableAiWrapUps = d.enableAiWrapUps;

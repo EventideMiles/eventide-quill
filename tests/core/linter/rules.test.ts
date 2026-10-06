@@ -8,8 +8,10 @@ import {
     checkEchoes,
     checkComplexWords,
     checkAiCliches,
+    checkAiContrast,
     checkAiEmDashes,
     checkAiNegation,
+    checkAiMetaCues,
     checkAiFillerAdverbs,
     checkAiHedging,
     checkAiWrapUps,
@@ -222,11 +224,100 @@ describe('checkAiNegation', () => {
     });
 });
 
+describe('checkAiContrast', () => {
+    it.each<{ name: string; text: string; expected: number }>([
+        { name: 'less X than Y', text: 'It was less a homecoming than a surrender.', expected: 1 },
+        { name: 'not so much X as Y', text: 'It was not so much anger as exhaustion.', expected: 1 },
+        { name: 'em-dash self-correction', text: 'He was relieved — no, he was furious.', expected: 1 },
+        {
+            name: 'multiple constructions in one text',
+            text: 'Less a plan than a hope — no, a prayer. Not so much bold as reckless.',
+            expected: 3
+        },
+        { name: 'comparative quantity near-miss ("less than ten")', text: 'There were less than ten coins left.', expected: 0 },
+        { name: 'plain comparative near-miss', text: 'She was quicker than her brother.', expected: 0 },
+        {
+            name: '"not so much as" idiom near-miss',
+            text: 'It was not so much as a whisper.',
+            expected: 0
+        },
+        { name: 'dialogue exempt', text: '"It was less a homecoming than a surrender," she said.', expected: 0 },
+        { name: 'curly-quote dialogue exempt', text: '“It was less a homecoming than a surrender,” she said.', expected: 0 },
+        { name: 'curly-single-quote dialogue exempt', text: '‘Not so much anger as exhaustion,’ she said.', expected: 0 },
+        {
+            name: 'narration after curly dialogue still flagged',
+            text: '“Less a plan than a hope,” she said. It was not so much bold as reckless.',
+            expected: 1
+        }
+    ])('ai-contrast: $name', ({ text, expected }) => {
+        const results = checkAiContrast(text);
+        expect(results).toHaveLength(expected);
+        expect(results.every((r) => r.rule === 'ai-contrast')).toBe(true);
+    });
+
+    it('reports info severity', () => {
+        const results = checkAiContrast('Less a door than a wound in the wall.');
+        expect(results[0]!.severity).toBe('info');
+    });
+});
+
+describe('checkAiMetaCues', () => {
+    it.each<{ name: string; text: string; expected: number }>([
+        { name: 'in that moment', text: 'In that moment, the door swung open.', expected: 1 },
+        { name: 'she realized', text: 'She realized the window stood open.', expected: 1 },
+        { name: 'a beat of silence', text: 'A beat of silence followed the thunder.', expected: 1 },
+        {
+            name: 'two separate cue phrases count separately',
+            text: 'The weight of the mail shirt settled over his shoulders.',
+            expected: 2
+        },
+        {
+            name: 'realized outside the stock construction',
+            text: 'He had realized it years before the letter arrived.',
+            expected: 0
+        },
+        { name: 'settled without over', text: 'The dust settled on the shelf.', expected: 0 },
+        {
+            name: 'bare "moment" and "silence" are not flagged alone',
+            text: 'The moment passed quietly; silence filled the room.',
+            expected: 0
+        },
+        { name: 'dialogue exempt', text: '"In that moment I understood everything," she said.', expected: 0 },
+        { name: 'curly-quote dialogue exempt', text: '“In that moment I understood everything,” she said.', expected: 0 },
+        { name: 'curly-single-quote dialogue exempt', text: '‘She realized the window stood open,’ he said.', expected: 0 },
+        {
+            name: 'narration after curly dialogue still flagged',
+            text: '“In that moment I understood everything,” she said, and in that moment the door swung open.',
+            expected: 1
+        }
+    ])('ai-meta-cues: $name', ({ text, expected }) => {
+        const results = checkAiMetaCues(text);
+        expect(results).toHaveLength(expected);
+        expect(results.every((r) => r.rule === 'ai-meta-cues')).toBe(true);
+    });
+
+    it('reports info severity with the density-tolerant message copy', () => {
+        const results = checkAiMetaCues('She realized the door was open.');
+        expect(results[0]!.severity).toBe('info');
+        expect(results[0]!.message).toContain('may be a deliberate choice');
+    });
+
+    it('does not double-count a pronoun substring ("she realized" is one hit, not two)', () => {
+        const results = checkAiMetaCues('She realized the truth.');
+        expect(results).toHaveLength(1);
+    });
+});
+
 describe('checkAiFillerAdverbs', () => {
     it('flags strategy adverbs common in AI prose', () => {
         const results = checkAiFillerAdverbs('She quietly closed the door and deliberately turned away.');
         expect(results.length).toBeGreaterThanOrEqual(1);
         expect(results[0]!.rule).toBe('ai-filler-adverbs');
+    });
+
+    it('does not flag filler adverbs inside typographic dialogue quotes', () => {
+        expect(checkAiFillerAdverbs('“She quietly closed the door,” he said.')).toEqual([]);
+        expect(checkAiFillerAdverbs('‘He gently set the cup down,’ she said.')).toEqual([]);
     });
 });
 

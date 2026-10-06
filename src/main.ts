@@ -1314,6 +1314,8 @@ export default class EventideQuillPlugin extends Plugin {
             enableAiCliches: ai && this.settings.enableAiCliches,
             enableAiEmDashes: ai && this.settings.enableAiEmDashes,
             enableAiNegation: ai && this.settings.enableAiNegation,
+            enableAiContrast: ai && this.settings.enableAiContrast,
+            enableAiMetaCues: ai && this.settings.enableAiMetaCues,
             enableAiFillerAdverbs: ai && this.settings.enableAiFillerAdverbs,
             enableAiHedging: ai && this.settings.enableAiHedging,
             enableAiWrapUps: ai && this.settings.enableAiWrapUps,

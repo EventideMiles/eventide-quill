@@ -2,9 +2,11 @@ import { LintResult } from './types';
 import {
     checkAdverbs,
     checkAiCliches,
+    checkAiContrast,
     checkAiEmDashes,
     checkAiFillerAdverbs,
     checkAiHedging,
+    checkAiMetaCues,
     checkAiNegation,
     checkAiWrapUps,
     checkComplexWords,
@@ -38,6 +40,8 @@ export interface LintOptions {
     enableAiCliches?: boolean;
     enableAiEmDashes?: boolean;
     enableAiNegation?: boolean;
+    enableAiContrast?: boolean;
+    enableAiMetaCues?: boolean;
     enableAiFillerAdverbs?: boolean;
     enableAiHedging?: boolean;
     enableAiWrapUps?: boolean;
@@ -109,6 +113,14 @@ export function lint(text: string, options?: LintOptions): LintResult[] {
 
     if (opts.enableAiNegation ?? true) {
         run(() => checkAiNegation(text), 'ai-negation');
+    }
+
+    if (opts.enableAiContrast ?? true) {
+        run(() => checkAiContrast(text), 'ai-contrast');
+    }
+
+    if (opts.enableAiMetaCues ?? true) {
+        run(() => checkAiMetaCues(text), 'ai-meta-cues');
     }
 
     if (opts.enableAiFillerAdverbs ?? true) {

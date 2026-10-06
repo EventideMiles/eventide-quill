@@ -85,6 +85,14 @@
         "at the end of the day", "when all is said and done",
         "all things considered"
     ],
+    "aiMetaCues": [
+        "in that moment",
+        "she realized", "he realized", "they realized", "i realized",
+        "something in her shifted", "something in him shifted", "something in them shifted",
+        "a beat of silence",
+        "the weight of",
+        "settled over"
+    ],
     "abbreviations": [
         "dr", "mr", "mrs", "ms", "st", "jr", "sr", "vs", "etc",
         "dept", "est", "govt", "inc", "ave", "blvd", "co", "corp",

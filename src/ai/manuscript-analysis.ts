@@ -229,6 +229,7 @@ function formatMetricsForPrompt(metrics: ManuscriptMetrics): string {
         `- Narration ratio: ${metrics.narrationRatio}`,
         `- Flesch-Kincaid grade: ${metrics.fleschKincaidGrade}`,
         `- Pacing flags: ${metrics.pacingFlags.length} (${metrics.pacingFlags.filter((f) => f.kind === 'uniform-short').length} short, ${metrics.pacingFlags.filter((f) => f.kind === 'uniform-long').length} long)`,
+        `- AI-tell density: ${metrics.aiTellDensity} per 1,000 words (stylistic-oddity heuristic, dialogue excluded — a pattern count, not authorship detection)`,
         '',
         '--- Per-chapter breakdown ---'
     ];
