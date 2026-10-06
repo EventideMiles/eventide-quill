@@ -9,9 +9,11 @@ export type { ActiveDocument };
  * controls (e.g. the co-writer hides Add-context / Refresh behind a hamburger
  * overflow menu). Shared by every chat panel subclass via the
  * {@link AbstractChatPanel} ResizeObserver so the Review tab's results chat
- * gets the same treatment as the co-writer.
+ * gets the same treatment as the co-writer. Also reused by the sidebar's
+ * Lorebook sub-tab bar (`loreSubTabBarMode` in quill-sidebar.ts) so every
+ * width-driven compact collapse in the plugin engages at the same breakpoint.
  */
-const COMPACT_WIDTH_THRESHOLD = 420;
+export const COMPACT_WIDTH_THRESHOLD = 420;
 
 /**
  * Below this panel height (px), the chat textarea collapses from its default
