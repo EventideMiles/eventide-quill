@@ -179,6 +179,14 @@ function findToolResult(messages: ChatMessage[], toolCallId: string): ChatMessag
  * regurgitation source) and the tool result (rewritten to the durable move-on
  * signal). Idempotent — already-refined calls are skipped per call, so a
  * second draft in the same turn stays refinable after the first resolves.
+ *
+ * A second pass covers drafts whose args a budget pass already compressed:
+ * those are invisible to the normal per-call filter, so without it the tool
+ * result would keep saying "review status is unchanged" forever after the
+ * writer resolves the draft. The second pass rewrites ONLY the tool result
+ * (the args stay compressed) and skips results that already carry an outcome
+ * marker, so repeated calls are no-ops.
+ *
  * Returns whether any message was changed (so the caller can refresh the token
  * estimate / persist).
  *
@@ -196,6 +204,13 @@ export function refineProposeEntryOutcome(
 ): boolean {
     const needle = name.trim().toLowerCase();
     if (needle.length === 0) return false;
+
+    const outcomeLine =
+        outcome === 'accepted'
+            ? `The writer ACCEPTED the draft${savedPath ? ` and saved it to ${savedPath}` : ''}. ` +
+              `This entry is COMPLETE — do not re-propose, re-draft, or re-output its content. ` +
+              `Re-run vault_lookup on "${name.trim()}" if you need its current text.`
+            : `The writer DISCARDED the draft. Do not re-propose it unless the writer explicitly asks.`;
 
     const sites = findToolCallSites(messages, 'propose_entry', (args) => {
         const n = typeof args.name === 'string' ? args.name.trim().toLowerCase() : '';
@@ -219,12 +234,6 @@ export function refineProposeEntryOutcome(
 
         const result = findToolResult(messages, site.call.id);
         if (result) {
-            const outcomeLine =
-                outcome === 'accepted'
-                    ? `The writer ACCEPTED the draft${savedPath ? ` and saved it to ${savedPath}` : ''}. ` +
-                      `This entry is COMPLETE — do not re-propose, re-draft, or re-output its content. ` +
-                      `Re-run vault_lookup on "${name.trim()}" if you need its current text.`
-                    : `The writer DISCARDED the draft. Do not re-propose it unless the writer explicitly asks.`;
             result.content =
                 `[Entry "${name.trim()}" (${typeLabel}): ~${refinedTokens} tokens of draft content ` +
                 `were refined out of context to keep it lean. ${outcomeLine}]`;
@@ -238,6 +247,48 @@ export function refineProposeEntryOutcome(
         if (!turnHasUnrefinedDraftCalls(assistant)) assistant.quillRefined = true;
         changed = true;
     }
+
+    // Second pass — budget-refined drafts. findToolCallSites skips calls whose
+    // args already carry the refined-draft marker (per-call idempotency) and
+    // turns already flagged `quillRefined`, which is exactly the state a
+    // `refineForBudget` pass leaves a compressed draft in. Re-scan for those
+    // calls by hand and rewrite ONLY the tool result — the args are already
+    // compressed and must stay that way. Results still showing the budget
+    // marker's "review status is unchanged" line get the durable outcome
+    // marker; results already carrying the outcome phrase are skipped, making
+    // repeated calls no-ops.
+    for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i]!;
+        if (msg.role !== 'assistant') continue;
+        // Anthropic thinking blocks are signed and must replay verbatim — skip
+        // any turn that carries them (same invariant as findToolCallSites).
+        if (msg.thinkingBlocks && msg.thinkingBlocks.length > 0) continue;
+        if (!msg.toolCalls) continue;
+        for (const call of msg.toolCalls) {
+            if (call.name !== 'propose_entry') continue;
+            const args = parseToolArgs(call.arguments);
+            if (args === null || !isRefinedDraftArgs(args)) continue;
+            const n = typeof args.name === 'string' ? args.name.trim().toLowerCase() : '';
+            if (n !== needle) continue;
+            const result = findToolResult(messages, call.id);
+            if (!result || typeof result.content !== 'string') continue;
+            if (result.content.includes('The writer ACCEPTED') || result.content.includes('The writer DISCARDED')) {
+                continue;
+            }
+            const typeLabel = entryTypeLabel(args);
+            // The compressed arg preserves the original token estimate in its
+            // marker ("[Draft content (~N tokens) …]") — reuse it so the
+            // rewritten result keeps a faithful size hint.
+            const contentArg = typeof args.content === 'string' ? args.content : '';
+            const refinedTokens = /~(\d+) tokens/.exec(contentArg)?.[1] ?? '0';
+            result.content =
+                `[Entry "${name.trim()}" (${typeLabel}): ~${refinedTokens} tokens of draft content ` +
+                `were refined out of context to keep it lean. ${outcomeLine}]`;
+            result.quillRefined = true;
+            changed = true;
+        }
+    }
+
     return changed;
 }
 
