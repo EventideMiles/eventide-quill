@@ -366,7 +366,7 @@ export interface EventideQuillSettings {
     memoriesFullInject: boolean;
     /**
      * Cap on the number of index entries auto-injected into co-writer
-     * context per session. A fixed cap — lower it yourself when running a
+     * context per memory scope. A fixed cap — lower it yourself when running a
      * small-context model. Default 20.
      */
     memoriesMaxIndexEntries: number;
@@ -1966,7 +1966,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     },
                     {
                         name: 'Max index entries',
-                        desc: 'Cap on the number of memory entries auto-injected into co-writer context per session. A fixed cap — lower it yourself when running a small-context model. Default: 20.',
+                        desc: 'Cap on the number of memory entries auto-injected into co-writer context per memory scope. A fixed cap — lower it yourself when running a small-context model. Default: 20.',
                         control: {
                             type: 'number',
                             key: 'memoriesMaxIndexEntries',
