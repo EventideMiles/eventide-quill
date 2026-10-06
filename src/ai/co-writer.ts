@@ -2454,7 +2454,9 @@ export class CoWriterSession {
         if (needsCompaction) {
             const sentenceCount = Math.max(1, Math.min(20, this.settingsOrDefault(plugin).compactSummarySentences));
             try {
-                const result = await compactConversation(chat.provider, this.loreCoachMessages, sentenceCount);
+                const result = await compactConversation(chat.provider, this.loreCoachMessages, sentenceCount, {
+                    signal: this.abortController?.signal
+                });
                 if (result) {
                     this.loreCoachMessages = result.messages;
                     this.emitTokenEstimate(loreFullBreakdown(), maxTokens);
@@ -2467,6 +2469,16 @@ export class CoWriterSession {
                 }
                 console.warn('Quill: Lore coach compaction failed; continuing without compaction.', err);
             }
+        }
+
+        // Guard against an abort race: cancelGeneration may have cleared
+        // this.abortController during the compaction await above — bail here,
+        // before the fresh per-round controller is minted, so a cancelled turn
+        // never streams (same pattern as the discuss-mode pre-loop check).
+        if (!this.abortController || this.abortController.signal.aborted) {
+            this.optionsLoading = false;
+            this.onOptionsLoading?.(false);
+            return;
         }
 
         if (__DEV__ && plugin.settings.enableDebugLogging) {
