@@ -4,6 +4,7 @@ import type { LoreDraftEntry, ProposedImage } from '../ai/co-writer';
 import { LORE_TYPE_LABELS } from '../core/dashboard/lorebook-types';
 import type { LoreEntryType } from '../core/dashboard/lorebook-types';
 import type EventideQuillPlugin from '../main';
+import { escapeRegExp } from '../utils/text-analysis';
 
 /**
  * Render a proposed lore entry draft as a review card. Used by the Lorebook
@@ -623,11 +624,6 @@ async function cleanupResolvedImages(
 function extractFilename(path: string): string {
     const slash = path.lastIndexOf('/');
     return slash >= 0 ? path.slice(slash + 1) : path;
-}
-
-/** Escape regex metacharacters in a filename for safe embedding in a RegExp. */
-function escapeRegExp(s: string): string {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // ── Path B: image attachments to existing entries ───────────────────────────

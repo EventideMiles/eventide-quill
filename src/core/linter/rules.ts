@@ -6,26 +6,34 @@ import {
     isInsideQuotes,
     isAfterDialogueTag,
     countSyllables,
-    wordListPattern
+    wordListPattern,
+    escapeRegExp
 } from '../../utils/text-analysis';
 
 // --- Build patterns from word lists ---
+// All alternations go through the shared wordListPattern builder so each
+// entry is escaped before joining (see text-analysis.ts). The two composite
+// patterns rebuild from `.source` to append their anchors: dialogue tags get
+// a trailing-whitespace requirement (look-behind slice for adverb
+// exemptions), abbreviations get a literal closing period (sentence-split
+// guard); both run case-insensitive only (no `g` — they use .test/.exec
+// against fresh slices).
 
-const DIALOGUE_TAG_PATTERN = new RegExp(`\\b(${wordLists.dialogueTags.join('|')})\\b`, 'gi');
+const DIALOGUE_TAG_PATTERN = wordListPattern(wordLists.dialogueTags);
 
-const PRECEDING_DIALOGUE_TAG = new RegExp(`\\b(${wordLists.dialogueTags.join('|')})\\s+$`, 'i');
+const PRECEDING_DIALOGUE_TAG = new RegExp(wordListPattern(wordLists.dialogueTags, '').source + '\\s+$', 'i');
 
-const QUALIFIER_PATTERN = new RegExp(`\\b(${wordLists.qualifiers.join('|')})\\b`, 'gi');
+const QUALIFIER_PATTERN = wordListPattern(wordLists.qualifiers);
 
-const AI_CLICHE_PHRASES = new RegExp(`\\b(${wordLists.aiClichePhrases.join('|')})\\b`, 'gi');
+const AI_CLICHE_PHRASES = wordListPattern(wordLists.aiClichePhrases);
 
-const AI_FILLER_ADVERBS = new RegExp(`\\b(${wordLists.aiFillerAdverbs.join('|')})\\b`, 'gi');
+const AI_FILLER_ADVERBS = wordListPattern(wordLists.aiFillerAdverbs);
 
-const AI_HEDGING = new RegExp(`\\b(${wordLists.aiHedging.join('|')})\\b`, 'gi');
+const AI_HEDGING = wordListPattern(wordLists.aiHedging);
 
-const AI_WRAP_UP = new RegExp(`\\b(${wordLists.aiWrapUps.join('|')})\\b`, 'gi');
+const AI_WRAP_UP = wordListPattern(wordLists.aiWrapUps);
 
-const ABBREVIATIONS = new RegExp(`\\b(${wordLists.abbreviations.join('|')})\\.$`, 'i');
+const ABBREVIATIONS = new RegExp(wordListPattern(wordLists.abbreviations, '').source + '\\.$', 'i');
 
 const COMMON_ADVERBS = new Set(wordLists.commonAdverbs);
 const SKIP_WORDS = new Set(wordLists.skipWords);
@@ -805,11 +813,6 @@ export function checkDuplicateText(text: string): LintResult[] {
     }
 
     return results;
-}
-
-/** Escape RegExp special characters in a user-supplied crutch word. */
-function escapeRegExp(s: string): string {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
