@@ -204,7 +204,8 @@ export interface EventideQuillSettings {
      * lore_siblings, vault_lookup, grep_notes, measure_folder,
      * calculate_file_sizes, edit_note, delete_paragraph, add_world_rule,
      * insert_note, append_to_note, revise_edit, refresh_dashboard,
-     * get_lore_image. Default: on.
+     * get_lore_image. The lorebook coach registers a reduced set that omits
+     * manuscript_mentions, grep_notes, and refresh_dashboard. Default: on.
      */
     coWriterToolsEnabled: boolean;
     /**
@@ -1413,6 +1414,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 'Master switch for all 14 internal vault tools: manuscript_mentions, lore_siblings, vault_lookup, ' +
                     'grep_notes, measure_folder, calculate_file_sizes, edit_note, delete_paragraph, add_world_rule, ' +
                     'insert_note, append_to_note, revise_edit, refresh_dashboard, get_lore_image. ' +
+                    'The lorebook coach uses a reduced set that omits manuscript_mentions, grep_notes, and refresh_dashboard. ' +
                     'Turning it off disables every tool.'
             )
             .addToggle((toggle) =>
@@ -1804,7 +1806,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     },
                     {
                         name: 'Co-writer tool use',
-                        desc: 'Let the co-writer (discuss, coach, and lorebook modes) call the 14 internal vault tools (manuscript_mentions, lore_siblings, vault_lookup, grep_notes, measure_folder, calculate_file_sizes, edit_note, delete_paragraph, add_world_rule, insert_note, append_to_note, revise_edit, refresh_dashboard, get_lore_image) via the model’s native tool-calling API so it can look up details mid-conversation. Turn off if your model doesn’t support tool calling or to avoid the extra turn consumption. Default: on.',
+                        desc: 'Let the co-writer call the 14 internal vault tools (manuscript_mentions, lore_siblings, vault_lookup, grep_notes, measure_folder, calculate_file_sizes, edit_note, delete_paragraph, add_world_rule, insert_note, append_to_note, revise_edit, refresh_dashboard, get_lore_image) via the model’s native tool-calling API so it can look up details mid-conversation; the lorebook coach uses a reduced set that omits manuscript_mentions, grep_notes, and refresh_dashboard. Turn off if your model doesn’t support tool calling or to avoid the extra turn consumption. Default: on.',
                         control: { type: 'toggle', key: 'coWriterToolsEnabled' }
                     },
                     {
