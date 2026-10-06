@@ -177,8 +177,12 @@ const SKELETON_LENGTH_BUCKETS = ['short', 'medium', 'long'] as const;
  */
 export const SKELETON_SPACE_SIZE = SKELETON_FIRST_WORD_CLASSES.length * SKELETON_LENGTH_BUCKETS.length;
 
-/** Abbreviation list for sentence splitting, matching the linter rules. */
-const SKELETON_ABBREVIATIONS = new RegExp(`\\b(${wordLists.abbreviations.join('|')})\\.$`, 'i');
+/**
+ * Abbreviation list for sentence splitting, matching the linter rules. Built
+ * via the shared wordListPattern builder (mirrors the rules.ts ABBREVIATIONS
+ * composite) so a metachar-bearing entry can't corrupt the pattern.
+ */
+const SKELETON_ABBREVIATIONS = new RegExp(wordListPattern(wordLists.abbreviations, '').source + '\\.$', 'i');
 
 /** Length-bucket bounds, mirroring the pacing analysis' short/long averages. */
 const SKELETON_SHORT_WORDS = 8;
