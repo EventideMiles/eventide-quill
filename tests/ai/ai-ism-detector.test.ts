@@ -9,14 +9,22 @@ describe('detectAiIsms', () => {
             expect(isms.some((i) => i.category === 'em-dash')).toBe(true);
         });
 
-        it('detects double-hyphen with spaces ( -- )', () => {
+        it('detects en dash (–) as its own category, not an em dash', () => {
+            const isms = detectAiIsms('He walked to the door\u2013a place he knew well.');
+            expect(isms.some((i) => i.category === 'en-dash')).toBe(true);
+            expect(isms.some((i) => i.category === 'em-dash')).toBe(false);
+        });
+
+        it('detects double-hyphen with spaces ( -- ) as an en-dash-category tell', () => {
             const isms = detectAiIsms('He walked to the door -- a place he knew well.');
-            expect(isms.some((i) => i.category === 'em-dash')).toBe(true);
+            expect(isms.some((i) => i.category === 'en-dash')).toBe(true);
+            expect(isms.some((i) => i.category === 'em-dash')).toBe(false);
         });
 
         it('does NOT flag clean prose without em dashes', () => {
             const isms = detectAiIsms('He walked to the door. It was a place he knew well.');
             expect(isms.filter((i) => i.category === 'em-dash')).toHaveLength(0);
+            expect(isms.filter((i) => i.category === 'en-dash')).toHaveLength(0);
         });
     });
 
@@ -137,5 +145,11 @@ describe('formatAiIsmError', () => {
         expect(msg).toContain('Em dash');
         expect(msg).toContain('ozone');
         expect(msg).toContain('Rewrite');
+    });
+
+    it('labels an en-dash finding "En dash", not "Em dash"', () => {
+        const msg = formatAiIsmError([{ category: 'en-dash', match: '\u2013', snippet: 'door\u2013and' }]);
+        expect(msg).toContain('En dash');
+        expect(msg).not.toContain('Em dash');
     });
 });

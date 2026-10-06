@@ -8,7 +8,9 @@ import {
     splitSentences,
     splitParagraphs,
     extractScene,
-    listSections
+    listSections,
+    escapeRegExp,
+    wordListPattern
 } from '../../src/utils/text-analysis';
 
 const ABBREV = /\b(Mr|Mrs|Ms|Dr|etc|vs|Jr|Sr)\.$/i;
@@ -321,5 +323,42 @@ describe('listSections', () => {
     it('skips empty sections', () => {
         const sections = listSections('### One\nBody\n### Two\n\n### Three\nEnd');
         expect(sections.filter((s) => s.text.trim() === '')).toHaveLength(0);
+    });
+});
+
+describe('escapeRegExp', () => {
+    it('escapes every regex metacharacter', () => {
+        expect(escapeRegExp('a.b(c)d[e]f{g}h*i+j?k$l^m|n\\o')).toBe(
+            'a\\.b\\(c\\)d\\[e\\]f\\{g\\}h\\*i\\+j\\?k\\$l\\^m\\|n\\\\o'
+        );
+    });
+
+    it('leaves plain phrases unchanged', () => {
+        expect(escapeRegExp('hung heavy')).toBe('hung heavy');
+    });
+});
+
+describe('wordListPattern', () => {
+    it('matches a metachar-bearing list entry LITERALLY (the escaping contract)', () => {
+        // A hypothetical word-list entry containing `(` must match as text —
+        // not be interpreted as a group (which would throw or change meaning).
+        // The entry keeps word characters at both ends so the shared
+        // word-boundary wrap (pre-existing semantics at every call site)
+        // still applies.
+        const re = wordListPattern(['wait (for it) now', 'plain phrase']);
+        expect('she said wait (for it) now and left'.match(re)).toEqual(['wait (for it) now']);
+        expect('a plain phrase here'.match(re)).toEqual(['plain phrase']);
+    });
+
+    it('builds a case-insensitive word-bounded alternation by default', () => {
+        const re = wordListPattern(['Delve']);
+        expect('we delve deeper'.match(re)).toEqual(['delve']);
+        expect('delving deeper'.match(re)).toBeNull(); // \b guard: no suffix match
+    });
+
+    it('keeps every entry matchable regardless of order', () => {
+        const re = wordListPattern(['tapestry', 'purple (very) prose']);
+        const hits = 'purple (very) prose and tapestry'.match(re);
+        expect(hits).toEqual(['purple (very) prose', 'tapestry']);
     });
 });

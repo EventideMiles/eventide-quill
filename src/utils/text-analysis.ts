@@ -452,3 +452,25 @@ export function splitParagraphs(text: string): string[] {
     flush();
     return paragraphs;
 }
+
+/**
+ * Escape regular-expression metacharacters in `phrase` so it can be embedded
+ * in a pattern as a LITERAL match. Word-list data assets are writer-extensible
+ * prose, not pattern fragments — an entry like "not only... but (also)" would
+ * otherwise change the alternation's meaning or throw at construction time.
+ */
+export function escapeRegExp(phrase: string): string {
+    return phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Build a word-boundary alternation RegExp from a list of literal phrases,
+ * escaping each entry first (see {@link escapeRegExp}). Single source for
+ * every pattern assembled from the linter's word lists (`aiClichePhrases`,
+ * `aiMetaCues`, `aiHedging`, …) so no call site can forget the escaping.
+ * The default `gi` flags match the linter/detector convention: global scan,
+ * case-insensitive.
+ */
+export function wordListPattern(phrases: readonly string[], flags = 'gi'): RegExp {
+    return new RegExp(`\\b(${phrases.map(escapeRegExp).join('|')})\\b`, flags);
+}

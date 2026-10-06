@@ -26,7 +26,7 @@
  */
 
 import { PURPLE_PATTERNS } from '../../ai/ai-ism-detector';
-import { isInsideQuotes, splitSentences } from '../../utils/text-analysis';
+import { isInsideQuotes, splitSentences, wordListPattern } from '../../utils/text-analysis';
 import wordLists from '../linter/word-lists.json';
 
 /** Weight applied to each `echo` / `loom` hit (see module docstring). */
@@ -42,11 +42,11 @@ interface TellSource {
 }
 
 const PHRASE_SOURCES: TellSource[] = [
-    { category: 'ai-cliches', pattern: new RegExp(`\\b(${wordLists.aiClichePhrases.join('|')})\\b`, 'gi') },
-    { category: 'ai-filler-adverbs', pattern: new RegExp(`\\b(${wordLists.aiFillerAdverbs.join('|')})\\b`, 'gi') },
-    { category: 'ai-hedging', pattern: new RegExp(`\\b(${wordLists.aiHedging.join('|')})\\b`, 'gi') },
-    { category: 'ai-wrap-ups', pattern: new RegExp(`\\b(${wordLists.aiWrapUps.join('|')})\\b`, 'gi') },
-    { category: 'ai-meta-cues', pattern: new RegExp(`\\b(${wordLists.aiMetaCues.join('|')})\\b`, 'gi') }
+    { category: 'ai-cliches', pattern: wordListPattern(wordLists.aiClichePhrases) },
+    { category: 'ai-filler-adverbs', pattern: wordListPattern(wordLists.aiFillerAdverbs) },
+    { category: 'ai-hedging', pattern: wordListPattern(wordLists.aiHedging) },
+    { category: 'ai-wrap-ups', pattern: wordListPattern(wordLists.aiWrapUps) },
+    { category: 'ai-meta-cues', pattern: wordListPattern(wordLists.aiMetaCues) }
 ];
 
 /** Per-category weighted hit count. `count` is a weighted contribution, so it may be fractional when down-weighted words hit. */

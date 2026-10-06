@@ -12,23 +12,25 @@
  *
  * Detection is pattern-based (regex + word lists sourced from the linter's
  * own word-lists.json). It catches the tells that prompt guidance alone
- * hasn't been able to suppress: em dashes, cliché atmospheric words,
+ * hasn't been able to suppress: em/en dashes, cliché atmospheric words,
  * overwrought metaphors, filler verbs, and purple constructions.
  */
 
 import wordLists from '../core/linter/word-lists.json';
+import { wordListPattern } from '../utils/text-analysis';
 
 /** A single AI-ism detected in the model's proposed text. */
 export interface AiIsm {
     /** Category for grouping in the error message. */
-    category: 'em-dash' | 'cliche-word' | 'purple-construction';
+    category: 'em-dash' | 'en-dash' | 'cliche-word' | 'purple-construction';
     /** The specific word or phrase that triggered the detection. */
     match: string;
     /** Short snippet of surrounding context for the error message. */
     snippet: string;
 }
 
-const EM_DASH_PATTERN = /\u2014|\u2013/g;
+const EM_DASH_PATTERN = /\u2014/g;
+const EN_DASH_PATTERN = /\u2013/g;
 const DOUBLE_HYPHEN_PATTERN = / -- /g;
 
 /**
@@ -66,19 +68,30 @@ export function detectAiIsms(text: string): AiIsm[] {
             snippet: snippetAround(text, match.index)
         });
     }
+    // En dashes and spaced double hyphens are the same tell in a weaker
+    // disguise — labeled separately so the model isn't told it wrote an
+    // "Em dash" when it wrote an en dash or ` -- `.
+    EN_DASH_PATTERN.lastIndex = 0;
+    while ((match = EN_DASH_PATTERN.exec(text)) !== null) {
+        isms.push({
+            category: 'en-dash',
+            match: match[0],
+            snippet: snippetAround(text, match.index)
+        });
+    }
     DOUBLE_HYPHEN_PATTERN.lastIndex = 0;
     while ((match = DOUBLE_HYPHEN_PATTERN.exec(text)) !== null) {
         isms.push({
-            category: 'em-dash',
+            category: 'en-dash',
             match: '--',
             snippet: snippetAround(text, match.index)
         });
     }
 
-    // AI cliché words (from the linter's own word list)
-    const clicheWords = wordLists.aiClichePhrases;
-    const escaped = clicheWords.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    const clicheRegex = new RegExp(`\\b(${escaped.join('|')})\\b`, 'gi');
+    // AI cliché words (from the linter's own word list — escaped via the
+    // shared wordListPattern builder, so a metachar-bearing entry can't
+    // corrupt the alternation)
+    const clicheRegex = wordListPattern(wordLists.aiClichePhrases);
     while ((match = clicheRegex.exec(text)) !== null) {
         isms.push({
             category: 'cliche-word',
@@ -127,9 +140,11 @@ export function formatAiIsmError(isms: AiIsm[]): string {
         const label =
             ism.category === 'em-dash'
                 ? `Em dash`
-                : ism.category === 'cliche-word'
-                  ? `Clich\u00e9 word "${ism.match}"`
-                  : `Purple construction "${ism.match}"`;
+                : ism.category === 'en-dash'
+                  ? `En dash`
+                  : ism.category === 'cliche-word'
+                    ? `Clich\u00e9 word "${ism.match}"`
+                    : `Purple construction "${ism.match}"`;
         lines.push(`- ${label}: "...${ism.snippet}..."`);
     }
     if (isms.length > 8) {

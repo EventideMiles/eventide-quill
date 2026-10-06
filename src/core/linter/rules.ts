@@ -5,7 +5,8 @@ import {
     posAtOffset,
     isInsideQuotes,
     isAfterDialogueTag,
-    countSyllables
+    countSyllables,
+    wordListPattern
 } from '../../utils/text-analysis';
 
 // --- Build patterns from word lists ---
@@ -467,7 +468,7 @@ export function checkAiContrast(text: string): LintResult[] {
     return results;
 }
 
-const AI_META_CUE_PATTERN = new RegExp(`\\b(${wordLists.aiMetaCues.join('|')})\\b`, 'gi');
+const AI_META_CUE_PATTERN = wordListPattern(wordLists.aiMetaCues);
 
 /**
  * Flag meta-narrative interiority stock phrases ("in that moment", "she
