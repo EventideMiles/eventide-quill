@@ -299,8 +299,7 @@ export interface EventideQuillSettings {
      * When on, follow-up discussion of a review report runs through the
      * co-writer session machinery with editing tools enabled, so the editor
      * can propose specific, reviewable inline-diff edits (not just advisory
-     * prose). Off preserves the pre-2.3.0 text-only chat behavior. Default:
-     * on.
+     * prose). Off keeps follow-up discussion text-only. Default: on.
      */
     reviewSuggestedEditsEnabled: boolean;
     /**
@@ -366,13 +365,17 @@ export interface EventideQuillSettings {
     memoriesFullInject: boolean;
     /**
      * Cap on the number of index entries auto-injected into co-writer
-     * context per session. Lowered automatically for small-context local
-     * models (under ~8k tokens) to stay within budget. Default 20.
+     * context per session. A fixed cap — lower it yourself when running a
+     * small-context model. Default 20.
      */
     memoriesMaxIndexEntries: number;
     /** Cap on the number of entries `recall_memory` returns in one call. Default 10. */
     memoriesRecallMaxEntries: number;
-    /** Soft cap on memories per file, mostly hygiene. The UI shows a "consider pruning" hint when exceeded. Default 100. */
+    /**
+     * Reserved soft cap on memories per file. Not currently enforced by any
+     * code path — kept so a future hygiene pass has a home without a schema
+     * migration. Default 100.
+     */
     memoriesMaxPerFile: number;
     /**
      * Internal one-time flag: true after the advisory Notice has been shown
@@ -522,6 +525,21 @@ export const DEFAULT_SETTINGS: EventideQuillSettings = {
 };
 
 const POWER_OF_TWO_OPTIONS = [4096, 8192, 16384, 32768, 65536, 131072];
+
+/**
+ * Home of the project wiki — the plugin's user-facing documentation. Single
+ * source of truth for the Welcome tab's Documentation links and the
+ * "Quill: Open documentation" command in `main.ts`.
+ */
+export const WIKI_HOME_URL = 'https://github.com/EventideMiles/eventide-quill/wiki';
+
+/** Wiki pages surfaced by the Welcome tab's Documentation section. */
+const WIKI_DOC_LINKS: { label: string; url: string }[] = [
+    { label: 'Wiki home', url: WIKI_HOME_URL },
+    { label: 'Providers and local models', url: `${WIKI_HOME_URL}/Providers-and-local-models` },
+    { label: 'Context management', url: `${WIKI_HOME_URL}/Context-management` },
+    { label: 'Privacy and network', url: `${WIKI_HOME_URL}/Privacy-and-network` }
+];
 
 /** Simple text input modal for prompting the user for a value. */
 class InputModal extends Modal {
@@ -1476,9 +1494,9 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 '"Allow any Fandom wiki" danger toggle overrides this. The Fandom page cache is a ' +
                 'separate consent surface: populating it is a network act, but once cached, those ' +
                 'pages answer locally even with network tools off — consent is at sync time, and ' +
-                'you can clear each wiki from the General tab. AI providers you configure receive ' +
+                'you can clear each wiki from the Lorebook tab. AI providers you configure receive ' +
                 'the manuscript text you send them — pick local providers (Ollama, LM Studio) to ' +
-                'keep everything on your machine. Full per-tool controls live on the General tab.'
+                'keep everything on your machine. Full per-tool controls live on the Lorebook tab.'
         });
 
         content.createDiv({
@@ -1498,6 +1516,19 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                 "focus on fine details (scars, jewelry, fabric texture) when it isn't spreading its " +
                 'token budget across a crowd. For group shots, it will still cover every visible ' +
                 'character — but each gets a shorter share. Crop tightly for best results.'
+        });
+
+        // --- Documentation ---
+
+        new Setting(content).setName('Documentation').setHeading();
+
+        const docLinks = content.createDiv({ cls: 'quill-settings__welcome-doc-links' });
+        for (const link of WIKI_DOC_LINKS) {
+            docLinks.createEl('a', { text: link.label, href: link.url, cls: 'external-link' });
+        }
+        content.createDiv({
+            cls: 'quill-settings__welcome-doc-note',
+            text: 'Full documentation lives on the project wiki — every page links deeper from there.'
         });
     }
 
@@ -1933,7 +1964,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     },
                     {
                         name: 'Max index entries',
-                        desc: 'Cap on the number of memory entries auto-injected into co-writer context per session. Lowered automatically for small-context local models (under ~8k tokens) to stay within budget. Default: 20.',
+                        desc: 'Cap on the number of memory entries auto-injected into co-writer context per session. A fixed cap — lower it yourself when running a small-context model. Default: 20.',
                         control: {
                             type: 'number',
                             key: 'memoriesMaxIndexEntries',
@@ -1955,7 +1986,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     },
                     {
                         name: 'Max memories per file',
-                        desc: 'Soft cap on memories per file, mostly hygiene. The Memories sub-tab shows a "consider pruning" hint when exceeded. Default: 100.',
+                        desc: 'Reserved soft cap on memories per file. Not currently enforced — kept for a future hygiene pass. Default: 100.',
                         control: {
                             type: 'number',
                             key: 'memoriesMaxPerFile',
@@ -3340,7 +3371,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
                     },
                     {
                         name: 'Proactive editor chat',
-                        desc: 'After a report finishes, the follow-up discussion runs through the co-writer session with editing tools enabled, so the editor can propose specific, reviewable inline-diff edits (not just advisory prose). Every proposed edit still requires your approval before it reaches the vault. Turn off to keep the pre-2.3.0 text-only chat behavior. Default: on.',
+                        desc: 'After a report finishes, the follow-up discussion runs through the co-writer session with editing tools enabled, so the editor can propose specific, reviewable inline-diff edits (not just advisory prose). Every proposed edit still requires your approval before it reaches the vault. Turn off to keep follow-up discussion text-only. Default: on.',
                         control: { type: 'toggle', key: 'reviewSuggestedEditsEnabled' }
                     },
                     {

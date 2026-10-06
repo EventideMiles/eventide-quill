@@ -66,7 +66,8 @@ export const RULE_INFO: Record<string, RuleInfo> = {
     },
     echoes: {
         name: 'Echoes',
-        description: 'Flags the same word or short phrase starting 3+ consecutive sentences in a paragraph.',
+        description:
+            'Flags the same two-word sentence opening appearing in 2+ sentences of one paragraph (paragraphs with fewer than three sentences are skipped; the sentences need not be consecutive).',
         example: 'Vary sentence openings to avoid a repetitive rhythm.'
     },
     'telling-vs-showing': {
