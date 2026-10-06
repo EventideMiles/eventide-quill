@@ -87,6 +87,17 @@ describe('getReviewDiscussSystemPrompt', () => {
         }
     });
 
+    it('advertises propose_entry only on the engine branches that run with it registered', () => {
+        // Path A (editorial/critical/manuscript) adds propose_entry to the tool
+        // registry (reviewEngine !== null in co-writer.ts) — the prompt may
+        // advertise it. Path B (generic) never registers it: the prompt must
+        // NOT mention it, or the model calls a tool that isn't there.
+        for (const engine of ['editorial', 'critical', 'manuscript'] as const) {
+            expect(getReviewDiscussSystemPrompt(engine)).toContain('propose_entry');
+        }
+        expect(getReviewDiscussSystemPrompt('generic')).not.toContain('propose_entry');
+    });
+
     it('varies the engine label in the opening line', () => {
         const editorial = getReviewDiscussSystemPrompt('editorial');
         const critical = getReviewDiscussSystemPrompt('critical');

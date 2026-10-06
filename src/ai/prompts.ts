@@ -1524,11 +1524,11 @@ export function getReviewDiscussSystemPrompt(
             'DELETING a paragraph entirely:',
             '- Use `delete_paragraph` with paragraph_start or old_text.',
             '',
-            'CREATING a new lore entry (character, location, plot thread):',
-            '- Use `propose_entry` to draft a new note. The draft appears as a',
-            '  review card the writer can save to the vault or discard. Use this',
-            '  when the discussion surfaces a character, place, or world detail',
-            '  that does not yet have its own entry.',
+            // NOTE: the generic (Path B) branch must NOT advertise `propose_entry` —
+            // the Path B tool registry is createToolRegistry(plugin, false, true),
+            // which never registers it (only Path A's reviewEngine !== null branch
+            // adds it in co-writer.ts). New-note creation stays covered by the
+            // `insert_note` guidance under ADDING above.
             '',
             '## Scope discipline (critical)',
             '',
@@ -1651,6 +1651,12 @@ export function getReviewDiscussSystemPrompt(
         '',
         'DELETING a paragraph entirely:',
         '- Use `delete_paragraph` with paragraph_start or old_text.',
+        '',
+        'CREATING a new lore entry (character, location, plot thread):',
+        '- Use `propose_entry` to draft a new note. The draft appears as a',
+        '  review card the writer can save to the vault or discard. Use this',
+        '  when the discussion surfaces a character, place, or world detail',
+        '  that does not yet have its own entry.',
         '',
         '## Scope discipline (critical)',
         '',
