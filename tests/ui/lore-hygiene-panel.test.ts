@@ -135,7 +135,12 @@ function lastModal(): Modal {
 /** Drive one scan to completion on the rendered panel. */
 async function scan(container: HTMLElement): Promise<void> {
     findButton(container, 'Scan attachments')!.click();
-    await vi.waitFor(() => expect(container.textContent).to.include('Last scanned'));
+    // Wait for the finished button state — NOT the 'Last scanned' hint, which
+    // module state renders on mount before any scan runs, so it passes
+    // instantly on re-scans and would race the scan against the next click.
+    // Observing the restored button also guarantees the in-flight guard has
+    // been released (released in the same tick's microtask flush).
+    await vi.waitFor(() => expect(findButton(container, 'Rescan attachments')?.disabled).toBe(false));
 }
 
 describe('renderLoreHygieneTab', () => {
@@ -283,7 +288,7 @@ describe('renderLoreHygieneTab', () => {
         findButtonStartingWith(container, 'Strip (')!.click();
         findButton(lastModal().contentEl, 'Strip')!.click();
         await vi.waitFor(() => expect(noticeSpy).toHaveBeenCalledTimes(1));
-        // The Notice names the in-flight strip (same narrowing as provider-delete — the arg may be a fragment).
+        // The Notice names the shared scan/strip guard (the arg may be a fragment).
         const noticeArg = noticeSpy.mock.calls[0]?.[0];
         const noticeText = typeof noticeArg === 'string' ? noticeArg : (noticeArg?.textContent ?? '');
         expect(noticeText).to.include('already running');
@@ -294,6 +299,62 @@ describe('renderLoreHygieneTab', () => {
             expect(after && inspectAttachmentMetadata(new Uint8Array(after), 'png')!.findings).toEqual([]);
         });
         expect(writeCalls).toBe(1); // the second request never wrote
+
+        noticeSpy.mockRestore();
+    });
+
+    it('no-ops a scan requested while a strip is mid-flight', async () => {
+        const { vault, store } = makeVault({ 'attachments/scene.png': DIRTY_PNG }, [{ path: 'attachments/scene.png' }]);
+        const container = createDiv();
+        renderLoreHygieneTab(container, makePlugin(vault), new Component());
+        await scan(container);
+
+        const noticeSpy = vi.spyOn(obsidian, 'Notice');
+
+        // Gate writeBinary so the strip parks mid-flight deterministically, and
+        // count reads so a blocked scan provably never touches the files.
+        let writeCalls = 0;
+        let readCalls = 0;
+        let release!: () => void;
+        const gated = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const adapter = vault.adapter as unknown as {
+            writeBinary: (path: string, data: ArrayBuffer) => Promise<void>;
+            readBinary: (path: string) => Promise<ArrayBuffer>;
+        };
+        const origWrite = vault.adapter.writeBinary.bind(vault.adapter);
+        const origRead = vault.adapter.readBinary.bind(vault.adapter);
+        adapter.writeBinary = async (path, data) => {
+            writeCalls++;
+            await gated;
+            await origWrite(path, data);
+        };
+        adapter.readBinary = async (path) => {
+            readCalls++;
+            return origRead(path);
+        };
+
+        findButtonStartingWith(container, 'Strip (')!.click();
+        findButton(lastModal().contentEl, 'Strip')!.click();
+        await vi.waitFor(() => expect(writeCalls).toBe(1));
+        const readsWhileParked = readCalls; // the initial scan + the strip's pre-write read
+
+        // A rescan mid-strip must no-op: Notice + zero reads + button untouched.
+        findButton(container, 'Rescan attachments')!.click();
+        await vi.waitFor(() => expect(noticeSpy).toHaveBeenCalledTimes(1));
+        expect(readCalls).toBe(readsWhileParked);
+        const scanBtn = findButton(container, 'Rescan attachments');
+        expect(scanBtn).not.toBeNull(); // never flipped to 'Scanning…'
+        expect(scanBtn!.disabled).toBe(false);
+
+        release();
+        await vi.waitFor(() => {
+            const after = store.get('attachments/scene.png');
+            expect(after && inspectAttachmentMetadata(new Uint8Array(after), 'png')!.findings).toEqual([]);
+        });
+        await vi.waitFor(() => expect(noticeSpy).toHaveBeenCalledTimes(2)); // blocked scan + strip success — flow fully drained
+        expect(writeCalls).toBe(1); // the scan never wrote or repainted over the strip
 
         noticeSpy.mockRestore();
     });

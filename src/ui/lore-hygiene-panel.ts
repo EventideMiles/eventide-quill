@@ -11,9 +11,11 @@
  * state, but holding it means a sidebar re-render (active-leaf-change)
  * redraws the same results instead of losing them, and
  * {@link loreHygieneFlaggedCount} can feed the sub-tab badge between renders.
- * An in-flight STRIP is likewise module state (`stripping`): while one strip
- * (per-file or strip-all) is running, further strip requests no-op with a
- * Notice instead of racing the same file.
+ * An in-flight scan-or-strip is likewise module state (`operationInFlight`):
+ * all three async entry points (scan, per-file strip, strip-all) share one
+ * guard, so a rescan started mid-strip cannot read pre-write bytes and
+ * repaint stale flagged rows (and a strip cannot race a scan's reads) —
+ * concurrent requests no-op with a Notice instead.
  *
  * Scope honesty: only writer-added binary attachments are scanned — images
  * that enter through the co-writer (paste, tool results) are already
@@ -64,12 +66,13 @@ interface HygieneScan {
 let lastScan: HygieneScan | null = null;
 
 /**
- * True while a strip operation (per-file or strip-all) is mid-flight (module
- * state — see the module docstring): binary writes bypass Obsidian's file
- * recovery, so a second strip request during one in flight no-ops with a
- * Notice rather than racing it on the same file.
+ * True while a scan or strip operation (scan, per-file strip, or strip-all)
+ * is mid-flight (module state — see the module docstring): binary writes
+ * bypass Obsidian's file recovery, and a scan racing a strip can read
+ * pre-write bytes and repaint stale flagged rows, so concurrent operations
+ * no-op with a Notice rather than racing each other.
  */
-let stripping = false;
+let operationInFlight = false;
 
 /** Flagged-file count from the last scan (0 before the first scan) — drives the Hygiene sub-tab badge. */
 export function loreHygieneFlaggedCount(): number {
@@ -298,7 +301,7 @@ export function renderLoreHygieneTab(
         }
     }
 
-    /** Scan (or rescan) the vault and repaint. */
+    /** Scan (or rescan) the vault and repaint — the click site runs it under the shared in-flight guard (`runExclusive`). */
     async function refresh(): Promise<void> {
         scanBtn.disabled = true;
         scanBtn.setText('Scanning…');
@@ -313,17 +316,19 @@ export function renderLoreHygieneTab(
     }
 
     /**
-     * Run one strip operation under the module-level in-flight guard — no-ops
-     * with a brief Notice when a strip is already running (see `stripping`).
+     * Run one scan-or-strip operation under the module-level in-flight guard —
+     * no-ops with a brief Notice when another scan or strip is already running
+     * (see `operationInFlight`). The guard is released in `finally` only on the
+     * set path, so the early-return no-op never releases a lock it didn't take.
      */
-    function runStripExclusive(op: () => Promise<void>): void {
-        if (stripping) {
-            new Notice('A strip is already running.');
+    function runExclusive(op: () => Promise<void>): void {
+        if (operationInFlight) {
+            new Notice('A scan or strip is already running.');
             return;
         }
-        stripping = true;
+        operationInFlight = true;
         void op().finally(() => {
-            stripping = false;
+            operationInFlight = false;
         });
     }
 
@@ -334,7 +339,7 @@ export function renderLoreHygieneTab(
             'Strip metadata?',
             `Remove ${formatBytes(row.removableBytes)} of embedded metadata from "${row.file.name}"? ` +
                 "Pixels are untouched, but binary writes bypass Obsidian's file recovery — this cannot be undone.",
-            () => runStripExclusive(() => stripRow(row)),
+            () => runExclusive(() => stripRow(row)),
             'Strip'
         ).open();
     }
@@ -349,7 +354,7 @@ export function renderLoreHygieneTab(
                 `About ${formatBytes(totalBytes)} will be removed across them. Pixels are untouched, but binary ` +
                 "writes bypass Obsidian's file recovery — this cannot be undone.",
             () =>
-                runStripExclusive(async () => {
+                runExclusive(async () => {
                     for (const row of flagged) await stripRow(row);
                 }),
             'Strip all'
@@ -417,7 +422,7 @@ export function renderLoreHygieneTab(
         }
     }
 
-    events.registerDomEvent(scanBtn, 'click', () => void refresh());
+    events.registerDomEvent(scanBtn, 'click', () => runExclusive(refresh));
     renderHint();
     renderResults();
 }
