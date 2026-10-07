@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import '../helpers/ui-setup';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { App, Menu, WorkspaceLeaf } from 'obsidian';
+import { App, Component, Menu, WorkspaceLeaf } from 'obsidian';
 import { QuillSidebarView, loreSubTabBarMode } from '../../src/ui/quill-sidebar';
 import type EventideQuillPlugin from '../../src/main';
 
@@ -91,6 +91,16 @@ function clickTopTab(leaf: WorkspaceLeaf, label: string): void {
     );
     if (!btn) throw new Error(`top tab ${label} not found`);
     btn.dispatchEvent(new MouseEvent('click'));
+}
+
+/**
+ * Click an element with a bubbling MouseEvent. The Lorebook sub-tab bar uses
+ * one delegated listener on the bar element, so clicks dispatched on its
+ * buttons must propagate to the bar (native user clicks and keyboard
+ * Enter/Space activation bubble; a bare `new MouseEvent('click')` does not).
+ */
+function clickBubbling(el: HTMLElement): void {
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 }
 
 /** All Lorebook sub-tab buttons currently in the bar (the More button excluded). */
@@ -235,7 +245,7 @@ describe('QuillSidebarView', () => {
         fireResize(390);
 
         const openSpy = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(() => ({} as Menu));
-        moreButton(leaf)?.dispatchEvent(new MouseEvent('click'));
+        clickBubbling(moreButton(leaf)!);
         expect(openSpy).toHaveBeenCalledTimes(1);
 
         const menu = capturedMenu(openSpy, 0);
@@ -259,13 +269,79 @@ describe('QuillSidebarView', () => {
         fireResize(390);
 
         const openSpy = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(() => ({} as Menu));
-        moreButton(leaf)?.dispatchEvent(new MouseEvent('click'));
+        clickBubbling(moreButton(leaf)!);
         const menu = capturedMenu(openSpy, 0);
         menu.items[4]?.triggerClick(); // Hygiene
 
         // The bar re-rendered — grab the fresh More button and open again.
-        moreButton(leaf)?.dispatchEvent(new MouseEvent('click'));
+        clickBubbling(moreButton(leaf)!);
         const menu2 = capturedMenu(openSpy, 1);
         expect(menu2.items.map((i) => i.checked)).to.deep.equal([false, false, false, false, true]);
+    });
+
+    it('switches sub-tabs from a full-mode button click via the delegated bar listener', async () => {
+        const plugin = makePlugin();
+        const refreshManuscript = vi.fn(async () => {});
+        (plugin as unknown as Record<string, unknown>).refreshLorebookManuscriptCoverage = refreshManuscript;
+        const { leaf } = await makeOpenedView(plugin);
+        clickTopTab(leaf, 'Lorebook');
+
+        // Click the Manuscript sub-tab button — the listener lives on the bar,
+        // so the click must bubble from the button to the bar to be handled.
+        const btn = loreSubTabs(leaf).find((el) => el.textContent === 'Manuscript');
+        expect(btn).to.not.equal(undefined);
+        clickBubbling(btn!);
+
+        const subtabs = loreSubTabs(leaf);
+        expect(subtabs.map((el) => el.textContent)).to.deep.equal(LORE_TAB_LABELS);
+        expect(subtabs[1]?.classList.contains('quill-sidebar__subtab--active')).to.equal(true);
+        expect(subtabs[0]?.classList.contains('quill-sidebar__subtab--active')).to.equal(false);
+        expect(refreshManuscript).toHaveBeenCalledWith(true);
+    });
+
+    it('registers no new bar listeners across repeated width crossings (delegated listener only)', async () => {
+        // Regression guard for the per-button registerDomEvent leak: each bar
+        // repopulation used to re-register listeners on renderEvents for
+        // freshly-detached buttons, so dragging the divider back and forth
+        // across the 420px threshold accumulated dead registrations. The
+        // delegated design registers exactly ONE listener when the bar element
+        // is created (render(), which also swaps renderEvents) and nothing on
+        // repopulation. The count is observable — the obsidian mock's
+        // registerDomEvent is a prototype method, spied per call — so no
+        // behavioral-only fallback is needed.
+        const { leaf } = await makeOpenedView(makePlugin());
+
+        const regSpy = vi.spyOn(Component.prototype, 'registerDomEvent');
+        /** Count registerDomEvent calls whose target element is the Lorebook sub-tab bar. */
+        const barRegistrations = (): number =>
+            regSpy.mock.calls.filter((args) => {
+                const el = args[0] as { classList?: { contains(cls: string): boolean } } | undefined;
+                return !!el?.classList && el.classList.contains('quill-sidebar__subtab-bar');
+            }).length;
+
+        // Entering the Lorebook tab creates the bar → exactly one delegated registration.
+        clickTopTab(leaf, 'Lorebook');
+        expect(barRegistrations()).to.equal(1);
+
+        // Five alternating crossings across the 420px threshold (divider drag):
+        // zero new registrations for the bar across all of them.
+        for (const width of [390, 800, 390, 800, 390]) {
+            fireResize(width);
+        }
+        expect(barRegistrations()).to.equal(1);
+
+        // The bar still works after the crossings: currently compact (390) —
+        // the More menu opens through the same delegated listener and switches.
+        const openSpy = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(() => ({} as Menu));
+        clickBubbling(moreButton(leaf)!);
+        expect(openSpy).toHaveBeenCalledTimes(1);
+        capturedMenu(openSpy, 0).items[1]?.triggerClick(); // Manuscript
+        expect(loreSubTabs(leaf)[0]?.textContent).to.equal('Manuscript');
+
+        // And full mode still switches via delegation after crossing back up.
+        fireResize(800);
+        const btn = loreSubTabs(leaf).find((el) => el.textContent === 'Hygiene');
+        clickBubbling(btn!);
+        expect(loreSubTabs(leaf)[4]?.classList.contains('quill-sidebar__subtab--active')).to.equal(true);
     });
 });
