@@ -5,7 +5,7 @@ import { enqueueMock, clearMocks, getMockStats, sseChatBody, sseToolCallBody } f
 import { openFile, sendCoWriterMessage, waitForAssistantDone, openQuillSidebar, isMobileEmulation } from '../helpers/obsidian-helpers.js';
 
 /**
- * Memories round-trip — the v2.3.0 memory system end-to-end against real
+ * Memories round-trip — the v2.3.1 memory system end-to-end against real
  * Obsidian and the mock provider. Covers the four behaviors the unit suite
  * can't prove in composition:
  *
@@ -164,14 +164,28 @@ describe('Memories (save / inject / delete round-trip)', () => {
         await lorebookTab.click();
         // Click the Memories sub-tab via native DOM. The sidebar re-renders on
         // notices/token ticks, which races WDIO element handles mid-waitUntil;
-        // a native click on the freshly-queried node is immune to that.
+        // a native click on the freshly-queried node is immune to that. Under
+        // a narrow sidebar the lorebook bar renders compact (active label +
+        // More overflow, same 420px breakpoint as the co-writer button row) —
+        // there the Memories item lives behind the More menu, which Obsidian
+        // builds synchronously on click.
         const clicked = await browser.waitUntil(
             async () =>
                 browser.execute(() => {
                     const buttons = Array.from(document.querySelectorAll('.quill-sidebar__subtab'));
                     const target = buttons.find((b) => /memories/i.test(b.textContent ?? ''));
-                    if (!target) return false;
-                    (target as HTMLElement).click();
+                    if (target) {
+                        (target as HTMLElement).click();
+                        return true;
+                    }
+                    const more = document.querySelector('.quill-sidebar__subtab--more') as HTMLElement | null;
+                    if (!more) return false;
+                    more.click();
+                    const item = Array.from(document.querySelectorAll('.menu-item')).find((m) =>
+                        /memories/i.test(m.textContent ?? '')
+                    ) as HTMLElement | undefined;
+                    if (!item) return false;
+                    item.click();
                     return true;
                 }),
             { timeout: 5_000, timeoutMsg: 'Memories sub-tab button never appeared' }

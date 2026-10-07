@@ -1,4 +1,4 @@
-import { Component, ItemView, MarkdownView, Notice, setIcon, WorkspaceLeaf } from 'obsidian';
+import { Component, ItemView, MarkdownView, Menu, Notice, setIcon, WorkspaceLeaf } from 'obsidian';
 import { LintResult, RULE_INFO, FIXABLE_RULES } from '../core/linter/types';
 import { FIXES } from '../core/linter/fixes';
 import { renderChangeCard, renderChangeBulkBar } from './change-card';
@@ -9,6 +9,7 @@ import { FixWithAiModal } from './fix-with-ai-modal';
 import { renderContextTab } from './context-panel';
 import { ReviewPanel } from './review-panel';
 import { CoWriterPanel } from './co-writer-panel';
+import { COMPACT_WIDTH_THRESHOLD } from './chat-panel';
 import { renderDashboardTab, renderDashboardSettingsTab } from './dashboard-panel';
 import { renderLorebookTab } from './lorebook-panel';
 import { loreHygieneFlaggedCount } from './lore-hygiene-panel';
@@ -23,6 +24,19 @@ export const QUILL_VIEW_TYPE = 'quill-sidebar';
 
 type TopTab = 'linter' | 'context' | 'review' | 'cowriter' | 'dashboard' | 'lorebook';
 type LinterSubTab = 'results' | 'details' | 'pending';
+type LorebookSubTab = 'document' | 'manuscript' | 'relationships' | 'memories' | 'hygiene';
+
+/**
+ * Layout mode for the Lorebook sub-tab bar at a given container width.
+ * Width-driven (never `Platform.isMobile`): below the chat panels' compact
+ * width threshold (the same 420px breakpoint as the co-writer button row's
+ * hamburger — see {@link COMPACT_WIDTH_THRESHOLD} in chat-panel.ts) the bar
+ * renders only the active sub-tab plus a "More" overflow menu; at or above it
+ * all five tabs render and CSS `flex-wrap` handles any residual overflow.
+ */
+export function loreSubTabBarMode(width: number): 'full' | 'compact' {
+    return width < COMPACT_WIDTH_THRESHOLD ? 'compact' : 'full';
+}
 
 /** Allow-list of valid TopTab values, used to validate persisted settings. */
 const VALID_TOP_TABS: ReadonlySet<TopTab> = new Set<TopTab>([
@@ -34,6 +48,15 @@ const VALID_TOP_TABS: ReadonlySet<TopTab> = new Set<TopTab>([
     'lorebook'
 ]);
 
+/** The five Lorebook sub-tabs in bar order — shared by the bar renderer and the bar's delegated click handler. */
+const LOREBOOK_SUBTABS: ReadonlyArray<{ id: LorebookSubTab; label: string }> = [
+    { id: 'document', label: 'Document' },
+    { id: 'manuscript', label: 'Manuscript' },
+    { id: 'relationships', label: 'Relationships' },
+    { id: 'memories', label: 'Memories' },
+    { id: 'hygiene', label: 'Hygiene' }
+];
+
 /** Sidebar view hosting the linter, context, review, co-writer, dashboard, and lorebook tabs. */
 export class QuillSidebarView extends ItemView {
     private results: LintResult[] = [];
@@ -41,7 +64,15 @@ export class QuillSidebarView extends ItemView {
     private activeTopTab: TopTab = 'linter';
     private activeLinterSubTab: LinterSubTab = 'results';
     private dashboardSubTab: 'overview' | 'pending' | 'settings' = 'overview';
-    private lorebookSubTab: 'document' | 'manuscript' | 'relationships' | 'memories' | 'hygiene' = 'document';
+    private lorebookSubTab: LorebookSubTab = 'document';
+    /**
+     * Whether the Lorebook sub-tab bar renders in compact mode (container width
+     * below the chat panels' compact threshold). Width-driven — updated by the
+     * ResizeObserver, never derived from `Platform.isMobile`.
+     */
+    private loreSubTabCompact = false;
+    /** Cached Lorebook sub-tab bar element for bar-only re-renders on width crossing. */
+    private loreSubTabBarEl: HTMLElement | null = null;
     /** Cached Hygiene sub-tab badge element (live-updated after scans/strips without a full re-render). */
     private loreHygieneBadgeEl: HTMLElement | null = null;
     private container!: HTMLElement;
@@ -128,6 +159,18 @@ export class QuillSidebarView extends ItemView {
                 const watermark = !compact && width < 540;
                 this.container.classList.toggle('quill-sidebar--compact', compact);
                 this.container.classList.toggle('quill-sidebar--watermark', watermark);
+                // Lorebook sub-tab bar mode — same width-driven breakpoint as
+                // the chat panels' compact-width hamburger. Only the bar
+                // re-renders on a crossing (no full-panel churn); when the
+                // tab is inactive the flag alone updates and the next
+                // renderLorebookSubTabBar picks it up.
+                const loreCompact = loreSubTabBarMode(width) === 'compact';
+                if (loreCompact !== this.loreSubTabCompact) {
+                    this.loreSubTabCompact = loreCompact;
+                    if (this.activeTopTab === 'lorebook') {
+                        this.rerenderLorebookSubTabBar();
+                    }
+                }
             }
         });
         this.resizeObserver.observe(this.contentEl);
@@ -539,44 +582,122 @@ export class QuillSidebarView extends ItemView {
         }
     }
 
-    /** Render the Lorebook sub-tab bar (Document / Manuscript / Relationships / Memories / Hygiene) and cache the Hygiene badge element. */
+    /** Switch the active Lorebook sub-tab and refresh its data source. */
+    private switchLorebookSubTab(tab: LorebookSubTab): void {
+        this.lorebookSubTab = tab;
+        this.render();
+        if (tab === 'manuscript') {
+            void this.plugin.refreshLorebookManuscriptCoverage(true);
+        } else if (tab === 'relationships') {
+            this.plugin.refreshLorebookRelationships();
+        } else if (tab === 'memories' || tab === 'hygiene') {
+            // Memories + Hygiene read on each render — the unconditional
+            // this.render() above already covers them; no plugin-level
+            // cache to refresh.
+        } else {
+            void this.plugin.refreshLorebookDocumentCoverage();
+        }
+    }
+
+    /** Render the Lorebook sub-tab bar (Document / Manuscript / Relationships / Memories / Hygiene). */
     private renderLorebookSubTabBar() {
-        const subTabBar = this.content.createDiv({ cls: 'quill-sidebar__subtab-bar' });
-        this.loreHygieneBadgeEl = null;
-
-        const tabs: { id: 'document' | 'manuscript' | 'relationships' | 'memories' | 'hygiene'; label: string }[] = [
-            { id: 'document', label: 'Document' },
-            { id: 'manuscript', label: 'Manuscript' },
-            { id: 'relationships', label: 'Relationships' },
-            { id: 'memories', label: 'Memories' },
-            { id: 'hygiene', label: 'Hygiene' }
-        ];
-
-        for (const tab of tabs) {
-            const btn = subTabBar.createEl('button', {
-                cls: `quill-sidebar__subtab${this.lorebookSubTab === tab.id ? ' quill-sidebar__subtab--active' : ''}`,
-                text: tab.label
-            });
-            if (tab.id === 'hygiene') {
-                this.loreHygieneBadgeEl = btn.createSpan({ cls: 'quill-sidebar__subtab-badge' });
+        this.loreSubTabBarEl = this.content.createDiv({ cls: 'quill-sidebar__subtab-bar' });
+        // ONE delegated click listener for the bar element's lifetime. The bar
+        // element survives width crossings (rerenderLorebookSubTabBar only
+        // empties + repopulates its children), so per-button listeners would
+        // re-register on renderEvents for freshly-detached buttons on every
+        // 420px crossing — an accumulating leak while dragging the divider.
+        // Delegation keeps exactly one registration per render lifecycle (the
+        // element is only recreated by render(), which also swaps renderEvents).
+        this.renderEvents!.registerDomEvent(this.loreSubTabBarEl, 'click', (evt: MouseEvent) => {
+            const target = evt.target as HTMLElement;
+            // Compact-mode More (⋯) button — open the overflow menu.
+            if (target.closest('.quill-sidebar__subtab--more')) {
+                this.openLorebookSubTabMenu(evt);
+                return;
             }
-            this.renderEvents!.registerDomEvent(btn, 'click', () => {
-                this.lorebookSubTab = tab.id;
-                this.render();
-                if (tab.id === 'manuscript') {
-                    void this.plugin.refreshLorebookManuscriptCoverage(true);
-                } else if (tab.id === 'relationships') {
-                    this.plugin.refreshLorebookRelationships();
-                } else if (tab.id === 'memories' || tab.id === 'hygiene') {
-                    // Memories + Hygiene read on each render — the unconditional
-                    // this.render() above already covers them; no plugin-level
-                    // cache to refresh.
-                } else {
-                    void this.plugin.refreshLorebookDocumentCoverage();
+            // Sub-tab buttons carry data-lore-subtab="{id}" (full mode). The
+            // compact bar's active label button deliberately has no attribute,
+            // so clicking it is a no-op — matching the previous per-listener
+            // behavior where only the More button was wired in compact mode.
+            const btn = target.closest('button[data-lore-subtab]');
+            if (!btn) return;
+            const id = btn.getAttribute('data-lore-subtab');
+            const tab = LOREBOOK_SUBTABS.find((t) => t.id === id);
+            if (tab) this.switchLorebookSubTab(tab.id);
+        });
+        this.populateLorebookSubTabBar();
+    }
+
+    /** Re-render just the Lorebook sub-tab bar in place (width-driven mode switch — no full-panel churn). */
+    private rerenderLorebookSubTabBar(): void {
+        if (!this.loreSubTabBarEl) return;
+        this.populateLorebookSubTabBar();
+    }
+
+    /** Populate the Lorebook sub-tab bar: all five tabs (full) or active label + More overflow (compact). */
+    private populateLorebookSubTabBar(): void {
+        const subTabBar = this.loreSubTabBarEl;
+        if (!subTabBar) return;
+        subTabBar.empty();
+        this.loreHygieneBadgeEl = null;
+        subTabBar.toggleClass('quill-sidebar__subtab-bar--compact', this.loreSubTabCompact);
+
+        if (this.loreSubTabCompact) {
+            this.renderLorebookSubTabBarCompact(subTabBar);
+        } else {
+            for (const tab of LOREBOOK_SUBTABS) {
+                const btn = subTabBar.createEl('button', {
+                    cls: `quill-sidebar__subtab${this.lorebookSubTab === tab.id ? ' quill-sidebar__subtab--active' : ''}`,
+                    text: tab.label,
+                    attr: { 'data-lore-subtab': tab.id }
+                });
+                if (tab.id === 'hygiene') {
+                    this.loreHygieneBadgeEl = btn.createSpan({ cls: 'quill-sidebar__subtab-badge' });
                 }
-            });
+            }
         }
         this.updateLoreHygieneBadge();
+    }
+
+    /**
+     * Render the compact Lorebook sub-tab bar: the active sub-tab's label
+     * (with its badge if any) plus a "⋯" More button opening a native
+     * Obsidian Menu listing every sub-tab — the same overflow-hamburger
+     * pattern as the co-writer button row under compact width. No per-button
+     * listeners here: the bar's single delegated listener (registered in
+     * {@link renderLorebookSubTabBar}) routes More clicks to
+     * {@link openLorebookSubTabMenu} and ignores the active-label button.
+     */
+    private renderLorebookSubTabBarCompact(subTabBar: HTMLElement): void {
+        const active = LOREBOOK_SUBTABS.find((t) => t.id === this.lorebookSubTab) ?? LOREBOOK_SUBTABS[0]!;
+        const activeBtn = subTabBar.createEl('button', {
+            cls: 'quill-sidebar__subtab quill-sidebar__subtab--active',
+            text: active.label
+        });
+        if (active.id === 'hygiene') {
+            this.loreHygieneBadgeEl = activeBtn.createSpan({ cls: 'quill-sidebar__subtab-badge' });
+        }
+
+        const moreBtn = subTabBar.createEl('button', {
+            cls: 'quill-sidebar__subtab quill-sidebar__subtab--more',
+            attr: { type: 'button', title: 'More sub-tabs', 'aria-label': 'More sub-tabs' }
+        });
+        const moreIcon = moreBtn.createSpan({ cls: 'quill-sidebar__tab-icon' });
+        setIcon(moreIcon, 'more-horizontal');
+    }
+
+    /** Open the compact bar's overflow Menu (one item per sub-tab, the active one checked). */
+    private openLorebookSubTabMenu(evt: MouseEvent): void {
+        const menu = new Menu();
+        for (const tab of LOREBOOK_SUBTABS) {
+            menu.addItem((item) => {
+                item.setTitle(tab.label);
+                if (tab.id === this.lorebookSubTab) item.setChecked(true);
+                item.onClick(() => this.switchLorebookSubTab(tab.id));
+            });
+        }
+        menu.showAtMouseEvent(evt);
     }
 
     /** Update the cached Hygiene sub-tab badge from the last scan (no full re-render). */

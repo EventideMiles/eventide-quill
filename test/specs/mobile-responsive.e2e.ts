@@ -73,4 +73,67 @@ describe('Mobile responsive layout', () => {
         });
         await assertNoHorizontalOverflow('review');
     });
+
+    it('renders the lorebook sub-tab bar compact on mobile and full on desktop with no clipping', async function () {
+        await browser.executeObsidianCommand('eventide-quill:quill-lorebook-open');
+        const bar = await browser.$('.quill-sidebar__subtab-bar');
+        await bar.waitForDisplayed({ timeout: 15_000 });
+
+        if (isMobileEmulation()) {
+            // At 390px (under the shared 420px compact threshold) the lorebook
+            // bar collapses to the active sub-tab + the More overflow button
+            // instead of wrapping/clipping all five tabs.
+            const moreBtn = await browser.$('.quill-sidebar__subtab--more');
+            await moreBtn.waitForExist({ timeout: 10_000 });
+            expect(await moreBtn.isDisplayed(), 'lorebook More button should be visible under compact width').to.equal(true);
+            const subtabs = await browser.$$('.quill-sidebar__subtab:not(.quill-sidebar__subtab--more)');
+            expect(
+                subtabs.length,
+                `compact lorebook bar should show only the active sub-tab (found ${subtabs.length})`
+            ).to.equal(1);
+        } else {
+            // Desktop: a default-width sidebar sits below the 420px compact
+            // threshold (compact engages there by design, same as the co-writer
+            // button row) — widen the sidebar's workspace split so this branch
+            // exercises the full bar. Obsidian's workspace reconciles inline
+            // widths on its own layout ticks, so each poll re-asserts the
+            // widened layout before checking the mode.
+            const widen = (): Promise<{ compact: boolean; width: number }> =>
+                browser.execute(() => {
+                    const split = document.querySelector('.quill-sidebar')?.closest('.workspace-split') as HTMLElement | null;
+                    if (split) {
+                        split.style.width = '600px';
+                        split.style.flex = '0 0 600px';
+                    }
+                    return {
+                        compact: document.querySelectorAll('.quill-sidebar__subtab--more').length > 0,
+                        width: document.querySelector('.quill-sidebar')?.getBoundingClientRect().width ?? -1
+                    };
+                });
+            await browser.waitUntil(
+                async () => {
+                    const state = await widen();
+                    return !state.compact && state.width > 420;
+                },
+                {
+                    timeout: 10_000,
+                    timeoutMsg: 'lorebook bar never left compact mode after widening the sidebar'
+                }
+            );
+            // All five sub-tabs render (single row when they fit, wrapped when
+            // they don't — never clipped). Read in the same tick as a final
+            // width re-assert so a layout restore can't race the read.
+            const texts = await widen().then(() =>
+                browser.execute(() =>
+                    Array.from(document.querySelectorAll('.quill-sidebar__subtab:not(.quill-sidebar__subtab--more)')).map(
+                        (b) => b.textContent ?? ''
+                    )
+                )
+            );
+            for (const expected of ['Document', 'Manuscript', 'Relationships', 'Memories', 'Hygiene']) {
+                expect(texts, `lorebook sub-tab "${expected}" should be visible on desktop`).to.include(expected);
+            }
+        }
+        await assertNoHorizontalOverflow('lorebook');
+    });
 });

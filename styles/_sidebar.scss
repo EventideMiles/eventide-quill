@@ -109,9 +109,17 @@
     }
 
     // Sub-tab bar — second-level tabs (e.g., linter Results / Details,
-    // feedback New analysis / Results).
+    // feedback New analysis / Results, the five Lorebook sub-tabs).
     &__subtab-bar {
         display: flex;
+        // Wrap to a second row instead of clipping when the tabs' natural
+        // widths exceed the bar (the five Lorebook sub-tabs in a narrow
+        // sidebar). Bars that fit on one line are unaffected.
+        flex-wrap: wrap;
+        // Distribute natural-width tabs across the row so single-row bars
+        // keep the edge-to-edge look the stretched flex:1 tabs used to give
+        // (first tab flush-left, last flush-right).
+        justify-content: space-between;
         border-bottom: 1px solid var(--background-modifier-border);
         flex-shrink: 0;
         margin-bottom: $space-md;
@@ -122,7 +130,10 @@
         align-items: center;
         justify-content: center;
         gap: $space-xs;
-        flex: 1;
+        // Natural width with shrink allowed — combined with the bar's
+        // flex-wrap this replaces the old flex: 1 (which forced equal shares
+        // and clipped trailing tabs when the min-content didn't fit).
+        flex: 0 1 auto;
         padding: $space-sm $space-lg;
         cursor: pointer;
         border: none;
@@ -143,6 +154,15 @@
         &--active {
             color: var(--text-accent);
             border-bottom-color: var(--text-accent);
+        }
+
+        // Overflow hamburger in the compact Lorebook sub-tab bar (width-driven
+        // — see loreSubTabBarMode in quill-sidebar.ts). Icon-only button;
+        // every tab keeps its own 2px bottom-border rhythm so the wrapped and
+        // compact rows line up with the full bar's single bottom rule (no
+        // doubled borders between wrapped rows).
+        &--more {
+            padding: $space-sm $space-md;
         }
     }
 

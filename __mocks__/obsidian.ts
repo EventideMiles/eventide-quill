@@ -264,6 +264,88 @@ export class Component {
 }
 
 /**
+ * Stub menu item — chainable setters that record title/check state so tests
+ * can assert on the menu a component built, and a `triggerClick` helper to
+ * invoke the recorded onClick handler.
+ */
+export class MenuItem {
+    title = '';
+    icon = '';
+    checked = false;
+    disabled = false;
+    private _onClick?: (evt: MouseEvent | KeyboardEvent) => unknown;
+
+    /** Record the item's title. */
+    setTitle(title: string | DocumentFragment): this {
+        this.title = typeof title === 'string' ? title : (title.textContent ?? '');
+        return this;
+    }
+
+    /** Record the item's icon id. */
+    setIcon(icon: string): this {
+        this.icon = icon;
+        return this;
+    }
+
+    /** Record the item's check state. */
+    setChecked(checked: boolean): this {
+        this.checked = checked;
+        return this;
+    }
+
+    /** Record the item's disabled state. */
+    setDisabled(disabled: boolean): this {
+        this.disabled = disabled;
+        return this;
+    }
+
+    /** Record the click callback. */
+    onClick(cb: (evt: MouseEvent | KeyboardEvent) => unknown): this {
+        this._onClick = cb;
+        return this;
+    }
+
+    /** Invoke the recorded click callback (test helper). */
+    triggerClick(evt?: MouseEvent): void {
+        this._onClick?.(evt ?? new MouseEvent('click'));
+    }
+}
+
+/** Stub Menu — records configured items; display methods are no-ops tests can spy on. */
+export class Menu {
+    /** Items configured via addItem, in order. */
+    items: MenuItem[] = [];
+
+    /** Build one item, run `cb` on it, and record it. */
+    addItem(cb: (item: MenuItem) => unknown): this {
+        const item = new MenuItem();
+        cb(item);
+        this.items.push(item);
+        return this;
+    }
+
+    /** No-op separator. */
+    addSeparator(): this {
+        return this;
+    }
+
+    /** No-op display at a mouse event (tests spy on this to capture the menu). */
+    showAtMouseEvent(_evt: MouseEvent): this {
+        return this;
+    }
+
+    /** No-op display at a position (tests spy on this to capture the menu). */
+    showAtPosition(_position: { x: number; y: number }): this {
+        return this;
+    }
+
+    /** No-op close. */
+    hide(): this {
+        return this;
+    }
+}
+
+/**
  * Functional Setting mock. Creates a real `.setting-item` DOM row (in
  * happy-dom) so UI tests can assert on structure, text, and controls.
  * Only instantiated in jsdom/happy-dom tests (needs `document`).

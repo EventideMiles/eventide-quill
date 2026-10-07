@@ -139,7 +139,7 @@ export interface EventideQuillSettings {
      * markers (keeping `quillAnchorId` so rewind still works), and a free
      * refinement pass runs before the AI compaction fallback when a
      * conversation approaches the threshold. Off = pure AI compaction only
-     * (the pre-2.3.0 behavior). See `src/ai/context-refinement.ts`.
+     * (the pre-2.3.1 behavior). See `src/ai/context-refinement.ts`.
      */
     contextRefinementEnabled: boolean;
     contextIncludeVaultContext: boolean;
@@ -293,7 +293,7 @@ export interface EventideQuillSettings {
      * returns a length-aware message routing the model to `edit_note` /
      * `insert_note` / `append_to_note` instead. Prevents duplicate notes that
      * strand [[wikilinks]] pointing at the original. Off = unconditional
-     * create (the pre-2.3.0 behavior) — escape hatch.
+     * create (the pre-2.3.1 behavior) — escape hatch.
      */
     lorePreferEditOverCreate: boolean;
     /**
@@ -895,7 +895,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         const scroll = containerEl.createDiv({ cls: 'quill-settings__scroll-area' });
         render(scroll);
         // Wrap runs of settings under each heading into bordered sections,
-        // matching the pre-2.3.0 grouped look. Each tab renders into a single
+        // matching the pre-2.3.1 grouped look. Each tab renders into a single
         // `.quill-settings-content-*` div created by its render method.
         const content = scroll.querySelector<HTMLElement>('[class*="quill-settings-content-"]');
         if (content) this.groupSettingsByHeading(content);
@@ -905,7 +905,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
     /**
      * Re-render the currently-open bridge page in place after a mutation
      * (add/remove provider, slash command, folder override, etc.). Replaces the
-     * pre-2.3.0 `this.refreshBridge()` full re-render. Falls back to `update()` when
+     * pre-2.3.1 `this.refreshBridge()` full re-render. Falls back to `update()` when
      * no bridge page is active (e.g. at the root definition list). As tabs
      * convert to declarative controls (Phases 2–6), their mutation handlers
      * switch to `this.update()` / `this.refreshDomState()` and this method is
@@ -1720,7 +1720,7 @@ export class EventideQuillSettingTab extends PluginSettingTab {
         ];
     }
 
-    /** Restore-defaults action for the General page (resets across all tabs, matching pre-2.3.0 behavior). */
+    /** Restore-defaults action for the General page (resets across all tabs, matching pre-2.3.1 behavior). */
     private async restoreGeneralDefaults(): Promise<void> {
         const s = this.plugin.settings;
         const d = DEFAULT_SETTINGS;
