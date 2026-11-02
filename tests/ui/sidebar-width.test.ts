@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import '../helpers/ui-setup';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     COLLAPSED_WIDTH_PX,
     MIN_EDITOR_ROOM_PX,
@@ -344,6 +344,9 @@ describe('sidebar width DOM helpers', () => {
     });
 
     afterEach(() => {
+        // The hasFocus stub must not survive past its test (restore all
+        // spies) — otherwise later suites here read a blurred window.
+        vi.restoreAllMocks();
         document.body.innerHTML = '';
     });
 
@@ -362,6 +365,12 @@ describe('sidebar width DOM helpers', () => {
     });
 
     it('sidedockHasKeyboardFocus follows actual keyboard focus, not the active leaf', () => {
+        // Window-focus pin: happy-dom derives hasFocus() from activeElement
+        // (`return !!this.activeElement` in its Document), so its default is
+        // true (the body fallback). The fixtures inherit truthfully, but pin
+        // true explicitly — focus-in-window is this suite's premise — so a
+        // happy-dom behavior change cannot silently flip their meaning.
+        vi.spyOn(document, 'hasFocus').mockReturnValue(true);
         // buildSidedock marks its leaf `.mod-active` — the post-Discuss state
         // (setActiveLeaf(leaf, { focus: false }) marks the Quill leaf active
         // while keyboard focus stays in the editor). Focus is on the body:
@@ -378,6 +387,25 @@ describe('sidebar width DOM helpers', () => {
         const outside = createDiv();
         document.body.appendChild(outside);
         outside.focus();
+        expect(sidedockHasKeyboardFocus(sidedock)).toBe(false);
+    });
+
+    it('sidedockHasKeyboardFocus never reads in-dock while the window is blurred (retained activeElement)', () => {
+        // PR #68 round 10: `activeElement` is RETAINED per-document when the
+        // window loses OS focus (the writer works in an Obsidian popout or
+        // another app while the dock's window is blurred). happy-dom cannot
+        // represent OS blur natively — its hasFocus() is `!!activeElement`
+        // and is therefore always true — so the blurred state is controlled
+        // with a stub, as the finding sanctions.
+        vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+        const { sidedock } = buildSidedock();
+        // Focus sits inside the dock and is retained there despite the blur.
+        const inside = createDiv();
+        sidedock.appendChild(inside);
+        inside.focus();
+        expect(document.activeElement).toBe(inside);
+        // A blurred window never reads as focused-in-sidebar, so the
+        // un-commanded reset in that state stays protected.
         expect(sidedockHasKeyboardFocus(sidedock)).toBe(false);
     });
 

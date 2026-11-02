@@ -3,7 +3,7 @@ import '../helpers/ui-setup';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, Component, Menu, WorkspaceLeaf } from 'obsidian';
 import { QuillSidebarView, loreSubTabBarMode } from '../../src/ui/quill-sidebar';
-import { DRAG_STILL_MS, parseSidebarWidthState, sidebarWidthState } from '../../src/ui/sidebar-width';
+import { DRAG_STILL_MS, parseSidebarWidthState, sidebarWidthState, sidedockHasKeyboardFocus } from '../../src/ui/sidebar-width';
 import type EventideQuillPlugin from '../../src/main';
 
 /** Build a minimal `EventideQuillPlugin` stub for sidebar construction. */
@@ -530,6 +530,13 @@ describe('sidebar width keeper reset guard (keyboard focus, not active leaf)', (
      * fixture's 450px width at open.
      */
     async function makePostDiscussView(): Promise<PostDiscussFixture> {
+        // Window-focus pin: happy-dom derives hasFocus() from activeElement
+        // and defaults to true (the body fallback), so this fixture's premise
+        // — a FOCUSED window with keyboard focus in the editor, outside the
+        // dock — is inherited truthfully, but pin it so a happy-dom behavior
+        // change cannot silently flip the fixtures' meaning. The blurred
+        // regression below re-stubs to false.
+        vi.spyOn(document, 'hasFocus').mockReturnValue(true);
         const width = { value: 450 };
         const sidedock = createDiv();
         sidedock.className = 'workspace-split mod-right-split';
@@ -627,6 +634,35 @@ describe('sidebar width keeper reset guard (keyboard focus, not active leaf)', (
         // Adopted as drag: no restore, the new width is remembered.
         expect(sidedock.style.width).toBe('');
         expect(widthKeeperOf(view)?.rememberedWidth).toBe(320);
+    });
+
+    it('restores a large drop when focus is retained in-dock while the window is blurred', async () => {
+        const { view, sidedock, width } = await makePostDiscussView();
+
+        // The writer clicks into the sidebar past the stillness threshold:
+        // with the window still focused this MUST read as focused-in-dock —
+        // proving the blur below is the only discriminator.
+        vi.setSystemTime(T0 + DRAG_STILL_MS + 500);
+        const quillLeaf = sidedock.querySelector('.mod-active');
+        expect(quillLeaf).not.toBeNull();
+        (quillLeaf as HTMLElement).focus();
+        expect(sidedockHasKeyboardFocus(sidedock)).toBe(true);
+
+        // Then the window loses OS focus (the writer works in an Obsidian
+        // popout or another app): `activeElement` is RETAINED in-dock, but
+        // the window-focus gate must keep the dock out of "the writer owns
+        // the width" — the >=50px single-step drop after stillness
+        // classifies as an un-commanded reset and RESTORES. Adopting here
+        // (drag) is exactly the round-10 bug.
+        vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+        // Retention premise pinned, not implicit: activeElement is still the
+        // in-dock leaf despite the blur.
+        expect(document.activeElement).toBe(quillLeaf);
+        width.value = 320;
+        widthSampleCallback()([], {} as ResizeObserver);
+
+        expect(sidedock.style.width).toBe('450px');
+        expect(widthKeeperOf(view)?.rememberedWidth).toBe(450);
     });
 });
 

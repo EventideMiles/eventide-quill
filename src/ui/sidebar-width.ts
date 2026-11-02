@@ -368,26 +368,35 @@ export function readSidedockWidth(el: HTMLElement | null): number | null {
 
 /**
  * Whether the writer's actual keyboard focus sits inside the given container
- * (the sidedock). Resolved against the container's own document —
- * `ownerDocument.activeElement`, never a global `document` — so popout
- * windows answer correctly; a second realm's DOM can't be built under
- * happy-dom, so that case is covered by this contract rather than a test.
- * Realm-safe by construction: `Node.contains` accepts `Node | null` in
- * lib.dom, so no cross-realm `instanceof` is needed (the same duck-typing
- * posture as {@link isSidebarDividerGrab}). Zero Obsidian imports.
- *
- * WHY keyboard focus and not the active leaf: `setActiveLeaf(leaf,
- * { focus: false })` moves the document-wide `.workspace-leaf.mod-active`
- * class to the target leaf's container REGARDLESS of the focus flag (focus
- * only gates `focusLeaf`), so after the desktop Discuss flow loads a report
- * (PR #68 round 8) the Quill leaf carries `mod-active` inside the sidedock
- * while keyboard focus stays in the editor. The active-leaf proxy therefore
- * reported "the writer owns the width" in exactly the post-Discuss state an
- * un-commanded reset (the #67 symptom) strikes, disabling the keeper's core
- * protection — reset detection must follow actual keyboard focus.
+ * (the sidedock). WHY keyboard focus and not the active leaf:
+ * `setActiveLeaf(leaf, { focus: false })` moves the document-wide
+ * `.workspace-leaf.mod-active` class to the target leaf's container
+ * REGARDLESS of the focus flag (focus only gates `focusLeaf`), so after the
+ * desktop Discuss flow loads a report (PR #68 round 8) the Quill leaf carries
+ * `mod-active` inside the sidedock while keyboard focus stays in the editor —
+ * the active-leaf proxy reported "the writer owns the width" in exactly the
+ * post-Discuss state an un-commanded reset (the #67 symptom) strikes,
+ * disabling the keeper's core protection. Focus containment (the container's
+ * OWN document's `activeElement` must be a DOM descendant) superseded the
+ * proxy, and the window-focus gate (`ownerDocument.hasFocus()`, PR #68
+ * round 10) closes containment's retention edge: `activeElement` is RETAINED
+ * per-document when the window loses OS focus — the writer works in an
+ * Obsidian popout or another app while this dock's window is blurred — so
+ * containment alone still read the dock as focused-in-sidebar and an
+ * un-commanded reset in that state was adopted instead of reverted.
+ * Remaining semantics, honestly: a FOCUSED window answers from its real
+ * `activeElement`; a BLURRED window never reads as in-dock, so a large drop
+ * while blurred restores — the safe bias. Resolved against the container's
+ * own document, never a global `document`, so popout windows answer in their
+ * own realm's terms; realm-safe by construction (`Node.contains` accepts
+ * `Node | null` in lib.dom — no cross-realm `instanceof`, the same
+ * duck-typing posture as {@link isSidebarDividerGrab}). Zero Obsidian
+ * imports.
  */
 export function sidedockHasKeyboardFocus(sidedock: HTMLElement): boolean {
-    const el = sidedock.ownerDocument.activeElement;
+    const doc = sidedock.ownerDocument;
+    if (!doc.hasFocus()) return false;
+    const el = doc.activeElement;
     return el !== null && sidedock.contains(el);
 }
 
