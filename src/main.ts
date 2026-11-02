@@ -5,6 +5,7 @@ import {
     Menu,
     normalizePath,
     Notice,
+    Platform,
     Plugin,
     TAbstractFile,
     TFile,
@@ -1599,9 +1600,12 @@ export default class EventideQuillPlugin extends Plugin {
      * the editor (as the Discuss flows do to put the manuscript in context)
      * dismisses the overlay. Calling this right after restores it so the writer
      * lands on the results chat instead of the bare editor. No-op on desktop
-     * where the leaf is docked and already visible.
+     * where the leaf is docked and already visible — `revealLeaf` would
+     * activate the sidebar leaf and steal focus from the editor this flow just
+     * opened (issue #67 investigation finding).
      */
     private revealQuillSidebar(): void {
+        if (!Platform.isMobile) return;
         const quillLeaf = this.app.workspace.getLeavesOfType(QUILL_VIEW_TYPE)[0];
         if (quillLeaf) {
             void this.app.workspace.revealLeaf(quillLeaf);
