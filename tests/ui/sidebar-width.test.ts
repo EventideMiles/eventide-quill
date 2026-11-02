@@ -243,6 +243,63 @@ describe('SidebarWidthKeeper', () => {
         expect(decision.persist).toBe(true);
         expect(keeper.rememberedWidth).toBe(312);
     });
+
+    it('baselines on the first observe so later changes classify without begin', () => {
+        const keeper = new SidebarWidthKeeper();
+        const first = keeper.observe(300, 1000, ctx());
+        expect(first.kind).toBe('initial');
+        const second = keeper.observe(320, 1100, ctx());
+        expect(second.kind).toBe('drag');
+        expect(second.persist).toBe(true);
+        expect(keeper.rememberedWidth).toBe(320);
+    });
+
+    it('carries a first-observe restore intent when a seeded width differs', () => {
+        const keeper = new SidebarWidthKeeper();
+        keeper.seedRemembered(450);
+        const decision = keeper.observe(300, 1000, ctx());
+        expect(decision.kind).toBe('initial');
+        expect(decision.restoreWidth).toBe(450);
+        expect(decision.persist).toBe(false);
+        expect(keeper.rememberedWidth).toBe(450);
+    });
+
+    it('re-adopts the restored width on the sample after a first-visible restore', () => {
+        const keeper = new SidebarWidthKeeper();
+        keeper.seedRemembered(450);
+        const first = keeper.observe(300, 1000, ctx());
+        expect(first.restoreWidth).toBe(450);
+        const afterRestore = keeper.observe(450, 1050, ctx());
+        expect(afterRestore.kind).toBe('drag');
+        expect(afterRestore.persist).toBe(true);
+        expect(keeper.rememberedWidth).toBe(450);
+    });
+
+    it('skips the first-observe restore when the observed width matches within the epsilon', () => {
+        const keeper = new SidebarWidthKeeper();
+        keeper.seedRemembered(450);
+        const decision = keeper.observe(450 + WIDTH_EPSILON_PX, 1000, ctx());
+        expect(decision.kind).toBe('initial');
+        expect(decision.restoreWidth).toBeNull();
+        expect(decision.persist).toBe(false);
+        expect(keeper.rememberedWidth).toBe(450);
+    });
+
+    it('skips the first-observe restore when the remembered width does not fit the window', () => {
+        const keeper = new SidebarWidthKeeper();
+        keeper.seedRemembered(450);
+        const decision = keeper.observe(300, 1000, ctx({ windowWidth: 400 }));
+        expect(decision.restoreWidth).toBeNull();
+        expect(keeper.rememberedWidth).toBe(450);
+    });
+
+    it('never carries a first-observe restore when nothing is seeded', () => {
+        const keeper = new SidebarWidthKeeper();
+        const decision = keeper.observe(300, 1000, ctx());
+        expect(decision.restoreWidth).toBeNull();
+        expect(decision.persist).toBe(true); // the defensive fresh-install adopt
+        expect(keeper.rememberedWidth).toBe(300);
+    });
 });
 
 describe('sidebar width sidecar payload', () => {

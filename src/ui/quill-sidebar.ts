@@ -322,6 +322,17 @@ export class QuillSidebarView extends ItemView {
             resetAllowed: !isLeafActiveInside(sidedock)
         });
         if (decision.kind === 'stable' || decision.kind === 'collapsed') return;
+        if (decision.kind === 'initial') {
+            // First usable sample after a collapsed open (begin() never ran):
+            // apply a seeded width that differs from the observed one, and
+            // persist only the defensive fresh-install adopt.
+            if (decision.restoreWidth !== null) {
+                applySidebarWidth(sidedock, decision.restoreWidth);
+                this.logWidthChange('restored on first visible', decision.fromWidth, decision.restoreWidth);
+            }
+            if (decision.persist) this.scheduleSidebarWidthPersist();
+            return;
+        }
         if (decision.kind === 'reset-drop') {
             if (decision.restoreWidth === null) return;
             this.logWidthChange('detected un-commanded reset', decision.fromWidth, width);

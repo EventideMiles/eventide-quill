@@ -247,7 +247,12 @@ export class SidebarWidthKeeper {
     /**
      * Observe a sidedock width and classify the change. Collapsed samples are
      * ignored entirely (they do not touch the sample baseline, so expanding a
-     * collapsed sidebar later compares against the pre-collapse width).
+     * collapsed sidebar later compares against the pre-collapse width). When
+     * no baseline exists (begin() never ran — the view opened with the sidebar
+     * collapsed), the first usable sample baselines the stream and, when a
+     * width was seeded that differs from the observed one beyond the epsilon,
+     * carries a validated restore intent for the wiring to apply on first
+     * visibility.
      */
     observe(width: number, atMs: number, context: WidthObserveContext): WidthDecision {
         if (!Number.isFinite(width) || width <= COLLAPSED_WIDTH_PX) {
@@ -261,14 +266,23 @@ export class SidebarWidthKeeper {
         }
         const prev = this.lastSample;
         if (!prev) {
-            // Defensively adopt when begin() was never called.
-            if (this.remembered === null) this.remembered = clampSidebarWidth(width, context.windowWidth);
+            // begin() never ran (the view opened with the sidebar collapsed):
+            // baseline the sample stream so later observations classify
+            // normally instead of re-entering this branch forever. Adopt and
+            // persist only when nothing was seeded (fresh install); carry a
+            // restore intent when a seeded width differs from the observed
+            // one so the wiring can apply it on first visibility.
+            const wasUnseeded = this.remembered === null;
+            if (wasUnseeded) this.remembered = clampSidebarWidth(width, context.windowWidth);
+            this.lastSample = { width, atMs };
+            this.lastChangeMs = atMs;
+            const restore = wasUnseeded ? null : restoreWidthForOpen(this.remembered, width, context.windowWidth);
             return {
                 kind: 'initial',
                 fromWidth: null,
                 rememberedWidth: this.remembered,
-                restoreWidth: null,
-                persist: true
+                restoreWidth: restore,
+                persist: wasUnseeded
             };
         }
         this.lastSample = { width, atMs };
