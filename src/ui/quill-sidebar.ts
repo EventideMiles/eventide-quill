@@ -95,6 +95,20 @@ const LOREBOOK_SUBTABS: ReadonlyArray<{ id: LorebookSubTab; label: string }> = [
  */
 let sidebarWidthWriteChain: Promise<void> = Promise.resolve();
 
+/**
+ * Monotonic revision of the latest SCHEDULED width save, shared by every
+ * QuillSidebarView instance beside {@link sidebarWidthWriteChain}. The chain
+ * guarantees enqueue ORDER, but order alone still lets a stale write win:
+ * an older instance's unload flush of a still-pending debounced save can
+ * enqueue AFTER a newer instance's already-enqueued save and land last with
+ * the older width. Each scheduling arms a new revision; the enqueued write
+ * carries the revision minted at its schedule time and skips itself at
+ * execution time (before any disk I/O) once a newer scheduling has
+ * superseded it. Direct saves without a revision capture the current one at
+ * enqueue, so they stay current unless a newer scheduling follows.
+ */
+let sidebarWidthSaveRevision = 0;
+
 /** Sidebar view hosting the linter, context, review, co-writer, dashboard, and lorebook tabs. */
 export class QuillSidebarView extends ItemView {
     private results: LintResult[] = [];
@@ -159,6 +173,8 @@ export class QuillSidebarView extends ItemView {
     private lastWindowResizeMs: number | null = null;
     /** Pending debounced sidecar-write timer, or null when idle. */
     private widthSaveTimer: number | null = null;
+    /** Revision minted when the pending timer was armed; consumed (nulled) by the timer fire or the teardown flush. */
+    private widthSaveRevision: number | null = null;
     /**
      * Epoch ms of a plausible sidebar-divider grab (see {@link isSidebarDividerGrab}),
      * or null when idle. Read-time expiry ({@link SIDEBAR_DRAG_ACTIVE_TIMEOUT_MS})
@@ -453,9 +469,12 @@ export class QuillSidebarView extends ItemView {
      * Persist the remembered width to the sidecar (best-effort; never
      * throws). The write is enqueued on the module-level
      * {@link sidebarWidthWriteChain} so saves land in enqueue order on the
-     * single shared sidecar, no matter which view instance issued them.
+     * single shared sidecar, no matter which view instance issued them, and
+     * carries `revision` — defaulting to the current one, so a direct call
+     * is fresh unless a newer scheduling follows — for the chain link's
+     * staleness skip ({@link sidebarWidthSaveRevision}).
      */
-    private async saveSidebarWidth(width: number): Promise<void> {
+    private async saveSidebarWidth(width: number, revision: number = sidebarWidthSaveRevision): Promise<void> {
         // Capture the write's inputs at call time: the enqueued link must
         // persist the width this caller asked for, not one re-read from a
         // possibly-torn-down instance when the chain reaches the link.
@@ -464,6 +483,10 @@ export class QuillSidebarView extends ItemView {
         const dir = normalizePath(this.plugin.pluginDataDir);
         sidebarWidthWriteChain = sidebarWidthWriteChain
             .then(async () => {
+                // Freshness gate before any disk I/O: a newer scheduling since
+                // this write was enqueued makes it stale — skip it rather than
+                // let an older width land last (order alone can't prevent that).
+                if (revision !== sidebarWidthSaveRevision) return;
                 if (!(await adapter.exists(dir))) await adapter.mkdir(dir);
                 await adapter.write(path, JSON.stringify(sidebarWidthState(width), null, 2));
             })
@@ -477,12 +500,18 @@ export class QuillSidebarView extends ItemView {
     /** Debounce a sidecar write so drag streams collapse into one disk write. */
     private scheduleSidebarWidthPersist(): void {
         if (this.widthSaveTimer !== null) window.clearTimeout(this.widthSaveTimer);
+        // Mint at arming, module-wide: every re-arm supersedes the previous
+        // pending intent — across instances too, since a rebuild gives the
+        // new instance a fresh timer but not a fresh intent lineage.
+        const revision = ++sidebarWidthSaveRevision;
+        this.widthSaveRevision = revision;
         // Raw one-shot debounce: registerInterval is for recurring ticks; the
         // pending write is flushed explicitly in onunload.
         this.widthSaveTimer = window.setTimeout(() => {
             this.widthSaveTimer = null;
+            this.widthSaveRevision = null;
             const width = this.widthKeeper?.rememberedWidth;
-            if (width !== null && width !== undefined) void this.saveSidebarWidth(width);
+            if (width !== null && width !== undefined) void this.saveSidebarWidth(width, revision);
         }, SIDEBAR_WIDTH_SAVE_DEBOUNCE_MS);
     }
 
@@ -494,7 +523,14 @@ export class QuillSidebarView extends ItemView {
             window.clearTimeout(this.widthSaveTimer);
             this.widthSaveTimer = null;
             const width = this.widthKeeper?.rememberedWidth;
-            if (width !== null && width !== undefined) void this.saveSidebarWidth(width);
+            // The flush carries the revision minted at SCHEDULE time — never a
+            // fresh one — so a stale instance's unload flush loses to any newer
+            // scheduling instead of being promoted to current by its own unload.
+            const revision = this.widthSaveRevision;
+            this.widthSaveRevision = null;
+            if (width !== null && width !== undefined && revision !== null) {
+                void this.saveSidebarWidth(width, revision);
+            }
         }
         this.widthKeeper = null;
         this.sidedockEl = null;

@@ -546,6 +546,11 @@ describe('sidebar width sidecar write chain (cross-instance ordering)', () => {
         return (view as unknown as { saveSidebarWidth(width: number): Promise<void> }).saveSidebarWidth(width);
     }
 
+    /** Arm the view's debounced persist (tests reach internals pragmatically). */
+    function schedulePersist(view: QuillSidebarView): void {
+        (view as unknown as { scheduleSidebarWidthPersist(): void }).scheduleSidebarWidthPersist();
+    }
+
     /** Drain macrotasks so the chained adapter work (microtasks between ticks) settles deterministically. */
     async function flushMacrotasks(times: number): Promise<void> {
         for (let i = 0; i < times; i++) await new Promise((resolve) => setTimeout(resolve, 0));
@@ -585,5 +590,47 @@ describe('sidebar width sidecar write chain (cross-instance ordering)', () => {
         // Completion order IS disk order: the stale write landed first and the
         // newer save last — the sidecar's final content is B's width.
         expect(adapter.writes.map((data) => parseSidebarWidthState(data))).toEqual([300, 450]);
+    });
+
+    it("an older instance's onunload flush cannot overwrite a newer save", async () => {
+        // B's write stalls mid-flight so A's unload flush is enqueued while
+        // the newer save is still being written — FIFO serialization alone
+        // preserves order, not freshness, and would land A's stale width last.
+        const adapter = makeDelayedAdapter('"width": 450', 3);
+
+        // Production shape: ONE plugin and ONE vault adapter persist while
+        // only the view instance (and its leaf) is rebuilt, so all views
+        // share them.
+        const app = new App();
+        (app.vault as unknown as { adapter: unknown }).adapter = adapter;
+        const plugin = makePlugin();
+        Object.assign(plugin, { pluginDataDir: '.plugins/eventide-quill' });
+        /** Build a leaf bound to the shared app, mirroring a rebuilt sidebar leaf. */
+        const makeLeaf = () =>
+            new (WorkspaceLeaf as unknown as new (app?: unknown) => object)(app) as unknown as WorkspaceLeaf;
+
+        // Neither view is opened (the chain lives in the save path); each
+        // keeper is stubbed to the width its instance would hold.
+        const viewA = new QuillSidebarView(makeLeaf(), plugin);
+        const viewB = new QuillSidebarView(makeLeaf(), plugin);
+        (viewA as unknown as { widthKeeper: unknown }).widthKeeper = { rememberedWidth: 300 };
+        (viewB as unknown as { widthKeeper: unknown }).widthKeeper = { rememberedWidth: 450 };
+
+        // The older instance arms a debounced save (minting its schedule-time
+        // revision); the newer instance arms one too, then unloads BEFORE its
+        // debounce fires — its teardown flush enqueues the newer write now.
+        schedulePersist(viewA);
+        schedulePersist(viewB);
+        viewB.onunload();
+        // Let B's flush enter its adapter stall, THEN unload A: the stale
+        // flush is enqueued behind an in-flight newer write.
+        await flushMacrotasks(1);
+        viewA.onunload();
+        await flushMacrotasks(8);
+
+        // The schedule-time revision gate skips A's stale flush: only the
+        // newer width reaches disk — not [450, 300] as order-only
+        // serialization would land.
+        expect(adapter.writes.map((data) => parseSidebarWidthState(data))).toEqual([450]);
     });
 });
