@@ -494,6 +494,143 @@ describe('sidebar width keeper drag hint (final-sample race)', () => {
 });
 
 /**
+ * Regression for the PR #68 round-8 interaction: desktop
+ * `revealQuillSidebar()` calls `workspace.setActiveLeaf(quillLeaf,
+ * { focus: false })` after Discuss flows load a report, which moves the
+ * document-wide `.workspace-leaf.mod-active` class to the Quill leaf's
+ * container WITHOUT moving keyboard focus (focus only gates `focusLeaf`).
+ * The reset guard used the active leaf as its "the writer owns the width"
+ * proxy, so in exactly that post-Discuss state a qualifying un-commanded
+ * width drop (the #67 symptom itself) classified as a drag and was adopted
+ * — the keeper's core protection was disabled. The guard must follow actual
+ * keyboard focus (`sidedockHasKeyboardFocus`); the divider-drag guard stays
+ * a separate arm of the conjunction.
+ */
+describe('sidebar width keeper reset guard (keyboard focus, not active leaf)', () => {
+    /** Epoch base for the fake clock: the keeper baselines its sample stream at open. */
+    const T0 = 1_000_000;
+    /** The ResizeObserver global before the capturing double was installed. */
+    let originalResizeObserver: unknown;
+    /** The still-open view, unloaded in afterEach so keeper teardown runs. */
+    let openView: QuillSidebarView | null = null;
+
+    /** The mounted fixture returned by {@link makePostDiscussView}. */
+    interface PostDiscussFixture {
+        view: QuillSidebarView;
+        sidedock: HTMLElement;
+        width: { value: number };
+    }
+
+    /**
+     * Mount the real sidebar view inside a fabricated right-sidedock whose
+     * measured width is stubbed and mutable, carrying the post-round-8 DOM
+     * state: the Quill leaf inside the dock is marked `.mod-active` while
+     * keyboard focus sits OUTSIDE the sidedock (in the editor). The sidecar
+     * load is stubbed to null so the keeper deterministically adopts the
+     * fixture's 450px width at open.
+     */
+    async function makePostDiscussView(): Promise<PostDiscussFixture> {
+        const width = { value: 450 };
+        const sidedock = createDiv();
+        sidedock.className = 'workspace-split mod-right-split';
+        document.body.appendChild(sidedock);
+        const leaf = (new (WorkspaceLeaf as unknown as new (app?: unknown) => object)(new App())) as unknown as WorkspaceLeaf;
+        const leafContainer = (leaf as unknown as { containerEl: HTMLElement }).containerEl;
+        // Round-8 interaction: setActiveLeaf(leaf, { focus: false }) marks the
+        // Quill leaf's container `workspace-leaf mod-active` without moving
+        // focus into it.
+        leafContainer.classList.add('workspace-leaf', 'mod-active');
+        sidedock.appendChild(leafContainer);
+        // Keyboard focus stays in the editor, outside the sidedock.
+        const editor = createDiv();
+        document.body.appendChild(editor);
+        editor.focus();
+        // Production reads the width via getBoundingClientRect (forces layout); the stub IS the layout here.
+        sidedock.getBoundingClientRect = () => ({ width: width.value, left: 800 } as DOMRect);
+        const plugin = makePlugin();
+        Object.assign(plugin, { pluginDataDir: '.plugins/eventide-quill' });
+        const view = new QuillSidebarView(leaf, plugin);
+        // Deterministic seed: ignore sidecar/scheduled state — the keeper
+        // adopts the fixture's 450px width at open.
+        vi.spyOn(view as unknown as { loadSidebarWidth(): Promise<number | null> }, 'loadSidebarWidth').mockResolvedValue(null);
+        await view.onOpen();
+        // Flush the fire-and-forget sidecar read so initSidebarWidthState
+        // finishes: the keeper baselines at the current width and the width
+        // observer attaches.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        openView = view;
+        return { view, sidedock, width };
+    }
+
+    /** The width-keeper observer callback — the LAST observer the view constructed. */
+    function widthSampleCallback(): ResizeObserverCallback {
+        const callbacks = CapturingResizeObserver.callbacks;
+        const cb = callbacks[callbacks.length - 1];
+        if (!cb) throw new Error('width ResizeObserver callback not captured');
+        return cb;
+    }
+
+    /** The view's width keeper read through the private field (tests reach internals pragmatically). */
+    function widthKeeperOf(view: QuillSidebarView): { rememberedWidth: number | null } | null {
+        return (view as unknown as { widthKeeper: { rememberedWidth: number | null } | null }).widthKeeper;
+    }
+
+    beforeEach(() => {
+        CapturingResizeObserver.callbacks = [];
+        originalResizeObserver = (globalThis as Record<string, unknown>).ResizeObserver;
+        (globalThis as Record<string, unknown>).ResizeObserver = CapturingResizeObserver;
+        vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+        (globalThis as Record<string, unknown>).ResizeObserver = originalResizeObserver;
+        openView?.onunload();
+        openView = null;
+        document.body.innerHTML = '';
+    });
+
+    it('classifies a large drop as an un-commanded reset even though the dock carries mod-active', async () => {
+        const { view, sidedock, width } = await makePostDiscussView();
+        // Open adopted the fixture width as the remembered one.
+        expect(widthKeeperOf(view)?.rememberedWidth).toBe(450);
+
+        // The writer pauses: fill the stillness clock past DRAG_STILL_MS so a
+        // large single-step drop qualifies as a reset candidate.
+        vi.setSystemTime(T0 + DRAG_STILL_MS + 500);
+
+        // The #67 symptom itself: a >=50px single-step drop, no drag armed.
+        width.value = 320;
+        widthSampleCallback()([], {} as ResizeObserver);
+
+        // RESET, not adopt: the remembered width is restored to the DOM and
+        // kept — the mod-active class must not suppress reset handling.
+        expect(sidedock.style.width).toBe('450px');
+        expect(widthKeeperOf(view)?.rememberedWidth).toBe(450);
+    });
+
+    it('still adopts a large drop as a drag when keyboard focus IS inside the sidedock', async () => {
+        const { view, sidedock, width } = await makePostDiscussView();
+
+        // The writer pauses past the stillness threshold, then clicks into
+        // the sidebar: keyboard focus moves inside the dock.
+        vi.setSystemTime(T0 + DRAG_STILL_MS + 500);
+        const quillLeaf = sidedock.querySelector('.mod-active');
+        expect(quillLeaf).not.toBeNull();
+        (quillLeaf as HTMLElement).focus();
+
+        // The same large single-step drop now counts as legitimate intent.
+        width.value = 320;
+        widthSampleCallback()([], {} as ResizeObserver);
+
+        // Adopted as drag: no restore, the new width is remembered.
+        expect(sidedock.style.width).toBe('');
+        expect(widthKeeperOf(view)?.rememberedWidth).toBe(320);
+    });
+});
+
+/**
  * Cross-instance serialization tests for the sidebar-width sidecar write
  * chain. The sidecar is one plugin-data file, but each QuillSidebarView
  * instance carries its own debounce/flush path — so an unloading instance's

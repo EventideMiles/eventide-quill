@@ -73,10 +73,11 @@ export interface WidthObserveContext {
     /** Epoch ms of the last window resize event, or null when none is recent. */
     lastWindowResizeMs: number | null;
     /**
-     * False when the writer demonstrably owns the width — the active leaf
-     * sits inside the sidebar, or a divider drag gesture is in progress (see
-     * {@link isSidebarDividerGrab}). Large single-step drops then count as
-     * legitimate intent and are adopted instead of restored.
+     * False when the writer demonstrably owns the width — the writer's
+     * keyboard focus sits inside the sidebar (see
+     * {@link sidedockHasKeyboardFocus}), or a divider drag gesture is in
+     * progress (see {@link isSidebarDividerGrab}). Large single-step drops
+     * then count as legitimate intent and are adopted instead of restored.
      */
     resetAllowed: boolean;
 }
@@ -366,13 +367,28 @@ export function readSidedockWidth(el: HTMLElement | null): number | null {
 }
 
 /**
- * Whether the active leaf lives inside the given container (the writer's
- * focus is in the sidebar). Resolved against the container's own document,
- * so popout windows answer correctly.
+ * Whether the writer's actual keyboard focus sits inside the given container
+ * (the sidedock). Resolved against the container's own document —
+ * `ownerDocument.activeElement`, never a global `document` — so popout
+ * windows answer correctly; a second realm's DOM can't be built under
+ * happy-dom, so that case is covered by this contract rather than a test.
+ * Realm-safe by construction: `Node.contains` accepts `Node | null` in
+ * lib.dom, so no cross-realm `instanceof` is needed (the same duck-typing
+ * posture as {@link isSidebarDividerGrab}). Zero Obsidian imports.
+ *
+ * WHY keyboard focus and not the active leaf: `setActiveLeaf(leaf,
+ * { focus: false })` moves the document-wide `.workspace-leaf.mod-active`
+ * class to the target leaf's container REGARDLESS of the focus flag (focus
+ * only gates `focusLeaf`), so after the desktop Discuss flow loads a report
+ * (PR #68 round 8) the Quill leaf carries `mod-active` inside the sidedock
+ * while keyboard focus stays in the editor. The active-leaf proxy therefore
+ * reported "the writer owns the width" in exactly the post-Discuss state an
+ * un-commanded reset (the #67 symptom) strikes, disabling the keeper's core
+ * protection — reset detection must follow actual keyboard focus.
  */
-export function isLeafActiveInside(container: HTMLElement): boolean {
-    const active = container.ownerDocument.querySelector('.workspace-leaf.mod-active');
-    return active instanceof HTMLElement && container.contains(active);
+export function sidedockHasKeyboardFocus(sidedock: HTMLElement): boolean {
+    const el = sidedock.ownerDocument.activeElement;
+    return el !== null && sidedock.contains(el);
 }
 
 /** Minimal pointer-event shape the grab predicate reads (structural so tests can pass plain objects). */

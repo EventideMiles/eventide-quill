@@ -12,13 +12,13 @@ import {
     applySidebarWidth,
     classifyWidthChange,
     clampSidebarWidth,
-    isLeafActiveInside,
     isSidebarDividerGrab,
     parseSidebarWidthState,
     readSidedockWidth,
     resolveSidedockElement,
     restoreWidthForOpen,
     restorableWidth,
+    sidedockHasKeyboardFocus,
     sidebarWidthKeeperEnabled,
     sidebarWidthState
 } from '../../src/ui/sidebar-width';
@@ -361,17 +361,24 @@ describe('sidebar width DOM helpers', () => {
         expect(readSidedockWidth(withMeasuredWidth(el, 312.2))).toBe(312.2);
     });
 
-    it('isLeafActiveInside answers per the active leaf location', () => {
+    it('sidedockHasKeyboardFocus follows actual keyboard focus, not the active leaf', () => {
+        // buildSidedock marks its leaf `.mod-active` — the post-Discuss state
+        // (setActiveLeaf(leaf, { focus: false }) marks the Quill leaf active
+        // while keyboard focus stays in the editor). Focus is on the body:
+        // outside the dock, so the dock does NOT have keyboard focus despite
+        // carrying the active leaf.
         const { sidedock } = buildSidedock();
-        expect(isLeafActiveInside(sidedock)).toBe(true);
-        document.body.innerHTML = '';
-        const { sidedock: dock2 } = buildSidedock();
-        dock2.querySelector('.workspace-leaf.mod-active')?.classList.remove('mod-active');
-        expect(isLeafActiveInside(dock2)).toBe(false);
+        expect(sidedockHasKeyboardFocus(sidedock)).toBe(false);
+        // Focus moves into the dock (the writer clicks into the sidebar).
+        const inside = createDiv();
+        sidedock.appendChild(inside);
+        inside.focus();
+        expect(sidedockHasKeyboardFocus(sidedock)).toBe(true);
+        // Focus moves back outside (into the editor).
         const outside = createDiv();
-        outside.className = 'workspace-leaf mod-active';
         document.body.appendChild(outside);
-        expect(isLeafActiveInside(dock2)).toBe(false);
+        outside.focus();
+        expect(sidedockHasKeyboardFocus(sidedock)).toBe(false);
     });
 
     it('applySidebarWidth writes a rounded inline width without !important', () => {

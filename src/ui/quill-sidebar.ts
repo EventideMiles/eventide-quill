@@ -35,14 +35,14 @@ import {
     SIDEBAR_WIDTH_SAVE_DEBOUNCE_MS,
     SidebarWidthKeeper,
     applySidebarWidth,
-    isLeafActiveInside,
     isSidebarDividerGrab,
     parseSidebarWidthState,
     readSidedockWidth,
     resolveSidedockElement,
     restoreWidthForOpen,
     sidebarWidthKeeperEnabled,
-    sidebarWidthState
+    sidebarWidthState,
+    sidedockHasKeyboardFocus
 } from './sidebar-width';
 
 export const QUILL_VIEW_TYPE = 'quill-sidebar';
@@ -406,7 +406,7 @@ export class QuillSidebarView extends ItemView {
             const begin = keeper.begin(current, Date.now(), {
                 windowWidth,
                 lastWindowResizeMs: this.lastWindowResizeMs,
-                resetAllowed: !isLeafActiveInside(sidedock) && !this.isSidebarDragActive()
+                resetAllowed: !sidedockHasKeyboardFocus(sidedock) && !this.isSidebarDragActive()
             });
             if (begin.persist) this.scheduleSidebarWidthPersist();
             const restore = restoreWidthForOpen(keeper.rememberedWidth, current, windowWidth);
@@ -431,7 +431,7 @@ export class QuillSidebarView extends ItemView {
         const decision = keeper.observe(width, Date.now(), {
             windowWidth: this.viewWindowWidth(sidedock),
             lastWindowResizeMs: this.lastWindowResizeMs,
-            resetAllowed: !isLeafActiveInside(sidedock) && !this.isSidebarDragActive()
+            resetAllowed: !sidedockHasKeyboardFocus(sidedock) && !this.isSidebarDragActive()
         });
         if (decision.kind === 'stable' || decision.kind === 'collapsed') return;
         if (decision.kind === 'initial') {
