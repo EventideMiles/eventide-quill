@@ -48,6 +48,16 @@ export const DRAG_STILL_MS = 1500;
 /** Debounce for sidecar writes while widths settle (ms). */
 export const SIDEBAR_WIDTH_SAVE_DEBOUNCE_MS = 500;
 
+/** Distance from the divider edge within which a pointerdown counts as a divider grab (px). */
+export const SIDEBAR_DIVIDER_STRIP_PX = 10;
+
+/**
+ * How long a divider grab stays "drag active" without a matching pointerup
+ * (ms). Read-time expiry — a missed up-event can only transiently suppress
+ * reset handling, so no timers are needed.
+ */
+export const SIDEBAR_DRAG_ACTIVE_TIMEOUT_MS = 15_000;
+
 /** One sidedock width observation. */
 export interface WidthSample {
     /** Measured sidedock width (px). */
@@ -63,9 +73,10 @@ export interface WidthObserveContext {
     /** Epoch ms of the last window resize event, or null when none is recent. */
     lastWindowResizeMs: number | null;
     /**
-     * False while the active leaf sits inside the sidebar (the writer owns
-     * the divider then) — large single-step drops count as legitimate intent
-     * and are adopted instead of restored.
+     * False when the writer demonstrably owns the width — the active leaf
+     * sits inside the sidebar, or a divider drag gesture is in progress (see
+     * {@link isSidebarDividerGrab}). Large single-step drops then count as
+     * legitimate intent and are adopted instead of restored.
      */
     resetAllowed: boolean;
 }
@@ -166,7 +177,8 @@ export function restoreWidthForOpen(
  *   `window-resize` (checked before the drop test — a narrowed window looks
  *   like a large drop).
  * - A drop over {@link RESET_DROP_PX} that arrives after the width has been
- *   still for {@link DRAG_STILL_MS}, with focus outside the sidebar:
+ *   still for {@link DRAG_STILL_MS}, with `context.resetAllowed` (the writer
+ *   neither has focus inside the sidebar nor is dragging its divider):
  *   `reset-drop`. Large *increases* are never resets (expanding a collapsed
  *   sidebar is one big step and is always the user's or core's intent).
  * - Everything else: `drag` (adopt).
@@ -361,6 +373,42 @@ export function readSidedockWidth(el: HTMLElement | null): number | null {
 export function isLeafActiveInside(container: HTMLElement): boolean {
     const active = container.ownerDocument.querySelector('.workspace-leaf.mod-active');
     return active instanceof HTMLElement && container.contains(active);
+}
+
+/** Minimal pointer-event shape the grab predicate reads (structural so tests can pass plain objects). */
+export interface PointerDownLike {
+    /** Horizontal pointer position in the element's own viewport coordinates (px). */
+    clientX: number;
+    /** The event's target. `unknown` on purpose — popout targets are another realm's `EventTarget`. */
+    target: unknown;
+}
+
+/**
+ * Whether a pointerdown on the sidedock plausibly grabbed its resize divider.
+ * Two signals, both gated on the target living inside the sidedock subtree so
+ * other splits' handles can never fire this:
+ *
+ * 1. **Handle class** — Obsidian's divider is `.workspace-leaf-resize-handle`
+ *    (a descendant of the split); matching `/resize/i` also tolerates themes
+ *    that restyle/rename it.
+ * 2. **Left-edge strip** — the right sidebar's divider is its LEFT edge, so a
+ *    pointerdown within {@link SIDEBAR_DIVIDER_STRIP_PX} of the container's
+ *    left rect edge (a few px of negative tolerance included — the handle
+ *    straddles the boundary) counts even when the class check misses.
+ *
+ * Deliberately duck-typed on the target (no `instanceof HTMLElement`) so
+ * popout-window elements — instances of another realm's HTMLElement — still
+ * qualify; `Node.contains` is realm-agnostic. Zero Obsidian imports.
+ */
+export function isSidebarDividerGrab(sidedock: HTMLElement, event: PointerDownLike): boolean {
+    const target: unknown = event.target;
+    if (!target || typeof target !== 'object') return false;
+    const el = target as HTMLElement;
+    if (typeof el.className !== 'string' || typeof el.getBoundingClientRect !== 'function') return false;
+    if (!sidedock.contains(el)) return false;
+    if (/resize/i.test(el.className)) return true;
+    const fromLeft = event.clientX - sidedock.getBoundingClientRect().left;
+    return fromLeft >= -SIDEBAR_DIVIDER_STRIP_PX && fromLeft <= SIDEBAR_DIVIDER_STRIP_PX;
 }
 
 /** Apply a restored width as an inline style — no `!important`, so the writer's own drag-resizing keeps working. */

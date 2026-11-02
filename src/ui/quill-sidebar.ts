@@ -30,11 +30,13 @@ import type { ProposedEdit } from '../core/change-set';
 import type EventideQuillPlugin from '../main';
 import type { ContextAssembly } from '../core/context-engine/types';
 import {
+    SIDEBAR_DRAG_ACTIVE_TIMEOUT_MS,
     SIDEBAR_WIDTH_FILE_NAME,
     SIDEBAR_WIDTH_SAVE_DEBOUNCE_MS,
     SidebarWidthKeeper,
     applySidebarWidth,
     isLeafActiveInside,
+    isSidebarDividerGrab,
     parseSidebarWidthState,
     readSidedockWidth,
     resolveSidedockElement,
@@ -144,6 +146,12 @@ export class QuillSidebarView extends ItemView {
     private lastWindowResizeMs: number | null = null;
     /** Pending debounced sidecar-write timer, or null when idle. */
     private widthSaveTimer: number | null = null;
+    /**
+     * Epoch ms of a plausible sidebar-divider grab (see {@link isSidebarDividerGrab}),
+     * or null when idle. Read-time expiry ({@link SIDEBAR_DRAG_ACTIVE_TIMEOUT_MS})
+     * makes a missed pointerup self-healing — no timers.
+     */
+    private sidebarPointerDownAtMs: number | null = null;
 
     /** Create the sidebar view for the given workspace leaf. */
     constructor(leaf: WorkspaceLeaf, plugin: EventideQuillPlugin) {
@@ -267,6 +275,28 @@ export class QuillSidebarView extends ItemView {
         this.registerDomEvent(this.viewWindow(sidedock), 'resize', () => {
             this.lastWindowResizeMs = Date.now();
         });
+        // Drag-active hint: a fast deliberate divider drag's first ResizeObserver
+        // step can drop >50px after stillness and would classify as a reset-drop,
+        // restoring mid-gesture and fighting the writer. A pointerdown that
+        // plausibly grabs the divider arms the hint; pointerup/pointercancel on
+        // the sidedock's window clear it (capture — the up happens over whatever
+        // element sits under the pointer), and the timestamp check auto-expires
+        // (SIDEBAR_DRAG_ACTIVE_TIMEOUT_MS) so a missed up-event only transiently
+        // suppresses reset handling. All listeners unregister with the view.
+        this.registerDomEvent(
+            sidedock,
+            'pointerdown',
+            (event: PointerEvent) => {
+                if (isSidebarDividerGrab(sidedock, event)) this.sidebarPointerDownAtMs = Date.now();
+            },
+            { capture: true }
+        );
+        /** Release/cancel handler: end the drag hint so reset handling re-arms immediately. */
+        const clearDragHint = () => {
+            this.sidebarPointerDownAtMs = null;
+        };
+        this.registerDomEvent(this.viewWindow(sidedock), 'pointerup', clearDragHint, { capture: true });
+        this.registerDomEvent(this.viewWindow(sidedock), 'pointercancel', clearDragHint, { capture: true });
         // Fire-and-forget: the sample observer starts only after the sidecar
         // read resolves so observations can't race the seeded remembered width.
         void this.initSidebarWidthState();
@@ -275,6 +305,12 @@ export class QuillSidebarView extends ItemView {
     /** The window an element lives in — the sidedock's owner view, popout-safe. */
     private viewWindow(el: HTMLElement): Window {
         return el.ownerDocument.defaultView ?? window;
+    }
+
+    /** Whether a sidebar-divider drag gesture is currently (or very recently) in progress. */
+    private isSidebarDragActive(): boolean {
+        const at = this.sidebarPointerDownAtMs;
+        return at !== null && Date.now() - at < SIDEBAR_DRAG_ACTIVE_TIMEOUT_MS;
     }
 
     /** Current inner width of the window hosting the sidedock (px). */
@@ -287,14 +323,20 @@ export class QuillSidebarView extends ItemView {
         const keeper = this.widthKeeper;
         const sidedock = this.sidedockEl;
         if (!keeper || !sidedock) return;
-        keeper.seedRemembered(await this.loadSidebarWidth());
+        const remembered = await this.loadSidebarWidth();
+        // Teardown nulls widthKeeper (and sidedockEl); stop if the view
+        // unloaded during the sidecar read — the continuation below would
+        // otherwise seed the dead keeper and attach a ResizeObserver that
+        // nothing will ever disconnect (teardown already ran).
+        if (this.widthKeeper !== keeper) return;
+        keeper.seedRemembered(remembered);
         const current = readSidedockWidth(sidedock);
         if (current !== null) {
             const windowWidth = this.viewWindowWidth(sidedock);
             const begin = keeper.begin(current, Date.now(), {
                 windowWidth,
                 lastWindowResizeMs: this.lastWindowResizeMs,
-                resetAllowed: !isLeafActiveInside(sidedock)
+                resetAllowed: !isLeafActiveInside(sidedock) && !this.isSidebarDragActive()
             });
             if (begin.persist) this.scheduleSidebarWidthPersist();
             const restore = restoreWidthForOpen(keeper.rememberedWidth, current, windowWidth);
@@ -319,7 +361,7 @@ export class QuillSidebarView extends ItemView {
         const decision = keeper.observe(width, Date.now(), {
             windowWidth: this.viewWindowWidth(sidedock),
             lastWindowResizeMs: this.lastWindowResizeMs,
-            resetAllowed: !isLeafActiveInside(sidedock)
+            resetAllowed: !isLeafActiveInside(sidedock) && !this.isSidebarDragActive()
         });
         if (decision.kind === 'stable' || decision.kind === 'collapsed') return;
         if (decision.kind === 'initial') {
@@ -409,6 +451,7 @@ export class QuillSidebarView extends ItemView {
         }
         this.widthKeeper = null;
         this.sidedockEl = null;
+        this.sidebarPointerDownAtMs = null;
     }
 
     /** Update the stored results and cache the editor text for passage context. */

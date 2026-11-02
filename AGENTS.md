@@ -316,9 +316,10 @@ src/
                          desktop sidebar-width keeper wiring — see sidebar-width.ts below),
     sidebar-width.ts (pure decision logic for the sidebar-width keeper (issue #67): classifies
                       sidedock width changes as drag vs un-commanded reset vs window-resize-correlated,
-                      clamps and validates restores, shapes the `<pluginDataDir>/sidebar-state.json`
-                      sidecar payload; zero Obsidian imports — DOM/adapter wiring lives in quill-sidebar.ts
-                      and is a complete no-op on mobile),
+                      plus divider-grab detection (`isSidebarDividerGrab`) so an in-progress sidebar
+                      drag suppresses reset handling, clamps and validates restores, shapes the
+                      `<pluginDataDir>/sidebar-state.json` sidecar payload; zero Obsidian imports —
+                      DOM/adapter wiring lives in quill-sidebar.ts and is a complete no-op on mobile),
     co-writer-panel.ts (~2.7k lines), context-panel.ts, review-panel.ts,
     dashboard-panel.ts, lorebook-panel.ts, lore-entry-review.ts,
     feedback-queue-panel.ts (encapsulated Queue sub-tab renderer),

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
     COLLAPSED_WIDTH_PX,
     MIN_EDITOR_ROOM_PX,
+    SIDEBAR_DIVIDER_STRIP_PX,
     SIDEBAR_MIN_WIDTH_PX,
     WIDTH_EPSILON_PX,
     SIDEBAR_WIDTH_STATE_VERSION,
@@ -12,6 +13,7 @@ import {
     classifyWidthChange,
     clampSidebarWidth,
     isLeafActiveInside,
+    isSidebarDividerGrab,
     parseSidebarWidthState,
     readSidedockWidth,
     resolveSidedockElement,
@@ -377,5 +379,67 @@ describe('sidebar width DOM helpers', () => {
         applySidebarWidth(el, 412.6);
         expect(el.style.width).toBe('413px');
         expect(el.style.getPropertyPriority('width')).toBe('');
+    });
+});
+
+describe('isSidebarDividerGrab', () => {
+    /** A fake right-sidedock with one plain child, positioned at left=800px. */
+    function buildDock(): { sidedock: HTMLElement; child: HTMLElement; left: number } {
+        const sidedock = createDiv();
+        sidedock.className = 'workspace-split mod-right-split';
+        const child = createDiv();
+        child.className = 'workspace-tabs';
+        sidedock.appendChild(child);
+        document.body.appendChild(sidedock);
+        const left = 800;
+        sidedock.getBoundingClientRect = () => ({ left, width: 400 } as DOMRect);
+        return { sidedock, child, left };
+    }
+
+    beforeEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    it('hits the left-edge strip (the divider side of the right sidebar)', () => {
+        const { sidedock, child, left } = buildDock();
+        // A few px inside the edge...
+        expect(isSidebarDividerGrab(sidedock, { clientX: left + 5, target: child })).toBe(true);
+        // ...exactly at the strip bound...
+        expect(isSidebarDividerGrab(sidedock, { clientX: left + SIDEBAR_DIVIDER_STRIP_PX, target: child })).toBe(true);
+        // ...and slightly negative (Obsidian's handle straddles the boundary).
+        expect(isSidebarDividerGrab(sidedock, { clientX: left - 3, target: child })).toBe(true);
+    });
+
+    it('misses far from the divider edge', () => {
+        const { sidedock, child, left } = buildDock();
+        expect(isSidebarDividerGrab(sidedock, { clientX: left + SIDEBAR_DIVIDER_STRIP_PX + 1, target: child })).toBe(false);
+        expect(isSidebarDividerGrab(sidedock, { clientX: left + 200, target: child })).toBe(false);
+    });
+
+    it('matches the resize-handle class anywhere inside the dock', () => {
+        const { sidedock, left } = buildDock();
+        const handle = createDiv();
+        handle.className = 'workspace-leaf-resize-handle';
+        sidedock.appendChild(handle);
+        // Deep inside the dock (the strip misses) — the class still qualifies.
+        expect(isSidebarDividerGrab(sidedock, { clientX: left + 200, target: handle })).toBe(true);
+    });
+
+    it('misses on the wrong side, on uncontained targets, and on non-elements', () => {
+        const { sidedock, child, left } = buildDock();
+        // Just past the negative tolerance — not the divider side.
+        expect(isSidebarDividerGrab(sidedock, { clientX: left - SIDEBAR_DIVIDER_STRIP_PX - 1, target: child })).toBe(false);
+        // A resize-classed element outside the dock subtree never qualifies.
+        const stranger = createDiv();
+        stranger.className = 'workspace-leaf-resize-handle';
+        document.body.appendChild(stranger);
+        expect(isSidebarDividerGrab(sidedock, { clientX: left + 5, target: stranger })).toBe(false);
+        // Non-element and absent targets bail out.
+        expect(isSidebarDividerGrab(sidedock, { clientX: left + 5, target: null })).toBe(false);
+        expect(isSidebarDividerGrab(sidedock, { clientX: left + 5, target: 'div' })).toBe(false);
     });
 });
