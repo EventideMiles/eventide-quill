@@ -82,6 +82,19 @@ const LOREBOOK_SUBTABS: ReadonlyArray<{ id: LorebookSubTab; label: string }> = [
     { id: 'hygiene', label: 'Hygiene' }
 ];
 
+/**
+ * Shared write chain serializing sidebar-width sidecar saves across ALL
+ * QuillSidebarView instances. Module-level on purpose: the sidecar is a
+ * single plugin-data file shared by every instance, and Obsidian rebuilds the
+ * view (new instance, fresh debounce timer) when its leaf is recreated — so a
+ * per-instance queue could not stop an older instance's unload flush from
+ * racing a newer instance's already-enqueued write and landing last with a
+ * stale width (last-writer-wins across instances). Enqueue order here is disk
+ * order; each link swallows its own failure so the best-effort contract is
+ * unchanged and the chain itself never rejects.
+ */
+let sidebarWidthWriteChain: Promise<void> = Promise.resolve();
+
 /** Sidebar view hosting the linter, context, review, co-writer, dashboard, and lorebook tabs. */
 export class QuillSidebarView extends ItemView {
     private results: LintResult[] = [];
@@ -436,17 +449,29 @@ export class QuillSidebarView extends ItemView {
         }
     }
 
-    /** Persist the remembered width to the sidecar (best-effort; never throws). */
+    /**
+     * Persist the remembered width to the sidecar (best-effort; never
+     * throws). The write is enqueued on the module-level
+     * {@link sidebarWidthWriteChain} so saves land in enqueue order on the
+     * single shared sidecar, no matter which view instance issued them.
+     */
     private async saveSidebarWidth(width: number): Promise<void> {
-        try {
-            const path = this.sidebarWidthPath();
-            const adapter = this.app.vault.adapter;
-            const dir = normalizePath(this.plugin.pluginDataDir);
-            if (!(await adapter.exists(dir))) await adapter.mkdir(dir);
-            await adapter.write(path, JSON.stringify(sidebarWidthState(width), null, 2));
-        } catch {
-            // Sidecar persistence is best-effort — a failed write must not break the sidebar.
-        }
+        // Capture the write's inputs at call time: the enqueued link must
+        // persist the width this caller asked for, not one re-read from a
+        // possibly-torn-down instance when the chain reaches the link.
+        const path = this.sidebarWidthPath();
+        const adapter = this.app.vault.adapter;
+        const dir = normalizePath(this.plugin.pluginDataDir);
+        sidebarWidthWriteChain = sidebarWidthWriteChain
+            .then(async () => {
+                if (!(await adapter.exists(dir))) await adapter.mkdir(dir);
+                await adapter.write(path, JSON.stringify(sidebarWidthState(width), null, 2));
+            })
+            .catch(() => {
+                // Sidecar persistence is best-effort — a failed write must
+                // not break the sidebar (nor reject the shared chain).
+            });
+        await sidebarWidthWriteChain;
     }
 
     /** Debounce a sidecar write so drag streams collapse into one disk write. */

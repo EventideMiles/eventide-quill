@@ -3,7 +3,7 @@ import '../helpers/ui-setup';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, Component, Menu, WorkspaceLeaf } from 'obsidian';
 import { QuillSidebarView, loreSubTabBarMode } from '../../src/ui/quill-sidebar';
-import { DRAG_STILL_MS } from '../../src/ui/sidebar-width';
+import { DRAG_STILL_MS, parseSidebarWidthState } from '../../src/ui/sidebar-width';
 import type EventideQuillPlugin from '../../src/main';
 
 /** Build a minimal `EventideQuillPlugin` stub for sidebar construction. */
@@ -490,5 +490,100 @@ describe('sidebar width keeper drag hint (final-sample race)', () => {
         // bail on the null check without forcing a layout-reading width sample.
         window.dispatchEvent(new Event('pointerup'));
         expect(sampleSpy).not.toHaveBeenCalled();
+    });
+});
+
+/**
+ * Cross-instance serialization tests for the sidebar-width sidecar write
+ * chain. The sidecar is one plugin-data file, but each QuillSidebarView
+ * instance carries its own debounce/flush path — so an unloading instance's
+ * flush must never land its write after a newer instance's save and clobber
+ * the sidecar with a stale width (last-writer-wins across instances).
+ */
+describe('sidebar width sidecar write chain (cross-instance ordering)', () => {
+    /** Shape of the recording adapter this suite installs as the shared vault adapter. */
+    interface DelayedAdapter {
+        /** Payloads handed to write, in completion order (= what the disk ends up holding). */
+        writes: string[];
+        /** Whether the path exists (always false — every save takes the mkdir branch). */
+        exists(path: string): Promise<boolean>;
+        /** Create the directory (no-op). */
+        mkdir(path: string): Promise<void>;
+        /** Read the sidecar (the last completed write, or empty). */
+        read(path: string): Promise<string>;
+        /** Write the sidecar (records the payload; delayed payloads stall first). */
+        write(path: string, data: string): Promise<void>;
+    }
+
+    /**
+     * Build a recording adapter whose write for `delayedPayload` stalls for
+     * `delayTicks` macrotasks first — the controllable delay that models the
+     * older instance's write still being in flight while the newer instance's
+     * save is enqueued.
+     */
+    function makeDelayedAdapter(delayedPayload: string, delayTicks: number): DelayedAdapter {
+        const writes: string[] = [];
+        return {
+            writes,
+            async exists(_path: string): Promise<boolean> {
+                return false;
+            },
+            async mkdir(_path: string): Promise<void> {},
+            async read(_path: string): Promise<string> {
+                return writes[writes.length - 1] ?? '';
+            },
+            async write(_path: string, data: string): Promise<void> {
+                if (data.includes(delayedPayload)) {
+                    for (let i = 0; i < delayTicks; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+                }
+                writes.push(data);
+            }
+        };
+    }
+
+    /** Invoke the view's private saveSidebarWidth (tests reach internals pragmatically). */
+    function saveWidth(view: QuillSidebarView, width: number): Promise<void> {
+        return (view as unknown as { saveSidebarWidth(width: number): Promise<void> }).saveSidebarWidth(width);
+    }
+
+    /** Drain macrotasks so the chained adapter work (microtasks between ticks) settles deterministically. */
+    async function flushMacrotasks(times: number): Promise<void> {
+        for (let i = 0; i < times; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    it('lands saves in enqueue order so an unload flush cannot clobber a newer save', async () => {
+        // Instance A's write stalls for several macrotasks — long enough that,
+        // without cross-instance serialization, instance B's write completes
+        // (and would be clobbered) before A's resolves.
+        const adapter = makeDelayedAdapter('"width": 300', 3);
+
+        // Production shape: ONE plugin and ONE vault adapter persist while only
+        // the view instance (and its leaf) is rebuilt, so both views share them.
+        const app = new App();
+        (app.vault as unknown as { adapter: unknown }).adapter = adapter;
+        const plugin = makePlugin();
+        Object.assign(plugin, { pluginDataDir: '.plugins/eventide-quill' });
+        /** Build a leaf bound to the shared app, mirroring a rebuilt sidebar leaf. */
+        const makeLeaf = () =>
+            new (WorkspaceLeaf as unknown as new (app?: unknown) => object)(app) as unknown as WorkspaceLeaf;
+
+        // Neither view is opened: the chain lives inside saveSidebarWidth, and
+        // the constructor alone binds each view to the shared app/adapter.
+        const viewA = new QuillSidebarView(makeLeaf(), plugin);
+        const viewB = new QuillSidebarView(makeLeaf(), plugin);
+
+        // The stale instance (A) issues what would be its unload-flush save;
+        // its write hangs in the adapter. The newer instance (B) saves the
+        // current width while A's write is still in flight.
+        const savingA = saveWidth(viewA, 300);
+        const savingB = saveWidth(viewB, 450);
+
+        await flushMacrotasks(6);
+        await Promise.all([savingA, savingB]);
+        await flushMacrotasks(2);
+
+        // Completion order IS disk order: the stale write landed first and the
+        // newer save last — the sidecar's final content is B's width.
+        expect(adapter.writes.map((data) => parseSidebarWidthState(data))).toEqual([300, 450]);
     });
 });
