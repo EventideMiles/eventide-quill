@@ -279,8 +279,11 @@ export class QuillSidebarView extends ItemView {
         // step can drop >50px after stillness and would classify as a reset-drop,
         // restoring mid-gesture and fighting the writer. A pointerdown that
         // plausibly grabs the divider arms the hint; pointerup/pointercancel on
-        // the sidedock's window clear it (capture — the up happens over whatever
-        // element sits under the pointer), and the timestamp check auto-expires
+        // the sidedock's window end it (capture — the up happens over whatever
+        // element sits under the pointer), first sampling the settled width
+        // while the hint is still armed so the gesture's final step — which the
+        // ResizeObserver may deliver only AFTER the release — can't misclassify
+        // (see clearDragHint below). The timestamp check auto-expires
         // (SIDEBAR_DRAG_ACTIVE_TIMEOUT_MS) so a missed up-event only transiently
         // suppresses reset handling. All listeners unregister with the view.
         this.registerDomEvent(
@@ -291,8 +294,27 @@ export class QuillSidebarView extends ItemView {
             },
             { capture: true }
         );
-        /** Release/cancel handler: end the drag hint so reset handling re-arms immediately. */
+        /**
+         * Release/cancel handler. While the drag hint is still armed, sample
+         * the sidedock width synchronously BEFORE nulling the hint:
+         * ResizeObserver deliveries batch at frame boundaries, so a drag's
+         * final width change can arrive only after this handler ran — and a
+         * post-release sample would see stillness plus focus outside the
+         * sidebar and misclassify the gesture's last step as an un-commanded
+         * reset, restoring and fighting the writer at the exact moment the
+         * gesture ends. The synchronous read forces layout and sees the
+         * settled width; the keeper classifies it as a drag (the hint is
+         * still armed) and adopts it, re-baselining the sample stream so the
+         * late observer delivery reads `stable` and no-ops. The handler then
+         * ends the drag hint so reset handling re-arms immediately. Cheap
+         * when no drag is armed (every window pointerup hits it): a single
+         * null check. Safe before init and after teardown — the sample's
+         * null-guards bail on a missing keeper/sidedock, and teardown nulls
+         * the hint first.
+         */
         const clearDragHint = () => {
+            if (this.sidebarPointerDownAtMs === null) return;
+            this.sampleSidedockWidth();
             this.sidebarPointerDownAtMs = null;
         };
         this.registerDomEvent(this.viewWindow(sidedock), 'pointerup', clearDragHint, { capture: true });

@@ -3,6 +3,7 @@ import '../helpers/ui-setup';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, Component, Menu, WorkspaceLeaf } from 'obsidian';
 import { QuillSidebarView, loreSubTabBarMode } from '../../src/ui/quill-sidebar';
+import { DRAG_STILL_MS } from '../../src/ui/sidebar-width';
 import type EventideQuillPlugin from '../../src/main';
 
 /** Build a minimal `EventideQuillPlugin` stub for sidebar construction. */
@@ -343,5 +344,151 @@ describe('QuillSidebarView', () => {
         const btn = loreSubTabs(leaf).find((el) => el.textContent === 'Hygiene');
         clickBubbling(btn!);
         expect(loreSubTabs(leaf)[4]?.classList.contains('quill-sidebar__subtab--active')).to.equal(true);
+    });
+});
+
+/**
+ * Recording ResizeObserver double for the width-keeper wiring tests: captures
+ * EVERY constructed observer's callback (the view builds two — the
+ * responsive-mode observer synchronously in onOpen, then the width keeper's
+ * after the async sidecar read resolves), so a test can drive the width
+ * observer by construction order. The width observer is always last.
+ */
+class CapturingResizeObserver {
+    /** Callbacks from every constructed observer, in construction order. */
+    static callbacks: ResizeObserverCallback[] = [];
+
+    /** Record the callback. */
+    constructor(cb: ResizeObserverCallback) {
+        CapturingResizeObserver.callbacks.push(cb);
+    }
+
+    /** No-op. */
+    observe(): void {}
+
+    /** No-op. */
+    unobserve(): void {}
+
+    /** No-op. */
+    disconnect(): void {}
+}
+
+describe('sidebar width keeper drag hint (final-sample race)', () => {
+    /** Epoch base for the fake clock: the keeper baselines its sample stream at open. */
+    const T0 = 1_000_000;
+    /** The ResizeObserver global before the capturing double was installed. */
+    let originalResizeObserver: unknown;
+    /** The still-open view, unloaded in afterEach so keeper teardown runs. */
+    let openView: QuillSidebarView | null = null;
+
+    /** The mounted keeper-view fixture returned by {@link makeKeeperView}. */
+    interface KeeperViewFixture {
+        view: QuillSidebarView;
+        sidedock: HTMLElement;
+        width: { value: number };
+    }
+
+    /**
+     * Mount the real sidebar view inside a fabricated right-sidedock whose
+     * measured width is stubbed and mutable via the returned cell.
+     */
+    async function makeKeeperView(): Promise<KeeperViewFixture> {
+        const width = { value: 450 };
+        const sidedock = createDiv();
+        sidedock.className = 'workspace-split mod-right-split';
+        document.body.appendChild(sidedock);
+        const leaf = (new (WorkspaceLeaf as unknown as new (app?: unknown) => object)(new App())) as unknown as WorkspaceLeaf;
+        sidedock.appendChild((leaf as unknown as { containerEl: HTMLElement }).containerEl);
+        // Production reads the width via getBoundingClientRect (forces layout); the stub IS the layout here.
+        sidedock.getBoundingClientRect = () => ({ width: width.value, left: 800 } as DOMRect);
+        const plugin = makePlugin();
+        Object.assign(plugin, { pluginDataDir: '.plugins/eventide-quill' });
+        const view = new QuillSidebarView(leaf, plugin);
+        await view.onOpen();
+        // Flush the fire-and-forget sidecar read so initSidebarWidthState finishes:
+        // the keeper baselines at the current width and the width observer attaches.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        openView = view;
+        return { view, sidedock, width };
+    }
+
+    /** The width-keeper observer callback — the LAST observer the view constructed. */
+    function widthSampleCallback(): ResizeObserverCallback {
+        const callbacks = CapturingResizeObserver.callbacks;
+        const cb = callbacks[callbacks.length - 1];
+        if (!cb) throw new Error('width ResizeObserver callback not captured');
+        return cb;
+    }
+
+    /** The view's width keeper read through the private field (tests reach internals pragmatically). */
+    function widthKeeperOf(view: QuillSidebarView): { rememberedWidth: number | null } | null {
+        return (view as unknown as { widthKeeper: { rememberedWidth: number | null } | null }).widthKeeper;
+    }
+
+    beforeEach(() => {
+        CapturingResizeObserver.callbacks = [];
+        originalResizeObserver = (globalThis as Record<string, unknown>).ResizeObserver;
+        (globalThis as Record<string, unknown>).ResizeObserver = CapturingResizeObserver;
+        // Fake ONLY the wall clock: the keeper's stillness/expiry math is all
+        // Date.now, while vitest timers stay real so the setTimeout(0) flush
+        // in makeKeeperView still works (the conversation-store suite fakes
+        // the same way).
+        vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+        (globalThis as Record<string, unknown>).ResizeObserver = originalResizeObserver;
+        openView?.onunload();
+        openView = null;
+        document.body.innerHTML = '';
+    });
+
+    it('samples the settled width at pointerup so the late ResizeObserver delivery cannot restore', async () => {
+        const { view, sidedock, width } = await makeKeeperView();
+
+        // The writer pauses: fill the stillness clock past DRAG_STILL_MS. A
+        // post-release sample of the flick below would then — without the
+        // pointerup adoption — see a large drop + stillness + no drag hint and
+        // classify it as an un-commanded reset.
+        vi.setSystemTime(T0 + DRAG_STILL_MS + 500);
+
+        // Grab the divider: a resize-classed handle inside the dock arms the
+        // hint. Real pointerdowns bubble, and the obsidian test mock registers
+        // listeners without the capture flag, so dispatch a bubbling event.
+        const handle = createDiv();
+        handle.className = 'workspace-leaf-resize-handle';
+        sidedock.appendChild(handle);
+        handle.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+
+        // The flick: the final width lands in the DOM, but its ResizeObserver
+        // delivery is still batched — nothing has sampled 300 yet.
+        width.value = 300;
+
+        // Release: the clear handler must sample the settled width while the
+        // hint is still armed — adopting 300 and re-baselining the stream —
+        // before nulling the hint.
+        window.dispatchEvent(new Event('pointerup'));
+
+        // The hint is cleared and the final width was adopted.
+        expect((view as unknown as { sidebarPointerDownAtMs: number | null }).sidebarPointerDownAtMs).toBeNull();
+        expect(widthKeeperOf(view)?.rememberedWidth).toBe(300);
+
+        // The late delivery of the batched final observation now reads stable
+        // and no-ops: no restore was ever applied to the DOM, and the adopted
+        // width survives.
+        widthSampleCallback()([], {} as ResizeObserver);
+        expect(sidedock.style.width).toBe('');
+        expect(widthKeeperOf(view)?.rememberedWidth).toBe(300);
+    });
+
+    it('keeps the release handler cheap when no drag is armed', async () => {
+        const { view } = await makeKeeperView();
+        const sampleSpy = vi.spyOn(view as unknown as { sampleSidedockWidth: () => void }, 'sampleSidedockWidth');
+        // Every window pointerup hits the handler; with no armed hint it must
+        // bail on the null check without forcing a layout-reading width sample.
+        window.dispatchEvent(new Event('pointerup'));
+        expect(sampleSpy).not.toHaveBeenCalled();
     });
 });
