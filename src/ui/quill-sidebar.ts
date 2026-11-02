@@ -1,4 +1,14 @@
-import { Component, ItemView, MarkdownView, Menu, Notice, setIcon, WorkspaceLeaf } from 'obsidian';
+import {
+    Component,
+    ItemView,
+    MarkdownView,
+    Menu,
+    Notice,
+    normalizePath,
+    Platform,
+    setIcon,
+    WorkspaceLeaf
+} from 'obsidian';
 import { LintResult, RULE_INFO, FIXABLE_RULES } from '../core/linter/types';
 import { FIXES } from '../core/linter/fixes';
 import { renderChangeCard, renderChangeBulkBar } from './change-card';
@@ -19,6 +29,21 @@ import type { SubagentView } from '../ai/subagent-session';
 import type { ProposedEdit } from '../core/change-set';
 import type EventideQuillPlugin from '../main';
 import type { ContextAssembly } from '../core/context-engine/types';
+import {
+    SIDEBAR_DRAG_ACTIVE_TIMEOUT_MS,
+    SIDEBAR_WIDTH_FILE_NAME,
+    SIDEBAR_WIDTH_SAVE_DEBOUNCE_MS,
+    SidebarWidthKeeper,
+    applySidebarWidth,
+    isSidebarDividerGrab,
+    parseSidebarWidthState,
+    readSidedockWidth,
+    resolveSidedockElement,
+    restoreWidthForOpen,
+    sidebarWidthKeeperEnabled,
+    sidebarWidthState,
+    sidedockHasKeyboardFocus
+} from './sidebar-width';
 
 export const QUILL_VIEW_TYPE = 'quill-sidebar';
 
@@ -56,6 +81,52 @@ const LOREBOOK_SUBTABS: ReadonlyArray<{ id: LorebookSubTab; label: string }> = [
     { id: 'memories', label: 'Memories' },
     { id: 'hygiene', label: 'Hygiene' }
 ];
+
+/**
+ * Shared write chain serializing sidebar-width sidecar saves across ALL
+ * QuillSidebarView instances. Module-level on purpose: the sidecar is a
+ * single plugin-data file shared by every instance, and Obsidian rebuilds the
+ * view (new instance, fresh debounce timer) when its leaf is recreated — so a
+ * per-instance queue could not stop an older instance's unload flush from
+ * racing a newer instance's already-enqueued write and landing last with a
+ * stale width (last-writer-wins across instances). Enqueue order here is disk
+ * order; each link swallows its own failure so the best-effort contract is
+ * unchanged and the chain itself never rejects.
+ */
+let sidebarWidthWriteChain: Promise<void> = Promise.resolve();
+
+/**
+ * Monotonic revision of the latest SCHEDULED width save, shared by every
+ * QuillSidebarView instance beside {@link sidebarWidthWriteChain}. The chain
+ * guarantees enqueue ORDER, but order alone still lets a stale write win:
+ * an older instance's unload flush of a still-pending debounced save can
+ * enqueue AFTER a newer instance's already-enqueued save and land last with
+ * the older width. Each scheduling arms a new revision; the enqueued write
+ * carries the revision minted at its schedule time and skips itself at
+ * execution time (before any disk I/O) once a newer scheduling has
+ * superseded it. Direct saves without a revision capture the current one at
+ * enqueue, so they stay current unless a newer scheduling follows.
+ */
+let sidebarWidthSaveRevision = 0;
+
+/**
+ * The latest scheduled width intent, shared by every QuillSidebarView
+ * instance beside {@link sidebarWidthWriteChain} and
+ * {@link sidebarWidthSaveRevision}. WHY: it bridges write latency across
+ * instance rebuilds — Obsidian can build a fresh sidebar view while the
+ * previous instance's debounced/unload-flushed write is still in flight on
+ * the chain, and that fresh instance's open-time read must seed the newest
+ * scheduled width, not the stale sidecar. Recorded at arming time by every
+ * scheduling (re-arms overwrite, so it always holds the newest intent);
+ * {@link loadSidebarWidth} prefers it over disk — checked at entry AND
+ * re-checked after every adapter await, so an intent armed while a load's
+ * disk round trip is pending still beats the stale parse. It is ALWAYS at
+ * least as fresh as the sidecar: every width that can reach disk is first
+ * recorded here at arming time, and a superseding scheduling re-records —
+ * so revision-skipped (superseded) writes can only leave disk holding a
+ * width the module value already covers, never a newer one.
+ */
+let sidebarWidthScheduledWidth: number | null = null;
 
 /** Sidebar view hosting the linter, context, review, co-writer, dashboard, and lorebook tabs. */
 export class QuillSidebarView extends ItemView {
@@ -108,6 +179,27 @@ export class QuillSidebarView extends ItemView {
      */
     private embeddedCoWriterPanel: CoWriterPanel | null = null;
     private resizeObserver: ResizeObserver | null = null;
+    /**
+     * Width-keeper state machine (issue #67) — desktop only. Null whenever
+     * the keeper is inactive (mobile, or the sidedock element wasn't found).
+     */
+    private widthKeeper: SidebarWidthKeeper | null = null;
+    /** The right-sidedock element Obsidian sizes when the divider is dragged. */
+    private sidedockEl: HTMLElement | null = null;
+    /** ResizeObserver driving the keeper's width sampling (separate concern from the responsive-mode observer). */
+    private widthResizeObserver: ResizeObserver | null = null;
+    /** Epoch ms of the last window resize — correlates legit width changes with window resizes. */
+    private lastWindowResizeMs: number | null = null;
+    /** Pending debounced sidecar-write timer, or null when idle. */
+    private widthSaveTimer: number | null = null;
+    /** Revision minted when the pending timer was armed; consumed (nulled) by the timer fire or the teardown flush. */
+    private widthSaveRevision: number | null = null;
+    /**
+     * Epoch ms of a plausible sidebar-divider grab (see {@link isSidebarDividerGrab}),
+     * or null when idle. Read-time expiry ({@link SIDEBAR_DRAG_ACTIVE_TIMEOUT_MS})
+     * makes a missed pointerup self-healing — no timers.
+     */
+    private sidebarPointerDownAtMs: number | null = null;
 
     /** Create the sidebar view for the given workspace leaf. */
     constructor(leaf: WorkspaceLeaf, plugin: EventideQuillPlugin) {
@@ -202,12 +294,294 @@ export class QuillSidebarView extends ItemView {
                 }
             })
         );
+
+        // Defensive width keeper (issue #67): remember the writer's chosen
+        // right-sidebar width and restore it when something else resets it.
+        this.setupSidebarWidthKeeper();
     }
 
     /** Clean up the ResizeObserver when the view is destroyed. */
     onunload() {
         this.resizeObserver?.disconnect();
         this.resizeObserver = null;
+        this.teardownSidebarWidthKeeper();
+    }
+
+    /**
+     * Desktop-only sidebar width keeper (issue #67): resolve the sidedock
+     * element, timestamp window resizes, then load the persisted width and
+     * start sampling. A complete no-op on mobile (sidebars there are
+     * full-width overlays) and when the sidedock element can't be resolved.
+     */
+    private setupSidebarWidthKeeper(): void {
+        if (!sidebarWidthKeeperEnabled(Platform.isMobile)) return;
+        const sidedock = resolveSidedockElement(this.containerEl);
+        if (!sidedock) return;
+        this.sidedockEl = sidedock;
+        this.widthKeeper = new SidebarWidthKeeper();
+        this.lastWindowResizeMs = null;
+        this.registerDomEvent(this.viewWindow(sidedock), 'resize', () => {
+            this.lastWindowResizeMs = Date.now();
+        });
+        // Drag-active hint: a fast deliberate divider drag's first ResizeObserver
+        // step can drop >50px after stillness and would classify as a reset-drop,
+        // restoring mid-gesture and fighting the writer. A pointerdown that
+        // plausibly grabs the divider arms the hint; pointerup/pointercancel on
+        // the sidedock's window end it (capture — the up happens over whatever
+        // element sits under the pointer), first sampling the settled width
+        // while the hint is still armed so the gesture's final step — which the
+        // ResizeObserver may deliver only AFTER the release — can't misclassify
+        // (see clearDragHint below). The timestamp check auto-expires
+        // (SIDEBAR_DRAG_ACTIVE_TIMEOUT_MS) so a missed up-event only transiently
+        // suppresses reset handling. All listeners unregister with the view.
+        this.registerDomEvent(
+            sidedock,
+            'pointerdown',
+            (event: PointerEvent) => {
+                if (isSidebarDividerGrab(sidedock, event)) this.sidebarPointerDownAtMs = Date.now();
+            },
+            { capture: true }
+        );
+        /**
+         * Release/cancel handler. While the drag hint is still armed, sample
+         * the sidedock width synchronously BEFORE nulling the hint:
+         * ResizeObserver deliveries batch at frame boundaries, so a drag's
+         * final width change can arrive only after this handler ran — and a
+         * post-release sample would see stillness plus focus outside the
+         * sidebar and misclassify the gesture's last step as an un-commanded
+         * reset, restoring and fighting the writer at the exact moment the
+         * gesture ends. The synchronous read forces layout and sees the
+         * settled width; the keeper classifies it as a drag (the hint is
+         * still armed) and adopts it, re-baselining the sample stream so the
+         * late observer delivery reads `stable` and no-ops. The handler then
+         * ends the drag hint so reset handling re-arms immediately. Cheap
+         * when no drag is armed (every window pointerup hits it): a single
+         * null check. Safe before init and after teardown — the sample's
+         * null-guards bail on a missing keeper/sidedock, and teardown nulls
+         * the hint first.
+         */
+        const clearDragHint = () => {
+            if (this.sidebarPointerDownAtMs === null) return;
+            this.sampleSidedockWidth();
+            this.sidebarPointerDownAtMs = null;
+        };
+        this.registerDomEvent(this.viewWindow(sidedock), 'pointerup', clearDragHint, { capture: true });
+        this.registerDomEvent(this.viewWindow(sidedock), 'pointercancel', clearDragHint, { capture: true });
+        // Fire-and-forget: the sample observer starts only after the sidecar
+        // read resolves so observations can't race the seeded remembered width.
+        void this.initSidebarWidthState();
+    }
+
+    /** The window an element lives in — the sidedock's owner view, popout-safe. */
+    private viewWindow(el: HTMLElement): Window {
+        return el.ownerDocument.defaultView ?? window;
+    }
+
+    /** Whether a sidebar-divider drag gesture is currently (or very recently) in progress. */
+    private isSidebarDragActive(): boolean {
+        const at = this.sidebarPointerDownAtMs;
+        return at !== null && Date.now() - at < SIDEBAR_DRAG_ACTIVE_TIMEOUT_MS;
+    }
+
+    /** Current inner width of the window hosting the sidedock (px). */
+    private viewWindowWidth(el: HTMLElement): number {
+        return this.viewWindow(el).innerWidth;
+    }
+
+    /** Load the sidecar, seed the keeper, apply the open-time restore, then start sampling. */
+    private async initSidebarWidthState(): Promise<void> {
+        const keeper = this.widthKeeper;
+        const sidedock = this.sidedockEl;
+        if (!keeper || !sidedock) return;
+        const remembered = await this.loadSidebarWidth();
+        // Teardown nulls widthKeeper (and sidedockEl); stop if the view
+        // unloaded during the sidecar read — the continuation below would
+        // otherwise seed the dead keeper and attach a ResizeObserver that
+        // nothing will ever disconnect (teardown already ran).
+        if (this.widthKeeper !== keeper) return;
+        keeper.seedRemembered(remembered);
+        const current = readSidedockWidth(sidedock);
+        if (current !== null) {
+            const windowWidth = this.viewWindowWidth(sidedock);
+            const begin = keeper.begin(current, Date.now(), {
+                windowWidth,
+                lastWindowResizeMs: this.lastWindowResizeMs,
+                resetAllowed: !sidedockHasKeyboardFocus(sidedock) && !this.isSidebarDragActive()
+            });
+            if (begin.persist) this.scheduleSidebarWidthPersist();
+            const restore = restoreWidthForOpen(keeper.rememberedWidth, current, windowWidth);
+            if (restore !== null) {
+                applySidebarWidth(sidedock, restore);
+                this.logWidthChange('restored on open', current, restore);
+            } else if (begin.rememberedWidth !== null) {
+                this.logWidthChange('tracking', null, current);
+            }
+        }
+        this.widthResizeObserver = new ResizeObserver(() => this.sampleSidedockWidth());
+        this.widthResizeObserver.observe(sidedock);
+    }
+
+    /** Sample the sidedock width, classify the change, and adopt or restore accordingly. */
+    private sampleSidedockWidth(): void {
+        const keeper = this.widthKeeper;
+        const sidedock = this.sidedockEl;
+        if (!keeper || !sidedock) return;
+        const width = readSidedockWidth(sidedock);
+        if (width === null) return;
+        const decision = keeper.observe(width, Date.now(), {
+            windowWidth: this.viewWindowWidth(sidedock),
+            lastWindowResizeMs: this.lastWindowResizeMs,
+            resetAllowed: !sidedockHasKeyboardFocus(sidedock) && !this.isSidebarDragActive()
+        });
+        if (decision.kind === 'stable' || decision.kind === 'collapsed') return;
+        if (decision.kind === 'initial') {
+            // First usable sample after a collapsed open (begin() never ran):
+            // apply a seeded width that differs from the observed one, and
+            // persist only the defensive fresh-install adopt.
+            if (decision.restoreWidth !== null) {
+                applySidebarWidth(sidedock, decision.restoreWidth);
+                this.logWidthChange('restored on first visible', decision.fromWidth, decision.restoreWidth);
+            }
+            if (decision.persist) this.scheduleSidebarWidthPersist();
+            return;
+        }
+        if (decision.kind === 'reset-drop') {
+            if (decision.restoreWidth === null) return;
+            this.logWidthChange('detected un-commanded reset', decision.fromWidth, width);
+            applySidebarWidth(sidedock, decision.restoreWidth);
+            this.logWidthChange('restored remembered width', width, decision.restoreWidth);
+            return;
+        }
+        // 'drag' | 'window-resize' — the keeper already adopted; persist (debounced) and log.
+        this.logWidthChange(`${decision.kind} adopted`, decision.fromWidth, width);
+        if (decision.persist) this.scheduleSidebarWidthPersist();
+    }
+
+    /** Debug log a sidedock width transition (release-visible; gated on the writer's debug-logging setting). */
+    private logWidthChange(reason: string, from: number | null, to: number): void {
+        if (!this.plugin.settings.enableDebugLogging) return;
+        const fromText = from === null ? 'unknown' : `${Math.round(from)}px`;
+        // console.warn (not log) — the Obsidian reviewer's no-console rule
+        // errors on console.log; warn is the established debug-aid channel
+        // (see review-panel.ts's mountEmbeddedPanel logging).
+        console.warn(`[quill] sidebar width ${reason}: ${fromText} -> ${Math.round(to)}px`);
+    }
+
+    /** Normalize the sidecar path inside the plugin data directory. */
+    private sidebarWidthPath(): string {
+        return normalizePath(`${this.plugin.pluginDataDir}/${SIDEBAR_WIDTH_FILE_NAME}`);
+    }
+
+    /**
+     * Load the remembered width (best-effort; null on miss/corruption).
+     * Prefers the module-level pending scheduled width over the sidecar: it
+     * is by construction at least as fresh as disk (see
+     * {@link sidebarWidthScheduledWidth}), and a freshly rebuilt instance can
+     * open while the previous instance's last write is still in flight —
+     * reading disk there would seed a stale width and drive a bogus
+     * restore-on-open snap. The preference is checked at entry AND re-checked
+     * after every adapter await (a failed one included): another instance can
+     * arm a scheduling while the round trip is pending, and that newer intent
+     * must still beat whatever disk produced during the awaits.
+     */
+    private async loadSidebarWidth(): Promise<number | null> {
+        // Non-null pending intent — skip the disk read entirely (fresh
+        // installs / first loads have nothing scheduled and fall through).
+        if (sidebarWidthScheduledWidth !== null) return sidebarWidthScheduledWidth;
+        try {
+            const path = this.sidebarWidthPath();
+            const adapter = this.app.vault.adapter;
+            if (!(await adapter.exists(path))) return sidebarWidthScheduledWidth;
+            const raw = await adapter.read(path);
+            return sidebarWidthScheduledWidth ?? parseSidebarWidthState(raw);
+        } catch {
+            // Same precedence on a failed round trip: non-null here can only
+            // be a mid-await arming (the entry check already short-circuits
+            // non-null), and that intent is independent of the failing
+            // adapter — prefer it exactly like the resolved paths. Null when
+            // nothing armed: the existing best-effort behavior.
+            return sidebarWidthScheduledWidth;
+        }
+    }
+
+    /**
+     * Persist the remembered width to the sidecar (best-effort; never
+     * throws). The write is enqueued on the module-level
+     * {@link sidebarWidthWriteChain} so saves land in enqueue order on the
+     * single shared sidecar, no matter which view instance issued them, and
+     * carries `revision` — defaulting to the current one, so a direct call
+     * is fresh unless a newer scheduling follows — for the chain link's
+     * staleness skip ({@link sidebarWidthSaveRevision}).
+     */
+    private async saveSidebarWidth(width: number, revision: number = sidebarWidthSaveRevision): Promise<void> {
+        // Capture the write's inputs at call time: the enqueued link must
+        // persist the width this caller asked for, not one re-read from a
+        // possibly-torn-down instance when the chain reaches the link.
+        const path = this.sidebarWidthPath();
+        const adapter = this.app.vault.adapter;
+        const dir = normalizePath(this.plugin.pluginDataDir);
+        sidebarWidthWriteChain = sidebarWidthWriteChain
+            .then(async () => {
+                // Freshness gate before any disk I/O: a newer scheduling since
+                // this write was enqueued makes it stale — skip it rather than
+                // let an older width land last (order alone can't prevent that).
+                if (revision !== sidebarWidthSaveRevision) return;
+                if (!(await adapter.exists(dir))) await adapter.mkdir(dir);
+                await adapter.write(path, JSON.stringify(sidebarWidthState(width), null, 2));
+            })
+            .catch(() => {
+                // Sidecar persistence is best-effort — a failed write must
+                // not break the sidebar (nor reject the shared chain).
+            });
+        await sidebarWidthWriteChain;
+    }
+
+    /** Debounce a sidecar write so drag streams collapse into one disk write. */
+    private scheduleSidebarWidthPersist(): void {
+        if (this.widthSaveTimer !== null) window.clearTimeout(this.widthSaveTimer);
+        // Mint at arming, module-wide: every re-arm supersedes the previous
+        // pending intent — across instances too, since a rebuild gives the
+        // new instance a fresh timer but not a fresh intent lineage.
+        const revision = ++sidebarWidthSaveRevision;
+        this.widthSaveRevision = revision;
+        // Record the arming-time width for {@link loadSidebarWidth}: a rebuilt
+        // instance opening before this debounce (or the unload flush) lands
+        // must seed this width, not a stale sidecar. Every re-arm overwrites,
+        // so the value always holds the latest scheduled intent. Null means no
+        // width was ever worth scheduling — record nothing; the fire-time
+        // guard skips the save exactly as before.
+        const width = this.widthKeeper?.rememberedWidth;
+        if (width !== null && width !== undefined) sidebarWidthScheduledWidth = width;
+        // Raw one-shot debounce: registerInterval is for recurring ticks; the
+        // pending write is flushed explicitly in onunload.
+        this.widthSaveTimer = window.setTimeout(() => {
+            this.widthSaveTimer = null;
+            this.widthSaveRevision = null;
+            const width = this.widthKeeper?.rememberedWidth;
+            if (width !== null && width !== undefined) void this.saveSidebarWidth(width, revision);
+        }, SIDEBAR_WIDTH_SAVE_DEBOUNCE_MS);
+    }
+
+    /** Stop the width sampling, drop a pending debounce, and flush unsaved state (best-effort). */
+    private teardownSidebarWidthKeeper(): void {
+        this.widthResizeObserver?.disconnect();
+        this.widthResizeObserver = null;
+        if (this.widthSaveTimer !== null) {
+            window.clearTimeout(this.widthSaveTimer);
+            this.widthSaveTimer = null;
+            const width = this.widthKeeper?.rememberedWidth;
+            // The flush carries the revision minted at SCHEDULE time — never a
+            // fresh one — so a stale instance's unload flush loses to any newer
+            // scheduling instead of being promoted to current by its own unload.
+            const revision = this.widthSaveRevision;
+            this.widthSaveRevision = null;
+            if (width !== null && width !== undefined && revision !== null) {
+                void this.saveSidebarWidth(width, revision);
+            }
+        }
+        this.widthKeeper = null;
+        this.sidedockEl = null;
+        this.sidebarPointerDownAtMs = null;
     }
 
     /** Update the stored results and cache the editor text for passage context. */
