@@ -109,6 +109,23 @@ let sidebarWidthWriteChain: Promise<void> = Promise.resolve();
  */
 let sidebarWidthSaveRevision = 0;
 
+/**
+ * The latest scheduled width intent, shared by every QuillSidebarView
+ * instance beside {@link sidebarWidthWriteChain} and
+ * {@link sidebarWidthSaveRevision}. WHY: it bridges write latency across
+ * instance rebuilds — Obsidian can build a fresh sidebar view while the
+ * previous instance's debounced/unload-flushed write is still in flight on
+ * the chain, and that fresh instance's open-time read must seed the newest
+ * scheduled width, not the stale sidecar. Recorded at arming time by every
+ * scheduling (re-arms overwrite, so it always holds the newest intent);
+ * {@link loadSidebarWidth} prefers it while it is non-null. It is ALWAYS at
+ * least as fresh as the sidecar: every width that can reach disk is first
+ * recorded here at arming time, and a superseding scheduling re-records —
+ * so revision-skipped (superseded) writes can only leave disk holding a
+ * width the module value already covers, never a newer one.
+ */
+let sidebarWidthScheduledWidth: number | null = null;
+
 /** Sidebar view hosting the linter, context, review, co-writer, dashboard, and lorebook tabs. */
 export class QuillSidebarView extends ItemView {
     private results: LintResult[] = [];
@@ -453,8 +470,19 @@ export class QuillSidebarView extends ItemView {
         return normalizePath(`${this.plugin.pluginDataDir}/${SIDEBAR_WIDTH_FILE_NAME}`);
     }
 
-    /** Load the remembered width from the sidecar (best-effort; null on miss/corruption). */
+    /**
+     * Load the remembered width (best-effort; null on miss/corruption).
+     * Prefers the module-level pending scheduled width over the sidecar: it
+     * is by construction at least as fresh as disk (see
+     * {@link sidebarWidthScheduledWidth}), and a freshly rebuilt instance can
+     * open while the previous instance's last write is still in flight —
+     * reading disk there would seed a stale width and drive a bogus
+     * restore-on-open snap.
+     */
     private async loadSidebarWidth(): Promise<number | null> {
+        // Non-null pending intent — skip the disk read entirely (fresh
+        // installs / first loads have nothing scheduled and fall through).
+        if (sidebarWidthScheduledWidth !== null) return sidebarWidthScheduledWidth;
         try {
             const path = this.sidebarWidthPath();
             const adapter = this.app.vault.adapter;
@@ -505,6 +533,14 @@ export class QuillSidebarView extends ItemView {
         // new instance a fresh timer but not a fresh intent lineage.
         const revision = ++sidebarWidthSaveRevision;
         this.widthSaveRevision = revision;
+        // Record the arming-time width for {@link loadSidebarWidth}: a rebuilt
+        // instance opening before this debounce (or the unload flush) lands
+        // must seed this width, not a stale sidecar. Every re-arm overwrites,
+        // so the value always holds the latest scheduled intent. Null means no
+        // width was ever worth scheduling — record nothing; the fire-time
+        // guard skips the save exactly as before.
+        const width = this.widthKeeper?.rememberedWidth;
+        if (width !== null && width !== undefined) sidebarWidthScheduledWidth = width;
         // Raw one-shot debounce: registerInterval is for recurring ticks; the
         // pending write is flushed explicitly in onunload.
         this.widthSaveTimer = window.setTimeout(() => {

@@ -3,7 +3,7 @@ import '../helpers/ui-setup';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, Component, Menu, WorkspaceLeaf } from 'obsidian';
 import { QuillSidebarView, loreSubTabBarMode } from '../../src/ui/quill-sidebar';
-import { DRAG_STILL_MS, parseSidebarWidthState } from '../../src/ui/sidebar-width';
+import { DRAG_STILL_MS, parseSidebarWidthState, sidebarWidthState } from '../../src/ui/sidebar-width';
 import type EventideQuillPlugin from '../../src/main';
 
 /** Build a minimal `EventideQuillPlugin` stub for sidebar construction. */
@@ -632,5 +632,69 @@ describe('sidebar width sidecar write chain (cross-instance ordering)', () => {
         // newer width reaches disk — not [450, 300] as order-only
         // serialization would land.
         expect(adapter.writes.map((data) => parseSidebarWidthState(data))).toEqual([450]);
+    });
+
+    it('seeds a newly opened instance from the pending scheduled width before the debounced write lands', async () => {
+        // The read-side twin of the write races above: a rebuilt sidebar view
+        // can open while the previous instance's last save is STILL IN FLIGHT
+        // (pending debounce, or its unload flush stuck behind a slow write).
+        // Reading only the sidecar then seeds the new keeper from a stale
+        // width — which can drive a visible restore-on-open snap and becomes
+        // the new baseline. Arming a schedule records the width in module
+        // state, and the load must prefer it over stale disk.
+        const stalePayload = JSON.stringify(sidebarWidthState(200), null, 2);
+        const writes: string[] = [];
+        // Sidecar already on disk from a prior session (stale 200); the
+        // flush's write (300) stalls for several macrotasks first.
+        const adapter = {
+            async exists(): Promise<boolean> {
+                return true;
+            },
+            async mkdir(): Promise<void> {},
+            async read(): Promise<string> {
+                return writes[writes.length - 1] ?? stalePayload;
+            },
+            async write(_path: string, data: string): Promise<void> {
+                if (data.includes('"width": 300')) {
+                    for (let i = 0; i < 3; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+                }
+                writes.push(data);
+            }
+        };
+
+        // Production shape: ONE plugin and ONE vault adapter persist while
+        // only the view instance (and its leaf) is rebuilt, so both views
+        // share them.
+        const app = new App();
+        (app.vault as unknown as { adapter: unknown }).adapter = adapter;
+        const plugin = makePlugin();
+        Object.assign(plugin, { pluginDataDir: '.plugins/eventide-quill' });
+        /** Build a leaf bound to the shared app, mirroring a rebuilt sidebar leaf. */
+        const makeLeaf = () =>
+            new (WorkspaceLeaf as unknown as new (app?: unknown) => object)(app) as unknown as WorkspaceLeaf;
+
+        // Instance A schedules width 300 — arming records the pending intent.
+        // The debounce never fires: A unloads first, and its flush write is
+        // deliberately stalled in the adapter below.
+        const viewA = new QuillSidebarView(makeLeaf(), plugin);
+        (viewA as unknown as { widthKeeper: unknown }).widthKeeper = { rememberedWidth: 300 };
+        schedulePersist(viewA);
+        viewA.onunload();
+
+        // Instance B opens while A's flush is still mid-chain: the disk read
+        // would return the stale 200 — the pending intent (300) must win.
+        const viewB = new QuillSidebarView(makeLeaf(), plugin);
+        /** Invoke the view's private loadSidebarWidth (tests reach internals pragmatically). */
+        const loadWidth = (view: QuillSidebarView): Promise<number | null> =>
+            (view as unknown as { loadSidebarWidth(): Promise<number | null> }).loadSidebarWidth();
+        expect(await loadWidth(viewB)).toBe(300);
+        // Prove the flush really was still in flight when B loaded.
+        expect(writes).toEqual([]);
+
+        // Once the flush lands, disk and the pending intent agree — a later
+        // load resolves the same width through either source.
+        await flushMacrotasks(6);
+        expect(writes.map((data) => parseSidebarWidthState(data))).toEqual([300]);
+        expect(await loadWidth(viewB)).toBe(300);
     });
 });
