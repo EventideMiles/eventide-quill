@@ -1595,20 +1595,24 @@ export default class EventideQuillPlugin extends Plugin {
     }
 
     /**
-     * Re-reveal the Quill sidebar leaf after an action that dismisses it on
-     * mobile. On mobile the sidebar is a temporary overlay — opening a file in
-     * the editor (as the Discuss flows do to put the manuscript in context)
-     * dismisses the overlay. Calling this right after restores it so the writer
-     * lands on the results chat instead of the bare editor. No-op on desktop
-     * where the leaf is docked and already visible — `revealLeaf` would
-     * activate the sidebar leaf and steal focus from the editor this flow just
-     * opened (issue #67 investigation finding).
+     * Bring the Quill sidebar leaf back into view after an action that hides
+     * it. On mobile the sidebar is a temporary overlay — opening a file in the
+     * editor (as the Discuss flows do to put the manuscript in context)
+     * dismisses the overlay, so `revealLeaf` restores it and the writer lands
+     * on the results chat instead of the bare editor. On desktop the leaf is
+     * docked but may sit behind another sidebar tab, which would leave the
+     * discussion loading into a hidden view — `setActiveLeaf(leaf, { focus:
+     * false })` brings the Quill tab to the front WITHOUT moving keyboard
+     * focus away from the editor this flow just opened (a plain `revealLeaf`
+     * steals editor focus — issue #67 investigation finding).
      */
     private revealQuillSidebar(): void {
-        if (!Platform.isMobile) return;
         const quillLeaf = this.app.workspace.getLeavesOfType(QUILL_VIEW_TYPE)[0];
-        if (quillLeaf) {
+        if (!quillLeaf) return;
+        if (Platform.isMobile) {
             void this.app.workspace.revealLeaf(quillLeaf);
+        } else {
+            this.app.workspace.setActiveLeaf(quillLeaf, { focus: false });
         }
     }
 
@@ -5968,9 +5972,11 @@ export default class EventideQuillPlugin extends Plugin {
         // Open the current file so the follow-up paths see the living document.
         await this.app.workspace.getLeaf().openFile(file);
 
-        // On mobile, opening a file in the editor dismisses the sidebar
-        // overlay — re-reveal it so the writer lands on the results chat
-        // (switched to just below), not the bare editor. No-op on desktop.
+        // Opening a file in the editor dismisses the mobile sidebar overlay,
+        // and on desktop the Quill leaf may sit behind another sidebar tab —
+        // re-reveal/activate it (without stealing editor focus) so the writer
+        // lands on the results chat (switched to just below), not the bare
+        // editor.
         this.revealQuillSidebar();
 
         const snapshot = job.contextSnapshot;
@@ -6083,7 +6089,8 @@ export default class EventideQuillPlugin extends Plugin {
         // Open the current source so the follow-up path sees the living document.
         await this.app.workspace.getLeaf().openFile(sourceFile);
 
-        // Re-reveal the sidebar (dismissed on mobile by the openFile above).
+        // Re-reveal the sidebar (dismissed on mobile by the openFile above;
+        // on desktop brought to the front without stealing editor focus).
         this.revealQuillSidebar();
 
         if (engine === 'editorial') {
