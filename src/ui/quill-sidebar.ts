@@ -1,4 +1,14 @@
-import { Component, ItemView, MarkdownView, Menu, Notice, setIcon, WorkspaceLeaf } from 'obsidian';
+import {
+    Component,
+    ItemView,
+    MarkdownView,
+    Menu,
+    Notice,
+    normalizePath,
+    Platform,
+    setIcon,
+    WorkspaceLeaf
+} from 'obsidian';
 import { LintResult, RULE_INFO, FIXABLE_RULES } from '../core/linter/types';
 import { FIXES } from '../core/linter/fixes';
 import { renderChangeCard, renderChangeBulkBar } from './change-card';
@@ -19,6 +29,19 @@ import type { SubagentView } from '../ai/subagent-session';
 import type { ProposedEdit } from '../core/change-set';
 import type EventideQuillPlugin from '../main';
 import type { ContextAssembly } from '../core/context-engine/types';
+import {
+    SIDEBAR_WIDTH_FILE_NAME,
+    SIDEBAR_WIDTH_SAVE_DEBOUNCE_MS,
+    SidebarWidthKeeper,
+    applySidebarWidth,
+    isLeafActiveInside,
+    parseSidebarWidthState,
+    readSidedockWidth,
+    resolveSidedockElement,
+    restoreWidthForOpen,
+    sidebarWidthKeeperEnabled,
+    sidebarWidthState
+} from './sidebar-width';
 
 export const QUILL_VIEW_TYPE = 'quill-sidebar';
 
@@ -108,6 +131,19 @@ export class QuillSidebarView extends ItemView {
      */
     private embeddedCoWriterPanel: CoWriterPanel | null = null;
     private resizeObserver: ResizeObserver | null = null;
+    /**
+     * Width-keeper state machine (issue #67) — desktop only. Null whenever
+     * the keeper is inactive (mobile, or the sidedock element wasn't found).
+     */
+    private widthKeeper: SidebarWidthKeeper | null = null;
+    /** The right-sidedock element Obsidian sizes when the divider is dragged. */
+    private sidedockEl: HTMLElement | null = null;
+    /** ResizeObserver driving the keeper's width sampling (separate concern from the responsive-mode observer). */
+    private widthResizeObserver: ResizeObserver | null = null;
+    /** Epoch ms of the last window resize — correlates legit width changes with window resizes. */
+    private lastWindowResizeMs: number | null = null;
+    /** Pending debounced sidecar-write timer, or null when idle. */
+    private widthSaveTimer: number | null = null;
 
     /** Create the sidebar view for the given workspace leaf. */
     constructor(leaf: WorkspaceLeaf, plugin: EventideQuillPlugin) {
@@ -202,12 +238,166 @@ export class QuillSidebarView extends ItemView {
                 }
             })
         );
+
+        // Defensive width keeper (issue #67): remember the writer's chosen
+        // right-sidebar width and restore it when something else resets it.
+        this.setupSidebarWidthKeeper();
     }
 
     /** Clean up the ResizeObserver when the view is destroyed. */
     onunload() {
         this.resizeObserver?.disconnect();
         this.resizeObserver = null;
+        this.teardownSidebarWidthKeeper();
+    }
+
+    /**
+     * Desktop-only sidebar width keeper (issue #67): resolve the sidedock
+     * element, timestamp window resizes, then load the persisted width and
+     * start sampling. A complete no-op on mobile (sidebars there are
+     * full-width overlays) and when the sidedock element can't be resolved.
+     */
+    private setupSidebarWidthKeeper(): void {
+        if (!sidebarWidthKeeperEnabled(Platform.isMobile)) return;
+        const sidedock = resolveSidedockElement(this.containerEl);
+        if (!sidedock) return;
+        this.sidedockEl = sidedock;
+        this.widthKeeper = new SidebarWidthKeeper();
+        this.lastWindowResizeMs = null;
+        this.registerDomEvent(this.viewWindow(sidedock), 'resize', () => {
+            this.lastWindowResizeMs = Date.now();
+        });
+        // Fire-and-forget: the sample observer starts only after the sidecar
+        // read resolves so observations can't race the seeded remembered width.
+        void this.initSidebarWidthState();
+    }
+
+    /** The window an element lives in — the sidedock's owner view, popout-safe. */
+    private viewWindow(el: HTMLElement): Window {
+        return el.ownerDocument.defaultView ?? window;
+    }
+
+    /** Current inner width of the window hosting the sidedock (px). */
+    private viewWindowWidth(el: HTMLElement): number {
+        return this.viewWindow(el).innerWidth;
+    }
+
+    /** Load the sidecar, seed the keeper, apply the open-time restore, then start sampling. */
+    private async initSidebarWidthState(): Promise<void> {
+        const keeper = this.widthKeeper;
+        const sidedock = this.sidedockEl;
+        if (!keeper || !sidedock) return;
+        keeper.seedRemembered(await this.loadSidebarWidth());
+        const current = readSidedockWidth(sidedock);
+        if (current !== null) {
+            const windowWidth = this.viewWindowWidth(sidedock);
+            const begin = keeper.begin(current, Date.now(), {
+                windowWidth,
+                lastWindowResizeMs: this.lastWindowResizeMs,
+                resetAllowed: !isLeafActiveInside(sidedock)
+            });
+            if (begin.persist) this.scheduleSidebarWidthPersist();
+            const restore = restoreWidthForOpen(keeper.rememberedWidth, current, windowWidth);
+            if (restore !== null) {
+                applySidebarWidth(sidedock, restore);
+                this.logWidthChange('restored on open', current, restore);
+            } else if (begin.rememberedWidth !== null) {
+                this.logWidthChange('tracking', null, current);
+            }
+        }
+        this.widthResizeObserver = new ResizeObserver(() => this.sampleSidedockWidth());
+        this.widthResizeObserver.observe(sidedock);
+    }
+
+    /** Sample the sidedock width, classify the change, and adopt or restore accordingly. */
+    private sampleSidedockWidth(): void {
+        const keeper = this.widthKeeper;
+        const sidedock = this.sidedockEl;
+        if (!keeper || !sidedock) return;
+        const width = readSidedockWidth(sidedock);
+        if (width === null) return;
+        const decision = keeper.observe(width, Date.now(), {
+            windowWidth: this.viewWindowWidth(sidedock),
+            lastWindowResizeMs: this.lastWindowResizeMs,
+            resetAllowed: !isLeafActiveInside(sidedock)
+        });
+        if (decision.kind === 'stable' || decision.kind === 'collapsed') return;
+        if (decision.kind === 'reset-drop') {
+            if (decision.restoreWidth === null) return;
+            this.logWidthChange('detected un-commanded reset', decision.fromWidth, width);
+            applySidebarWidth(sidedock, decision.restoreWidth);
+            this.logWidthChange('restored remembered width', width, decision.restoreWidth);
+            return;
+        }
+        // 'drag' | 'window-resize' — the keeper already adopted; persist (debounced) and log.
+        this.logWidthChange(`${decision.kind} adopted`, decision.fromWidth, width);
+        if (decision.persist) this.scheduleSidebarWidthPersist();
+    }
+
+    /** Debug log a sidedock width transition (release-visible; gated on the writer's debug-logging setting). */
+    private logWidthChange(reason: string, from: number | null, to: number): void {
+        if (!this.plugin.settings.enableDebugLogging) return;
+        const fromText = from === null ? 'unknown' : `${Math.round(from)}px`;
+        // console.warn (not log) — the Obsidian reviewer's no-console rule
+        // errors on console.log; warn is the established debug-aid channel
+        // (see review-panel.ts's mountEmbeddedPanel logging).
+        console.warn(`[quill] sidebar width ${reason}: ${fromText} -> ${Math.round(to)}px`);
+    }
+
+    /** Normalize the sidecar path inside the plugin data directory. */
+    private sidebarWidthPath(): string {
+        return normalizePath(`${this.plugin.pluginDataDir}/${SIDEBAR_WIDTH_FILE_NAME}`);
+    }
+
+    /** Load the remembered width from the sidecar (best-effort; null on miss/corruption). */
+    private async loadSidebarWidth(): Promise<number | null> {
+        try {
+            const path = this.sidebarWidthPath();
+            const adapter = this.app.vault.adapter;
+            if (!(await adapter.exists(path))) return null;
+            return parseSidebarWidthState(await adapter.read(path));
+        } catch {
+            return null;
+        }
+    }
+
+    /** Persist the remembered width to the sidecar (best-effort; never throws). */
+    private async saveSidebarWidth(width: number): Promise<void> {
+        try {
+            const path = this.sidebarWidthPath();
+            const adapter = this.app.vault.adapter;
+            const dir = normalizePath(this.plugin.pluginDataDir);
+            if (!(await adapter.exists(dir))) await adapter.mkdir(dir);
+            await adapter.write(path, JSON.stringify(sidebarWidthState(width), null, 2));
+        } catch {
+            // Sidecar persistence is best-effort — a failed write must not break the sidebar.
+        }
+    }
+
+    /** Debounce a sidecar write so drag streams collapse into one disk write. */
+    private scheduleSidebarWidthPersist(): void {
+        if (this.widthSaveTimer !== null) window.clearTimeout(this.widthSaveTimer);
+        // Raw one-shot debounce: registerInterval is for recurring ticks; the
+        // pending write is flushed explicitly in onunload.
+        this.widthSaveTimer = window.setTimeout(() => {
+            this.widthSaveTimer = null;
+            const width = this.widthKeeper?.rememberedWidth;
+            if (width !== null && width !== undefined) void this.saveSidebarWidth(width);
+        }, SIDEBAR_WIDTH_SAVE_DEBOUNCE_MS);
+    }
+
+    /** Stop the width sampling, drop a pending debounce, and flush unsaved state (best-effort). */
+    private teardownSidebarWidthKeeper(): void {
+        this.widthResizeObserver?.disconnect();
+        this.widthResizeObserver = null;
+        if (this.widthSaveTimer !== null) {
+            window.clearTimeout(this.widthSaveTimer);
+            this.widthSaveTimer = null;
+            const width = this.widthKeeper?.rememberedWidth;
+            if (width !== null && width !== undefined) void this.saveSidebarWidth(width);
+        }
+        this.widthKeeper = null;
+        this.sidedockEl = null;
     }
 
     /** Update the stored results and cache the editor text for passage context. */

@@ -453,8 +453,8 @@ export default class EventideQuillPlugin extends Plugin {
     private writingGoalsLoading: Promise<void> = Promise.resolve();
     /** Per-manuscript dashboard data loaded from the sidecar file, or null when not yet loaded. */
     currentManuscriptFileData: ManuscriptFileData | null = null;
-    /** Absolute path to the plugin's data directory (for dashboard snapshot storage). */
-    private pluginDataDir = '';
+    /** Absolute path to the plugin's data directory (for sidecar storage; public so views can persist sidecars). */
+    pluginDataDir = '';
 
     /** Local Fandom wiki cache — fandom_* write-through + (Stage 3) cache-first lookup. */
     fandomCache: FandomCache | null = null;
