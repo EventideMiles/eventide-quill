@@ -118,7 +118,9 @@ let sidebarWidthSaveRevision = 0;
  * the chain, and that fresh instance's open-time read must seed the newest
  * scheduled width, not the stale sidecar. Recorded at arming time by every
  * scheduling (re-arms overwrite, so it always holds the newest intent);
- * {@link loadSidebarWidth} prefers it while it is non-null. It is ALWAYS at
+ * {@link loadSidebarWidth} prefers it over disk — checked at entry AND
+ * re-checked after every adapter await, so an intent armed while a load's
+ * disk round trip is pending still beats the stale parse. It is ALWAYS at
  * least as fresh as the sidecar: every width that can reach disk is first
  * recorded here at arming time, and a superseding scheduling re-records —
  * so revision-skipped (superseded) writes can only leave disk holding a
@@ -477,7 +479,10 @@ export class QuillSidebarView extends ItemView {
      * {@link sidebarWidthScheduledWidth}), and a freshly rebuilt instance can
      * open while the previous instance's last write is still in flight —
      * reading disk there would seed a stale width and drive a bogus
-     * restore-on-open snap.
+     * restore-on-open snap. The preference is checked at entry AND re-checked
+     * after every adapter await (a failed one included): another instance can
+     * arm a scheduling while the round trip is pending, and that newer intent
+     * must still beat whatever disk produced during the awaits.
      */
     private async loadSidebarWidth(): Promise<number | null> {
         // Non-null pending intent — skip the disk read entirely (fresh
@@ -486,10 +491,16 @@ export class QuillSidebarView extends ItemView {
         try {
             const path = this.sidebarWidthPath();
             const adapter = this.app.vault.adapter;
-            if (!(await adapter.exists(path))) return null;
-            return parseSidebarWidthState(await adapter.read(path));
+            if (!(await adapter.exists(path))) return sidebarWidthScheduledWidth;
+            const raw = await adapter.read(path);
+            return sidebarWidthScheduledWidth ?? parseSidebarWidthState(raw);
         } catch {
-            return null;
+            // Same precedence on a failed round trip: non-null here can only
+            // be a mid-await arming (the entry check already short-circuits
+            // non-null), and that intent is independent of the failing
+            // adapter — prefer it exactly like the resolved paths. Null when
+            // nothing armed: the existing best-effort behavior.
+            return sidebarWidthScheduledWidth;
         }
     }
 
