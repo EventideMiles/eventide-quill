@@ -3,6 +3,7 @@ import '../helpers/ui-setup';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, Component, Menu, WorkspaceLeaf } from 'obsidian';
 import { QuillSidebarView, loreSubTabBarMode } from '../../src/ui/quill-sidebar';
+import { DRAG_STILL_MS, parseSidebarWidthState, sidebarWidthState, sidedockHasKeyboardFocus } from '../../src/ui/sidebar-width';
 import type EventideQuillPlugin from '../../src/main';
 
 /** Build a minimal `EventideQuillPlugin` stub for sidebar construction. */
@@ -343,5 +344,530 @@ describe('QuillSidebarView', () => {
         const btn = loreSubTabs(leaf).find((el) => el.textContent === 'Hygiene');
         clickBubbling(btn!);
         expect(loreSubTabs(leaf)[4]?.classList.contains('quill-sidebar__subtab--active')).to.equal(true);
+    });
+});
+
+/**
+ * Recording ResizeObserver double for the width-keeper wiring tests: captures
+ * EVERY constructed observer's callback (the view builds two — the
+ * responsive-mode observer synchronously in onOpen, then the width keeper's
+ * after the async sidecar read resolves), so a test can drive the width
+ * observer by construction order. The width observer is always last.
+ */
+class CapturingResizeObserver {
+    /** Callbacks from every constructed observer, in construction order. */
+    static callbacks: ResizeObserverCallback[] = [];
+
+    /** Record the callback. */
+    constructor(cb: ResizeObserverCallback) {
+        CapturingResizeObserver.callbacks.push(cb);
+    }
+
+    /** No-op. */
+    observe(): void {}
+
+    /** No-op. */
+    unobserve(): void {}
+
+    /** No-op. */
+    disconnect(): void {}
+}
+
+describe('sidebar width keeper drag hint (final-sample race)', () => {
+    /** Epoch base for the fake clock: the keeper baselines its sample stream at open. */
+    const T0 = 1_000_000;
+    /** The ResizeObserver global before the capturing double was installed. */
+    let originalResizeObserver: unknown;
+    /** The still-open view, unloaded in afterEach so keeper teardown runs. */
+    let openView: QuillSidebarView | null = null;
+
+    /** The mounted keeper-view fixture returned by {@link makeKeeperView}. */
+    interface KeeperViewFixture {
+        view: QuillSidebarView;
+        sidedock: HTMLElement;
+        width: { value: number };
+    }
+
+    /**
+     * Mount the real sidebar view inside a fabricated right-sidedock whose
+     * measured width is stubbed and mutable via the returned cell.
+     */
+    async function makeKeeperView(): Promise<KeeperViewFixture> {
+        const width = { value: 450 };
+        const sidedock = createDiv();
+        sidedock.className = 'workspace-split mod-right-split';
+        document.body.appendChild(sidedock);
+        const leaf = (new (WorkspaceLeaf as unknown as new (app?: unknown) => object)(new App())) as unknown as WorkspaceLeaf;
+        sidedock.appendChild((leaf as unknown as { containerEl: HTMLElement }).containerEl);
+        // Production reads the width via getBoundingClientRect (forces layout); the stub IS the layout here.
+        sidedock.getBoundingClientRect = () => ({ width: width.value, left: 800 } as DOMRect);
+        const plugin = makePlugin();
+        Object.assign(plugin, { pluginDataDir: '.plugins/eventide-quill' });
+        const view = new QuillSidebarView(leaf, plugin);
+        await view.onOpen();
+        // Flush the fire-and-forget sidecar read so initSidebarWidthState finishes:
+        // the keeper baselines at the current width and the width observer attaches.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        openView = view;
+        return { view, sidedock, width };
+    }
+
+    /** The width-keeper observer callback — the LAST observer the view constructed. */
+    function widthSampleCallback(): ResizeObserverCallback {
+        const callbacks = CapturingResizeObserver.callbacks;
+        const cb = callbacks[callbacks.length - 1];
+        if (!cb) throw new Error('width ResizeObserver callback not captured');
+        return cb;
+    }
+
+    /** The view's width keeper read through the private field (tests reach internals pragmatically). */
+    function widthKeeperOf(view: QuillSidebarView): { rememberedWidth: number | null } | null {
+        return (view as unknown as { widthKeeper: { rememberedWidth: number | null } | null }).widthKeeper;
+    }
+
+    beforeEach(() => {
+        CapturingResizeObserver.callbacks = [];
+        originalResizeObserver = (globalThis as Record<string, unknown>).ResizeObserver;
+        (globalThis as Record<string, unknown>).ResizeObserver = CapturingResizeObserver;
+        // Fake ONLY the wall clock: the keeper's stillness/expiry math is all
+        // Date.now, while vitest timers stay real so the setTimeout(0) flush
+        // in makeKeeperView still works (the conversation-store suite fakes
+        // the same way).
+        vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+        (globalThis as Record<string, unknown>).ResizeObserver = originalResizeObserver;
+        openView?.onunload();
+        openView = null;
+        document.body.innerHTML = '';
+    });
+
+    it('samples the settled width at pointerup so the late ResizeObserver delivery cannot restore', async () => {
+        const { view, sidedock, width } = await makeKeeperView();
+
+        // The writer pauses: fill the stillness clock past DRAG_STILL_MS. A
+        // post-release sample of the flick below would then — without the
+        // pointerup adoption — see a large drop + stillness + no drag hint and
+        // classify it as an un-commanded reset.
+        vi.setSystemTime(T0 + DRAG_STILL_MS + 500);
+
+        // Grab the divider: a resize-classed handle inside the dock arms the
+        // hint. Real pointerdowns bubble, and the obsidian test mock registers
+        // listeners without the capture flag, so dispatch a bubbling event.
+        const handle = createDiv();
+        handle.className = 'workspace-leaf-resize-handle';
+        sidedock.appendChild(handle);
+        handle.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+
+        // The flick: the final width lands in the DOM, but its ResizeObserver
+        // delivery is still batched — nothing has sampled 300 yet.
+        width.value = 300;
+
+        // Release: the clear handler must sample the settled width while the
+        // hint is still armed — adopting 300 and re-baselining the stream —
+        // before nulling the hint.
+        window.dispatchEvent(new Event('pointerup'));
+
+        // The hint is cleared and the final width was adopted.
+        expect((view as unknown as { sidebarPointerDownAtMs: number | null }).sidebarPointerDownAtMs).toBeNull();
+        expect(widthKeeperOf(view)?.rememberedWidth).toBe(300);
+
+        // The late delivery of the batched final observation now reads stable
+        // and no-ops: no restore was ever applied to the DOM, and the adopted
+        // width survives.
+        widthSampleCallback()([], {} as ResizeObserver);
+        expect(sidedock.style.width).toBe('');
+        expect(widthKeeperOf(view)?.rememberedWidth).toBe(300);
+    });
+
+    it('keeps the release handler cheap when no drag is armed', async () => {
+        const { view } = await makeKeeperView();
+        const sampleSpy = vi.spyOn(view as unknown as { sampleSidedockWidth: () => void }, 'sampleSidedockWidth');
+        // Every window pointerup hits the handler; with no armed hint it must
+        // bail on the null check without forcing a layout-reading width sample.
+        window.dispatchEvent(new Event('pointerup'));
+        expect(sampleSpy).not.toHaveBeenCalled();
+    });
+});
+
+/**
+ * Regression for the PR #68 round-8 interaction: desktop
+ * `revealQuillSidebar()` calls `workspace.setActiveLeaf(quillLeaf,
+ * { focus: false })` after Discuss flows load a report, which moves the
+ * document-wide `.workspace-leaf.mod-active` class to the Quill leaf's
+ * container WITHOUT moving keyboard focus (focus only gates `focusLeaf`).
+ * The reset guard used the active leaf as its "the writer owns the width"
+ * proxy, so in exactly that post-Discuss state a qualifying un-commanded
+ * width drop (the #67 symptom itself) classified as a drag and was adopted
+ * — the keeper's core protection was disabled. The guard must follow actual
+ * keyboard focus (`sidedockHasKeyboardFocus`); the divider-drag guard stays
+ * a separate arm of the conjunction.
+ */
+describe('sidebar width keeper reset guard (keyboard focus, not active leaf)', () => {
+    /** Epoch base for the fake clock: the keeper baselines its sample stream at open. */
+    const T0 = 1_000_000;
+    /** The ResizeObserver global before the capturing double was installed. */
+    let originalResizeObserver: unknown;
+    /** The still-open view, unloaded in afterEach so keeper teardown runs. */
+    let openView: QuillSidebarView | null = null;
+
+    /** The mounted fixture returned by {@link makePostDiscussView}. */
+    interface PostDiscussFixture {
+        view: QuillSidebarView;
+        sidedock: HTMLElement;
+        width: { value: number };
+    }
+
+    /**
+     * Mount the real sidebar view inside a fabricated right-sidedock whose
+     * measured width is stubbed and mutable, carrying the post-round-8 DOM
+     * state: the Quill leaf inside the dock is marked `.mod-active` while
+     * keyboard focus sits OUTSIDE the sidedock (in the editor). The sidecar
+     * load is stubbed to null so the keeper deterministically adopts the
+     * fixture's 450px width at open.
+     */
+    async function makePostDiscussView(): Promise<PostDiscussFixture> {
+        // Window-focus pin: happy-dom derives hasFocus() from activeElement
+        // and defaults to true (the body fallback), so this fixture's premise
+        // — a FOCUSED window with keyboard focus in the editor, outside the
+        // dock — is inherited truthfully, but pin it so a happy-dom behavior
+        // change cannot silently flip the fixtures' meaning. The blurred
+        // regression below re-stubs to false.
+        vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+        const width = { value: 450 };
+        const sidedock = createDiv();
+        sidedock.className = 'workspace-split mod-right-split';
+        document.body.appendChild(sidedock);
+        const leaf = (new (WorkspaceLeaf as unknown as new (app?: unknown) => object)(new App())) as unknown as WorkspaceLeaf;
+        const leafContainer = (leaf as unknown as { containerEl: HTMLElement }).containerEl;
+        // Round-8 interaction: setActiveLeaf(leaf, { focus: false }) marks the
+        // Quill leaf's container `workspace-leaf mod-active` without moving
+        // focus into it.
+        leafContainer.classList.add('workspace-leaf', 'mod-active');
+        sidedock.appendChild(leafContainer);
+        // Keyboard focus stays in the editor, outside the sidedock.
+        const editor = createDiv();
+        document.body.appendChild(editor);
+        editor.focus();
+        // Production reads the width via getBoundingClientRect (forces layout); the stub IS the layout here.
+        sidedock.getBoundingClientRect = () => ({ width: width.value, left: 800 } as DOMRect);
+        const plugin = makePlugin();
+        Object.assign(plugin, { pluginDataDir: '.plugins/eventide-quill' });
+        const view = new QuillSidebarView(leaf, plugin);
+        // Deterministic seed: ignore sidecar/scheduled state — the keeper
+        // adopts the fixture's 450px width at open.
+        vi.spyOn(view as unknown as { loadSidebarWidth(): Promise<number | null> }, 'loadSidebarWidth').mockResolvedValue(null);
+        await view.onOpen();
+        // Flush the fire-and-forget sidecar read so initSidebarWidthState
+        // finishes: the keeper baselines at the current width and the width
+        // observer attaches.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        openView = view;
+        return { view, sidedock, width };
+    }
+
+    /** The width-keeper observer callback — the LAST observer the view constructed. */
+    function widthSampleCallback(): ResizeObserverCallback {
+        const callbacks = CapturingResizeObserver.callbacks;
+        const cb = callbacks[callbacks.length - 1];
+        if (!cb) throw new Error('width ResizeObserver callback not captured');
+        return cb;
+    }
+
+    /** The view's width keeper read through the private field (tests reach internals pragmatically). */
+    function widthKeeperOf(view: QuillSidebarView): { rememberedWidth: number | null } | null {
+        return (view as unknown as { widthKeeper: { rememberedWidth: number | null } | null }).widthKeeper;
+    }
+
+    beforeEach(() => {
+        CapturingResizeObserver.callbacks = [];
+        originalResizeObserver = (globalThis as Record<string, unknown>).ResizeObserver;
+        (globalThis as Record<string, unknown>).ResizeObserver = CapturingResizeObserver;
+        vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+        (globalThis as Record<string, unknown>).ResizeObserver = originalResizeObserver;
+        openView?.onunload();
+        openView = null;
+        document.body.innerHTML = '';
+    });
+
+    it('classifies a large drop as an un-commanded reset even though the dock carries mod-active', async () => {
+        const { view, sidedock, width } = await makePostDiscussView();
+        // Open adopted the fixture width as the remembered one.
+        expect(widthKeeperOf(view)?.rememberedWidth).toBe(450);
+
+        // The writer pauses: fill the stillness clock past DRAG_STILL_MS so a
+        // large single-step drop qualifies as a reset candidate.
+        vi.setSystemTime(T0 + DRAG_STILL_MS + 500);
+
+        // The #67 symptom itself: a >=50px single-step drop, no drag armed.
+        width.value = 320;
+        widthSampleCallback()([], {} as ResizeObserver);
+
+        // RESET, not adopt: the remembered width is restored to the DOM and
+        // kept — the mod-active class must not suppress reset handling.
+        expect(sidedock.style.width).toBe('450px');
+        expect(widthKeeperOf(view)?.rememberedWidth).toBe(450);
+    });
+
+    it('still adopts a large drop as a drag when keyboard focus IS inside the sidedock', async () => {
+        const { view, sidedock, width } = await makePostDiscussView();
+
+        // The writer pauses past the stillness threshold, then clicks into
+        // the sidebar: keyboard focus moves inside the dock.
+        vi.setSystemTime(T0 + DRAG_STILL_MS + 500);
+        const quillLeaf = sidedock.querySelector('.mod-active');
+        expect(quillLeaf).not.toBeNull();
+        (quillLeaf as HTMLElement).focus();
+
+        // The same large single-step drop now counts as legitimate intent.
+        width.value = 320;
+        widthSampleCallback()([], {} as ResizeObserver);
+
+        // Adopted as drag: no restore, the new width is remembered.
+        expect(sidedock.style.width).toBe('');
+        expect(widthKeeperOf(view)?.rememberedWidth).toBe(320);
+    });
+
+    it('restores a large drop when focus is retained in-dock while the window is blurred', async () => {
+        const { view, sidedock, width } = await makePostDiscussView();
+
+        // The writer clicks into the sidebar past the stillness threshold:
+        // with the window still focused this MUST read as focused-in-dock —
+        // proving the blur below is the only discriminator.
+        vi.setSystemTime(T0 + DRAG_STILL_MS + 500);
+        const quillLeaf = sidedock.querySelector('.mod-active');
+        expect(quillLeaf).not.toBeNull();
+        (quillLeaf as HTMLElement).focus();
+        expect(sidedockHasKeyboardFocus(sidedock)).toBe(true);
+
+        // Then the window loses OS focus (the writer works in an Obsidian
+        // popout or another app): `activeElement` is RETAINED in-dock, but
+        // the window-focus gate must keep the dock out of "the writer owns
+        // the width" — the >=50px single-step drop after stillness
+        // classifies as an un-commanded reset and RESTORES. Adopting here
+        // (drag) is exactly the round-10 bug.
+        vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+        // Retention premise pinned, not implicit: activeElement is still the
+        // in-dock leaf despite the blur.
+        expect(document.activeElement).toBe(quillLeaf);
+        width.value = 320;
+        widthSampleCallback()([], {} as ResizeObserver);
+
+        expect(sidedock.style.width).toBe('450px');
+        expect(widthKeeperOf(view)?.rememberedWidth).toBe(450);
+    });
+});
+
+/**
+ * Cross-instance serialization tests for the sidebar-width sidecar write
+ * chain. The sidecar is one plugin-data file, but each QuillSidebarView
+ * instance carries its own debounce/flush path — so an unloading instance's
+ * flush must never land its write after a newer instance's save and clobber
+ * the sidecar with a stale width (last-writer-wins across instances).
+ */
+describe('sidebar width sidecar write chain (cross-instance ordering)', () => {
+    /** Shape of the recording adapter this suite installs as the shared vault adapter. */
+    interface DelayedAdapter {
+        /** Payloads handed to write, in completion order (= what the disk ends up holding). */
+        writes: string[];
+        /** Whether the path exists (always false — every save takes the mkdir branch). */
+        exists(path: string): Promise<boolean>;
+        /** Create the directory (no-op). */
+        mkdir(path: string): Promise<void>;
+        /** Read the sidecar (the last completed write, or empty). */
+        read(path: string): Promise<string>;
+        /** Write the sidecar (records the payload; delayed payloads stall first). */
+        write(path: string, data: string): Promise<void>;
+    }
+
+    /**
+     * Build a recording adapter whose write for `delayedPayload` stalls for
+     * `delayTicks` macrotasks first — the controllable delay that models the
+     * older instance's write still being in flight while the newer instance's
+     * save is enqueued.
+     */
+    function makeDelayedAdapter(delayedPayload: string, delayTicks: number): DelayedAdapter {
+        const writes: string[] = [];
+        return {
+            writes,
+            async exists(_path: string): Promise<boolean> {
+                return false;
+            },
+            async mkdir(_path: string): Promise<void> {},
+            async read(_path: string): Promise<string> {
+                return writes[writes.length - 1] ?? '';
+            },
+            async write(_path: string, data: string): Promise<void> {
+                if (data.includes(delayedPayload)) {
+                    for (let i = 0; i < delayTicks; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+                }
+                writes.push(data);
+            }
+        };
+    }
+
+    /** Invoke the view's private saveSidebarWidth (tests reach internals pragmatically). */
+    function saveWidth(view: QuillSidebarView, width: number): Promise<void> {
+        return (view as unknown as { saveSidebarWidth(width: number): Promise<void> }).saveSidebarWidth(width);
+    }
+
+    /** Arm the view's debounced persist (tests reach internals pragmatically). */
+    function schedulePersist(view: QuillSidebarView): void {
+        (view as unknown as { scheduleSidebarWidthPersist(): void }).scheduleSidebarWidthPersist();
+    }
+
+    /** Drain macrotasks so the chained adapter work (microtasks between ticks) settles deterministically. */
+    async function flushMacrotasks(times: number): Promise<void> {
+        for (let i = 0; i < times; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    it('lands saves in enqueue order so an unload flush cannot clobber a newer save', async () => {
+        // Instance A's write stalls for several macrotasks — long enough that,
+        // without cross-instance serialization, instance B's write completes
+        // (and would be clobbered) before A's resolves.
+        const adapter = makeDelayedAdapter('"width": 300', 3);
+
+        // Production shape: ONE plugin and ONE vault adapter persist while only
+        // the view instance (and its leaf) is rebuilt, so both views share them.
+        const app = new App();
+        (app.vault as unknown as { adapter: unknown }).adapter = adapter;
+        const plugin = makePlugin();
+        Object.assign(plugin, { pluginDataDir: '.plugins/eventide-quill' });
+        /** Build a leaf bound to the shared app, mirroring a rebuilt sidebar leaf. */
+        const makeLeaf = () =>
+            new (WorkspaceLeaf as unknown as new (app?: unknown) => object)(app) as unknown as WorkspaceLeaf;
+
+        // Neither view is opened: the chain lives inside saveSidebarWidth, and
+        // the constructor alone binds each view to the shared app/adapter.
+        const viewA = new QuillSidebarView(makeLeaf(), plugin);
+        const viewB = new QuillSidebarView(makeLeaf(), plugin);
+
+        // The stale instance (A) issues what would be its unload-flush save;
+        // its write hangs in the adapter. The newer instance (B) saves the
+        // current width while A's write is still in flight.
+        const savingA = saveWidth(viewA, 300);
+        const savingB = saveWidth(viewB, 450);
+
+        await flushMacrotasks(6);
+        await Promise.all([savingA, savingB]);
+        await flushMacrotasks(2);
+
+        // Completion order IS disk order: the stale write landed first and the
+        // newer save last — the sidecar's final content is B's width.
+        expect(adapter.writes.map((data) => parseSidebarWidthState(data))).toEqual([300, 450]);
+    });
+
+    it("an older instance's onunload flush cannot overwrite a newer save", async () => {
+        // B's write stalls mid-flight so A's unload flush is enqueued while
+        // the newer save is still being written — FIFO serialization alone
+        // preserves order, not freshness, and would land A's stale width last.
+        const adapter = makeDelayedAdapter('"width": 450', 3);
+
+        // Production shape: ONE plugin and ONE vault adapter persist while
+        // only the view instance (and its leaf) is rebuilt, so all views
+        // share them.
+        const app = new App();
+        (app.vault as unknown as { adapter: unknown }).adapter = adapter;
+        const plugin = makePlugin();
+        Object.assign(plugin, { pluginDataDir: '.plugins/eventide-quill' });
+        /** Build a leaf bound to the shared app, mirroring a rebuilt sidebar leaf. */
+        const makeLeaf = () =>
+            new (WorkspaceLeaf as unknown as new (app?: unknown) => object)(app) as unknown as WorkspaceLeaf;
+
+        // Neither view is opened (the chain lives in the save path); each
+        // keeper is stubbed to the width its instance would hold.
+        const viewA = new QuillSidebarView(makeLeaf(), plugin);
+        const viewB = new QuillSidebarView(makeLeaf(), plugin);
+        (viewA as unknown as { widthKeeper: unknown }).widthKeeper = { rememberedWidth: 300 };
+        (viewB as unknown as { widthKeeper: unknown }).widthKeeper = { rememberedWidth: 450 };
+
+        // The older instance arms a debounced save (minting its schedule-time
+        // revision); the newer instance arms one too, then unloads BEFORE its
+        // debounce fires — its teardown flush enqueues the newer write now.
+        schedulePersist(viewA);
+        schedulePersist(viewB);
+        viewB.onunload();
+        // Let B's flush enter its adapter stall, THEN unload A: the stale
+        // flush is enqueued behind an in-flight newer write.
+        await flushMacrotasks(1);
+        viewA.onunload();
+        await flushMacrotasks(8);
+
+        // The schedule-time revision gate skips A's stale flush: only the
+        // newer width reaches disk — not [450, 300] as order-only
+        // serialization would land.
+        expect(adapter.writes.map((data) => parseSidebarWidthState(data))).toEqual([450]);
+    });
+
+    it('seeds a newly opened instance from the pending scheduled width before the debounced write lands', async () => {
+        // The read-side twin of the write races above: a rebuilt sidebar view
+        // can open while the previous instance's last save is STILL IN FLIGHT
+        // (pending debounce, or its unload flush stuck behind a slow write).
+        // Reading only the sidecar then seeds the new keeper from a stale
+        // width — which can drive a visible restore-on-open snap and becomes
+        // the new baseline. Arming a schedule records the width in module
+        // state, and the load must prefer it over stale disk.
+        const stalePayload = JSON.stringify(sidebarWidthState(200), null, 2);
+        const writes: string[] = [];
+        // Sidecar already on disk from a prior session (stale 200); the
+        // flush's write (300) stalls for several macrotasks first.
+        const adapter = {
+            async exists(): Promise<boolean> {
+                return true;
+            },
+            async mkdir(): Promise<void> {},
+            async read(): Promise<string> {
+                return writes[writes.length - 1] ?? stalePayload;
+            },
+            async write(_path: string, data: string): Promise<void> {
+                if (data.includes('"width": 300')) {
+                    for (let i = 0; i < 3; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+                }
+                writes.push(data);
+            }
+        };
+
+        // Production shape: ONE plugin and ONE vault adapter persist while
+        // only the view instance (and its leaf) is rebuilt, so both views
+        // share them.
+        const app = new App();
+        (app.vault as unknown as { adapter: unknown }).adapter = adapter;
+        const plugin = makePlugin();
+        Object.assign(plugin, { pluginDataDir: '.plugins/eventide-quill' });
+        /** Build a leaf bound to the shared app, mirroring a rebuilt sidebar leaf. */
+        const makeLeaf = () =>
+            new (WorkspaceLeaf as unknown as new (app?: unknown) => object)(app) as unknown as WorkspaceLeaf;
+
+        // Instance A schedules width 300 — arming records the pending intent.
+        // The debounce never fires: A unloads first, and its flush write is
+        // deliberately stalled in the adapter below.
+        const viewA = new QuillSidebarView(makeLeaf(), plugin);
+        (viewA as unknown as { widthKeeper: unknown }).widthKeeper = { rememberedWidth: 300 };
+        schedulePersist(viewA);
+        viewA.onunload();
+
+        // Instance B opens while A's flush is still mid-chain: the disk read
+        // would return the stale 200 — the pending intent (300) must win.
+        const viewB = new QuillSidebarView(makeLeaf(), plugin);
+        /** Invoke the view's private loadSidebarWidth (tests reach internals pragmatically). */
+        const loadWidth = (view: QuillSidebarView): Promise<number | null> =>
+            (view as unknown as { loadSidebarWidth(): Promise<number | null> }).loadSidebarWidth();
+        expect(await loadWidth(viewB)).toBe(300);
+        // Prove the flush really was still in flight when B loaded.
+        expect(writes).toEqual([]);
+
+        // Once the flush lands, disk and the pending intent agree — a later
+        // load resolves the same width through either source.
+        await flushMacrotasks(6);
+        expect(writes.map((data) => parseSidebarWidthState(data))).toEqual([300]);
+        expect(await loadWidth(viewB)).toBe(300);
     });
 });
