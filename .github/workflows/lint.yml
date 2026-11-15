@@ -12,7 +12,7 @@ jobs:
 
         strategy:
             matrix:
-                node-version: [22.x, 24.x]
+                node-version: [24.x, 26.x]
                 # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
 
         steps:
@@ -23,7 +23,7 @@ jobs:
                   node-version: ${{ matrix.node-version }}
                   cache: 'npm'
             - name: Pin npm version (allowScripts needs npm >= 11.16.0)
-              run: npm install -g "npm@11.16.0"
+              run: npm install -g "npm@11.21.2"
             - run: npm ci
             - run: npm run build --if-present
             - run: npm test --if-present

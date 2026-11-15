@@ -10,10 +10,12 @@
     "ignoreDependencies": [
         "@types/mocha",
         "@wdio/local-runner",
-        "@wdio/mocha-framework",
         "@wdio/spec-reporter",
         "mocha",
         "tslib",
         "wdio-obsidian-reporter"
-    ]
+    ],
+    "ignoreIssues": {
+        "wdio.conf.mts": ["unlisted"]
+    }
 }
