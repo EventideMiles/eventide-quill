@@ -22,14 +22,14 @@ jobs:
               with:
                   persist-credentials: false
 
-            - name: Use Node.js 22.x
+            - name: Use Node.js 26.x
               uses: actions/setup-node@v6
               with:
-                  node-version: '22.x'
+                  node-version: '26.x'
                   cache: 'npm'
 
             - name: Pin npm version (allowScripts needs npm >= 11.16.0)
-              run: npm install -g "npm@11.16.0"
+              run: npm install -g "npm@11.21.2"
 
             - run: npm ci
 
